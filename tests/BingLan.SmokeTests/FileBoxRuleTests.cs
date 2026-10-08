@@ -13,12 +13,62 @@ internal static class FileBoxRuleTests
     public static void Run()
     {
         TestShellEntryAndMissingRules();
+        TestCollectGoneIdsAndParentDirectories();
         TestAddSystemEntryDedupe();
         TestRelinkKeepsIdAndOrder();
         TestRelinkRejectsShellEntriesAndMissingTargets();
         TestRenameChangesOnlyTheDisplayName();
         TestTransferMovesMappingBetweenBoxes();
         TestDistributeHonoursCustomBoxes();
+    }
+
+    private static void TestCollectGoneIdsAndParentDirectories()
+    {
+        var temp = Path.Combine(Path.GetTempPath(), $"BingLan-collect-gone-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(temp);
+        try
+        {
+            var keptFile = Path.Combine(temp, "保留.txt");
+            var goneFile = Path.Combine(temp, "已删除.txt");
+            File.WriteAllText(keptFile, "内容");
+            File.WriteAllText(goneFile, "占位");
+
+            var box = new FileBoxState();
+            FileMappingService.AddExisting(box, [keptFile, goneFile]);
+            FileMappingService.AddSystemEntry(box, "shell:RecycleBinFolder", "回收站");
+            var keptId = box.Items.Single(item => item.Path == keptFile).Id;
+            var goneId = box.Items.Single(item => item.Path == goneFile).Id;
+            File.Delete(goneFile);
+
+            var goneIds = FileMappingService.CollectGoneIds(box.Items);
+            Assert(goneIds.Contains(goneId), "原文件已删除的映射应进入待清除集合");
+            Assert(!goneIds.Contains(keptId), "原文件存在的映射不应进入待清除集合");
+            Assert(goneIds.Count == 1, "系统入口不应进入待清除集合");
+
+            var parents = FileMappingService.CollectExistingParentDirectories(
+                box.Items.Select(item => item.Path));
+            Assert(
+                parents.Count == 1 && parents.Contains(temp),
+                "监听目录应只包含现存映射的父目录，系统入口被跳过");
+
+            Assert(
+                !FileMappingService.CollectGoneIds(
+                        [new FileMappingState { Path = @"\\binglan-offline-host.invalid\share\报告.docx" }])
+                    .Any(),
+                "离线网络共享上的映射不应进入待清除集合");
+
+            Assert(
+                FileMappingService.IsPartialDownload(Path.Combine(temp, "视频.crdownload")),
+                "下载中的临时文件应识别为部分下载");
+            Assert(
+                FileMappingService.IsPartialDownload(Path.Combine(temp, "压缩包.PART")),
+                "部分下载识别应忽略扩展名大小写");
+            Assert(!FileMappingService.IsPartialDownload(keptFile), "普通文件不应识别为部分下载");
+        }
+        finally
+        {
+            Directory.Delete(temp, true);
+        }
     }
 
     private static void TestDistributeHonoursCustomBoxes()

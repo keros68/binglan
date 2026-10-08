@@ -54,6 +54,7 @@ public partial class SettingsWindow : Window
     private bool _loadingDesktopMode;
     private bool _loadingStartup;
     private bool _loadingCleanDesktop;
+    private bool _loadingFileBoxAutomation;
     private bool _loadingStyle;
 
     public SettingsWindow(
@@ -152,6 +153,7 @@ public partial class SettingsWindow : Window
         LoadPrivacySettings();
         LoadUpdateSettings();
         RefreshCleanDesktopSettings();
+        LoadFileBoxAutomation();
         LoadStyle();
         RefreshBackupList();
         ShowPage("Appearance");
@@ -1114,6 +1116,29 @@ public partial class SettingsWindow : Window
         _maintenance.Style.CardSpacing = double.Parse(spacingTag, System.Globalization.CultureInfo.InvariantCulture);
         _maintenance.Style.Motion = Enum.Parse<MotionLevel>(motionTag);
         _maintenance.ApplyStyle();
+    }
+
+    private void LoadFileBoxAutomation()
+    {
+        _loadingFileBoxAutomation = true;
+        try
+        {
+            FileBoxAutomationCheckBox.IsChecked = _maintenance.IsFileBoxAutomationEnabled();
+        }
+        finally
+        {
+            _loadingFileBoxAutomation = false;
+        }
+    }
+
+    private void FileBoxAutomationCheckBox_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_loadingFileBoxAutomation)
+        {
+            return;
+        }
+
+        _maintenance.SetFileBoxAutomation(FileBoxAutomationCheckBox.IsChecked == true);
     }
 
     private async void CleanDesktopCheckBox_Changed(object sender, RoutedEventArgs e)

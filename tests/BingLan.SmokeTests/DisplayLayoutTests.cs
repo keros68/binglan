@@ -71,6 +71,12 @@ internal static class DisplayLayoutTests
             Check(migrated.SchemaVersion == AppState.CurrentSchemaVersion
                 && placement.Left == 300 && placement.DisplayLayouts.Count == 0,
                 "v21 迁移应保留原位置并从空的排列记录开始");
+
+            File.WriteAllText(store.StatePath, "{\"SchemaVersion\":22}");
+            File.Delete(store.StatePath + ".bak");
+            var automation = store.Load();
+            Check(automation.SchemaVersion == AppState.CurrentSchemaVersion && !automation.FileBoxAutomationEnabled,
+                "v22 迁移应默认关闭分组盒自动刷新");
         }
         finally
         {

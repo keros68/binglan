@@ -240,6 +240,16 @@
                                       Unchecked="CleanDesktopCheckBox_Changed"/>
                         </StackPanel>
                     </local:SettingsRow>
+                    <local:SettingsRow Glyph="&#xE72C;"
+                                       GlyphBrush="{DynamicResource SettingsIconGreenBrush}"
+                                       Header="分组盒自动刷新"
+                                       Description="桌面新文件自动收纳进分组盒子，已删除的文件映射自动清除；关闭后只在“自动整理”时处理">
+                        <CheckBox x:Name="FileBoxAutomationCheckBox"
+                                  AutomationProperties.Name="分组盒自动刷新"
+                                  Style="{StaticResource ToggleSwitchStyle}"
+                                  Checked="FileBoxAutomationCheckBox_Changed"
+                                  Unchecked="FileBoxAutomationCheckBox_Changed"/>
+                    </local:SettingsRow>
                     </local:SettingsGroup>
 
                     <TextBlock Style="{StaticResource SectionHeaderStyle}" Text="卡片外观"/>

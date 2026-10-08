@@ -67,4 +67,8 @@ public sealed class SettingsMaintenance
         _ => Task.FromResult("清爽桌面不可用");
     public Func<string> CleanDesktopNotice { get; init; } = () => string.Empty;
     public Func<Task<string>> RetryCleanDesktopRestore { get; init; } = () => Task.FromResult(string.Empty);
+
+    /// <summary>File-box automation (auto-collect new desktop items, auto-clear gone mappings).</summary>
+    public Func<bool> IsFileBoxAutomationEnabled { get; init; } = () => false;
+    public Action<bool> SetFileBoxAutomation { get; init; } = _ => { };
 }

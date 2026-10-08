@@ -48,6 +48,7 @@ public sealed class WidgetCoordinator : IDisposable
     private bool _cleanDesktopRestoreFailed;
     private readonly StartupRegistration _startup;
     private readonly FullScreenWatcher _fullScreenWatcher = new();
+    private readonly FileMappingWatchService _mappingWatcher;
     private readonly List<WidgetWindowBase> _windowsHiddenFromTray = [];
     private Forms.ToolStripMenuItem? _toggleDesktopMenuItem;
     private bool _desktopHidden;
@@ -60,6 +61,10 @@ public sealed class WidgetCoordinator : IDisposable
     private bool _isOrganizingDesktop;
     private bool _isApplyingDesktopExperience;
     private bool _isApplyingTaskbar;
+    private bool _isSweepingGoneMappings;
+    private bool _sweepGoneAgain;
+    private bool _isImportingDesktopEntries;
+    private bool _importDesktopAgain;
 
     public WidgetCoordinator(
         bool interactiveQa = false,
@@ -76,6 +81,7 @@ public sealed class WidgetCoordinator : IDisposable
         _performanceSampler = new WindowsPerformanceSamplingService();
         _weatherService = new WeatherService();
         _citySearchService = new CitySearchService();
+        _mappingWatcher = new FileMappingWatchService(SweepGoneFileMappings, ImportNewDesktopEntries);
         _saveTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(350) };
         _saveTimer.Tick += (_, _) =>
         {
@@ -177,6 +183,10 @@ public sealed class WidgetCoordinator : IDisposable
             WindowScreenRecovery.EnsureOnScreen(window);
         }
         WindowScreenRecovery.SettleLayout();
+        // Catches deletions that happened while the app was off; later ones arrive through
+        // the mapping watcher, as do new desktop items through the import watcher. All of
+        // it only when the user opted in to file-box automation.
+        ApplyFileBoxAutomation();
         StartShellModulesAsync().ContinueWith(
             task => StartupLog.Write($"启动未完成：{task.Exception?.GetBaseException().Message}"),
             CancellationToken.None,
@@ -620,6 +630,7 @@ public sealed class WidgetCoordinator : IDisposable
         WindowScreenRecovery.LayoutChanged -= OnDisplayLayoutChanged;
         AccessibilityThemeManager.HighContrastChanged -= OnHighContrastChanged;
         _fullScreenWatcher.Dispose();
+        _mappingWatcher.Dispose();
         _dock.Dispose();
         _cornerReveal.Dispose();
         _taskbar.Dispose();
@@ -717,6 +728,11 @@ public sealed class WidgetCoordinator : IDisposable
 
         Capture(window);
         ScheduleSave();
+        if (window is FileBoxWindow && _state.FileBoxAutomationEnabled)
+        {
+            // Box membership changed; keep the watched folders and the gone sweep current.
+            _mappingWatcher.RequestSweep();
+        }
     }
 
     private void Capture(WidgetWindowBase window)
@@ -955,6 +971,8 @@ public sealed class WidgetCoordinator : IDisposable
                 PinBoundApp = PinBoundApp,
                 IsCleanDesktopEnabled = () => _state.CleanDesktopEnabled,
                 SetCleanDesktop = SetCleanDesktopAsync,
+                IsFileBoxAutomationEnabled = () => _state.FileBoxAutomationEnabled,
+                SetFileBoxAutomation = SetFileBoxAutomation,
                 CleanDesktopNotice = CleanDesktopNotice,
                 RetryCleanDesktopRestore = RetryCleanDesktopRestoreAsync,
                 Style = _state.Style,
@@ -1663,6 +1681,146 @@ public sealed class WidgetCoordinator : IDisposable
         Process.Start(new ProcessStartInfo(_store.DataDirectory) { UseShellExecute = true });
     }
 
+    /// <summary>
+    /// Removes mappings whose originals are confirmed deleted (the drive is reachable, so
+    /// the file is really gone rather than on an unplugged drive or an offline share) and
+    /// refreshes the watched folders. Runs once at startup and after watcher notices or box
+    /// changes; the filesystem checks run off the UI thread.
+    /// </summary>
+    private async void SweepGoneFileMappings()
+    {
+        if (_isExiting || !_state.FileBoxAutomationEnabled)
+        {
+            return;
+        }
+        if (_isSweepingGoneMappings)
+        {
+            _sweepGoneAgain = true;
+            return;
+        }
+        _isSweepingGoneMappings = true;
+        try
+        {
+            do
+            {
+                _sweepGoneAgain = false;
+                var items = _state.FileBoxes.SelectMany(box => box.Items).ToList();
+                var (goneIds, parents) = await Task.Run(() => (
+                    FileMappingService.CollectGoneIds(items),
+                    FileMappingService.CollectExistingParentDirectories(items.Select(item => item.Path))));
+                if (_isExiting)
+                {
+                    return;
+                }
+
+                var cleared = 0;
+                foreach (var box in _windows.OfType<FileBoxWindow>())
+                {
+                    cleared += box.RemoveGoneMappings(goneIds);
+                }
+                if (cleared > 0)
+                {
+                    foreach (var box in _windows.OfType<FileBoxWindow>())
+                    {
+                        box.SetOperationStatus($"已自动移除 {cleared} 项已失效映射");
+                    }
+                }
+                _mappingWatcher.UpdateWatchedDirectories(parents);
+            }
+            while (_sweepGoneAgain && !_isExiting);
+        }
+        finally
+        {
+            _isSweepingGoneMappings = false;
+        }
+    }
+
+    private static string[] DesktopDirectories() =>
+    [
+        Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory),
+        Environment.GetFolderPath(Environment.SpecialFolder.CommonDesktopDirectory)
+    ];
+
+    /// <summary>
+    /// Turns file-box automation on or off and applies it: on starts watching the mapped
+    /// folders and the desktops, off tears every watcher down so the feature costs nothing.
+    /// </summary>
+    private void SetFileBoxAutomation(bool enabled)
+    {
+        _state.FileBoxAutomationEnabled = enabled;
+        ApplyFileBoxAutomation();
+        ScheduleSave();
+    }
+
+    private void ApplyFileBoxAutomation()
+    {
+        if (_state.FileBoxAutomationEnabled)
+        {
+            _mappingWatcher.UpdateImportDirectories(DesktopDirectories().Where(Directory.Exists));
+            // The sweep establishes the watched folders and clears anything already gone.
+            _mappingWatcher.RequestSweep();
+        }
+        else
+        {
+            _mappingWatcher.UpdateImportDirectories([]);
+            _mappingWatcher.UpdateWatchedDirectories([]);
+        }
+    }
+
+    /// <summary>
+    /// Imports items that appeared on the desktop while the app was running into the boxes
+    /// that already exist (custom collect rules and the category boxes). No new boxes are
+    /// created and partial downloads are skipped; they arrive when renamed to the final
+    /// name. Runs off the watcher; the scan stays off the UI thread.
+    /// </summary>
+    private async void ImportNewDesktopEntries()
+    {
+        if (_isExiting || !_state.FileBoxAutomationEnabled)
+        {
+            return;
+        }
+        if (_isImportingDesktopEntries)
+        {
+            _importDesktopAgain = true;
+            return;
+        }
+        _isImportingDesktopEntries = true;
+        try
+        {
+            do
+            {
+                _importDesktopAgain = false;
+                var boxes = _state.FileBoxes.ToList();
+                var distribution = await Task.Run(() => FileMappingService.Distribute(
+                    FileMappingService.EnumerateDirectChildren(DesktopDirectories())
+                        .Where(path => !FileMappingService.IsPartialDownload(path)),
+                    boxes));
+                if (_isExiting)
+                {
+                    return;
+                }
+
+                foreach (var (boxId, paths) in distribution.ByBox)
+                {
+                    if (_windows.OfType<FileBoxWindow>().FirstOrDefault(
+                            candidate => candidate.State.Id == boxId) is { } boxWindow)
+                    {
+                        var added = await boxWindow.AddMappingsAsync(paths);
+                        if (added > 0)
+                        {
+                            boxWindow.SetOperationStatus($"已自动收纳 {added} 项新桌面项目");
+                        }
+                    }
+                }
+            }
+            while (_importDesktopAgain && !_isExiting);
+        }
+        finally
+        {
+            _isImportingDesktopEntries = false;
+        }
+    }
+
     private async Task OrganizeDesktopAsync()
     {
         if (_isOrganizingDesktop)
@@ -1673,20 +1831,11 @@ public sealed class WidgetCoordinator : IDisposable
         _isOrganizingDesktop = true;
         try
         {
-            var desktopDirectories = new[]
-            {
-                Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory),
-                Environment.GetFolderPath(Environment.SpecialFolder.CommonDesktopDirectory)
-            };
+            var desktopDirectories = DesktopDirectories();
             CaptureAll();
             var boxes = _state.FileBoxes.ToList();
-            var mappings = boxes.SelectMany(box => box.Items)
-                .Select(item => (item.Id, item.Path))
-                .ToList();
-            var goneIds = await Task.Run(() => mappings
-                .Where(item => FileMappingService.IsGone(item.Path))
-                .Select(item => item.Id)
-                .ToHashSet());
+            var goneIds = await Task.Run(() =>
+                FileMappingService.CollectGoneIds(boxes.SelectMany(box => box.Items)));
             var cleared = 0;
             if (goneIds.Count > 0)
             {
@@ -1900,6 +2049,7 @@ public sealed class WidgetCoordinator : IDisposable
         SaveNow();
         _settingsWindow?.Close();
         _settingsWindow = null;
+        _mappingWatcher.Dispose();
         _dock.Dispose();
         _cornerReveal.Dispose();
         _taskbar.Dispose();

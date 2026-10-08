@@ -129,6 +129,60 @@ public static class FileMappingService
         return removed;
     }
 
+    /// <summary>
+    /// Ids of the mappings whose originals are confirmed deleted (see <see cref="IsGone"/>);
+    /// mappings on unplugged drives or offline shares are kept.
+    /// </summary>
+    public static IReadOnlySet<Guid> CollectGoneIds(IEnumerable<FileMappingState> mappings) =>
+        mappings
+            .Where(item => IsGone(item.Path))
+            .Select(item => item.Id)
+            .ToHashSet();
+
+    /// <summary>Extensions of in-progress downloads and temp files; not collected yet.</summary>
+    private static readonly HashSet<string> PartialDownloadExtensions = new(
+        [".crdownload", ".part", ".partial", ".download", ".tmp", ".opdownload"],
+        StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// True while a download or temp file is still being written; it becomes collectable
+    /// when renamed to its final name.
+    /// </summary>
+    public static bool IsPartialDownload(string path) =>
+        PartialDownloadExtensions.Contains(Path.GetExtension(path));
+
+    /// <summary>
+    /// Existing parent folders of the given paths, used to watch for deletions. Shell
+    /// namespace entries have no real folder and are skipped.
+    /// </summary>
+    public static IReadOnlySet<string> CollectExistingParentDirectories(IEnumerable<string> paths)
+    {
+        var parents = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var path in paths)
+        {
+            if (string.IsNullOrWhiteSpace(path) || IsShellEntry(path))
+            {
+                continue;
+            }
+
+            string? parent;
+            try
+            {
+                parent = Path.GetDirectoryName(Path.GetFullPath(path));
+            }
+            catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+            {
+                continue;
+            }
+
+            if (!string.IsNullOrEmpty(parent) && Directory.Exists(parent))
+            {
+                parents.Add(parent);
+            }
+        }
+        return parents;
+    }
+
     public static IReadOnlyList<string> EnumerateDirectChildren(IEnumerable<string> directories)
     {
         var comparer = StringComparer.OrdinalIgnoreCase;

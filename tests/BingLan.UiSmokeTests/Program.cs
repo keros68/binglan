@@ -106,6 +106,9 @@ internal static class Program
         Run("窗口位置尺寸关闭后重载", TestWindowPersistence, failures);
         Run("桌面分组盒导入入口、排序和图标网格", TestFileBoxWindow, failures);
         Run("桌面分组盒失效状态与系统入口菜单", TestFileBoxInvalidStateAndSystemEntries, failures);
+        Run("原文件删除后映射自动从分组盒清除", TestFileMappingWatchClearsDeletedMapping, failures);
+        Run("桌面新文件触发自动收纳，非桌面目录不触发", TestFileMappingWatchImportTrigger, failures);
+        Run("分组盒自动刷新开关默认关闭并按需写回", TestFileBoxAutomationToggle, failures);
         Run("桌面分组盒显示名称与盒间转移", TestFileBoxRenameAndTransfer, failures);
         Run("屏幕阅读器名称、Tab 顺序与实际 DPI 边界", TestAccessibilityAndKeyboardNavigation, failures);
         Run("高对比度系统色切换与冰蓝材质恢复", TestHighContrastThemeSwitch, failures);
@@ -1615,6 +1618,108 @@ internal static class Program
         finally
         {
             Close(window);
+            Directory.Delete(temp, true);
+        }
+    }
+
+    private static void TestFileMappingWatchClearsDeletedMapping()
+    {
+        var temp = Path.Combine(Path.GetTempPath(), $"BingLan-watch-gone-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(temp);
+        var file = Path.Combine(temp, "将被删除.txt");
+        File.WriteAllText(file, "冰蓝桌面");
+        var state = new FileBoxState();
+        FileMappingService.AddExisting(state, [file]);
+        var window = new FileBoxWindow(state);
+        var list = Require<ItemsControl>(window, "FileList");
+        ShowAndPump(window);
+        var watcher = new FileMappingWatchService(
+            () => window.RemoveGoneMappings(FileMappingService.CollectGoneIds(state.Items)),
+            () => { });
+        watcher.UpdateWatchedDirectories(
+            FileMappingService.CollectExistingParentDirectories(state.Items.Select(item => item.Path)));
+        try
+        {
+            Assert(list.Items.Count == 1, "测试开始时分组盒应有一项映射");
+            File.Delete(file);
+            PumpUntil(() => list.Items.Count == 0, "原文件被删除后映射没有自动移除");
+            Assert(state.Items.Count == 0, "自动清除后状态里不应残留失效映射");
+            Assert(!File.Exists(file), "自动清除不应恢复或改动原文件");
+        }
+        finally
+        {
+            watcher.Dispose();
+            Close(window);
+            Directory.Delete(temp, true);
+        }
+    }
+
+    private static void TestFileBoxAutomationToggle()
+    {
+        var automation = false;
+        var applied = new List<bool>();
+        var window = new SettingsWindow(
+            new CitySearchService(),
+            new InformationWidgetState(),
+            DesktopExperienceRules.CreateDefault(),
+            (_, _) => { },
+            _ => { },
+            _ => { },
+            maintenance: new SettingsMaintenance
+            {
+                IsFileBoxAutomationEnabled = () => automation,
+                SetFileBoxAutomation = value =>
+                {
+                    automation = value;
+                    applied.Add(value);
+                }
+            });
+        ShowAndPump(window);
+        try
+        {
+            var toggle = Require<CheckBox>(window, "FileBoxAutomationCheckBox");
+            Assert(toggle.IsChecked == false && applied.Count == 0, "分组盒自动刷新应默认关闭且加载时不写回");
+            toggle.IsChecked = true;
+            Pump();
+            Assert(applied.SequenceEqual([true]) && automation, "勾选后应开启分组盒自动刷新");
+            toggle.IsChecked = false;
+            Pump();
+            Assert(applied.SequenceEqual([true, false]) && !automation, "取消勾选后应关闭分组盒自动刷新");
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    private static void TestFileMappingWatchImportTrigger()
+    {
+        var temp = Path.Combine(Path.GetTempPath(), $"BingLan-watch-import-{Guid.NewGuid():N}");
+        var importDir = Path.Combine(temp, "桌面");
+        var otherDir = Path.Combine(temp, "其他目录");
+        Directory.CreateDirectory(importDir);
+        Directory.CreateDirectory(otherDir);
+        var importRequested = 0;
+        var watcher = new FileMappingWatchService(() => { }, () => importRequested++);
+        watcher.UpdateWatchedDirectories([importDir, otherDir]);
+        watcher.UpdateImportDirectories([importDir]);
+        try
+        {
+            File.WriteAllText(Path.Combine(otherDir, "普通.txt"), "x");
+            var deadline = DateTime.UtcNow.AddSeconds(2);
+            while (DateTime.UtcNow < deadline)
+            {
+                Pump();
+                Thread.Sleep(10);
+            }
+            Assert(importRequested == 0, "非桌面目录的新文件不应触发自动收纳");
+
+            File.WriteAllText(Path.Combine(importDir, "新桌面文件.txt"), "x");
+            PumpUntil(() => importRequested > 0, "桌面目录的新文件没有触发自动收纳");
+        }
+        finally
+        {
+            watcher.Dispose();
             Directory.Delete(temp, true);
         }
     }

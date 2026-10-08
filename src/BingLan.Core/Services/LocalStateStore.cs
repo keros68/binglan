@@ -429,6 +429,13 @@ public sealed class LocalStateStore
             // and fills on the arrangement in use.
             state.SchemaVersion = 22;
         }
+
+        if (state.SchemaVersion < 23)
+        {
+            // File-box automation is new and starts off: organising keeps clearing gone
+            // mappings, and nothing is watched until the user opts in.
+            state.SchemaVersion = 23;
+        }
         state.Updates ??= new UpdateState();
         state.QuickPlaces = QuickPlaceRules.Normalize(state.QuickPlaces);
         state.DismissedDesktopCategories = (state.DismissedDesktopCategories ?? [])

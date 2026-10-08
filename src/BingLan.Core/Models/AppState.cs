@@ -2,7 +2,7 @@ namespace BingLan.Core.Models;
 
 public sealed class AppState
 {
-    public const int CurrentSchemaVersion = 22;
+    public const int CurrentSchemaVersion = 23;
 
     public int SchemaVersion { get; set; } = CurrentSchemaVersion;
     public List<TodoWidgetState> TodoWidgets { get; set; } = [];
@@ -30,4 +30,11 @@ public sealed class AppState
 
     /// <summary>Whether the native desktop icons stay hidden while the app runs.</summary>
     public bool CleanDesktopEnabled { get; set; }
+
+    /// <summary>
+    /// Whether file boxes watch the desktop and mapped folders: new desktop items join
+    /// existing boxes and mappings whose originals were deleted are cleared on their own.
+    /// Off by default; while off, organising still clears gone mappings.
+    /// </summary>
+    public bool FileBoxAutomationEnabled { get; set; }
 }
