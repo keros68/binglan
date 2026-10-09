@@ -40,6 +40,7 @@ Run("超大预览图被拒绝", ThemePreviewTests.TestOversizedPreviewIsRejected
 Run("带预览图的导出仍不含个人信息", ThemePreviewTests.TestExportWithPreviewStillHasNoPersonalData);
 Run("清爽桌面只改图标位", CleanDesktopTests.TestOnlyTheIconBitChanges);
 Run("清爽桌面隐藏与恢复计划", CleanDesktopTests.TestHideAndRestorePlans);
+Run("显示桌面判定与提升回落规则", DesktopSurfaceTests.TestShownStateAndActions);
 Run("更新版本号与每日检查节奏", UpdateServiceTests.TestVersionAndSchedule);
 Run("更新发布信息解析与安全过滤", UpdateServiceTests.TestReleaseParsing);
 Run("检查更新结果与请求内容（离线桩）", UpdateServiceTests.TestCheck);

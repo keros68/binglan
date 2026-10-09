@@ -4,12 +4,17 @@ namespace BingLan.App.Interop;
 
 internal static class NativeMethods
 {
+    internal const int WmSize = 0x0005;
+    internal const int WmShowWindow = 0x0018;
     internal const int WmSettingChange = 0x001A;
     internal const int SpiSetWorkArea = 0x002F;
+    internal const int WmWindowPosChanged = 0x0047;
     internal const int WmNcCalcSize = 0x0083;
     internal const int WmNcHitTest = 0x0084;
     internal const int WmThemeChanged = 0x031A;
     internal const int WmDwmCompositionChanged = 0x031E;
+
+    internal const int SizeMinimized = 1;
 
     internal const int HtTransparent = -1;
     internal const int HtClient = 1;
@@ -32,6 +37,8 @@ internal static class NativeMethods
     internal const uint SwpNoZOrder = 0x0004;
     internal const uint SwpNoActivate = 0x0010;
     internal const uint SwpFrameChanged = 0x0020;
+    internal const uint SwpShowWindow = 0x0040;
+    internal const uint SwpHideWindow = 0x0080;
 
     internal const int DwmwaNcRenderingPolicy = 2;
     internal const int DwmwaWindowCornerPreference = 33;
@@ -52,6 +59,18 @@ internal static class NativeMethods
         internal int Bottom;
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct WindowPos
+    {
+        internal nint Window;
+        internal nint InsertAfter;
+        internal int X;
+        internal int Y;
+        internal int Cx;
+        internal int Cy;
+        internal uint Flags;
+    }
+
     [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW", SetLastError = true)]
     internal static extern nint GetWindowLongPtr(nint window, int index);
 
@@ -68,6 +87,51 @@ internal static class NativeMethods
         int width,
         int height,
         uint flags);
+
+    internal const int SwShowNoActivate = 4;
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool ShowWindow(nint window, int command);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool IsIconic(nint window);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool IsWindowVisible(nint window);
+
+    internal static long GetExStyleOf(nint window) => GetWindowLongPtr(window, GwlExStyle);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    internal static extern nint FindWindowW(string className, string? windowName);
+
+    [DllImport("user32.dll")]
+    internal static extern uint GetWindowThreadProcessId(nint window, out uint processId);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool EnumWindows(EnumWindowsProc callback, nint parameter);
+
+    internal delegate bool EnumWindowsProc(nint window, nint parameter);
+
+    public delegate void WinEventProc(
+        nint hook, uint eventType, nint window, int idObject, int idChild, uint thread, uint time);
+
+    [DllImport("user32.dll")]
+    internal static extern nint SetWinEventHook(
+        uint eventMin,
+        uint eventMax,
+        nint module,
+        WinEventProc callback,
+        uint processId,
+        uint threadId,
+        uint flags);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool UnhookWinEvent(nint hook);
 
     [DllImport("dwmapi.dll")]
     internal static extern int DwmExtendFrameIntoClientArea(

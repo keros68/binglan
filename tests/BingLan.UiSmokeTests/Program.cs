@@ -25,6 +25,7 @@ internal static class Program
     private const int WmNcHitTest = 0x0084;
     private const int GwlExStyle = -20;
     private const long WsExLayered = 0x00080000L;
+    private const long WsExTopmost = 0x00000008L;
     private const int DwmwaWindowCornerPreference = 33;
     private const int DwmWindowCornerDoNotRound = 1;
     private const int HtTransparent = -1;
@@ -55,6 +56,18 @@ internal static class Program
 
     [DllImport("user32.dll")]
     private static extern bool GetWindowRect(nint window, out NativeRect rect);
+
+    private const int SwHide = 0;
+    private const int SwMinimize = 6;
+
+    [DllImport("user32.dll")]
+    private static extern bool ShowWindow(nint window, int command);
+
+    [DllImport("user32.dll")]
+    private static extern bool IsIconic(nint window);
+
+    [DllImport("user32.dll")]
+    private static extern bool IsWindowVisible(nint window);
 
     private const uint GwHwndNext = 2;
 
@@ -121,6 +134,8 @@ internal static class Program
         Run("待办按 Enter 提交后文字写入状态", TestTodoEnterCommitsText, failures);
         Run("待办勾选后各行仍可被辅助技术访问", TestTodoRowsStayAccessible, failures);
         Run("托盘隐藏与显示桌面组件", TestTrayToggleDesktop, failures);
+        Run("Shell 隐藏或最小化组件后自动恢复显示", TestShellHideAndMinimizeRecovery, failures);
+        Run("显示桌面时组件提升到任务栏下方、恢复后回落", TestDesktopSurfaceRaiseAndLower, failures);
         Run("组件恢复默认位置", TestResetComponentPlacement, failures);
         Run("清爽桌面开关", TestCleanDesktopToggle, failures);
         Run("设置行分隔线对齐标题", TestSettingsRowDividersAlignWithTitles, failures);
@@ -2175,6 +2190,103 @@ internal static class Program
             }
             Pump();
             Directory.Delete(temp, true);
+        }
+    }
+
+    // "显示桌面" and "最小化所有窗口" reach a card either as ShowWindow(SW_HIDE) or as
+    // ShowWindow(SW_MINIMIZE); on Windows builds that do not skip tool windows the card
+    // puts itself back, while hides the app asked for stay in effect.
+    private static void TestShellHideAndMinimizeRecovery()
+    {
+        var state = TodoService.CreateDefaultWidget();
+        var window = new TodoWidgetWindow(state)
+        {
+            Left = 240,
+            Top = 240,
+            Width = 320,
+            Height = 260
+        };
+        ShowAndPump(window);
+        try
+        {
+            var handle = new WindowInteropHelper(window).Handle;
+            GetWindowRect(handle, out var before);
+
+            // The shell hides the window behind WPF's back, so the wait must watch the
+            // native visibility, not the WPF property.
+            ShowWindow(handle, SwHide);
+            PumpUntil(() => IsWindowVisible(handle), "Shell 隐藏后组件应自动恢复显示");
+            Assert(window.IsVisible, "恢复后 WPF 可见状态应一致");
+
+            ShowWindow(handle, SwMinimize);
+            PumpUntil(() => !IsIconic(handle) && IsWindowVisible(handle),
+                "Shell 最小化后组件应自动还原");
+            Assert(window.WindowState == WindowState.Normal, "还原后 WPF 窗口状态应为 Normal");
+            GetWindowRect(handle, out var after);
+            Assert(before.Left == after.Left && before.Top == after.Top &&
+                before.Right == after.Right && before.Bottom == after.Bottom,
+                "还原后组件应回到原位置和尺寸");
+
+            window.HideFromApp();
+            Pump();
+            Thread.Sleep(150);
+            Pump();
+            Assert(!window.IsVisible, "应用主动隐藏（托盘开关、组件可见性）不应被恢复");
+            window.Show();
+            Pump();
+            Assert(window.IsVisible, "再次显示应用隐藏的组件应正常");
+        }
+        finally
+        {
+            window.CanClose = true;
+            window.Close();
+            Pump();
+        }
+    }
+
+    // While the shell shows the desktop the cards are lifted into the topmost band
+    // under the taskbar; when ordinary windows return they go back below them. The
+    // z-order move keeps position and visibility and never activates the card.
+    private static void TestDesktopSurfaceRaiseAndLower()
+    {
+        var state = TodoService.CreateDefaultWidget();
+        var window = new TodoWidgetWindow(state)
+        {
+            Left = 300,
+            Top = 260,
+            Width = 320,
+            Height = 260
+        };
+        ShowAndPump(window);
+        try
+        {
+            var handle = new WindowInteropHelper(window).Handle;
+            Assert(handle != 0, "窗口应已创建");
+            Assert(window.WindowHandle == handle, "WindowHandle 应返回原生句柄");
+            window.SendToBack();
+            Pump();
+            GetWindowRect(handle, out var before);
+            Assert((GetWindowLongPtr(handle, GwlExStyle) & WsExTopmost) == 0, "常态下组件不应置顶");
+
+            window.RaiseAboveDesktop(BingLan.App.Interop.DockNativeMethods.HwndTopmost);
+            PumpUntil(() => (GetWindowLongPtr(handle, GwlExStyle) & WsExTopmost) != 0,
+                "提升后组件应进入置顶带");
+            Assert(IsWindowVisible(handle), "提升后组件应保持可见");
+            GetWindowRect(handle, out var raised);
+            Assert(before.Left == raised.Left && before.Top == raised.Top &&
+                before.Right == raised.Right && before.Bottom == raised.Bottom,
+                "提升只改 Z 序，不应移动或缩放组件");
+
+            window.SendToBack();
+            PumpUntil(() => (GetWindowLongPtr(handle, GwlExStyle) & WsExTopmost) == 0,
+                "回落后组件应离开置顶带");
+            Assert(IsWindowVisible(handle), "回落后组件应保持可见");
+        }
+        finally
+        {
+            window.CanClose = true;
+            window.Close();
+            Pump();
         }
     }
 

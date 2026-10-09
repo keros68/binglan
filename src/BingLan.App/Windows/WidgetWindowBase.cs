@@ -201,6 +201,8 @@ public class WidgetWindowBase : Window
     private bool _isApplyingTaskbarSafeBounds;
     private bool _titleEditorHooked;
     private string? _titleBeforeEdit;
+    private bool _isClosing;
+    private bool _isChangingVisibilityByApp;
 
     public WidgetWindowBase()
     {
@@ -333,7 +335,14 @@ public class WidgetWindowBase : Window
                 ApplySelection(false);
             }
         };
-        Closing += (_, e) => e.Cancel = !CanClose;
+        Closing += (_, e) =>
+        {
+            e.Cancel = !CanClose;
+            if (!e.Cancel)
+            {
+                _isClosing = true;
+            }
+        };
         ContextMenu = BuildContextMenu();
     }
 
@@ -1026,7 +1035,77 @@ public class WidgetWindowBase : Window
             RefreshBackdrop();
         }
 
+        if (!_isClosing && !_isChangingVisibilityByApp)
+        {
+            if (message == NativeMethods.WmSize && wParam == NativeMethods.SizeMinimized)
+            {
+                // The shell's "minimise all" minimised the card; it is desktop furniture
+                // and puts itself back.
+                RecoverFromShell(minimized: true);
+            }
+            else if (message == NativeMethods.WmShowWindow && wParam == 0)
+            {
+                // The shell's "show desktop" hid the card; it shows itself again.
+                RecoverFromShell(minimized: false);
+            }
+            else if (message == NativeMethods.WmWindowPosChanged
+                     && (Marshal.PtrToStructure<NativeMethods.WindowPos>(lParam).Flags
+                         & NativeMethods.SwpHideWindow) != 0)
+            {
+                RecoverFromShell(minimized: false);
+            }
+        }
+
         return 0;
+    }
+
+    /// <summary>
+    /// Puts the card back after the shell hid or minimised it, for example through
+    /// "show desktop" or "minimise all" on a Windows build that does not skip tool
+    /// windows. Runs after the current message so the shell's change completes first;
+    /// hides the app itself asked for are marked with <see cref="HideFromApp"/> and
+    /// never countered. The state is read from the native window because WPF does not
+    /// notice a visibility change made by another process.
+    /// </summary>
+    private void RecoverFromShell(bool minimized)
+    {
+        Dispatcher.BeginInvoke(
+            DispatcherPriority.Send,
+            new Action(() =>
+            {
+                if (_isClosing || _source is not { IsDisposed: false } source)
+                {
+                    return;
+                }
+                var handle = source.Handle;
+                if (minimized ? !NativeMethods.IsIconic(handle)
+                    : NativeMethods.IsWindowVisible(handle))
+                {
+                    return;
+                }
+
+                // SW_SHOWNOACTIVATE shows (and un-minimises) without stealing the
+                // foreground; the card then goes back under every ordinary window.
+                NativeMethods.ShowWindow(handle, NativeMethods.SwShowNoActivate);
+                SendToBack();
+            }));
+    }
+
+    /// <summary>
+    /// Hides the card for the app's own reason — the tray toggle or a component's
+    /// visibility setting — so the shell-hide recovery must leave it hidden.
+    /// </summary>
+    internal void HideFromApp()
+    {
+        _isChangingVisibilityByApp = true;
+        try
+        {
+            Hide();
+        }
+        finally
+        {
+            _isChangingVisibilityByApp = false;
+        }
     }
 
     private void EnsureTaskbarSafeBounds()
@@ -1100,6 +1179,31 @@ public class WidgetWindowBase : Window
                 0,
                 0,
                 NativeMethods.SwpNoMove | NativeMethods.SwpNoSize | NativeMethods.SwpNoActivate);
+        }
+    }
+
+    /// <summary>The card's window handle; 0 before the window exists or after it closed.</summary>
+    internal nint WindowHandle => _source is { IsDisposed: false } source ? source.Handle : 0;
+
+    /// <summary>
+    /// Lifts the card into the topmost band at the given z-order slot — under the
+    /// taskbar — while the shell shows the desktop: the raised desktop surface would
+    /// otherwise cover the card behind the wallpaper. <see cref="SendToBack"/> puts it
+    /// back once ordinary windows return.
+    /// </summary>
+    internal void RaiseAboveDesktop(nint insertAfter)
+    {
+        if (_source is { IsDisposed: false } source)
+        {
+            NativeMethods.SetWindowPos(
+                source.Handle,
+                insertAfter,
+                0,
+                0,
+                0,
+                0,
+                NativeMethods.SwpNoMove | NativeMethods.SwpNoSize |
+                NativeMethods.SwpNoActivate | NativeMethods.SwpShowWindow);
         }
     }
 

@@ -4,6 +4,7 @@ using System.IO;
 using System.Windows;
 using System.Windows.Threading;
 using BingLan.App.Dock;
+using BingLan.App.Interop;
 using BingLan.App.Services;
 using BingLan.App.Taskbar;
 using BingLan.App.Themes;
@@ -48,6 +49,7 @@ public sealed class WidgetCoordinator : IDisposable
     private bool _cleanDesktopRestoreFailed;
     private readonly StartupRegistration _startup;
     private readonly FullScreenWatcher _fullScreenWatcher = new();
+    private readonly DesktopSurfaceWatcher _desktopSurfaceWatcher;
     private readonly FileMappingWatchService _mappingWatcher;
     private readonly List<WidgetWindowBase> _windowsHiddenFromTray = [];
     private Forms.ToolStripMenuItem? _toggleDesktopMenuItem;
@@ -89,6 +91,12 @@ public sealed class WidgetCoordinator : IDisposable
             SaveNow();
         };
         _trayIcon = BuildTrayIcon();
+        _desktopSurfaceWatcher = new DesktopSurfaceWatcher(
+            () => _windows
+                .Where(window => window.IsVisible)
+                .Select(window => window.WindowHandle)
+                .Where(handle => handle != 0)
+                .ToList());
         // Only the installed app checks on its own; test and interactive runs keep quiet.
         _updater = new AppUpdater(_state.Updates, AppVersion, ScheduleSave, Exit, canAutoCheck: dataDirectory is null);
         _updater.ReleaseFound += OnReleaseFound;
@@ -197,6 +205,8 @@ public sealed class WidgetCoordinator : IDisposable
         _fullScreenWatcher.Changed += UpdateSamplingMode;
         _fullScreenWatcher.Changed += () => _cornerReveal.SetSuspended(_fullScreenWatcher.IsFullScreenInFront);
         _fullScreenWatcher.Start();
+        _desktopSurfaceWatcher.Changed += OnDesktopSurfaceChanged;
+        _desktopSurfaceWatcher.Start();
         SystemEvents.DisplaySettingsChanged += OnDisplaySettingsChanged;
         WindowScreenRecovery.LayoutChanged += OnDisplayLayoutChanged;
         SaveNow();
@@ -601,7 +611,7 @@ public sealed class WidgetCoordinator : IDisposable
             foreach (var window in _windows.Where(window => window.IsVisible).ToList())
             {
                 _windowsHiddenFromTray.Add(window);
-                window.Hide();
+                window.HideFromApp();
             }
             _desktopHidden = true;
         }
@@ -630,6 +640,7 @@ public sealed class WidgetCoordinator : IDisposable
         WindowScreenRecovery.LayoutChanged -= OnDisplayLayoutChanged;
         AccessibilityThemeManager.HighContrastChanged -= OnHighContrastChanged;
         _fullScreenWatcher.Dispose();
+        _desktopSurfaceWatcher.Dispose();
         _mappingWatcher.Dispose();
         _dock.Dispose();
         _cornerReveal.Dispose();
@@ -705,6 +716,16 @@ public sealed class WidgetCoordinator : IDisposable
     private void Wire(WidgetWindowBase window)
     {
         window.ApplyStyle(_state.Style);
+        // A card that appears while the desktop is shown would be covered by the
+        // raised desktop surface; lift it with the others.
+        window.IsVisibleChanged += (_, e) =>
+        {
+            if (e.NewValue is true && _desktopSurfaceWatcher.IsDesktopShown)
+            {
+                var slot = NativeMethods.FindWindowW("Shell_TrayWnd", null);
+                window.RaiseAboveDesktop(slot != 0 ? slot : DockNativeMethods.HwndTopmost);
+            }
+        };
         window.WidgetChanged += OnWindowStateChanged;
         window.Selected += selected =>
         {
@@ -717,6 +738,45 @@ public sealed class WidgetCoordinator : IDisposable
         window.OpenAppSettingsRequested += OpenSettings;
         window.DeleteRequested += DeleteWidget;
         window.ExitRequested += Exit;
+    }
+
+    /// <summary>
+    /// The shell just showed or stopped showing the desktop. While it is shown, the
+    /// raised desktop surface would cover the cards behind the wallpaper, so they are
+    /// lifted into the topmost band under the taskbar; when ordinary windows return
+    /// they go back below them.
+    /// </summary>
+    private void OnDesktopSurfaceChanged()
+    {
+        if (_desktopSurfaceWatcher.IsDesktopShown)
+        {
+            RaiseCardsAboveDesktop();
+            return;
+        }
+        foreach (var window in _windows.Where(window => window.IsVisible))
+        {
+            window.SendToBack();
+        }
+    }
+
+    private void RaiseCardsAboveDesktop()
+    {
+        // Under the taskbar so the taskbar stays reachable; each following card goes
+        // below the previous one to keep the stacking order between the cards.
+        var slot = NativeMethods.FindWindowW("Shell_TrayWnd", null);
+        if (slot == 0)
+        {
+            slot = DockNativeMethods.HwndTopmost;
+        }
+        foreach (var window in _windows.Where(window => window.IsVisible))
+        {
+            window.RaiseAboveDesktop(slot);
+            var handle = window.WindowHandle;
+            if (handle != 0)
+            {
+                slot = handle;
+            }
+        }
     }
 
     private void OnWindowStateChanged(WidgetWindowBase window)
@@ -1065,7 +1125,7 @@ public sealed class WidgetCoordinator : IDisposable
                             candidate.ComponentKind == kind);
                     if (!component.IsVisible)
                     {
-                        window?.Hide();
+                        window?.HideFromApp();
                         continue;
                     }
                     if (window is null)
@@ -1082,7 +1142,7 @@ public sealed class WidgetCoordinator : IDisposable
         {
             foreach (var window in _windows.OfType<InformationWidgetWindow>())
             {
-                window.Hide();
+                window.HideFromApp();
             }
         }
 
@@ -1117,7 +1177,7 @@ public sealed class WidgetCoordinator : IDisposable
         {
             foreach (var window in _windows.OfType<TodoWidgetWindow>())
             {
-                window.Hide();
+                window.HideFromApp();
             }
         }
         ApplyQuickPlaces();
@@ -1132,7 +1192,7 @@ public sealed class WidgetCoordinator : IDisposable
         var window = _windows.OfType<QuickPlacesWindow>().FirstOrDefault();
         if (!component.IsVisible)
         {
-            window?.Hide();
+            window?.HideFromApp();
             return;
         }
         if (window is null)
