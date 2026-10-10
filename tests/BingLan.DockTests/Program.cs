@@ -38,6 +38,7 @@ Run("无重叠时保持显示", TestDockAutoHideNoOverlapStaysShown);
 Run("重叠超过延迟后才隐藏且仅触发一次", TestDockAutoHideDelay);
 Run("指针进入唤出区域应立即显示并重置计时器", TestDockAutoHidePointerRevealResetsTimer);
 Run("指针悬停在 Dock 上应立即显示", TestDockAutoHidePointerOverDockShowsImmediately);
+Run("唤出区从悬空 Dock 底边延伸到屏幕底", TestDockRevealRules);
 Run("前台全屏应立即隐藏", TestDockAutoHideFullScreenHidesImmediately);
 Run("全屏优先于进行中的交互", TestDockAutoHideFullScreenOverridesInteraction);
 Run("资源管理器桌面、任务栏与账户提示窗口不算全屏应用", TestShellSurfaceWindows);
@@ -912,6 +913,48 @@ static void TestDockAutoHidePointerOverDockShowsImmediately()
         state.Update(new DockAutoHideInput(false, false, false, true, false), t1),
         "指针悬停在 Dock 上应立即显示");
     Assert(state.IsShown, "指针悬停在 Dock 上应处于显示状态");
+}
+
+static void TestDockRevealRules()
+{
+    var monitor = new PixelRect(0, 0, 1920, 1080);
+
+    // 贴底 Dock：唤出区保持屏幕底部 2px 的窄条。
+    var flush = new PixelRect(687, 1012, 1232, 1080);
+    Assert(
+        DockRevealRules.IsInRevealZone(960, 1079, flush, monitor, 2),
+        "贴底 Dock 时屏幕底部 2px 应属于唤出区");
+    Assert(
+        !DockRevealRules.IsInRevealZone(960, 1076, flush, monitor, 2),
+        "贴底 Dock 时边缘条上方不属于唤出区");
+    Assert(
+        !DockRevealRules.IsInRevealZone(400, 1079, flush, monitor, 2),
+        "唤出区横向限制在 Dock 范围内");
+
+    // 悬空 Dock（任务栏条、距底高度或让出残留）：Dock 底边到屏幕底都是唤出区，
+    // 否则指针穿越空档时 Dock 会在 600ms 延迟后中途隐藏，图标点不到。
+    var floating = new PixelRect(687, 944, 1232, 1012);
+    Assert(
+        DockRevealRules.IsInRevealZone(960, 1019, floating, monitor, 2),
+        "悬空 Dock 下方空档应属于唤出区");
+    Assert(
+        DockRevealRules.IsInRevealZone(960, 1079, floating, monitor, 2),
+        "悬空 Dock 时屏幕最底应属于唤出区");
+    Assert(
+        !DockRevealRules.IsInRevealZone(960, 1011, floating, monitor, 2),
+        "Dock 矩形内部由悬停判定负责，不属于唤出区");
+    Assert(
+        !DockRevealRules.IsInRevealZone(600, 1079, floating, monitor, 2),
+        "悬空 Dock 的唤出区同样限制横向范围");
+
+    // 防御：零或负深度按 1px 处理；Dock 底边超出屏幕时钳回边缘条。
+    Assert(
+        !DockRevealRules.IsInRevealZone(960, 1075, flush, monitor, 0),
+        "深度 0 应按 1px 边缘条处理");
+    var overhang = new PixelRect(687, 1012, 1232, 1090);
+    Assert(
+        DockRevealRules.IsInRevealZone(960, 1079, overhang, monitor, 2),
+        "底边超出屏幕的 Dock 仍应保留边缘条唤出区");
 }
 
 static void TestDockAutoHideFullScreenHidesImmediately()

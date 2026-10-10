@@ -930,10 +930,12 @@ public partial class IceBlueDockWindow : Window
         var input = new DockAutoHideInput(
             WindowOverlapsDock: overlaps,
             ForegroundIsFullScreen: trueFullScreen,
-            PointerInRevealZone: cursor.Y >= monitor.Bounds.Bottom - revealDepth
-                && cursor.Y < monitor.Bounds.Bottom
-                && cursor.X >= bounds.Left
-                && cursor.X < bounds.Right,
+            PointerInRevealZone: DockRevealRules.IsInRevealZone(
+                cursor.X,
+                cursor.Y,
+                bounds,
+                monitor.Bounds,
+                revealDepth),
             PointerOverDock: pointerOverDock,
             InteractionActive: _menuOpen || _dragging || DateTimeOffset.UtcNow < _attentionRevealUntil);
         if (_autoHide.Update(input, DateTimeOffset.UtcNow))
