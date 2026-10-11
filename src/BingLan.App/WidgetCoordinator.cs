@@ -669,6 +669,7 @@ public sealed class WidgetCoordinator : IDisposable
         _cornerReveal.Dispose();
         _taskbar.Dispose();
         _cleanDesktop.Dispose();
+        _topBar.Dispose();
         _performanceSampler.Dispose();
     }
 
@@ -2154,6 +2155,7 @@ public sealed class WidgetCoordinator : IDisposable
         _taskbar.Dispose();
         _cleanDesktop.Dispose();
         _updater.Dispose();
+        _topBar.Dispose();
         foreach (var window in _windows.ToList())
         {
             window.CanClose = true;

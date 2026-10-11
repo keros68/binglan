@@ -31,6 +31,7 @@ internal sealed class TopBarAppBarController : IDisposable
     private bool _fullScreenDetected;
     private bool _positioning;
     private bool _disposed;
+    private bool _setPositionApplied;
     private int _recoveryGeneration;
 
     internal TopBarAppBarController(Window window, double heightDip)
@@ -102,6 +103,14 @@ internal sealed class TopBarAppBarController : IDisposable
                 {
                     _reservation.MarkRegisterFailed();
                 }
+                else
+                {
+                    // ABM_NEW registers the bar but reserves nothing; the shell only
+                    // learns the rectangle from the next ABM_SETPOS, so the first
+                    // Position after every registration must send one even when the
+                    // rect matches what a previous registration used.
+                    _setPositionApplied = false;
+                }
             }
             else
             {
@@ -147,13 +156,15 @@ internal sealed class TopBarAppBarController : IDisposable
                 // ABN_POSCHANGED arrives for every bar's move (the auto-hiding taskbar
                 // fires it constantly), and every ABM_SETPOS rebroadcasts a work-area
                 // change system-wide — screen-capture overlays react to that by
-                // re-laying out. An unchanged strip needs no new broadcast.
-                if (adjusted == Bounds)
+                // re-laying out. An unchanged strip needs no new broadcast, but a
+                // registration that has not sent its first SETPOS yet must not skip.
+                if (adjusted == Bounds && _setPositionApplied)
                 {
                     return;
                 }
                 data.Rectangle = ToNative(adjusted);
-                DockNativeMethods.SHAppBarMessage(DockNativeMethods.AbmSetPos, ref data);
+                _setPositionApplied = DockNativeMethods.SHAppBarMessage(
+                    DockNativeMethods.AbmSetPos, ref data) != 0;
                 strip = ToPixel(data.Rectangle);
             }
             else
