@@ -46,6 +46,7 @@
     <Border x:Name="Surface"
             HorizontalAlignment="Stretch"
             VerticalAlignment="Stretch"
+            BorderThickness="0,0,0,1"
             CornerRadius="0">
         <DockPanel>
             <StackPanel x:Name="RightModules"

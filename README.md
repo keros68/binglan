@@ -36,9 +36,10 @@
 
 ## 快速开始
 
-1. 打开 [Releases](https://github.com/keros68/binglan/releases/latest)，下载 `BingLan-Setup-*.exe`。
-2. 运行安装包。按当前用户安装，不需要管理员权限，自带 .NET 运行时。安装包尚未加入代码签名，首次运行需按 Windows 提示手动放行。
-3. 首次启动后按引导选择布局和常用应用。之后可从托盘图标或卡片右键菜单打开设置中心。
+1. 打开 [Releases](https://github.com/keros68/binglan/releases/latest)，下载 `BingLan-Setup-*.exe`（安装版）或 `BingLan-*-portable.zip`（免安装版）。
+2. 安装版运行安装包，按当前用户安装，不需要管理员权限；免安装版解压到任意文件夹后运行其中的 `BingLan.exe`。两者均自带 .NET 运行时，尚未加入代码签名，首次运行需按 Windows 提示手动放行。
+3. 免安装版更新时重新下载 zip 覆盖，不要使用应用内“下载并安装”（它安装的是安装版）；与已安装版本不要同时运行。
+4. 首次启动后按引导选择布局和常用应用。之后可从托盘图标或卡片右键菜单打开设置中心。
 
 系统要求：Windows 11 x64；Windows 10 版本 2004 及以上可安装使用，但任务栏外观（透明、模糊、自动隐藏）不可用，设置窗口不显示 Mica 材质。各模块的详细用法见[使用说明](docs/USER-GUIDE.md)。
 

@@ -35,7 +35,9 @@ public static class TopBarTests
         Assert(!state.IsEnabled, "顶栏默认关闭");
         Assert(state.VisibilityMode == TopBarVisibilityMode.ReserveTopEdge, "默认预留顶边");
         Assert(state.MonitorDeviceName is null, "默认主屏");
-        Assert(Math.Abs(state.SurfaceOpacity - 0.84d) < 0.001d, "默认不透明度");
+        Assert(Math.Abs(state.SurfaceOpacity - 0.82d) < 0.001d, "默认不透明度");
+        Assert(state.SurfaceColor == TopBarState.DefaultSurfaceColor, "默认表面色");
+        Assert(!state.FollowCardLook, "默认深色菜单栏外观，不跟随卡片");
         foreach (var kind in TopBarRules.ModuleOrder)
         {
             Assert(TopBarRules.IsModuleOn(state.Modules, kind), $"模块 {kind} 默认开启");

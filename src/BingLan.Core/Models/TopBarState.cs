@@ -41,8 +41,8 @@ public sealed class TopBarState
 {
     public const double HeightDip = 32d;
     public const int MaximumAttentionApps = 3;
-    public const string DefaultSurfaceColor = "#EAF5FC";
-    public const double DefaultSurfaceOpacity = 0.84d;
+    public const string DefaultSurfaceColor = "#1E1F24";
+    public const double DefaultSurfaceOpacity = 0.82d;
 
     public bool IsEnabled { get; set; }
 
@@ -53,8 +53,9 @@ public sealed class TopBarState
 
     public TopBarModuleSwitches Modules { get; set; } = new();
 
-    /// <summary>Whether the bar takes its colours from the card material.</summary>
-    public bool FollowCardLook { get; set; } = true;
+    /// <summary>Whether the bar takes its colours from the card material. The default
+    /// dark menu-bar look reads white-on-charcoal; the card material is too light for it.</summary>
+    public bool FollowCardLook { get; set; }
 
     public string SurfaceColor { get; set; } = DefaultSurfaceColor;
 

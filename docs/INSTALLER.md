@@ -6,7 +6,11 @@
 pwsh -NoProfile -File .\installer\build.ps1 -Version 0.2.12
 ```
 
-输出 `installer\bin\BingLan-Setup-0.2.12.exe`（约 53 MB）。脚本先把应用发布为 win-x64 自包含程序（附带 .NET 运行时，只保留中文和英文资源），再用 Inno Setup 打包为按用户安装的安装程序。构建还需要 .NET 10 SDK、PowerShell 7、Visual Studio 2022 C++ x64 工具链和 Windows SDK；自有任务栏 DLL 随发布输出进入安装包，细节见 [任务栏 XAML 适配](TASKBAR-XAML.md)。需要 Inno Setup 6：`winget install JRSoftware.InnoSetup --scope user`。
+输出 `installer\bin\BingLan-Setup-0.2.12.exe`（约 53 MB）和免安装包 `installer\bin\BingLan-0.2.12-portable.zip`。脚本先把应用发布为 win-x64 自包含程序（附带 .NET 运行时，只保留中文和英文资源），再用 Inno Setup 打包为按用户安装的安装程序，并把同一份发布输出压成免安装 zip。构建还需要 .NET 10 SDK、PowerShell 7、Visual Studio 2022 C++ x64 工具链和 Windows SDK；自有任务栏 DLL 随发布输出进入安装包，细节见 [任务栏 XAML 适配](TASKBAR-XAML.md)。需要 Inno Setup 6：`winget install JRSoftware.InnoSetup --scope user`。
+
+## 免安装包
+
+zip 版内容与安装后的程序目录一致（程序文件、`使用说明.md`、`字体许可`），解压到任意文件夹后运行其中的 `BingLan.exe` 即可，不需要管理员权限，不创建快捷方式。个人数据与安装版一样保存在 `%LOCALAPPDATA%\BingLanWidgets`，两种版本可互换使用、配置不丢；单实例门禁决定了免安装版和已安装版不能同时运行。应用内的“下载并安装”启动的是安装程序，会把免安装使用变成安装版；免安装版更新时到 Releases 重新下载、解压覆盖。没有卸载流程：删除文件夹前先退出程序，若开启了“登录时启动”先在设置里关闭；任务栏或桌面图标未恢复时运行一次 `BingLan.exe --restore-taskbar`，彻底清理个人数据时删除 `%LOCALAPPDATA%\BingLanWidgets`。
 
 ## 安装程序行为
 

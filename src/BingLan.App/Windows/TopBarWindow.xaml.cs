@@ -349,6 +349,39 @@ public sealed partial class TopBarWindow : Window
 
     // ---------------------------------------------------------------- modules
 
+    // Windows' own status-bar glyph font: Segoe Fluent Icons on Windows 11, with the
+    // older Segoe MDL2 Assets as the fallback for the same codepoints.
+    private static readonly System.Windows.Media.FontFamily StatusIconFont =
+        new("Segoe Fluent Icons, Segoe MDL2 Assets");
+
+    // Marks the glyph TextBlock inside a module's content so the value text can be
+    // told apart when reading a module's state back.
+    private const string IconTag = "topbar-icon";
+
+    private const string GlyphCheckMark = "\uE73E";
+    private const string GlyphLocation = "\uE707";
+    private const string GlyphDiagnostic = "\uE9D9";
+    private const string GlyphWifi = "\uE701";
+    private const string GlyphWifiOff = "\uE871";
+    private const string GlyphVolume = "\uE767";
+    private const string GlyphVolume0 = "\uE992";
+    private const string GlyphVolume1 = "\uE993";
+    private const string GlyphVolume2 = "\uE994";
+    private const string GlyphVolume3 = "\uE995";
+    private const string GlyphBatteryUnknown = "\uE996";
+
+    // Battery0..Battery10 sit at E850..E859 plus E83F; the charging variants follow the
+    // same order from E85A, with BatteryCharging10 at EA93.
+    private static string BatteryGlyph(int percent, bool charging)
+    {
+        var level = Math.Clamp(percent / 10, 0, 10);
+        if (level == 10)
+        {
+            return charging ? "\uEA93" : "\uE83F";
+        }
+        return Convert.ToChar((charging ? 0xE85A : 0xE850) + level).ToString();
+    }
+
     private void BuildModules()
     {
         LeftModules.Children.Clear();
@@ -360,18 +393,21 @@ public sealed partial class TopBarWindow : Window
         // The to-do module shows its own flyout instead of opening settings.
         AddTodoModule(LeftModules);
         // The weather is a glance with hover details; it does nothing on click.
-        AddModule(TopBarModuleKind.Weather, LeftModules, "天气", null);
+        AddModule(TopBarModuleKind.Weather, LeftModules, "天气", null, GlyphLocation);
         AddModule(TopBarModuleKind.Performance, LeftModules, "性能",
-            _environment.OpenTaskManagerPerformance);
+            _environment.OpenTaskManagerPerformance, GlyphDiagnostic);
 
         // Right side from the outer edge inwards: the docked-right stack fills from the
         // screen edge leftwards, so the clock is added last to sit at the corner. The
         // attention marks sit between the input method and the clock.
         // The battery, network and volume modules summon the system quick settings,
         // the same panel the taskbar's tray icons open.
-        AddModule(TopBarModuleKind.Battery, RightModules, "电量", _environment.OpenQuickSettings);
-        AddModule(TopBarModuleKind.Network, RightModules, "网络", _environment.OpenQuickSettings);
-        AddModule(TopBarModuleKind.Volume, RightModules, "音量", _environment.OpenQuickSettings);
+        AddModule(TopBarModuleKind.Battery, RightModules, "电量",
+            _environment.OpenQuickSettings, GlyphBatteryUnknown);
+        AddModule(TopBarModuleKind.Network, RightModules, "网络",
+            _environment.OpenQuickSettings, GlyphWifiOff);
+        AddModule(TopBarModuleKind.Volume, RightModules, "音量",
+            _environment.OpenQuickSettings, GlyphVolume);
         AddModule(TopBarModuleKind.InputMethod, RightModules, "输入法", null);
         StyleInputMethodModule();
         if (TopBarRules.IsModuleOn(_state.Modules, TopBarModuleKind.Attention))
@@ -382,19 +418,26 @@ public sealed partial class TopBarWindow : Window
         RefreshAttention();
     }
 
-    private void AddModule(TopBarModuleKind kind, StackPanel panel, string label, Action? click)
+    private void AddModule(TopBarModuleKind kind, StackPanel panel, string label, Action? click, string? glyph = null)
     {
         if (!TopBarRules.IsModuleOn(_state.Modules, kind))
         {
             return;
         }
 
-        var text = new TextBlock
+        var text = CreateValueText();
+        if (kind == TopBarModuleKind.Weather)
         {
-            Foreground = Brushes.White,
-            TextTrimming = TextTrimming.CharacterEllipsis,
-            Effect = CreateTextShadow()
-        };
+            // Online geocoding can return a long display name; the bar shows the city
+            // part only (RenderWeather trims it) and the tooltip carries the rest.
+            text.MaxWidth = 240;
+        }
+        else if (kind == TopBarModuleKind.Performance)
+        {
+            text.MaxWidth = 360;
+        }
+
+        FrameworkElement content = glyph is null ? text : CreateIconContent(glyph, text);
         if (click is null)
         {
             // A display-only module keeps the same padding and tooltip, but no button:
@@ -404,7 +447,7 @@ public sealed partial class TopBarWindow : Window
             {
                 Padding = new Thickness(8, 0, 8, 0),
                 MinHeight = TopBarState.HeightDip,
-                Child = text
+                Child = content
             };
             System.Windows.Automation.AutomationProperties.SetName(block, $"{label}模块");
             if (kind == TopBarModuleKind.Weather)
@@ -425,7 +468,7 @@ public sealed partial class TopBarWindow : Window
         var button = new Button
         {
             Style = (Style)Resources["ModuleButton"],
-            Content = text,
+            Content = content,
             Focusable = true
         };
         System.Windows.Automation.AutomationProperties.SetName(button, $"{label}模块");
@@ -433,6 +476,37 @@ public sealed partial class TopBarWindow : Window
         _modules[kind] = button;
         panel.Children.Add(button);
     }
+
+    /// <summary>The bar's value text: white with a soft shadow for any backdrop.</summary>
+    private static TextBlock CreateValueText() => new()
+    {
+        Foreground = Brushes.White,
+        TextTrimming = TextTrimming.CharacterEllipsis,
+        VerticalAlignment = VerticalAlignment.Center,
+        Effect = CreateTextShadow()
+    };
+
+    /// <summary>A status glyph from Windows' icon font followed by the value text.</summary>
+    private static StackPanel CreateIconContent(string glyph, TextBlock value) => new()
+    {
+        Orientation = System.Windows.Controls.Orientation.Horizontal,
+        VerticalAlignment = VerticalAlignment.Center,
+        Children =
+        {
+            new TextBlock
+            {
+                FontFamily = StatusIconFont,
+                FontSize = 14,
+                Text = glyph,
+                Tag = IconTag,
+                Foreground = Brushes.White,
+                Opacity = 0.92,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 0, 6, 1)
+            },
+            value
+        }
+    };
 
     /// <summary>
     /// The input method module is a display-only element wearing the taskbar indicator's
@@ -543,14 +617,36 @@ public sealed partial class TopBarWindow : Window
     }
 
     private TextBlock? ModuleText(TopBarModuleKind kind) =>
-        _modules.TryGetValue(kind, out var module)
-            ? module switch
-            {
-                Button button => button.Content as TextBlock,
-                Border border => border.Child as TextBlock,
-                _ => null
-            }
-            : null;
+        _modules.TryGetValue(kind, out var module) ? module switch
+        {
+            Button button => ValueTextOf(button.Content),
+            Border border => ValueTextOf(border.Child),
+            _ => null
+        } : null;
+
+    /// <summary>The module's status glyph, when its content carries one.</summary>
+    private TextBlock? ModuleIcon(TopBarModuleKind kind) =>
+        _modules.TryGetValue(kind, out var module) ? module switch
+        {
+            Button button => IconOf(button.Content),
+            Border border => IconOf(border.Child),
+            _ => null
+        } : null;
+
+    private static TextBlock? ValueTextOf(object? content) => content switch
+    {
+        TextBlock text => text,
+        StackPanel panel => panel.Children.OfType<TextBlock>()
+            .FirstOrDefault(text => text.Tag is not IconTag),
+        _ => null
+    };
+
+    private static TextBlock? IconOf(object? content) => content switch
+    {
+        StackPanel panel => panel.Children.OfType<TextBlock>()
+            .FirstOrDefault(text => text.Tag is IconTag),
+        _ => null
+    };
 
     private void AddTodoModule(StackPanel panel)
     {
@@ -559,16 +655,11 @@ public sealed partial class TopBarWindow : Window
             return;
         }
 
-        var text = new TextBlock
-        {
-            Foreground = Brushes.White,
-            TextTrimming = TextTrimming.CharacterEllipsis,
-            Effect = CreateTextShadow()
-        };
+        var text = CreateValueText();
         var button = new Button
         {
             Style = (Style)Resources["ModuleButton"],
-            Content = text,
+            Content = CreateIconContent(GlyphCheckMark, text),
             Focusable = true
         };
         System.Windows.Automation.AutomationProperties.SetName(button, "待办模块");
@@ -1088,7 +1179,7 @@ public sealed partial class TopBarWindow : Window
         }
         if (ModuleText(TopBarModuleKind.TodoSummary) is { } todo)
         {
-            todo.Text = $"待办 {_environment.CountIncompleteTodos()}";
+            todo.Text = _environment.CountIncompleteTodos().ToString();
         }
         if (ModuleText(TopBarModuleKind.Weather) is { } weather)
         {
@@ -1123,20 +1214,37 @@ public sealed partial class TopBarWindow : Window
         if (ModuleText(TopBarModuleKind.Battery) is { } battery)
         {
             var (percent, status) = facts.Battery;
-            battery.Text = percent < 0
-                ? "电量 —"
-                : status == TopBarBatteryStatus.Charging
-                    ? $"充电 {percent}%"
-                    : $"电量 {percent}%";
+            battery.Text = percent < 0 ? "—" : $"{percent}%";
+            if (ModuleIcon(TopBarModuleKind.Battery) is { } batteryIcon)
+            {
+                batteryIcon.Text = percent < 0
+                    ? GlyphBatteryUnknown
+                    : BatteryGlyph(percent, status == TopBarBatteryStatus.Charging);
+            }
         }
         if (ModuleText(TopBarModuleKind.Volume) is { } volume)
         {
             var percent = facts.VolumePercent;
-            volume.Text = percent is { } value ? $"音量 {value}%" : "音量 —";
+            volume.Text = percent is { } value ? $"{value}%" : "—";
+            if (ModuleIcon(TopBarModuleKind.Volume) is { } volumeIcon)
+            {
+                volumeIcon.Text = percent switch
+                {
+                    null => GlyphVolume,
+                    0 => GlyphVolume0,
+                    <= 33 => GlyphVolume1,
+                    <= 66 => GlyphVolume2,
+                    _ => GlyphVolume3
+                };
+            }
         }
         if (ModuleText(TopBarModuleKind.Network) is { } network)
         {
             network.Text = facts.Network.Label;
+            if (ModuleIcon(TopBarModuleKind.Network) is { } networkIcon)
+            {
+                networkIcon.Text = facts.Network.Connected ? GlyphWifi : GlyphWifiOff;
+            }
         }
     }
 
@@ -1149,11 +1257,14 @@ public sealed partial class TopBarWindow : Window
             return;
         }
 
+        // Online geocoding names like "绥化市-黑龙江省绥化市-中国…" read as a trail;
+        // the bar shows the city part, the tooltip keeps the full snapshot text.
+        var city = snapshot.City.Split('-')[0];
         text.Text = snapshot.Status == WeatherStatus.NoCity
             ? "天气 未设置"
             : snapshot.TemperatureCelsius is { } temperature
-                ? $"{snapshot.City} {Math.Round(temperature):0}° {snapshot.Condition}"
-                : $"{snapshot.City} {snapshot.Condition}";
+                ? $"{city} {Math.Round(temperature):0}° {snapshot.Condition}"
+                : $"{city} {snapshot.Condition}";
         if (_modules.TryGetValue(TopBarModuleKind.Weather, out var module) && module.ToolTip is ToolTip toolTip)
         {
             toolTip.Content = new TextBlock

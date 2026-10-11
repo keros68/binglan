@@ -217,9 +217,9 @@ internal static class TopBarWindowTests
                 throw new InvalidOperationException("时钟模块应显示日期");
             }
             var todo = ButtonByName(bar, "待办模块");
-            if (TextOf(todo) != "待办 2")
+            if (TextOf(todo) != "2")
             {
-                throw new InvalidOperationException($"待办概要应显示未完成计数，实际：{TextOf(todo)}");
+                throw new InvalidOperationException($"待办概要应在勾选图标旁显示未完成计数，实际：{TextOf(todo)}");
             }
             var weather = ElementByName(bar, "天气模块");
             if (!TextOf(weather).StartsWith("北京") || !TextOf(weather).Contains("18°"))
@@ -244,7 +244,7 @@ internal static class TopBarWindowTests
             {
                 throw new InvalidOperationException("系统状态模块应在显示后数秒内完成首次渲染");
             }
-            if (TextOf(ButtonByName(bar, "音量模块")) == "音量 —")
+            if (TextOf(ButtonByName(bar, "音量模块")) == "—")
             {
                 throw new InvalidOperationException("音量模块应读到真实音量而非占位符（COM 路径失效）");
             }
@@ -410,12 +410,15 @@ internal static class TopBarWindowTests
     };
 
     // The input method button packs a rounded badge tile plus the input method's name
-    // into a horizontal panel; the badge's character is the module's spoken text.
+    // into a horizontal panel; the badge's character is the module's spoken text. The
+    // other icon modules pack a glyph TextBlock (tagged) plus the value text; the glyph
+    // is decoration, the value is the module's spoken text.
     private static string ButtonContentText(object? content) => content switch
     {
         TextBlock text => text.Text,
         StackPanel panel => TextOfTextBlock(
-            panel.Children.OfType<Border>().FirstOrDefault()?.Child as TextBlock),
+            panel.Children.OfType<Border>().FirstOrDefault()?.Child as TextBlock
+            ?? panel.Children.OfType<TextBlock>().FirstOrDefault(text => text.Tag is not "topbar-icon")),
         Border border => TextOfTextBlock(border.Child as TextBlock),
         _ => string.Empty
     };

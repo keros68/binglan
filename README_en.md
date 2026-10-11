@@ -37,9 +37,10 @@ The interface is in Simplified Chinese.
 
 ## Get started
 
-1. Open [Releases](https://github.com/keros68/binglan/releases/latest) and download `BingLan-Setup-*.exe`.
-2. Run the installer. It installs for the current user, needs no administrator rights, and includes the .NET runtime. The installer is not code-signed yet, so Windows asks for confirmation on first run.
-3. On first launch, pick a layout and your common apps. Settings open from the tray icon or any card's right-click menu.
+1. Open [Releases](https://github.com/keros68/binglan/releases/latest) and download `BingLan-Setup-*.exe` (installer) or `BingLan-*-portable.zip` (portable).
+2. Installer: run it — it installs for the current user and needs no administrator rights. Portable: unzip anywhere and run `BingLan.exe` inside. Both include the .NET runtime and are not code-signed yet, so Windows asks for confirmation on first run.
+3. Portable: to update, download the new zip and overwrite — don't use the in-app update (it installs the setup version); don't run the portable and installed copies at the same time.
+4. On first launch, pick a layout and your common apps. Settings open from the tray icon or any card's right-click menu.
 
 Requires Windows 11 x64. Windows 10 version 2004 or later also works, without the taskbar styles (transparent, blur, auto-hide) and without the Mica material in the settings window. See the [user guide (Chinese)](docs/USER-GUIDE.md) for details.
 
