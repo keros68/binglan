@@ -39,12 +39,17 @@ public sealed class TopBarModuleSwitches
 /// </summary>
 public sealed class TopBarState
 {
-    public const double HeightDip = 32d;
+    public const double DefaultHeightDip = 32d;
+    public const double MinimumHeightDip = 24d;
+    public const double MaximumHeightDip = 48d;
     public const int MaximumAttentionApps = 3;
     public const string DefaultSurfaceColor = "#1E1F24";
     public const double DefaultSurfaceOpacity = 0.82d;
 
     public bool IsEnabled { get; set; }
+
+    /// <summary>Bar height in DIPs; clamped by <see cref="TopBarRules.Normalize"/>.</summary>
+    public double Height { get; set; } = DefaultHeightDip;
 
     /// <summary>Device name of the monitor the bar sits on; null keeps the primary.</summary>
     public string? MonitorDeviceName { get; set; }
@@ -101,6 +106,14 @@ public static class TopBarRules
     {
         ArgumentNullException.ThrowIfNull(state);
         state.Modules ??= new TopBarModuleSwitches();
+        if (double.IsNaN(state.Height) || double.IsInfinity(state.Height))
+        {
+            state.Height = TopBarState.DefaultHeightDip;
+        }
+        else
+        {
+            state.Height = Math.Clamp(state.Height, TopBarState.MinimumHeightDip, TopBarState.MaximumHeightDip);
+        }
         if (!Enum.IsDefined(state.VisibilityMode))
         {
             state.VisibilityMode = TopBarVisibilityMode.ReserveTopEdge;

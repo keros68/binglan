@@ -10,7 +10,8 @@
         ShowActivated="False"
         AllowsTransparency="True"
         Background="Transparent"
-        FontFamily="{StaticResource UiFont}">
+        FontFamily="Segoe UI Variable Display, Segoe UI, Microsoft YaHei UI"
+        FontSize="13">
     <Window.Resources>
         <Style x:Key="ModuleButton" TargetType="Button">
             <Setter Property="Background" Value="Transparent"/>

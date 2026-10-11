@@ -175,7 +175,7 @@ public sealed partial class TopBarWindow : Window
             _appBar?.IsReserved == true,
             _monitor.Bounds,
             BingLan.App.Dock.DockAppBarController.GetLiveWorkingArea(_monitor));
-        _appBar?.Apply(_monitor, reserve, TopBarState.HeightDip);
+        _appBar?.Apply(_monitor, reserve, _state.Height);
         // While the flyout is open the fast interval keeps its outside-click watch
         // prompt even in reserve mode.
         _foregroundTimer.Interval = reserve && _todoFlyout is null
@@ -222,9 +222,10 @@ public sealed partial class TopBarWindow : Window
             HwndSource.FromHwnd(_handle)?.AddHook(OnShellHook);
         }
 
-        _appBar = new TopBarAppBarController(this, TopBarState.HeightDip);
+        _appBar = new TopBarAppBarController(this, _state.Height);
         _appBar.EnvironmentChanged += ApplyState;
         _appBar.ExplorerRestarted += RenderModules;
+        ApplyAcrylicBackdrop();
         ApplyState();
     }
 
@@ -446,7 +447,7 @@ public sealed partial class TopBarWindow : Window
             var block = new Border
             {
                 Padding = new Thickness(8, 0, 8, 0),
-                MinHeight = TopBarState.HeightDip,
+                MinHeight = _state.Height,
                 Child = content
             };
             System.Windows.Automation.AutomationProperties.SetName(block, $"{label}模块");
@@ -477,13 +478,13 @@ public sealed partial class TopBarWindow : Window
         panel.Children.Add(button);
     }
 
-    /// <summary>The bar's value text: white with a soft shadow for any backdrop.</summary>
+    /// <summary>The bar's value text: white over the dark scrim, no drop shadow — a WPF
+    /// Effect would switch the text to software rendering and lose ClearType.</summary>
     private static TextBlock CreateValueText() => new()
     {
         Foreground = Brushes.White,
         TextTrimming = TextTrimming.CharacterEllipsis,
-        VerticalAlignment = VerticalAlignment.Center,
-        Effect = CreateTextShadow()
+        VerticalAlignment = VerticalAlignment.Center
     };
 
     /// <summary>A status glyph from Windows' icon font followed by the value text.</summary>
@@ -532,8 +533,7 @@ public sealed partial class TopBarWindow : Window
             TextTrimming = TextTrimming.CharacterEllipsis,
             MaxWidth = 120,
             Margin = new Thickness(4, 0, 6, 0),
-            VerticalAlignment = VerticalAlignment.Center,
-            Effect = CreateTextShadow()
+            VerticalAlignment = VerticalAlignment.Center
         };
         block.Child = new StackPanel
         {
@@ -1395,16 +1395,50 @@ public sealed partial class TopBarWindow : Window
 
     // ---------------------------------------------------------------- appearance
 
+    /// <summary>Whether the WCA acrylic accent was accepted for this window.</summary>
+    private bool _acrylicBackdrop;
+
+    // macOS's menu bar is blurred wallpaper under a dark scrim: the WCA acrylic accent
+    // supplies the blur and the tint's alpha sets the scrim strength. Where the accent
+    // is unavailable (older Windows, composition off) the theme's semi-transparent
+    // surface brush stands in. ABGR: #141419 at 55%.
+    private const uint AcrylicScrimAbgr = 0x8C191414u;
+    private const string AcrylicSurfaceTint = "#0F141419";
+
+    private void ApplyAcrylicBackdrop()
+    {
+        _acrylicBackdrop = TaskbarNativeMethods.TryEnableAcrylicBlur(_handle, AcrylicScrimAbgr);
+        ApplySurface();
+    }
+
     private void ApplySurface()
     {
         var glass = DesktopStyleRules.TopBar(_style, _state);
-        var background = new SolidColorBrush((Color)ColorConverter.ConvertFromString(glass.Surface));
+        // The dark scrim only suits a dark surface: over a light material the blurred
+        // wallpaper would fight the bar's own colours, so acrylic yields to the brush.
+        var surfaceHex = _acrylicBackdrop && IsDarkSurface(glass.Surface)
+            ? AcrylicSurfaceTint
+            : glass.Surface;
+        var background = new SolidColorBrush((Color)ColorConverter.ConvertFromString(surfaceHex));
         background.Freeze();
         Surface.Background = background;
         var border = new SolidColorBrush((Color)ColorConverter.ConvertFromString(glass.Border));
         border.Freeze();
         Surface.BorderBrush = border;
         Surface.BorderThickness = new Thickness(0, 0, 0, 1);
+    }
+
+    private static bool IsDarkSurface(string surfaceWithAlpha)
+    {
+        // "#AARRGGBB" as produced by the style rules' WithAlpha.
+        if (surfaceWithAlpha.Length < 9)
+        {
+            return false;
+        }
+        var red = Convert.ToInt32(surfaceWithAlpha.Substring(3, 2), 16);
+        var green = Convert.ToInt32(surfaceWithAlpha.Substring(5, 2), 16);
+        var blue = Convert.ToInt32(surfaceWithAlpha.Substring(7, 2), 16);
+        return (0.2126d * red + 0.7152d * green + 0.0722d * blue) / 255d <= 0.6d;
     }
 
     // ---------------------------------------------------------------- visibility

@@ -463,6 +463,12 @@ public sealed class LocalStateStore
             // The top bar is new and starts off; nobody's desktop changes on upgrade.
             state.SchemaVersion = 27;
         }
+        if (state.SchemaVersion < 28)
+        {
+            // The top bar gains an adjustable height; a missing value falls back to
+            // the default in TopBarRules.Normalize, nothing else has to move.
+            state.SchemaVersion = 28;
+        }
         state.Updates ??= new UpdateState();
         state.QuickPlaces = QuickPlaceRules.Normalize(state.QuickPlaces);
         state.DismissedDesktopCategories = (state.DismissedDesktopCategories ?? [])

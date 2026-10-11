@@ -38,6 +38,7 @@ public static class TopBarTests
         Assert(Math.Abs(state.SurfaceOpacity - 0.82d) < 0.001d, "默认不透明度");
         Assert(state.SurfaceColor == TopBarState.DefaultSurfaceColor, "默认表面色");
         Assert(!state.FollowCardLook, "默认深色菜单栏外观，不跟随卡片");
+        Assert(Math.Abs(state.Height - TopBarState.DefaultHeightDip) < 0.001d, "默认高度");
         foreach (var kind in TopBarRules.ModuleOrder)
         {
             Assert(TopBarRules.IsModuleOn(state.Modules, kind), $"模块 {kind} 默认开启");
@@ -46,11 +47,13 @@ public static class TopBarTests
         state.VisibilityMode = (TopBarVisibilityMode)99;
         state.SurfaceOpacity = 5d;
         state.SurfaceColor = "not-a-color";
+        state.Height = 500d;
         // A file from before the top bar carries no module node, which reads as null.
         state.Modules = JsonSerializer.Deserialize<TopBarState>("{}")!.Modules;
         TopBarRules.Normalize(state);
         Assert(state.VisibilityMode == TopBarVisibilityMode.ReserveTopEdge, "未知显示方式回退预留");
         Assert(Math.Abs(state.SurfaceOpacity - 1d) < 0.001d, "不透明度钳制到 1");
+        Assert(Math.Abs(state.Height - TopBarState.MaximumHeightDip) < 0.001d, "高度钳制到上限");
         Assert(state.Modules is not null, "模块开关缺失时补默认");
 
         TopBarRules.SetModule(state.Modules!, TopBarModuleKind.Volume, false);
@@ -97,7 +100,7 @@ public static class TopBarTests
                 Path.Combine(directory, "widgets.json"),
                 v26.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
             var migrated = store.Load();
-            Assert(migrated.SchemaVersion == 27, "v26 迁移到 v27");
+            Assert(migrated.SchemaVersion == AppState.CurrentSchemaVersion, "v26 迁移到当前版本");
             Assert(migrated.TopBar is { IsEnabled: false }, "迁移后顶栏默认关闭");
             Assert(migrated.TodoWidgets.Count == state.TodoWidgets.Count, "迁移不改动待办");
         }

@@ -1719,6 +1719,10 @@ public partial class SettingsWindow : Window
             TopBarOptionsPanel.IsEnabled = state.IsEnabled;
             TopBarReserveRadio.IsChecked = state.VisibilityMode == TopBarVisibilityMode.ReserveTopEdge;
             TopBarSmartHideRadio.IsChecked = state.VisibilityMode == TopBarVisibilityMode.SmartHide;
+            TopBarHeightSlider.Value = Math.Clamp(
+                double.IsFinite(state.Height) ? state.Height : TopBarState.DefaultHeightDip,
+                TopBarState.MinimumHeightDip,
+                TopBarState.MaximumHeightDip);
             TopBarClockCheckBox.IsChecked = state.Modules.Clock;
             TopBarTodoSummaryCheckBox.IsChecked = state.Modules.TodoSummary;
             TopBarWeatherCheckBox.IsChecked = state.Modules.Weather;
@@ -1830,6 +1834,23 @@ public partial class SettingsWindow : Window
         _topBarState.SurfaceOpacity = e.NewValue;
         TopBarOpacityText.Text = $"{e.NewValue * 100:0}%";
         ApplyTopBarChange("已调整信息条不透明度");
+    }
+
+    private void TopBarHeight_Changed(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (TopBarHeightText is not null)
+        {
+            TopBarHeightText.Text = $"{e.NewValue:0} DIP";
+        }
+        // IsLoaded keeps the parse-time coercion (unset Value snapping to the minimum)
+        // from counting as a user change before the window even exists.
+        if (!IsLoaded || _loadingTopBar || _topBarState is null)
+        {
+            return;
+        }
+
+        _topBarState.Height = e.NewValue;
+        ApplyTopBarChange("已调整信息条高度");
     }
 
     private void TopBarColorEditor_KeyDown(object sender, System.Windows.Input.KeyEventArgs e)

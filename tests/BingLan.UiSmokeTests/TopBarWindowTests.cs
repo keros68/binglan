@@ -110,7 +110,9 @@ internal static class TopBarWindowTests
         var state = BarState();
         state.VisibilityMode = TopBarVisibilityMode.SmartHide;
         state.FollowCardLook = false;
-        state.SurfaceColor = "#523861";
+        // A light custom colour keeps the bar on the plain-brush path: the WCA acrylic
+        // scrim only applies to dark surfaces, so this test stays deterministic.
+        state.SurfaceColor = "#D8CFF0";
         state.SurfaceOpacity = 0.84d;
         using var sampler = new WindowsPerformanceSamplingService();
         var bar = new TopBarWindow(state, new DesktopStyleState(), new FakeEnvironment(), sampler);
@@ -120,8 +122,8 @@ internal static class TopBarWindowTests
             var background = bar.Surface.Background as SolidColorBrush
                 ?? throw new InvalidOperationException("Surface.Background 应为 SolidColorBrush");
             var color = background.Color;
-            Assert(color.A > 200 && color.R == 0x52 && color.G == 0x38 && color.B == 0x61,
-                $"玻璃底画刷应为紫色 84%，实际 A={color.A} #{color.R:X2}{color.G:X2}{color.B:X2}");
+            Assert(color.A > 200 && color.R == 0xD8 && color.G == 0xCF && color.B == 0xF0,
+                $"玻璃底画刷应为淡紫 84%，实际 A={color.A} #{color.R:X2}{color.G:X2}{color.B:X2}");
 
             // What actually reaches the screen: render the surface and sample the middle.
             var render = new System.Windows.Media.Imaging.RenderTargetBitmap(

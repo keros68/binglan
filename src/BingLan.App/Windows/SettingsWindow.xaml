@@ -1281,6 +1281,21 @@
                                              AutomationProperties.Name="智能隐藏"
                                              Checked="TopBarSetting_Changed"/>
                             </local:SettingsRow>
+                            <local:SettingsRow Style="{StaticResource NestedSettingsRowStyle}" Header="高度">
+                                <StackPanel Orientation="Horizontal">
+                                    <Slider x:Name="TopBarHeightSlider"
+                                            Width="220"
+                                            Minimum="24"
+                                            Maximum="48"
+                                            IsSnapToTickEnabled="True"
+                                            TickFrequency="1"
+                                            SmallChange="1"
+                                            LargeChange="4"
+                                            AutomationProperties.Name="顶端信息条高度"
+                                            ValueChanged="TopBarHeight_Changed"/>
+                                    <TextBlock x:Name="TopBarHeightText" Style="{StaticResource ValueTextStyle}"/>
+                                </StackPanel>
+                            </local:SettingsRow>
                         </local:SettingsGroup>
 
                         <TextBlock Style="{StaticResource SectionHeaderStyle}" Text="模块"/>

@@ -230,6 +230,11 @@ internal static class SettingsWindowTests
             Pump();
             Assert(topBar.VisibilityMode == TopBarVisibilityMode.SmartHide, "显示方式应写入状态");
 
+            var height = Require<Slider>(window, "TopBarHeightSlider");
+            height.Value = 40;
+            Pump();
+            Assert(Math.Abs(topBar.Height - 40d) < 0.001d, "高度应写入状态");
+
             Require<RadioButton>(window, "TopBarCustomLookRadio").IsChecked = true;
             Pump();
             Assert(!topBar.FollowCardLook, "自定义外观应写入状态");

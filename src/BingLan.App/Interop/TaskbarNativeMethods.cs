@@ -8,6 +8,7 @@ internal static class TaskbarNativeMethods
     internal const int WcaAccentPolicy = 19;
     internal const int AccentDisabled = 0;
     internal const int AccentEnableBlurBehind = 3;
+    internal const int AccentEnableAcrylicBlurBehind = 4;
     internal const int SmRemoteSession = 0x1000;
     internal const uint AbmGetState = 0x00000004;
     internal const uint AbmSetState = 0x0000000A;
@@ -26,6 +27,37 @@ internal static class TaskbarNativeMethods
     internal const int ObjidWindow = 0;
 
     internal delegate bool EnumWindowsProc(nint window, nint parameter);
+
+    /// <summary>
+    /// Applies the WCA acrylic accent to one window. The tint is an ABGR value whose
+    /// alpha sets how strongly the blurred backdrop is darkened; false means the
+    /// composition attribute is unavailable and the caller keeps its plain brush.
+    /// </summary>
+    internal static bool TryEnableAcrylicBlur(nint window, uint tintAbgr)
+    {
+        var policy = new AccentPolicy
+        {
+            State = AccentEnableAcrylicBlurBehind,
+            GradientColor = tintAbgr
+        };
+        var size = Marshal.SizeOf<AccentPolicy>();
+        var pointer = Marshal.AllocHGlobal(size);
+        try
+        {
+            Marshal.StructureToPtr(policy, pointer, false);
+            var data = new WindowCompositionAttributeData
+            {
+                Attribute = WcaAccentPolicy,
+                Data = pointer,
+                SizeOfData = size
+            };
+            return SetWindowCompositionAttribute(window, ref data);
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(pointer);
+        }
+    }
 
     internal delegate void WinEventProc(
         nint hook,
