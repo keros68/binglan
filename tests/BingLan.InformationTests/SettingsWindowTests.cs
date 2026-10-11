@@ -235,6 +235,11 @@ internal static class SettingsWindowTests
             Pump();
             Assert(Math.Abs(topBar.Height - 40d) < 0.001d, "高度应写入状态");
 
+            var frosted = Require<CheckBox>(window, "TopBarFrostedCheckBox");
+            frosted.IsChecked = false;
+            Pump();
+            Assert(!topBar.FrostedGlass, "磨砂开关应写入状态");
+
             Require<RadioButton>(window, "TopBarCustomLookRadio").IsChecked = true;
             Pump();
             Assert(!topBar.FollowCardLook, "自定义外观应写入状态");

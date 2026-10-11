@@ -207,6 +207,28 @@ public static class DesktopStyleRules
     }
 
     /// <summary>
+    /// Whether the dark frosted scrim (blurred wallpaper) may sit under the top bar:
+    /// the user has not turned the frosted look off and the material is dark enough
+    /// for the scrim to belong — a light or nearly clear surface shows the scrim
+    /// through as mud, so it yields to the plain brush.
+    /// </summary>
+    public static bool TopBarFrostedScrim(TopBarState? topBar, string surfaceWithAlpha) =>
+        topBar is { FrostedGlass: true } && IsDarkSurface(surfaceWithAlpha);
+
+    private static bool IsDarkSurface(string surfaceWithAlpha)
+    {
+        // "#AARRGGBB" as produced by WithAlpha.
+        if (surfaceWithAlpha.Length < 9)
+        {
+            return false;
+        }
+        var red = Convert.ToInt32(surfaceWithAlpha.Substring(3, 2), 16);
+        var green = Convert.ToInt32(surfaceWithAlpha.Substring(5, 2), 16);
+        var blue = Convert.ToInt32(surfaceWithAlpha.Substring(7, 2), 16);
+        return (0.2126d * red + 0.7152d * green + 0.0722d * blue) / 255d <= 0.6d;
+    }
+
+    /// <summary>
     /// A dock in its own colour and opacity. A nearly clear dock drops its border; the
     /// running dot is dark on a light, mostly opaque colour and white otherwise.
     /// </summary>

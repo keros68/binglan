@@ -1324,6 +1324,14 @@
 
                         <TextBlock Style="{StaticResource SectionHeaderStyle}" Text="外观"/>
                         <local:SettingsGroup>
+                            <local:SettingsRow Glyph="&#xE753;" GlyphBrush="{DynamicResource SettingsIconTealBrush}" Header="磨砂玻璃"
+                                               Description="深色表面下对壁纸做真实模糊（接近 macOS 菜单栏质感）；关闭后用半透明纯色。浅色材质不受影响">
+                                <CheckBox x:Name="TopBarFrostedCheckBox"
+                                          AutomationProperties.Name="磨砂玻璃"
+                                          Style="{StaticResource ToggleSwitchStyle}"
+                                          Checked="TopBarSetting_Changed"
+                                          Unchecked="TopBarSetting_Changed"/>
+                            </local:SettingsRow>
                             <local:SettingsRow Glyph="&#xE790;" GlyphBrush="{DynamicResource SettingsIconPinkBrush}" Header="信息条外观">
                                 <Border Style="{StaticResource SegmentHostStyle}">
                                     <StackPanel Orientation="Horizontal">

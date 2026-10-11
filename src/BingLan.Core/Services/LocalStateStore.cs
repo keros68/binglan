@@ -465,8 +465,9 @@ public sealed class LocalStateStore
         }
         if (state.SchemaVersion < 28)
         {
-            // The top bar gains an adjustable height; a missing value falls back to
-            // the default in TopBarRules.Normalize, nothing else has to move.
+            // The top bar gains an adjustable height and the frosted-glass switch;
+            // missing values fall back to their defaults in TopBarRules.Normalize,
+            // nothing else has to move.
             state.SchemaVersion = 28;
         }
         state.Updates ??= new UpdateState();

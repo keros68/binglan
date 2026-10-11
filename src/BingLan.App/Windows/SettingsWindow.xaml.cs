@@ -1717,6 +1717,7 @@ public partial class SettingsWindow : Window
         {
             TopBarEnabledCheckBox.IsChecked = state.IsEnabled;
             TopBarOptionsPanel.IsEnabled = state.IsEnabled;
+            TopBarFrostedCheckBox.IsChecked = state.FrostedGlass;
             TopBarReserveRadio.IsChecked = state.VisibilityMode == TopBarVisibilityMode.ReserveTopEdge;
             TopBarSmartHideRadio.IsChecked = state.VisibilityMode == TopBarVisibilityMode.SmartHide;
             TopBarHeightSlider.Value = Math.Clamp(
@@ -1766,6 +1767,7 @@ public partial class SettingsWindow : Window
 
         state.IsEnabled = TopBarEnabledCheckBox.IsChecked == true;
         TopBarOptionsPanel.IsEnabled = state.IsEnabled;
+        state.FrostedGlass = TopBarFrostedCheckBox.IsChecked == true;
         state.VisibilityMode = TopBarSmartHideRadio.IsChecked == true
             ? TopBarVisibilityMode.SmartHide
             : TopBarVisibilityMode.ReserveTopEdge;

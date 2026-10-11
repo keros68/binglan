@@ -1424,8 +1424,8 @@ public sealed partial class TopBarWindow : Window
     private void ApplySurface()
     {
         var glass = DesktopStyleRules.TopBar(_style, _state);
-        var darkSurface = IsDarkSurface(glass.Surface);
-        var acrylic = _acrylicAvailable && darkSurface;
+        var acrylic = _acrylicAvailable
+            && DesktopStyleRules.TopBarFrostedScrim(_state, glass.Surface);
         // Written unconditionally: the startup probe may have left the accent applied,
         // so a change-tracking comparison would skip the disable a light surface needs.
         // The call is idempotent and only runs on material changes.
@@ -1448,19 +1448,6 @@ public sealed partial class TopBarWindow : Window
 
     /// <summary>Whether the current surface decided to sit on the acrylic scrim.</summary>
     internal bool IsAcrylicSurface => _acrylicBackdrop;
-
-    private static bool IsDarkSurface(string surfaceWithAlpha)
-    {
-        // "#AARRGGBB" as produced by the style rules' WithAlpha.
-        if (surfaceWithAlpha.Length < 9)
-        {
-            return false;
-        }
-        var red = Convert.ToInt32(surfaceWithAlpha.Substring(3, 2), 16);
-        var green = Convert.ToInt32(surfaceWithAlpha.Substring(5, 2), 16);
-        var blue = Convert.ToInt32(surfaceWithAlpha.Substring(7, 2), 16);
-        return (0.2126d * red + 0.7152d * green + 0.0722d * blue) / 255d <= 0.6d;
-    }
 
     // ---------------------------------------------------------------- visibility
 

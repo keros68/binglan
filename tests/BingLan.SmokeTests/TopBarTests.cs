@@ -21,6 +21,7 @@ public static class TopBarTests
     public static void Run()
     {
         TestDefaultsAndNormalize();
+        TestFrostedScrimRule();
         TestPersistenceAndMigration();
         TestDesktopModeOrchestration();
         TestAttentionQueue();
@@ -39,6 +40,7 @@ public static class TopBarTests
         Assert(state.SurfaceColor == TopBarState.DefaultSurfaceColor, "默认表面色");
         Assert(!state.FollowCardLook, "默认深色菜单栏外观，不跟随卡片");
         Assert(Math.Abs(state.Height - TopBarState.DefaultHeightDip) < 0.001d, "默认高度");
+        Assert(state.FrostedGlass, "默认开启磨砂");
         foreach (var kind in TopBarRules.ModuleOrder)
         {
             Assert(TopBarRules.IsModuleOn(state.Modules, kind), $"模块 {kind} 默认开启");
@@ -59,6 +61,17 @@ public static class TopBarTests
         TopBarRules.SetModule(state.Modules!, TopBarModuleKind.Volume, false);
         Assert(!TopBarRules.IsModuleOn(state.Modules!, TopBarModuleKind.Volume), "模块开关可关闭");
         Assert(TopBarRules.IsModuleOn(state.Modules!, TopBarModuleKind.Clock), "其他模块不受影响");
+    }
+
+    private static void TestFrostedScrimRule()
+    {
+        var state = new TopBarState();
+        Assert(DesktopStyleRules.TopBarFrostedScrim(state, "#D61E1F24"), "深色表面默认应有磨砂");
+        Assert(!DesktopStyleRules.TopBarFrostedScrim(state, "#D6D8CFF0"), "浅色表面不应有磨砂");
+        Assert(!DesktopStyleRules.TopBarFrostedScrim(state, "#01FFFFFF"), "近透明表面不应有磨砂");
+        state.FrostedGlass = false;
+        Assert(!DesktopStyleRules.TopBarFrostedScrim(state, "#D61E1F24"), "关闭磨砂后深色表面也不应有磨砂");
+        Assert(!DesktopStyleRules.TopBarFrostedScrim(null, "#D61E1F24"), "无状态不应有磨砂");
     }
 
     private static void TestPersistenceAndMigration()
