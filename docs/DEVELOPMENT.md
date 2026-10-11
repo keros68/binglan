@@ -61,10 +61,10 @@ dotnet run --project .\src\BingLan.App\BingLan.App.csproj
 ## 安装包
 
 ```powershell
-pwsh -NoProfile -File .\installer\build.ps1 -Version 0.2.12
+pwsh -NoProfile -File .\installer\build.ps1 -Version 0.2.13
 ```
 
-生成按用户安装的 `installer\bin\BingLan-Setup-0.2.12.exe`（Inno Setup，自包含 .NET 运行时，不需要管理员权限）。安装位置、卸载行为、依赖许可证和验证状态见 [安装包](INSTALLER.md)。
+生成按用户安装的 `installer\bin\BingLan-Setup-0.2.13.exe`（Inno Setup，自包含 .NET 运行时，不需要管理员权限）。安装位置、卸载行为、依赖许可证和验证状态见 [安装包](INSTALLER.md)。
 
 ## 验证
 

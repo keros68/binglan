@@ -1,7 +1,7 @@
 # Builds installer\bin\BingLan-Setup-<version>.exe: a self-contained win-x64 publish of the
 # app wrapped in a per-user Inno Setup installer (no administrator rights needed), plus
 # installer\bin\BingLan-<version>-portable.zip: the same publish as an unpack-and-run archive.
-param([string]$Version = "0.2.12")
+param([string]$Version = "0.2.13")
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 $publish = Join-Path $PSScriptRoot "obj\publish"
