@@ -1426,16 +1426,16 @@ public sealed partial class TopBarWindow : Window
         var glass = DesktopStyleRules.TopBar(_style, _state);
         var darkSurface = IsDarkSurface(glass.Surface);
         var acrylic = _acrylicAvailable && darkSurface;
-        if (acrylic != _acrylicBackdrop)
-        {
-            _acrylicBackdrop = acrylic;
-            TaskbarNativeMethods.TrySetAccent(
-                _handle,
-                acrylic
-                    ? TaskbarNativeMethods.AccentEnableAcrylicBlurBehind
-                    : TaskbarNativeMethods.AccentDisabled,
-                acrylic ? AcrylicScrimAbgr : 0);
-        }
+        // Written unconditionally: the startup probe may have left the accent applied,
+        // so a change-tracking comparison would skip the disable a light surface needs.
+        // The call is idempotent and only runs on material changes.
+        _acrylicBackdrop = acrylic;
+        TaskbarNativeMethods.TrySetAccent(
+            _handle,
+            acrylic
+                ? TaskbarNativeMethods.AccentEnableAcrylicBlurBehind
+                : TaskbarNativeMethods.AccentDisabled,
+            acrylic ? AcrylicScrimAbgr : 0);
         var surfaceHex = acrylic ? AcrylicSurfaceTint : glass.Surface;
         var background = new SolidColorBrush((Color)ColorConverter.ConvertFromString(surfaceHex));
         background.Freeze();
