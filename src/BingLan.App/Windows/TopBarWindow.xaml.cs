@@ -1395,8 +1395,11 @@ public sealed partial class TopBarWindow : Window
 
     // ---------------------------------------------------------------- appearance
 
-    /// <summary>Whether the WCA acrylic accent was accepted for this window.</summary>
+    /// <summary>Whether the WCA acrylic accent currently darkens this window.</summary>
     private bool _acrylicBackdrop;
+
+    /// <summary>Whether the composition attribute accepted the acrylic accent at all.</summary>
+    private bool _acrylicAvailable;
 
     // macOS's menu bar is blurred wallpaper under a dark scrim: the WCA acrylic accent
     // supplies the blur and the tint's alpha sets the scrim strength. Where the accent
@@ -1407,18 +1410,33 @@ public sealed partial class TopBarWindow : Window
 
     private void ApplyAcrylicBackdrop()
     {
-        _acrylicBackdrop = TaskbarNativeMethods.TryEnableAcrylicBlur(_handle, AcrylicScrimAbgr);
+        // Probe once: an unavailable composition attribute should not be retried on
+        // every material change. Whether the scrim stays is decided per material in
+        // ApplySurface, which disables the accent again for light or clear surfaces —
+        // a scrim left applied under a nearly transparent bar turns it muddy grey.
+        _acrylicAvailable = TaskbarNativeMethods.TrySetAccent(
+            _handle,
+            TaskbarNativeMethods.AccentEnableAcrylicBlurBehind,
+            AcrylicScrimAbgr);
         ApplySurface();
     }
 
     private void ApplySurface()
     {
         var glass = DesktopStyleRules.TopBar(_style, _state);
-        // The dark scrim only suits a dark surface: over a light material the blurred
-        // wallpaper would fight the bar's own colours, so acrylic yields to the brush.
-        var surfaceHex = _acrylicBackdrop && IsDarkSurface(glass.Surface)
-            ? AcrylicSurfaceTint
-            : glass.Surface;
+        var darkSurface = IsDarkSurface(glass.Surface);
+        var acrylic = _acrylicAvailable && darkSurface;
+        if (acrylic != _acrylicBackdrop)
+        {
+            _acrylicBackdrop = acrylic;
+            TaskbarNativeMethods.TrySetAccent(
+                _handle,
+                acrylic
+                    ? TaskbarNativeMethods.AccentEnableAcrylicBlurBehind
+                    : TaskbarNativeMethods.AccentDisabled,
+                acrylic ? AcrylicScrimAbgr : 0);
+        }
+        var surfaceHex = acrylic ? AcrylicSurfaceTint : glass.Surface;
         var background = new SolidColorBrush((Color)ColorConverter.ConvertFromString(surfaceHex));
         background.Freeze();
         Surface.Background = background;
@@ -1427,6 +1445,9 @@ public sealed partial class TopBarWindow : Window
         Surface.BorderBrush = border;
         Surface.BorderThickness = new Thickness(0, 0, 0, 1);
     }
+
+    /// <summary>Whether the current surface decided to sit on the acrylic scrim.</summary>
+    internal bool IsAcrylicSurface => _acrylicBackdrop;
 
     private static bool IsDarkSurface(string surfaceWithAlpha)
     {

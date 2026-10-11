@@ -124,6 +124,7 @@ internal static class TopBarWindowTests
             var color = background.Color;
             Assert(color.A > 200 && color.R == 0xD8 && color.G == 0xCF && color.B == 0xF0,
                 $"玻璃底画刷应为淡紫 84%，实际 A={color.A} #{color.R:X2}{color.G:X2}{color.B:X2}");
+            Assert(!bar.IsAcrylicSurface, "浅色自定义材质不应启用亚克力薄纱（否则 0% 不透明度下发灰）");
 
             // What actually reaches the screen: render the surface and sample the middle.
             var render = new System.Windows.Media.Imaging.RenderTargetBitmap(
@@ -185,6 +186,7 @@ internal static class TopBarWindowTests
             {
                 throw new InvalidOperationException("顶栏窗口缺少 NoActivate 扩展样式，点击会抢焦点");
             }
+            Assert(bar.IsAcrylicSurface, "默认深色表面应启用亚克力薄纱");
 
             var buttons = AllButtons(bar);
             var names = buttons.Select(AutomationProperties.GetName).ToHashSet();

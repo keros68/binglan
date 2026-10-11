@@ -29,15 +29,15 @@ internal static class TaskbarNativeMethods
     internal delegate bool EnumWindowsProc(nint window, nint parameter);
 
     /// <summary>
-    /// Applies the WCA acrylic accent to one window. The tint is an ABGR value whose
-    /// alpha sets how strongly the blurred backdrop is darkened; false means the
-    /// composition attribute is unavailable and the caller keeps its plain brush.
+    /// Applies a WCA accent to one window. The tint is an ABGR value used by the
+    /// acrylic state; false means the composition attribute is unavailable and the
+    /// caller keeps its plain brush.
     /// </summary>
-    internal static bool TryEnableAcrylicBlur(nint window, uint tintAbgr)
+    internal static bool TrySetAccent(nint window, int accentState, uint tintAbgr)
     {
         var policy = new AccentPolicy
         {
-            State = AccentEnableAcrylicBlurBehind,
+            State = accentState,
             GradientColor = tintAbgr
         };
         var size = Marshal.SizeOf<AccentPolicy>();
