@@ -26,6 +26,7 @@ Run("任务栏检查点与恢复计划", TestTaskbarRecovery);
 Run("任务栏连续失败熔断", TestTaskbarBreaker);
 Run("任务栏设置持久化与 v13-v14 迁移", TestTaskbarPersistence);
 Run("三种桌面模式编排 Dock 与任务栏", TestDesktopModes);
+Run("顶端信息条模型、持久化与编排", TopBarTests.Run);
 Run("备份列表与重启后恢复", TestBackupRestore);
 Run("首次引导只对新安装显示", TestOnboardingFlagMigration);
 Run("主题导出不含个人信息", TestThemeExportExcludesPersonalInfo);

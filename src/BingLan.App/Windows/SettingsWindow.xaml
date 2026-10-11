@@ -132,6 +132,14 @@
                         <TextBlock VerticalAlignment="Center" Text="Dock"/>
                     </StackPanel>
                 </ListBoxItem>
+                <ListBoxItem x:Name="TopBarNavItem" Tag="TopBar" AutomationProperties.Name="顶端信息条">
+                    <StackPanel Orientation="Horizontal">
+                        <Border Style="{StaticResource NavigationTileStyle}" Background="{DynamicResource SettingsIconTealBrush}">
+                            <TextBlock Style="{StaticResource NavigationGlyphStyle}" Text="&#xE8B7;"/>
+                        </Border>
+                        <TextBlock VerticalAlignment="Center" Text="顶端信息条"/>
+                    </StackPanel>
+                </ListBoxItem>
                 <ListBoxItem Tag="Taskbar" AutomationProperties.Name="任务栏">
                     <StackPanel Orientation="Horizontal">
                         <Border Style="{StaticResource NavigationTileStyle}" Background="{DynamicResource SettingsIconIndigoBrush}">
@@ -1225,6 +1233,135 @@
                                Margin="2,10,0,0"
                                AutomationProperties.LiveSetting="Polite"
                                Style="{StaticResource CaptionStyle}"/>
+                </StackPanel>
+            </ScrollViewer>
+
+            <!-- 顶端信息条 -->
+            <ScrollViewer x:Name="TopBarPage"
+                          Visibility="Collapsed"
+                          VerticalScrollBarVisibility="Auto">
+                <StackPanel Margin="0,0,28,28">
+                    <TextBlock Style="{StaticResource PageTitleStyle}" Text="顶端信息条"/>
+                    <TextBlock Style="{StaticResource PageSubtitleStyle}"
+                               Text="在所选显示器顶边显示一条满宽信息条：时间、待办、天气、性能和系统状态，点击模块进入对应设置。"/>
+
+                    <local:SettingsGroup Margin="0,14,0,4">
+                        <local:SettingsRow Glyph="&#xE8B7;" Header="显示顶端信息条">
+                            <CheckBox x:Name="TopBarEnabledCheckBox"
+                                      AutomationProperties.Name="显示顶端信息条"
+                                      Style="{StaticResource ToggleSwitchStyle}"
+                                      Checked="TopBarSetting_Changed"
+                                      Unchecked="TopBarSetting_Changed"/>
+                        </local:SettingsRow>
+                    </local:SettingsGroup>
+
+                    <StackPanel x:Name="TopBarOptionsPanel">
+                        <TextBlock Style="{StaticResource SectionHeaderStyle}" Text="位置与行为"/>
+                        <local:SettingsGroup>
+                            <local:SettingsRow Glyph="&#xE7F4;" GlyphBrush="{DynamicResource SettingsIconTealBrush}" Header="显示器">
+                                <ComboBox x:Name="TopBarMonitorComboBox"
+                                          Width="300"
+                                          AutomationProperties.Name="顶端信息条所在显示器"
+                                          SelectionChanged="TopBarSetting_Changed"/>
+                            </local:SettingsRow>
+                            <local:SettingsRow Glyph="&#xE7C4;" GlyphBrush="{DynamicResource SettingsIconIndigoBrush}" Header="显示方式"/>
+                            <local:SettingsRow Style="{StaticResource NestedSettingsRowStyle}"
+                                               Header="始终显示，并预留屏幕顶部空间"
+                                               Description="最大化的窗口从信息条下方开始；全屏应用运行时信息条退到后面；顶边被系统任务栏占用（Windows 10）时自动改为智能隐藏">
+                                <RadioButton x:Name="TopBarReserveRadio"
+                                             GroupName="TopBarVisibility"
+                                             AutomationProperties.Name="始终显示，并预留屏幕顶部空间"
+                                             Checked="TopBarSetting_Changed"/>
+                            </local:SettingsRow>
+                            <local:SettingsRow Style="{StaticResource NestedSettingsRowStyle}"
+                                               Header="智能隐藏"
+                                               Description="窗口占用顶部时隐藏，鼠标移到屏幕顶边时显示">
+                                <RadioButton x:Name="TopBarSmartHideRadio"
+                                             GroupName="TopBarVisibility"
+                                             AutomationProperties.Name="智能隐藏"
+                                             Checked="TopBarSetting_Changed"/>
+                            </local:SettingsRow>
+                        </local:SettingsGroup>
+
+                        <TextBlock Style="{StaticResource SectionHeaderStyle}" Text="模块"/>
+                        <local:SettingsGroup>
+                            <WrapPanel>
+                                <CheckBox x:Name="TopBarClockCheckBox" Content="时钟与日期" Margin="0,6,24,6"
+                                          AutomationProperties.Name="时钟与日期模块" Checked="TopBarSetting_Changed" Unchecked="TopBarSetting_Changed"/>
+                                <CheckBox x:Name="TopBarTodoSummaryCheckBox" Content="待办概要" Margin="0,6,24,6"
+                                          AutomationProperties.Name="待办概要模块" Checked="TopBarSetting_Changed" Unchecked="TopBarSetting_Changed"/>
+                                <CheckBox x:Name="TopBarWeatherCheckBox" Content="天气" Margin="0,6,24,6"
+                                          AutomationProperties.Name="天气模块" Checked="TopBarSetting_Changed" Unchecked="TopBarSetting_Changed"/>
+                                <CheckBox x:Name="TopBarPerformanceCheckBox" Content="性能" Margin="0,6,24,6"
+                                          AutomationProperties.Name="性能模块" Checked="TopBarSetting_Changed" Unchecked="TopBarSetting_Changed"/>
+                                <CheckBox x:Name="TopBarAttentionCheckBox" Content="消息提示" Margin="0,6,24,6"
+                                          AutomationProperties.Name="消息提示模块" Checked="TopBarSetting_Changed" Unchecked="TopBarSetting_Changed"/>
+                                <CheckBox x:Name="TopBarInputMethodCheckBox" Content="输入法" Margin="0,6,24,6"
+                                          AutomationProperties.Name="输入法模块" Checked="TopBarSetting_Changed" Unchecked="TopBarSetting_Changed"/>
+                                <CheckBox x:Name="TopBarVolumeCheckBox" Content="音量" Margin="0,6,24,6"
+                                          AutomationProperties.Name="音量模块" Checked="TopBarSetting_Changed" Unchecked="TopBarSetting_Changed"/>
+                                <CheckBox x:Name="TopBarNetworkCheckBox" Content="网络" Margin="0,6,24,6"
+                                          AutomationProperties.Name="网络模块" Checked="TopBarSetting_Changed" Unchecked="TopBarSetting_Changed"/>
+                                <CheckBox x:Name="TopBarBatteryCheckBox" Content="电量" Margin="0,6,24,6"
+                                          AutomationProperties.Name="电量模块" Checked="TopBarSetting_Changed" Unchecked="TopBarSetting_Changed"/>
+                            </WrapPanel>
+                        </local:SettingsGroup>
+
+                        <TextBlock Style="{StaticResource SectionHeaderStyle}" Text="外观"/>
+                        <local:SettingsGroup>
+                            <local:SettingsRow Glyph="&#xE790;" GlyphBrush="{DynamicResource SettingsIconPinkBrush}" Header="信息条外观">
+                                <Border Style="{StaticResource SegmentHostStyle}">
+                                    <StackPanel Orientation="Horizontal">
+                                        <RadioButton x:Name="TopBarFollowLookRadio"
+                                                     GroupName="TopBarLook"
+                                                     Style="{StaticResource SegmentRadioStyle}"
+                                                     Content="跟随卡片外观"
+                                                     Checked="TopBarLook_Changed"/>
+                                        <RadioButton x:Name="TopBarCustomLookRadio"
+                                                     GroupName="TopBarLook"
+                                                     Style="{StaticResource SegmentRadioStyle}"
+                                                     Content="自定义"
+                                                     Checked="TopBarLook_Changed"/>
+                                    </StackPanel>
+                                </Border>
+                            </local:SettingsRow>
+                            <StackPanel x:Name="TopBarCustomLookPanel">
+                                <local:SettingsRow Style="{StaticResource NestedSettingsRowStyle}" Header="颜色">
+                                    <StackPanel Orientation="Horizontal">
+                                        <Border x:Name="TopBarColorPreview"
+                                                VerticalAlignment="Center"
+                                                Width="32"
+                                                Height="32"
+                                                CornerRadius="6"
+                                                BorderThickness="1"
+                                                BorderBrush="{DynamicResource SettingsControlBorderBrush}"/>
+                                        <TextBox x:Name="TopBarColorEditor"
+                                                 Width="110"
+                                                 Margin="8,0,0,0"
+                                                 AutomationProperties.Name="顶端信息条颜色"
+                                                 LostFocus="TopBarColorEditor_Commit"
+                                                 KeyDown="TopBarColorEditor_KeyDown"/>
+                                        <Button Margin="8,0,0,0" Content="选择颜色…" Click="TopBarChooseColor_Click"/>
+                                    </StackPanel>
+                                </local:SettingsRow>
+                                <local:SettingsRow Style="{StaticResource NestedSettingsRowStyle}" Header="不透明度">
+                                    <StackPanel Orientation="Horizontal">
+                                        <Slider x:Name="TopBarOpacitySlider"
+                                                Width="220"
+                                                Minimum="0"
+                                                Maximum="1"
+                                                SmallChange="0.02"
+                                                LargeChange="0.1"
+                                                AutomationProperties.Name="顶端信息条不透明度"
+                                                ValueChanged="TopBarOpacity_Changed"/>
+                                        <TextBlock x:Name="TopBarOpacityText" Style="{StaticResource ValueTextStyle}"/>
+                                    </StackPanel>
+                                </local:SettingsRow>
+                            </StackPanel>
+                        </local:SettingsGroup>
+
+                        <TextBlock x:Name="TopBarStatusText" Style="{StaticResource ValueTextStyle}"/>
+                    </StackPanel>
                 </StackPanel>
             </ScrollViewer>
 

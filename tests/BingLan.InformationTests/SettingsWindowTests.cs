@@ -181,6 +181,66 @@ internal static class SettingsWindowTests
         Pump();
     }
 
+    public static void TopBarSettingsPage()
+    {
+        var topBar = new TopBarState();
+        var applies = 0;
+        var window = new SettingsWindow(
+            new CityLookupService(new CitySearchService(new StubHttpMessageHandler()), CityLibrary.Empty),
+            new InformationWidgetState(),
+            DesktopExperienceRules.CreateDefault(),
+            (_, _) => { },
+            _ => { },
+            _ => { },
+            maintenance: null,
+            topBarState: topBar,
+            applyTopBar: () => applies++);
+        ShowAndPump(window);
+        try
+        {
+            var navigation = Require<ListBox>(window, "SettingsNavigationList");
+            var tags = navigation.Items.OfType<ListBoxItem>()
+                .Select(item => item.Tag as string)
+                .ToList();
+            Assert(tags.Contains("TopBar"), "导航应包含顶端信息条页");
+            Assert(tags.IndexOf("Dock") < tags.IndexOf("TopBar")
+                && tags.IndexOf("TopBar") < tags.IndexOf("Taskbar"),
+                "顶端信息条应排在 Dock 与任务栏之间");
+
+            navigation.SelectedItem = navigation.Items
+                .OfType<ListBoxItem>()
+                .First(item => (item.Tag as string) == "TopBar");
+            Pump();
+            Assert(Require<FrameworkElement>(window, "TopBarPage").IsVisible, "选择导航后显示顶端信息条页");
+
+            var enabled = Require<CheckBox>(window, "TopBarEnabledCheckBox");
+            Assert(enabled.IsChecked == false, "顶端信息条默认关闭");
+            enabled.IsChecked = true;
+            Pump();
+            Assert(topBar.IsEnabled, "开关应写入顶栏状态");
+            Assert(applies == 1, "开关后应通知宿主应用");
+
+            var volume = Require<CheckBox>(window, "TopBarVolumeCheckBox");
+            volume.IsChecked = false;
+            Pump();
+            Assert(!topBar.Modules.Volume, "模块开关应写入状态");
+
+            var smartHide = Require<RadioButton>(window, "TopBarSmartHideRadio");
+            smartHide.IsChecked = true;
+            Pump();
+            Assert(topBar.VisibilityMode == TopBarVisibilityMode.SmartHide, "显示方式应写入状态");
+
+            Require<RadioButton>(window, "TopBarCustomLookRadio").IsChecked = true;
+            Pump();
+            Assert(!topBar.FollowCardLook, "自定义外观应写入状态");
+        }
+        finally
+        {
+            window.Close();
+            Pump();
+        }
+    }
+
     public static void UpdatePageShowsFoundRelease()
     {
         var installer = System.Text.Encoding.UTF8.GetBytes("setup");

@@ -40,6 +40,8 @@ public partial class SettingsWindow : Window
     private readonly Action _applyTaskbar;
     private readonly Func<(TaskbarMode ActiveMode, string Problem)> _taskbarStatus;
     private readonly SettingsMaintenance _maintenance;
+    private readonly TopBarState? _topBarState;
+    private readonly Action? _applyTopBar;
     private DesktopComponentSettingsEntry? _selectedComponentEntry;
     private CancellationTokenSource? _searchCancellation;
     private bool _loadingExperience;
@@ -56,6 +58,8 @@ public partial class SettingsWindow : Window
     private bool _loadingCleanDesktop;
     private bool _loadingFileBoxAutomation;
     private bool _loadingStyle;
+    private bool _loadingTopBar;
+    private bool _loadingTopBarLook;
 
     public SettingsWindow(
         CityLookupService citySearchService,
@@ -87,7 +91,9 @@ public partial class SettingsWindow : Window
         TaskbarState? taskbarState = null,
         Action? applyTaskbar = null,
         Func<(TaskbarMode ActiveMode, string Problem)>? taskbarStatus = null,
-        SettingsMaintenance? maintenance = null)
+        SettingsMaintenance? maintenance = null,
+        TopBarState? topBarState = null,
+        Action? applyTopBar = null)
     {
         AccessibilityThemeManager.EnsureInitialized();
         _citySearchService = citySearchService;
@@ -105,6 +111,8 @@ public partial class SettingsWindow : Window
         _applyTaskbar = applyTaskbar ?? (() => { });
         _taskbarStatus = taskbarStatus ?? (() => (TaskbarMode.SystemDefault, string.Empty));
         _maintenance = maintenance ?? new SettingsMaintenance();
+        _topBarState = topBarState;
+        _applyTopBar = applyTopBar;
 
         InitializeComponent();
         SourceInitialized += (_, _) => IsBackdropActive = SettingsBackdrop.Apply(this);
@@ -148,6 +156,17 @@ public partial class SettingsWindow : Window
         LoadDesktopExperience();
         RefreshComponentList();
         LoadDockSettings();
+        if (_topBarState is null)
+        {
+            // Tests and older call sites construct the window without a top bar; the
+            // page leaves the navigation entirely so their index-based expectations,
+            // and the default page set, stay exactly as they were.
+            SettingsNavigationList.Items.Remove(TopBarNavItem);
+        }
+        else
+        {
+            LoadTopBarSettings();
+        }
         LoadTaskbarSettings();
         LoadDesktopMode();
         LoadPrivacySettings();
@@ -741,6 +760,17 @@ public partial class SettingsWindow : Window
         RefreshComponentList(window);
     }
 
+    /// <summary>
+    /// Opens the components page with one kind selected, for deep links from surfaces
+    /// that show a card's data without the card itself, like the top bar.
+    /// </summary>
+    public void ShowComponentSettings(DesktopComponentKind kind)
+    {
+        SelectNavigationPage("Components");
+        ShowPage("Components");
+        RefreshComponentList(null, kind);
+    }
+
     private bool _loadingCollect;
 
     private bool _loadingViewMode;
@@ -894,7 +924,7 @@ public partial class SettingsWindow : Window
     private void ShowPage(string page)
     {
         if (AppearancePage is null || ComponentsPage is null || DockPage is null || TaskbarPage is null ||
-            GeneralPage is null)
+            GeneralPage is null || TopBarPage is null)
         {
             return;
         }
@@ -903,6 +933,9 @@ public partial class SettingsWindow : Window
         AppearancePage.Visibility = page == "Appearance" ? Visibility.Visible : Visibility.Collapsed;
         ComponentsPage.Visibility = page == "Components" ? Visibility.Visible : Visibility.Collapsed;
         DockPage.Visibility = page == "Dock" ? Visibility.Visible : Visibility.Collapsed;
+        TopBarPage.Visibility = page == "TopBar" && _topBarState is not null
+            ? Visibility.Visible
+            : Visibility.Collapsed;
         TaskbarPage.Visibility = page == "Taskbar" ? Visibility.Visible : Visibility.Collapsed;
         GeneralPage.Visibility = page == "General" ? Visibility.Visible : Visibility.Collapsed;
         if (page == "General")
@@ -925,6 +958,17 @@ public partial class SettingsWindow : Window
     internal void RefreshDockSettings()
     {
         LoadDockSettings();
+        LoadDesktopMode();
+    }
+
+    internal void RefreshTopBarSettings()
+    {
+        if (_topBarState is null)
+        {
+            return;
+        }
+
+        LoadTopBarSettings();
         LoadDesktopMode();
     }
 
@@ -1392,7 +1436,19 @@ public partial class SettingsWindow : Window
             return;
         }
 
-        DesktopModeRules.Apply(mode, _dockState, _taskbarState);
+        if (_topBarState is null)
+        {
+            DesktopModeRules.Apply(mode, _dockState, _taskbarState);
+        }
+        else
+        {
+            // The apple mode also turns the top bar on and hides the three information
+            // cards it replaces, so the same facts do not show twice.
+            DesktopModeRules.Apply(mode, _dockState, _taskbarState, _topBarState, _desktopExperience);
+            _applyDesktopExperience(_desktopExperience);
+            _applyTopBar?.Invoke();
+            LoadTopBarSettings();
+        }
         _applyDock();
         _applyTaskbar();
         LoadDockSettings();
@@ -1645,6 +1701,194 @@ public partial class SettingsWindow : Window
         _dockState.SurfaceColor = $"#{dialog.Color.R:X2}{dialog.Color.G:X2}{dialog.Color.B:X2}";
         ApplyDockChange("已调整 Dock 颜色");
         LoadDockLook();
+    }
+
+    // ---------------------------------------------------------------- 顶端信息条
+
+    private void LoadTopBarSettings()
+    {
+        if (_topBarState is not { } state)
+        {
+            return;
+        }
+
+        _loadingTopBar = true;
+        try
+        {
+            TopBarEnabledCheckBox.IsChecked = state.IsEnabled;
+            TopBarOptionsPanel.IsEnabled = state.IsEnabled;
+            TopBarReserveRadio.IsChecked = state.VisibilityMode == TopBarVisibilityMode.ReserveTopEdge;
+            TopBarSmartHideRadio.IsChecked = state.VisibilityMode == TopBarVisibilityMode.SmartHide;
+            TopBarClockCheckBox.IsChecked = state.Modules.Clock;
+            TopBarTodoSummaryCheckBox.IsChecked = state.Modules.TodoSummary;
+            TopBarWeatherCheckBox.IsChecked = state.Modules.Weather;
+            TopBarPerformanceCheckBox.IsChecked = state.Modules.Performance;
+            TopBarAttentionCheckBox.IsChecked = state.Modules.Attention;
+            TopBarInputMethodCheckBox.IsChecked = state.Modules.InputMethod;
+            TopBarVolumeCheckBox.IsChecked = state.Modules.Volume;
+            TopBarNetworkCheckBox.IsChecked = state.Modules.Network;
+            TopBarBatteryCheckBox.IsChecked = state.Modules.Battery;
+
+            TopBarMonitorComboBox.Items.Clear();
+            foreach (var monitor in MonitorCatalog.GetAll())
+            {
+                var item = new ComboBoxItem { Content = monitor.Label, Tag = monitor.DeviceName };
+                TopBarMonitorComboBox.Items.Add(item);
+                if (string.Equals(
+                        monitor.DeviceName,
+                        state.MonitorDeviceName,
+                        StringComparison.OrdinalIgnoreCase)
+                    || (TopBarMonitorComboBox.SelectedItem is null && monitor.IsPrimary))
+                {
+                    TopBarMonitorComboBox.SelectedItem = item;
+                }
+            }
+
+            LoadTopBarLook();
+        }
+        finally
+        {
+            _loadingTopBar = false;
+        }
+    }
+
+    private void TopBarSetting_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_loadingTopBar || _topBarState is not { } state
+            || TopBarEnabledCheckBox is null || TopBarMonitorComboBox is null)
+        {
+            return;
+        }
+
+        state.IsEnabled = TopBarEnabledCheckBox.IsChecked == true;
+        TopBarOptionsPanel.IsEnabled = state.IsEnabled;
+        state.VisibilityMode = TopBarSmartHideRadio.IsChecked == true
+            ? TopBarVisibilityMode.SmartHide
+            : TopBarVisibilityMode.ReserveTopEdge;
+        state.Modules.Clock = TopBarClockCheckBox.IsChecked == true;
+        state.Modules.TodoSummary = TopBarTodoSummaryCheckBox.IsChecked == true;
+        state.Modules.Weather = TopBarWeatherCheckBox.IsChecked == true;
+        state.Modules.Performance = TopBarPerformanceCheckBox.IsChecked == true;
+        state.Modules.Attention = TopBarAttentionCheckBox.IsChecked == true;
+        state.Modules.InputMethod = TopBarInputMethodCheckBox.IsChecked == true;
+        state.Modules.Volume = TopBarVolumeCheckBox.IsChecked == true;
+        state.Modules.Network = TopBarNetworkCheckBox.IsChecked == true;
+        state.Modules.Battery = TopBarBatteryCheckBox.IsChecked == true;
+        if (TopBarMonitorComboBox.SelectedItem is ComboBoxItem { Tag: string deviceName })
+        {
+            state.MonitorDeviceName = deviceName;
+        }
+        ApplyTopBarChange(state.IsEnabled ? "已应用" : "顶端信息条已关闭");
+    }
+
+    private void LoadTopBarLook()
+    {
+        if (_topBarState is not { } state)
+        {
+            return;
+        }
+
+        _loadingTopBarLook = true;
+        try
+        {
+            TopBarFollowLookRadio.IsChecked = state.FollowCardLook;
+            TopBarCustomLookRadio.IsChecked = !state.FollowCardLook;
+            TopBarCustomLookPanel.IsEnabled = !state.FollowCardLook;
+            TopBarColorEditor.Text = state.SurfaceColor;
+            TopBarOpacitySlider.Value = state.SurfaceOpacity;
+            TopBarOpacityText.Text = $"{state.SurfaceOpacity * 100:0}%";
+            var preview = new System.Windows.Media.SolidColorBrush(
+                (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(state.SurfaceColor)!);
+            preview.Freeze();
+            TopBarColorPreview.Background = preview;
+        }
+        finally
+        {
+            _loadingTopBarLook = false;
+        }
+    }
+
+    private void TopBarLook_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_loadingTopBarLook || _loadingTopBar || _topBarState is null || TopBarCustomLookRadio is null)
+        {
+            return;
+        }
+
+        _topBarState.FollowCardLook = TopBarFollowLookRadio.IsChecked == true;
+        ApplyTopBarChange(_topBarState.FollowCardLook ? "信息条跟随卡片外观" : "信息条使用自定义外观");
+        LoadTopBarLook();
+    }
+
+    private void TopBarOpacity_Changed(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (_loadingTopBarLook || _loadingTopBar || _topBarState is null || TopBarOpacityText is null)
+        {
+            return;
+        }
+
+        _topBarState.SurfaceOpacity = e.NewValue;
+        TopBarOpacityText.Text = $"{e.NewValue * 100:0}%";
+        ApplyTopBarChange("已调整信息条不透明度");
+    }
+
+    private void TopBarColorEditor_KeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key == System.Windows.Input.Key.Enter)
+        {
+            TopBarColorEditor_Commit(sender, e);
+            e.Handled = true;
+        }
+    }
+
+    private void TopBarColorEditor_Commit(object sender, RoutedEventArgs e)
+    {
+        if (_loadingTopBarLook || _topBarState is not { } state)
+        {
+            return;
+        }
+
+        var color = WidgetAppearanceRules.CoerceColorOrDefault(TopBarColorEditor.Text, state.SurfaceColor);
+        if (color != state.SurfaceColor)
+        {
+            state.SurfaceColor = color;
+            ApplyTopBarChange("已调整信息条颜色");
+        }
+        LoadTopBarLook();
+    }
+
+    private void TopBarChooseColor_Click(object sender, RoutedEventArgs e)
+    {
+        if (_topBarState is not { } state)
+        {
+            return;
+        }
+
+        var current = (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(state.SurfaceColor)!;
+        using var dialog = new System.Windows.Forms.ColorDialog
+        {
+            Color = System.Drawing.Color.FromArgb(current.R, current.G, current.B),
+            FullOpen = true,
+            AnyColor = true
+        };
+        if (dialog.ShowDialog() != System.Windows.Forms.DialogResult.OK)
+        {
+            return;
+        }
+
+        state.SurfaceColor = $"#{dialog.Color.R:X2}{dialog.Color.G:X2}{dialog.Color.B:X2}";
+        ApplyTopBarChange("已调整信息条颜色");
+        LoadTopBarLook();
+    }
+
+    private void ApplyTopBarChange(string status)
+    {
+        _applyTopBar?.Invoke();
+        if (TopBarStatusText is not null)
+        {
+            TopBarStatusText.Text = status;
+        }
+        LoadDesktopMode();
     }
 
     private void QuietTaskbarFlash_Click(object sender, RoutedEventArgs e)

@@ -62,6 +62,7 @@ internal static class Program
         Run("统一设置搜索选择与保存", SettingsWindowTests.SearchSelectAndSave, failures);
         Run("三套布局预设与组件开关可应用", SettingsWindowTests.ApplyPresetAndComponents, failures);
         Run("通用页显示新版本", SettingsWindowTests.UpdatePageShowsFoundRelease, failures);
+        Run("顶端信息条设置页开关与写入", SettingsWindowTests.TopBarSettingsPage, failures);
 
         if (failures.Count > 0)
         {

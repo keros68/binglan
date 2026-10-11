@@ -2,7 +2,7 @@ namespace BingLan.Core.Models;
 
 public sealed class AppState
 {
-    public const int CurrentSchemaVersion = 26;
+    public const int CurrentSchemaVersion = 27;
 
     public int SchemaVersion { get; set; } = CurrentSchemaVersion;
     public List<TodoWidgetState> TodoWidgets { get; set; } = [];
@@ -13,6 +13,7 @@ public sealed class AppState
         DesktopExperienceRules.CreateDefault();
     public DockState Dock { get; set; } = new();
     public TaskbarState Taskbar { get; set; } = new();
+    public TopBarState TopBar { get; set; } = new();
     public DesktopStyleState Style { get; set; } = new();
     public UpdateState Updates { get; set; } = new();
 

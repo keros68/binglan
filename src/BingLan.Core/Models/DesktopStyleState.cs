@@ -193,6 +193,20 @@ public static class DesktopStyleRules
     }
 
     /// <summary>
+    /// The top bar's surface colours: the same edge-surface family as the dock, either
+    /// following the card material or the bar's own colour and opacity.
+    /// </summary>
+    public static DockGlass TopBar(DesktopStyleState style, TopBarState? topBar = null)
+    {
+        ArgumentNullException.ThrowIfNull(style);
+        if (topBar is { FollowCardLook: false })
+        {
+            return CustomDock(topBar.SurfaceColor, topBar.SurfaceOpacity);
+        }
+        return Dock(style);
+    }
+
+    /// <summary>
     /// A dock in its own colour and opacity. A nearly clear dock drops its border; the
     /// running dot is dark on a light, mostly opaque colour and white otherwise.
     /// </summary>

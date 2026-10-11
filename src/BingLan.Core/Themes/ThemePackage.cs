@@ -88,6 +88,14 @@ public sealed class ThemeBindings
     public bool DockEnabled { get; set; }
     public DockVisibilityMode DockVisibility { get; set; } = DockVisibilityMode.ReserveWorkArea;
     public List<ThemeAppBinding> Apps { get; set; } = [];
+
+    // The top bar's shareable settings; the monitor it sits on stays machine-local.
+    public bool TopBarEnabled { get; set; }
+    public TopBarVisibilityMode TopBarVisibility { get; set; } = TopBarVisibilityMode.ReserveTopEdge;
+    public TopBarModuleSwitches? TopBarModules { get; set; }
+    public bool TopBarFollowCardLook { get; set; } = true;
+    public string TopBarSurfaceColor { get; set; } = TopBarState.DefaultSurfaceColor;
+    public double TopBarSurfaceOpacity { get; set; } = TopBarState.DefaultSurfaceOpacity;
 }
 
 /// <summary>

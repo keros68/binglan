@@ -38,7 +38,13 @@ public static class ThemeRules
             Bindings = new ThemeBindings
             {
                 DockEnabled = state.Dock.IsEnabled,
-                DockVisibility = state.Dock.VisibilityMode
+                DockVisibility = state.Dock.VisibilityMode,
+                TopBarEnabled = state.TopBar.IsEnabled,
+                TopBarVisibility = state.TopBar.VisibilityMode,
+                TopBarModules = CopyTopBarModules(state.TopBar.Modules),
+                TopBarFollowCardLook = state.TopBar.FollowCardLook,
+                TopBarSurfaceColor = state.TopBar.SurfaceColor,
+                TopBarSurfaceOpacity = state.TopBar.SurfaceOpacity
             }
         };
         state.Style ??= new DesktopStyleState();
@@ -220,6 +226,24 @@ public static class ThemeRules
         {
             package.Bindings.DockVisibility = DockVisibilityMode.ReserveWorkArea;
         }
+        if (!Enum.IsDefined(package.Bindings.TopBarVisibility))
+        {
+            package.Bindings.TopBarVisibility = TopBarVisibilityMode.ReserveTopEdge;
+        }
+        package.Bindings.TopBarSurfaceColor = WidgetAppearanceRules.CoerceBackgroundColor(
+            package.Bindings.TopBarSurfaceColor);
+        if (double.IsNaN(package.Bindings.TopBarSurfaceOpacity)
+            || double.IsInfinity(package.Bindings.TopBarSurfaceOpacity))
+        {
+            package.Bindings.TopBarSurfaceOpacity = TopBarState.DefaultSurfaceOpacity;
+        }
+        else
+        {
+            package.Bindings.TopBarSurfaceOpacity = Math.Clamp(
+                package.Bindings.TopBarSurfaceOpacity,
+                0d,
+                1d);
+        }
         package.Bindings.Apps = (package.Bindings.Apps ?? [])
             .Where(binding => binding is not null)
             .Take(MaximumBindings)
@@ -245,6 +269,26 @@ public static class ThemeRules
                     : null;
             binding.IconEntry = IsIconEntry(binding.IconEntry) ? binding.IconEntry : null;
         }
+    }
+
+    /// <summary>
+    /// Applies the top bar's shareable settings. A package from before the top bar
+    /// carried no module switches, so those stay as the importing user had them; the
+    /// monitor stays machine-local either way.
+    /// </summary>
+    public static void ApplyTopBar(ThemePackage package, TopBarState topBar)
+    {
+        ArgumentNullException.ThrowIfNull(package);
+        ArgumentNullException.ThrowIfNull(topBar);
+        topBar.IsEnabled = package.Bindings.TopBarEnabled;
+        topBar.VisibilityMode = package.Bindings.TopBarVisibility;
+        if (package.Bindings.TopBarModules is { } modules)
+        {
+            topBar.Modules = CopyTopBarModules(modules);
+        }
+        topBar.FollowCardLook = package.Bindings.TopBarFollowCardLook;
+        topBar.SurfaceColor = package.Bindings.TopBarSurfaceColor;
+        topBar.SurfaceOpacity = package.Bindings.TopBarSurfaceOpacity;
     }
 
     /// <summary>Applies visual tokens, component switches and layout to the desktop.</summary>
@@ -322,6 +366,19 @@ public static class ThemeRules
         TitleFontFamily = source.TitleFontFamily,
         TitleFontBold = source.TitleFontBold,
         TitleFontItalic = source.TitleFontItalic
+    };
+
+    private static TopBarModuleSwitches CopyTopBarModules(TopBarModuleSwitches source) => new()
+    {
+        TodoSummary = source.TodoSummary,
+        Weather = source.Weather,
+        Performance = source.Performance,
+        Attention = source.Attention,
+        InputMethod = source.InputMethod,
+        Volume = source.Volume,
+        Network = source.Network,
+        Battery = source.Battery,
+        Clock = source.Clock
     };
 
     private static string CleanName(string? name) =>

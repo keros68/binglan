@@ -8,9 +8,11 @@ using BingLan.App.Interop;
 using BingLan.App.Services;
 using BingLan.App.Taskbar;
 using BingLan.App.Themes;
+using BingLan.App.TopBar;
 using BingLan.Core.Dock;
 using Microsoft.Win32;
 using BingLan.Core.Themes;
+using BingLan.Core.TopBar;
 using BingLan.App.Windows;
 using BingLan.Core.Models;
 using BingLan.Core.Services;
@@ -36,6 +38,7 @@ public sealed class WidgetCoordinator : IDisposable
     private readonly WeatherService _weatherService;
     private readonly CityLookupService _citySearchService;
     private readonly DockHost _dock;
+    private readonly TopBarHost _topBar;
     private readonly TaskbarAdapter _taskbar;
     private readonly CleanDesktopAdapter _cleanDesktop;
     private readonly TaskbarCornerReveal _cornerReveal = new();
@@ -124,6 +127,16 @@ public sealed class WidgetCoordinator : IDisposable
             ScheduleSave();
             _settingsWindow?.RefreshTaskbarSettings();
         };
+        _topBar = new TopBarHost(
+            _state.TopBar,
+            _state.Style,
+            new TopBarEnvironment(this),
+            _performanceSampler,
+            message => _trayIcon.ShowBalloonTip(
+                3000,
+                "顶端信息条",
+                message,
+                Forms.ToolTipIcon.Info));
         StartupLog.Open(_store.DataDirectory);
         _cleanDesktop = new CleanDesktopAdapter(CleanDesktopCheckpointPath(_store.DataDirectory));
         _cleanDesktop.TakenOver += () =>
@@ -257,6 +270,7 @@ public sealed class WidgetCoordinator : IDisposable
         }
 
         RunShellStep("Dock ", _dock.Apply);
+        RunShellStep("顶端信息条", _topBar.Apply);
         await ApplyTaskbarModeAsync();
         StartupLog.Write("任务栏模式已应用");
         RunShellStep("任务栏两角唤出", () => _cornerReveal.SetEnabled(_state.Taskbar.RevealOnlyAtCorners));
@@ -508,8 +522,15 @@ public sealed class WidgetCoordinator : IDisposable
             ApplyEntries = ApplyStarterEntries,
             ApplyDesktopMode = mode =>
             {
-                DesktopModeRules.Apply(mode, _state.Dock, _state.Taskbar);
+                DesktopModeRules.Apply(
+                    mode,
+                    _state.Dock,
+                    _state.Taskbar,
+                    _state.TopBar,
+                    _state.DesktopExperience);
                 _dock.Apply();
+                ApplyDesktopExperience(_state.DesktopExperience);
+                _topBar.Apply();
                 _ = ApplyTaskbarModeAsync();
                 SaveNow();
             },
@@ -572,7 +593,9 @@ public sealed class WidgetCoordinator : IDisposable
     private void UpdateSamplingMode() =>
         _performanceSampler.SetMode(PerformanceSamplingRules.ResolveMode(
             _fullScreenWatcher.IsFullScreenInFront,
-            _desktopHidden));
+            // The top bar reads the same snapshots, so an enabled bar keeps the clock
+            // ticking even when the desktop cards are hidden.
+            _desktopHidden && !_state.TopBar.IsEnabled));
 
     // Runs after monitors are added, removed or rearranged, or scaling changes.
     private void OnDisplaySettingsChanged(object? sender, EventArgs e) => OnDisplayLayoutChanged();
@@ -957,6 +980,12 @@ public sealed class WidgetCoordinator : IDisposable
         _settingsWindow?.ShowSettingsPage(page);
     }
 
+    private void OpenSettings(DesktopComponentKind componentKind)
+    {
+        OpenSettings((WidgetWindowBase?)null);
+        _settingsWindow?.ShowComponentSettings(componentKind);
+    }
+
     private void OpenSettings(WidgetWindowBase? target)
     {
         if (_settingsWindow is not null)
@@ -1062,7 +1091,9 @@ public sealed class WidgetCoordinator : IDisposable
                     SaveNow();
                     return added;
                 }
-            });
+            },
+            topBarState: _state.TopBar,
+            applyTopBar: ApplyTopBar);
         settings.Closed += (_, _) =>
         {
             if (ReferenceEquals(_settingsWindow, settings))
@@ -1220,6 +1251,13 @@ public sealed class WidgetCoordinator : IDisposable
     {
         ApplyItemSurface();
         _dock.Apply();
+        SaveNow();
+    }
+
+    private void ApplyTopBar()
+    {
+        _topBar.Apply();
+        UpdateSamplingMode();
         SaveNow();
     }
 
@@ -1660,8 +1698,11 @@ public sealed class WidgetCoordinator : IDisposable
         _state.Dock.VisibilityMode = package.Bindings.DockVisibility;
         _state.Dock.PinnedApps = bindings.Resolved.ToList();
         _dock.Apply();
+        ThemeRules.ApplyTopBar(package, _state.TopBar);
+        _topBar.Apply();
         SaveNow();
         _settingsWindow?.RefreshDockSettings();
+        _settingsWindow?.RefreshTopBarSettings();
 
         var message = $"已应用主题“{package.Manifest.Name}”，原设置已备份";
         if (bindings.Missing.Count == 0)
@@ -2192,5 +2233,228 @@ public sealed class WidgetCoordinator : IDisposable
         placement.Height = Math.Clamp(placement.Height, 72, Math.Max(72, area.Height));
         placement.Left = Math.Clamp(placement.Left, area.Left - placement.Width + 80, area.Right - 80);
         placement.Top = Math.Clamp(placement.Top, area.Top, area.Bottom - 60);
+    }
+
+    /// <summary>
+    /// The top bar's view of the app: shared facts and actions only, so the bar itself
+    /// stays a dumb surface and tests can fake every input.
+    /// </summary>
+    private sealed class TopBarEnvironment(WidgetCoordinator owner) : ITopBarEnvironment
+    {
+        private volatile bool _weatherInFlight;
+        private DateTimeOffset? _lastWeatherSuccess;
+
+        public bool Use24HourClock => owner.InformationState().Use24HourClock;
+
+        public WeatherSnapshot? ReadWeather()
+        {
+            var information = owner.InformationState();
+            return information.HasWeatherLocation
+                ? owner._weatherService.GetLastSnapshot(
+                    information.WeatherCity,
+                    information.WeatherLatitude!.Value,
+                    information.WeatherLongitude!.Value)
+                : null;
+        }
+
+        public void RefreshWeatherIfDue()
+        {
+            var information = owner.InformationState();
+            if (!information.HasWeatherLocation || _weatherInFlight)
+            {
+                return;
+            }
+
+            var now = DateTimeOffset.Now;
+            if (!owner._weatherService.ShouldAttemptRefresh(
+                    now,
+                    information.WeatherCity,
+                    information.WeatherLatitude!.Value,
+                    information.WeatherLongitude!.Value))
+            {
+                return;
+            }
+
+            // The bar rides the one-second sampling tick, so it has to keep the 15-minute
+            // success interval itself; the service's retry gate alone is not a cadence.
+            if (_lastWeatherSuccess is { } last
+                && now - last < WeatherService.SuccessRefreshInterval)
+            {
+                return;
+            }
+
+            _weatherInFlight = true;
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    var snapshot = await owner._weatherService.RefreshAsync(
+                        information.WeatherCity,
+                        information.WeatherLatitude!.Value,
+                        information.WeatherLongitude!.Value);
+                    if (snapshot.Status == WeatherStatus.Fresh)
+                    {
+                        _lastWeatherSuccess = now;
+                    }
+                }
+                finally
+                {
+                    _weatherInFlight = false;
+                }
+            });
+        }
+
+        public int CountIncompleteTodos() =>
+            TopBarModuleRules.CountIncompleteTodos(owner._state.TodoWidgets);
+
+        public TopBarTodoList? ReadTodoList() =>
+            owner._state.TodoWidgets.FirstOrDefault() is { } todo
+                ? new TopBarTodoList(
+                    todo.Title,
+                    todo.Items
+                        .Where(item => !string.IsNullOrWhiteSpace(item.Text))
+                        .ToList())
+                : null;
+
+        public void TodoItemToggled() => owner.ScheduleSave();
+
+        public void OpenTopBarSettings() => owner.OpenSettings("TopBar");
+
+        public void OpenQuickSettings() =>
+            InvokeTrayButton("音量", "网络", "电源", "电池");
+
+        /// <summary>
+        /// Invokes the taskbar tray button whose name starts with one of the prefixes,
+        /// opening exactly what that tray icon opens. The taskbar rebuilds itself now and
+        /// then, so each attempt re-reads and the loop gives up quietly.
+        /// </summary>
+        private static void InvokeTrayButton(params string[] prefixes)
+        {
+            _ = Task.Run(() =>
+            {
+                for (var attempt = 0; attempt < 6; attempt++)
+                {
+                    try
+                    {
+                        var taskbar = System.Windows.Automation.AutomationElement.RootElement.FindFirst(
+                            System.Windows.Automation.TreeScope.Children,
+                            new System.Windows.Automation.PropertyCondition(
+                                System.Windows.Automation.AutomationElement.ClassNameProperty,
+                                "Shell_TrayWnd"));
+                        if (taskbar is null)
+                        {
+                            return;
+                        }
+                        foreach (var button in taskbar.FindAll(
+                                     System.Windows.Automation.TreeScope.Descendants,
+                                     new System.Windows.Automation.PropertyCondition(
+                                         System.Windows.Automation.AutomationElement.ControlTypeProperty,
+                                         System.Windows.Automation.ControlType.Button))
+                                 .Cast<System.Windows.Automation.AutomationElement>())
+                        {
+                            var name = button.Current.Name;
+                            if (!prefixes.Any(prefix => name.StartsWith(prefix)))
+                            {
+                                continue;
+                            }
+                            if (button.GetCurrentPattern(
+                                    System.Windows.Automation.InvokePattern.Pattern)
+                                is System.Windows.Automation.InvokePattern invoke)
+                            {
+                                invoke.Invoke();
+                                return;
+                            }
+                        }
+                    }
+                    catch (Exception exception)
+                        when (exception is System.Windows.Automation.ElementNotAvailableException
+                            or System.Windows.Automation.ElementNotEnabledException)
+                    {
+                        // The taskbar rebuilt mid-walk; the next attempt re-reads it.
+                    }
+                }
+            });
+        }
+
+        public void OpenTaskManagerPerformance()
+        {
+            try
+            {
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("taskmgr.exe")
+                {
+                    UseShellExecute = true
+                });
+            }
+            catch (Exception exception) when (exception is System.ComponentModel.Win32Exception
+                or InvalidOperationException)
+            {
+                return;
+            }
+
+            // Task Manager rebuilds its window while starting and drops in-flight UIA
+            // reads, so each attempt re-reads and the loop gives up quietly.
+            _ = Task.Run(async () =>
+            {
+                for (var attempt = 0; attempt < 30; attempt++)
+                {
+                    await Task.Delay(300);
+                    try
+                    {
+                        var manager = System.Windows.Automation.AutomationElement.RootElement.FindFirst(
+                            System.Windows.Automation.TreeScope.Children,
+                            new System.Windows.Automation.PropertyCondition(
+                                System.Windows.Automation.AutomationElement.NameProperty,
+                                "任务管理器"));
+                        var page = manager?.FindFirst(
+                            System.Windows.Automation.TreeScope.Descendants,
+                            new System.Windows.Automation.PropertyCondition(
+                                System.Windows.Automation.AutomationElement.NameProperty,
+                                "性能"));
+                        if (page is null)
+                        {
+                            continue;
+                        }
+                        // The side navigation is a list: selection first, invoke second.
+                        if (page.GetCurrentPattern(
+                                System.Windows.Automation.SelectionItemPattern.Pattern)
+                            is System.Windows.Automation.SelectionItemPattern selection)
+                        {
+                            selection.Select();
+                            return;
+                        }
+                        if (page.GetCurrentPattern(
+                                System.Windows.Automation.InvokePattern.Pattern)
+                            is System.Windows.Automation.InvokePattern invoke)
+                        {
+                            invoke.Invoke();
+                            return;
+                        }
+                    }
+                    catch (Exception exception)
+                        when (exception is System.Windows.Automation.ElementNotAvailableException
+                            or System.Windows.Automation.ElementNotEnabledException)
+                    {
+                        // Window rebuilt mid-read; try again on the next attempt.
+                    }
+                }
+            });
+        }
+
+        public void OpenComponentSettings(DesktopComponentKind kind) => owner.OpenSettings(kind);
+
+        public bool ActivateWindow(nint handle)
+        {
+            if (handle == 0)
+            {
+                return false;
+            }
+
+            // The bar never takes focus itself, so Windows may refuse the switch: the
+            // same flash fallback the dock uses tells the user where the window is.
+            return WindowCommandService.Focus(
+                new TrackedWindow(handle, 0, "窗口", null, null, false, false)).Succeeded;
+        }
+
+        public void ExitApp() => owner.Exit();
     }
 }

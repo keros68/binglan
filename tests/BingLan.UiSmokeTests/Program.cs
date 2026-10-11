@@ -145,6 +145,7 @@ internal static class Program
         Run("卡片拖动吸附到相邻卡片且不会被系统吸附成半屏", () => SnapMoveTests.Run(ShowAndPump, Pump), failures);
         Run("显示器排列切换后卡片回到该排列下的位置", () => DisplayLayoutWindowTests.Run(ShowAndPump, Pump), failures);
         Run("Dock 隐藏把手的窗口样式、拖动与显隐", () => DockHandleTests.Run(ShowAndPump, Pump), failures);
+        Run("顶端信息条的窗口样式、模块与点击深链", () => TopBarWindowTests.Run(ShowAndPump, Pump), failures);
         Run("主题导入对话框显示名称与预览图", TestThemeImportDialogShowsNameAndPreview, failures);
 
         if (failures.Count > 0)
@@ -1921,11 +1922,18 @@ internal static class Program
             navigation.SelectedIndex = 3;
             Pump();
             Assert(
+                Require<FrameworkElement>(settings, "TopBarPage").IsVisible &&
+                Require<CheckBox>(settings, "TopBarEnabledCheckBox").IsChecked == false,
+                "顶端信息条页没有显示或默认没有保持关闭");
+
+            navigation.SelectedIndex = 4;
+            Pump();
+            Assert(
                 Require<FrameworkElement>(settings, "TaskbarPage").IsVisible &&
                 Require<RadioButton>(settings, "TaskbarDefaultRadio").IsChecked == true,
                 "任务栏设置页没有显示或默认没有保持系统默认");
 
-            navigation.SelectedIndex = 4;
+            navigation.SelectedIndex = 5;
             Pump();
             Assert(
                 Require<FrameworkElement>(settings, "GeneralPage").IsVisible &&
@@ -3312,7 +3320,7 @@ internal static class Program
         }
         catch (Exception ex)
         {
-            failures.Add($"失败：{name} - {ex.Message}");
+            failures.Add("失败：" + name + " - " + ex.Message + " @ " + (ex.StackTrace ?? string.Empty).Split('\n').FirstOrDefault());
         }
     }
 

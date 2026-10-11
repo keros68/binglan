@@ -457,6 +457,12 @@ public sealed class LocalStateStore
             // and only moves when the user drags it.
             state.SchemaVersion = 26;
         }
+
+        if (state.SchemaVersion < 27)
+        {
+            // The top bar is new and starts off; nobody's desktop changes on upgrade.
+            state.SchemaVersion = 27;
+        }
         state.Updates ??= new UpdateState();
         state.QuickPlaces = QuickPlaceRules.Normalize(state.QuickPlaces);
         state.DismissedDesktopCategories = (state.DismissedDesktopCategories ?? [])
@@ -532,6 +538,8 @@ public sealed class LocalStateStore
         DesktopExperienceRules.Normalize(state.DesktopExperience);
         state.Dock ??= new DockState();
         DockPinRules.Normalize(state.Dock);
+        state.TopBar ??= new TopBarState();
+        TopBarRules.Normalize(state.TopBar);
         state.Taskbar ??= new TaskbarState();
         if (!Enum.IsDefined(state.Taskbar.Mode))
         {
