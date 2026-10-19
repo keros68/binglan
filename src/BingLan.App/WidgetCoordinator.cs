@@ -2418,61 +2418,30 @@ public sealed class WidgetCoordinator : IDisposable
 
         public void OpenTopBarSettings() => owner.OpenSettings("TopBar");
 
-        public void OpenQuickSettings() =>
-            InvokeTrayButton("音量", "网络", "电源", "电池");
-
-        /// <summary>
-        /// Invokes the taskbar tray button whose name starts with one of the prefixes,
-        /// opening exactly what that tray icon opens. The taskbar rebuilds itself now and
-        /// then, so each attempt re-reads and the loop gives up quietly.
-        /// </summary>
-        private static void InvokeTrayButton(params string[] prefixes)
+        public async void OpenQuickSettings(TopBarModuleKind kind)
         {
-            _ = Task.Run(() =>
+            var uri = kind switch
             {
-                for (var attempt = 0; attempt < 6; attempt++)
-                {
-                    try
-                    {
-                        var taskbar = System.Windows.Automation.AutomationElement.RootElement.FindFirst(
-                            System.Windows.Automation.TreeScope.Children,
-                            new System.Windows.Automation.PropertyCondition(
-                                System.Windows.Automation.AutomationElement.ClassNameProperty,
-                                "Shell_TrayWnd"));
-                        if (taskbar is null)
-                        {
-                            return;
-                        }
-                        foreach (var button in taskbar.FindAll(
-                                     System.Windows.Automation.TreeScope.Descendants,
-                                     new System.Windows.Automation.PropertyCondition(
-                                         System.Windows.Automation.AutomationElement.ControlTypeProperty,
-                                         System.Windows.Automation.ControlType.Button))
-                                 .Cast<System.Windows.Automation.AutomationElement>())
-                        {
-                            var name = button.Current.Name;
-                            if (!prefixes.Any(prefix => name.StartsWith(prefix)))
-                            {
-                                continue;
-                            }
-                            if (button.GetCurrentPattern(
-                                    System.Windows.Automation.InvokePattern.Pattern)
-                                is System.Windows.Automation.InvokePattern invoke)
-                            {
-                                invoke.Invoke();
-                                return;
-                            }
-                        }
-                    }
-                    catch (Exception exception)
-                        when (exception is System.Windows.Automation.ElementNotAvailableException
-                            or System.Windows.Automation.ElementNotEnabledException)
-                    {
-                        // The taskbar rebuilt mid-walk; the next attempt re-reads it.
-                    }
-                }
-            });
+                TopBarModuleKind.Network => "ms-settings:network-status",
+                TopBarModuleKind.Battery => "ms-settings:batterysaver",
+                _ => "ms-settings:sound"
+            };
+            if (!await ShellSurfaceService.OpenQuickSettingsAsync(uri))
+            {
+                ReportShellFailure();
+            }
         }
+
+        public async void OpenInputMethod()
+        {
+            if (!await ShellSurfaceService.OpenInputMethodAsync())
+            {
+                ReportShellFailure();
+            }
+        }
+
+        private void ReportShellFailure() => owner._trayIcon.ShowBalloonTip(
+            4000, "系统入口暂不可用", "可将鼠标移到屏幕底边或角落唤出 Windows 任务栏。", Forms.ToolTipIcon.Info);
 
         public void OpenTaskManagerPerformance()
         {

@@ -1064,6 +1064,16 @@
                                           Checked="DockSetting_Changed"
                                           Unchecked="DockSetting_Changed"/>
                             </local:SettingsRow>
+                            <local:SettingsRow Glyph="&#xE782;"
+                                               GlyphBrush="{DynamicResource SettingsIconBlueBrush}"
+                                               Header="显示 Windows 开始菜单入口"
+                                               Description="显示在 Dock 左端，点击打开原生开始菜单；此设置只保存在本机，不随主题导入或导出。">
+                                <CheckBox x:Name="DockStartMenuButtonCheckBox"
+                                          AutomationProperties.Name="显示 Windows 开始菜单入口"
+                                          Style="{StaticResource ToggleSwitchStyle}"
+                                          Checked="DockSetting_Changed"
+                                          Unchecked="DockSetting_Changed"/>
+                            </local:SettingsRow>
                             <local:SettingsRow Glyph="&#xE70D;" GlyphBrush="{DynamicResource SettingsIconTealBrush}" Header="距底部高度" Description="Dock 底边与任务栏上沿之间的距离">
                                 <StackPanel Orientation="Horizontal">
                                     <Slider x:Name="DockBottomGapSlider"

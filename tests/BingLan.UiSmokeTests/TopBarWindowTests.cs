@@ -329,7 +329,7 @@ internal static class TopBarWindowTests
             var names = buttons.Select(AutomationProperties.GetName).ToHashSet();
             foreach (var module in new[]
                      {
-                         "待办模块", "性能模块", "电量模块", "网络模块", "音量模块", "时间日期模块"
+                         "待办模块", "性能模块", "电量模块", "网络模块", "音量模块", "输入法模块", "时间日期模块"
                      })
             {
                 if (!names.Contains(module))
@@ -338,13 +338,12 @@ internal static class TopBarWindowTests
                 }
             }
 
-            // The weather and the input method are display-only modules: present as
-            // elements, not buttons.
+            // The weather is a display-only module, with no button semantics.
             var elementNames = DescendantElements(bar)
                 .OfType<FrameworkElement>()
                 .Select(AutomationProperties.GetName)
                 .ToHashSet();
-            foreach (var module in new[] { "天气模块", "输入法模块" })
+            foreach (var module in new[] { "天气模块" })
             {
                 if (!elementNames.Contains(module))
                 {
@@ -396,11 +395,10 @@ internal static class TopBarWindowTests
             }
             // The module shows the taskbar indicator's shape: the mode badge in a
             // rounded tile with the input method's own name beside it, and the full
-            // layout name on the hover tooltip. It is a display-only element: clicking
-            // it does nothing.
-            if (inputMethod is not Border { Child: StackPanel imePanel })
+            // layout name on the hover tooltip. Clicking opens the system selector.
+            if (inputMethod is not Button { Content: StackPanel imePanel })
             {
-                throw new InvalidOperationException("输入法模块应为无点击的展示元素并承载徽标布局");
+                throw new InvalidOperationException("输入法模块应为按钮并承载徽标布局");
             }
             if (imePanel.Children.OfType<Border>().FirstOrDefault() is not { } imeTile
                 || imeTile.CornerRadius == default)
@@ -493,6 +491,12 @@ internal static class TopBarWindowTests
             {
                 throw new InvalidOperationException("点击电量模块应唤起系统快速设置");
             }
+            Invoke(ButtonByName(bar, "网络模块"));
+            Assert(environment.QuickSettingsKinds.SequenceEqual(new[]
+                { TopBarModuleKind.Volume, TopBarModuleKind.Battery, TopBarModuleKind.Network }),
+                "系统状态点击应保留对应模块，以便回退到各自设置页");
+            Invoke(ButtonByName(bar, "输入法模块"));
+            Assert(environment.InputMethodRequested == 1, "点击输入法应打开系统选择器");
             Invoke(ButtonByName(bar, "性能模块"));
             if (environment.TaskManagerRequested != 1)
             {
@@ -1721,7 +1725,17 @@ internal static class TopBarWindowTests
 
         public void OpenTopBarSettings() => TopBarPageRequested++;
 
-        public void OpenQuickSettings() => QuickSettingsRequested++;
+        internal List<TopBarModuleKind> QuickSettingsKinds { get; } = [];
+
+        internal int InputMethodRequested { get; private set; }
+
+        public void OpenQuickSettings(TopBarModuleKind kind)
+        {
+            QuickSettingsRequested++;
+            QuickSettingsKinds.Add(kind);
+        }
+
+        public void OpenInputMethod() => InputMethodRequested++;
 
         public void OpenTaskManagerPerformance() => TaskManagerRequested++;
 

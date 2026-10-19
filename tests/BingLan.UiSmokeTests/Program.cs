@@ -102,6 +102,11 @@ internal static class Program
         var app = new BingLan.App.App();
         app.InitializeComponent();
         BingLan.App.App.UseSoftwareRendering();
+        if (Environment.GetCommandLineArgs().Contains("--shell-surfaces-preview"))
+        {
+            ShellSurfacePreview.Run(app);
+            return 0;
+        }
         if (Environment.GetCommandLineArgs().Contains("--dock-glass-preview"))
         {
             DockGlassPreview.Run(app);
@@ -138,6 +143,7 @@ internal static class Program
         Run("缺失本机标题字体安全回退", TestUnavailableTitleFontFallback, failures);
         Run("桌面模式同时设置 Dock 与任务栏", TestDesktopModeSelection, failures);
         Run("Dock 距底高度与最大化让出设置即时生效", TestDockPlacementSettings, failures);
+        Run("系统入口选择与 Dock 开始菜单开关", () => ShellSurfaceTests.Run(ShowAndPump, Pump), failures);
         Run("待办按 Enter 提交后文字写入状态", TestTodoEnterCommitsText, failures);
         Run("待办勾选后各行仍可被辅助技术访问", TestTodoRowsStayAccessible, failures);
         Run("托盘隐藏与显示桌面组件", TestTrayToggleDesktop, failures);
@@ -2821,6 +2827,14 @@ internal static class Program
             Pump();
             Assert(dock.ReleaseWhenMaximized, "勾选后应开启最大化让出");
             Assert(dockApplied == 2, "切换最大化让出应再触发一次应用");
+            var startEntry = Require<CheckBox>(window, "DockStartMenuButtonCheckBox");
+            Assert(startEntry.IsChecked == true, "开始菜单入口默认应开启");
+            startEntry.IsChecked = false;
+            Pump();
+            Assert(!dock.ShowStartMenuButton && dockApplied == 3, "关闭开始菜单入口应保存并立即应用");
+            startEntry.IsChecked = true;
+            Pump();
+            Assert(dock.ShowStartMenuButton && dockApplied == 4, "重新开启入口应立即应用");
         }
         finally
         {

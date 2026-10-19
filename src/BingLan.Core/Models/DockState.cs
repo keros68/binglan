@@ -33,6 +33,11 @@ public sealed class DockState
     public const double DefaultSurfaceOpacity = 0.84d;
 
     public bool IsEnabled { get; set; }
+    /// <summary>
+    /// Whether the fixed Windows Start menu entry appears at the left edge of the Dock.
+    /// This is a machine-local preference and is never part of a shared theme.
+    /// </summary>
+    public bool ShowStartMenuButton { get; set; } = true;
     public string? MonitorDeviceName { get; set; }
     public DockVisibilityMode VisibilityMode { get; set; } = DockVisibilityMode.ReserveWorkArea;
     public List<DockPinnedApp> PinnedApps { get; set; } = [];

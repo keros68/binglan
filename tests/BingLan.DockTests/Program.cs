@@ -46,6 +46,7 @@ Run("资源管理器桌面、任务栏与账户提示窗口不算全屏应用", 
 Run("v12 状态迁移到 v13 应补齐 Dock 默认值", TestDockStateV12Migration);
 Run("v24 状态迁移后应补 Dock 新设置默认值", TestDockStateV24Migration);
 Run("v25 状态迁移后把手位置保持默认角位", TestDockStateV25Migration);
+Run("v31 状态迁移保留个人内容并开启开始菜单入口", TestStartMenuMigration);
 Run("Dock 状态保存与加载往返保留顺序与取值", TestDockStateRoundTrip);
 Run("重复固定项保存后应去重", TestDockStateDuplicatePinsDeduped);
 Run("隐藏的应用不出现在 Dock 且可恢复", TestDockHiddenApps);
@@ -1208,6 +1209,31 @@ static void TestDockStateV25Migration()
     }
 }
 
+static void TestStartMenuMigration()
+{
+    var temp = Path.Combine(Path.GetTempPath(), $"BingLan-start-migration-{Guid.NewGuid():N}");
+    try
+    {
+        Directory.CreateDirectory(temp);
+        var store = new LocalStateStore(temp);
+        File.WriteAllText(store.StatePath, """
+            { "SchemaVersion": 31, "Dock": { "IsEnabled": true, "IconSize": 48,
+              "PinnedApps": [{ "DisplayName": "应用", "ExecutablePath": "C:\\Apps\\Example.exe" }] },
+              "OnboardingCompleted": true }
+            """);
+        var state = store.Load();
+        AssertEqual(AppState.CurrentSchemaVersion, state.SchemaVersion, "应迁移到当前结构");
+        Assert(state.Dock.ShowStartMenuButton, "开始菜单入口默认开启");
+        AssertEqual(48d, state.Dock.IconSize, "图标大小应保留");
+        AssertEqual("C:\\Apps\\Example.exe", state.Dock.PinnedApps.Single().ExecutablePath!, "应用绑定应保留");
+        Assert(state.OnboardingCompleted, "升级不应触发首次引导");
+    }
+    finally
+    {
+        if (Directory.Exists(temp)) Directory.Delete(temp, true);
+    }
+}
+
 static void TestDockStateRoundTrip()
 {
     var temp = Path.Combine(Path.GetTempPath(), $"BingLan-dock-roundtrip-{Guid.NewGuid():N}");
@@ -1216,6 +1242,7 @@ static void TestDockStateRoundTrip()
         var store = new LocalStateStore(temp);
         var state = LocalStateStore.CreateDefault();
         state.Dock.IsEnabled = true;
+        state.Dock.ShowStartMenuButton = false;
         state.Dock.MonitorDeviceName = @"\\.\DISPLAY1";
         state.Dock.VisibilityMode = DockVisibilityMode.SmartHide;
         state.Dock.BottomGapDip = 52;
@@ -1241,6 +1268,7 @@ static void TestDockStateRoundTrip()
 
         store.Save(state);
         var loaded = store.Load();
+        Assert(!loaded.Dock.ShowStartMenuButton, "关闭开始菜单入口的个人设置应保留");
 
         Assert(loaded.Dock.IsEnabled, "Dock 启用状态未保留");
         AssertEqual(@"\\.\DISPLAY1", loaded.Dock.MonitorDeviceName, "显示器名称未保留");

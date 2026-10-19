@@ -11,6 +11,7 @@ using System.Windows.Media.Animation;
 using System.Windows.Threading;
 using BingLan.App.Dock;
 using BingLan.App.Interop;
+using BingLan.App.Services;
 using BingLan.Core.Dock;
 using BingLan.Core.Models;
 using Button = System.Windows.Controls.Button;
@@ -53,6 +54,7 @@ public partial class IceBlueDockWindow : Window
     private IReadOnlyList<DockItem> _items = [];
     private IReadOnlyList<string> _groupOrder = [];
     private string _lastSignature = string.Empty;
+    private bool _renderedStartEntry;
     private nint _handle;
     private bool _closing;
     private bool _refreshRunning;
@@ -189,11 +191,17 @@ public partial class IceBlueDockWindow : Window
         }
     }
 
-    private double ContentLengthDip() =>
-        DockLayoutMetrics.ContentLengthForItems(_items.Count, _state.IconSize)
-            + (_items.Any(item => item.IsPinned) && _items.Any(item => !item.IsPinned)
-                ? DockLayoutMetrics.DividerDip
-                : 0);
+    private double ContentLengthDip()
+    {
+        var hasApps = _items.Count > 0;
+        var hasStartEntry = _state.ShowStartMenuButton;
+        var dividerCount = (hasStartEntry && hasApps ? 1 : 0)
+            + (_items.Any(item => item.IsPinned) && _items.Any(item => !item.IsPinned) ? 1 : 0);
+        return DockLayoutMetrics.ContentLengthForItems(
+                   _items.Count + (hasStartEntry ? 1 : 0),
+                   _state.IconSize)
+               + (dividerCount * DockLayoutMetrics.DividerDip);
+    }
 
     // A reserved dock whose AppBar registration failed would float over windows, so it
     // falls back to smart hide until the reservation succeeds.
@@ -367,17 +375,27 @@ public partial class IceBlueDockWindow : Window
 
     private void ApplyItems(IReadOnlyList<DockItem> items)
     {
-        var signature = $"{_state.IconSize}|{BuildSignature(items)}|{string.Join(",", items.Select(item => _attention.Wants(item.Group) ? 1 : 0))}";
+        var signature = $"{_state.IconSize}|{_state.ShowStartMenuButton}|{BuildSignature(items)}|{string.Join(",", items.Select(item => _attention.Wants(item.Group) ? 1 : 0))}";
         if (string.Equals(signature, _lastSignature, StringComparison.Ordinal))
         {
             return;
         }
 
         var countChanged = items.Count != _items.Count
-            || items.Count(item => item.IsPinned) != _items.Count(item => item.IsPinned);
+            || items.Count(item => item.IsPinned) != _items.Count(item => item.IsPinned)
+            || _renderedStartEntry != _state.ShowStartMenuButton;
+        _renderedStartEntry = _state.ShowStartMenuButton;
         _lastSignature = signature;
         _items = items;
         ItemPanel.Children.Clear();
+        if (_state.ShowStartMenuButton)
+        {
+            ItemPanel.Children.Add(BuildStartMenuButton());
+            if (items.Count > 0)
+            {
+                ItemPanel.Children.Add(BuildDivider());
+            }
+        }
         for (var index = 0; index < items.Count; index++)
         {
             // Pinned apps come first; a thin line sets the other running apps apart.
@@ -392,6 +410,68 @@ public partial class IceBlueDockWindow : Window
         {
             ApplyState();
         }
+    }
+
+    private Button BuildStartMenuButton()
+    {
+        var glyph = new Grid
+        {
+            Width = _state.IconSize,
+            Height = _state.IconSize,
+            HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        glyph.RowDefinitions.Add(new RowDefinition());
+        glyph.RowDefinitions.Add(new RowDefinition());
+        glyph.ColumnDefinitions.Add(new ColumnDefinition());
+        glyph.ColumnDefinitions.Add(new ColumnDefinition());
+        for (var row = 0; row < 2; row++)
+        {
+            for (var column = 0; column < 2; column++)
+            {
+                var tile = new Border
+                {
+                    Margin = new Thickness(1.5),
+                    CornerRadius = new CornerRadius(Math.Max(1, _state.IconSize * 0.04))
+                };
+                tile.SetResourceReference(Border.BackgroundProperty, "DockRunningDotBrush");
+                Grid.SetRow(tile, row);
+                Grid.SetColumn(tile, column);
+                glyph.Children.Add(tile);
+            }
+        }
+
+        var content = new StackPanel { Orientation = Orientation.Vertical };
+        content.Children.Add(glyph);
+        // Reserve the running-indicator slot so the Start entry aligns with app icons.
+        content.Children.Add(new Border
+        {
+            Width = 4,
+            Height = 4,
+            Margin = new Thickness(0, 3, 0, 0),
+            Visibility = Visibility.Hidden
+        });
+
+        var button = new Button
+        {
+            Content = content,
+            Width = _state.IconSize + 16,
+            Height = _state.IconSize + 16,
+            Style = (Style)Resources["DockItemButtonStyle"],
+            ToolTip = "打开 Windows 开始菜单",
+            Focusable = true
+        };
+        AutomationProperties.SetName(button, "打开 Windows 开始菜单");
+        AutomationProperties.SetHelpText(button, "打开原生 Windows 开始菜单");
+        button.Click += (_, _) =>
+        {
+            if (!ShellSurfaceService.OpenStartMenu())
+            {
+                CommandFailed?.Invoke("无法打开 Windows 开始菜单，请稍后重试。");
+            }
+        };
+        AddHoverZoom(button, glyph);
+        return button;
     }
 
     private string DisplayNameOf(DockItem item) =>
@@ -548,7 +628,7 @@ public partial class IceBlueDockWindow : Window
             : new WindowCommandResult(false, $"{name} 不支持从 Dock 启动新实例"));
     }
 
-    private static void AddHoverZoom(Button button, Image icon)
+    private static void AddHoverZoom(Button button, UIElement icon)
     {
         var scale = new ScaleTransform(1, 1);
         icon.RenderTransformOrigin = new Point(0.5, 1);

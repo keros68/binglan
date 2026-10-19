@@ -1532,6 +1532,7 @@ public partial class SettingsWindow : Window
             LoadDockLook();
             DockIconSizeText.Text = $"{_dockState.IconSize:0}";
             DockMaximizeReleaseCheckBox.IsChecked = _dockState.ReleaseWhenMaximized;
+            DockStartMenuButtonCheckBox.IsChecked = _dockState.ShowStartMenuButton;
             DockBottomGapSlider.Value = _dockState.BottomGapDip;
             DockBottomGapText.Text = $"{_dockState.BottomGapDip:0} DIP";
 
@@ -1606,6 +1607,7 @@ public partial class SettingsWindow : Window
             ? DockVisibilityMode.SmartHide
             : DockVisibilityMode.ReserveWorkArea;
         _dockState.ReleaseWhenMaximized = DockMaximizeReleaseCheckBox.IsChecked == true;
+        _dockState.ShowStartMenuButton = DockStartMenuButtonCheckBox.IsChecked == true;
         if (DockMonitorComboBox.SelectedItem is ComboBoxItem { Tag: string deviceName })
         {
             _dockState.MonitorDeviceName = deviceName;

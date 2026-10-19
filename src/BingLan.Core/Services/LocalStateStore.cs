@@ -486,6 +486,13 @@ public sealed class LocalStateStore
             // Independent search appearance uses local defaults, preserving its layout.
             state.SchemaVersion = 31;
         }
+        if (state.SchemaVersion < 32)
+        {
+            // The Start menu entry is enabled for existing Dock users, matching new installs.
+            state.Dock ??= new DockState();
+            state.Dock.ShowStartMenuButton = true;
+            state.SchemaVersion = 32;
+        }
         state.Updates ??= new UpdateState();
         state.QuickPlaces = QuickPlaceRules.Normalize(state.QuickPlaces);
         state.DismissedDesktopCategories = (state.DismissedDesktopCategories ?? [])

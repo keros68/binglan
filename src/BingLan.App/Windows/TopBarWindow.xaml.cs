@@ -56,7 +56,9 @@ internal interface ITopBarEnvironment
     void OpenTopBarSettings();
 
     /// <summary>Opens the system quick-settings flyout (the taskbar tray's panel).</summary>
-    void OpenQuickSettings();
+    void OpenQuickSettings(TopBarModuleKind kind);
+
+    void OpenInputMethod();
 
     /// <summary>Opens Task Manager and lands on its performance page.</summary>
     void OpenTaskManagerPerformance();
@@ -526,12 +528,12 @@ public sealed partial class TopBarWindow : Window
         // The battery, network and volume modules summon the system quick settings,
         // the same panel the taskbar's tray icons open.
         AddModule(TopBarModuleKind.Battery, RightModules, "电量",
-            _environment.OpenQuickSettings, GlyphBatteryUnknown);
+            () => _environment.OpenQuickSettings(TopBarModuleKind.Battery), GlyphBatteryUnknown);
         AddModule(TopBarModuleKind.Network, RightModules, "网络",
-            _environment.OpenQuickSettings, GlyphWifiOff);
+            () => _environment.OpenQuickSettings(TopBarModuleKind.Network), GlyphWifiOff);
         AddModule(TopBarModuleKind.Volume, RightModules, "音量",
-            _environment.OpenQuickSettings, GlyphVolume);
-        AddModule(TopBarModuleKind.InputMethod, RightModules, "输入法", null);
+            () => _environment.OpenQuickSettings(TopBarModuleKind.Volume), GlyphVolume);
+        AddModule(TopBarModuleKind.InputMethod, RightModules, "输入法", _environment.OpenInputMethod);
         StyleInputMethodModule();
         if (TopBarRules.IsModuleOn(_state.Modules, TopBarModuleKind.Attention))
         {
@@ -659,15 +661,14 @@ public sealed partial class TopBarWindow : Window
     private void StyleInputMethodModule()
     {
         if (!_modules.TryGetValue(TopBarModuleKind.InputMethod, out var module)
-            || module is not Border { Child: TextBlock badgeText } block)
+            || module is not Button { Content: TextBlock badgeText } block)
         {
             return;
         }
 
         block.Padding = new Thickness(2, 0, 2, 0);
-        // Re-parenting demands detaching first: the initializer would otherwise adopt a
-        // TextBlock that still belongs to the block's child slot.
-        block.Child = null;
+        // Detach the existing content before placing the badge inside its layout panel.
+        block.Content = null;
         var nameText = new TextBlock
         {
             Foreground = Brushes.White,
@@ -676,7 +677,7 @@ public sealed partial class TopBarWindow : Window
             Margin = new Thickness(4, 0, 6, 0),
             VerticalAlignment = VerticalAlignment.Center
         };
-        block.Child = new StackPanel
+        block.Content = new StackPanel
         {
             Orientation = System.Windows.Controls.Orientation.Horizontal,
             Children =
