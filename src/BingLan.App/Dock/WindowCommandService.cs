@@ -55,7 +55,12 @@ internal static class WindowCommandService
             return new WindowCommandResult(false, $"找不到 {app.DisplayName} 的程序文件");
         }
 
-        return Start(app.ExecutablePath, app.DisplayName);
+        // Start in the folder the shortcut named, like Explorer does; if that folder is
+        // gone (for example after an update), the program's own folder is the fallback.
+        var workingDirectory = app.WorkingDirectory is { } folder && Directory.Exists(folder)
+            ? folder
+            : Path.GetDirectoryName(app.ExecutablePath);
+        return Start(app.ExecutablePath, app.DisplayName, app.Arguments, workingDirectory);
     }
 
     internal static WindowCommandResult Close(IEnumerable<TrackedWindow> windows)
@@ -121,11 +126,20 @@ internal static class WindowCommandService
         return new WindowCommandResult(false, $"Windows 阻止了切换到 {name}，已闪烁提醒");
     }
 
-    private static WindowCommandResult Start(string target, string displayName)
+    private static WindowCommandResult Start(
+        string target,
+        string displayName,
+        string? arguments = null,
+        string? workingDirectory = null)
     {
         try
         {
-            Process.Start(new ProcessStartInfo(target) { UseShellExecute = true })?.Dispose();
+            Process.Start(new ProcessStartInfo(target)
+            {
+                UseShellExecute = true,
+                Arguments = arguments ?? string.Empty,
+                WorkingDirectory = workingDirectory ?? string.Empty
+            })?.Dispose();
             return new WindowCommandResult(true, $"已启动 {displayName}");
         }
         catch (Exception exception) when (exception is Win32Exception or InvalidOperationException)

@@ -313,6 +313,10 @@ public static class DockPinRules
             app.ExecutablePath = string.IsNullOrWhiteSpace(app.ExecutablePath)
                 ? null
                 : WindowGrouping.NormalizeExecutablePath(app.ExecutablePath);
+            app.Arguments = string.IsNullOrWhiteSpace(app.Arguments) ? null : app.Arguments.Trim();
+            app.WorkingDirectory = string.IsNullOrWhiteSpace(app.WorkingDirectory)
+                ? null
+                : app.WorkingDirectory.Trim();
             var key = IdentityKey(app);
             if (key.Length == 0 || !seen.Add(key))
             {

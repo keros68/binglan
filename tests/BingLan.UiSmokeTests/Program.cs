@@ -121,6 +121,7 @@ internal static class Program
         Run("新建卡片不会重置 Dock 与卡片颜色", TestNewCardKeepsAppBrushes, failures);
         Run("卡片显示后与切换窗口后位于普通窗口下方", TestCardsStayBehindWindows, failures);
         Run("开始菜单应用列表可直接固定到 Dock", TestStartMenuApps, failures);
+        Run("固定项保留快捷方式的启动参数与工作目录", TestPinKeepsShortcutArguments, failures);
         Run("应用列表打开时其他窗口仍可用且按钮可见", TestAppPickerKeepsAppUsable, failures);
         Run("内置开源字体从程序中加载并带对应字重", TestBundledFonts, failures);
         Run("自动隐藏任务栏边缘不被组件占用", TestTaskbarRevealEdgeGuard, failures);
@@ -864,6 +865,81 @@ internal static class Program
         Assert(apps.Any(app => app.DisplayName == "文件资源管理器"
                 && string.Equals(Path.GetFileName(app.ExecutablePath), "explorer.exe", StringComparison.OrdinalIgnoreCase)),
             "应用列表应包含文件资源管理器");
+    }
+
+    // Regression for user feedback that some pinned apps never start: a shortcut that
+    // only works with its arguments and working directory (AutoCAD, game launchers)
+    // must keep them when pinned, and launching must honour both. cmd.exe expands
+    // %CD% at run time and writes it to a file, proving it got the arguments verbatim
+    // and started in the shortcut's folder.
+    private static void TestPinKeepsShortcutArguments()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "BingLanPinArgs", Path.GetRandomFileName());
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var marker = Path.Combine(directory, "launched.txt");
+            var shortcutPath = Path.Combine(directory, "带参数的程序.lnk");
+            var shellType = Type.GetTypeFromProgID("WScript.Shell")!;
+            dynamic shell = Activator.CreateInstance(shellType)!;
+            var shortcut = shell.CreateShortcut(shortcutPath);
+            shortcut.TargetPath = Path.Combine(Environment.SystemDirectory, "cmd.exe");
+            shortcut.Arguments = $"/c echo %CD%>\"{marker}\"";
+            shortcut.WorkingDirectory = directory;
+            shortcut.Save();
+
+            var pin = DockShortcuts.CreatePin(shortcutPath);
+            Assert(pin is not null, "指向程序的快捷方式应能固定");
+            Assert(pin!.Arguments == $"/c echo %CD%>\"{marker}\"", "固定项丢失了快捷方式的启动参数");
+            Assert(
+                string.Equals(pin.WorkingDirectory, directory, StringComparison.OrdinalIgnoreCase),
+                $"固定项丢失了快捷方式的工作目录，实际：{pin.WorkingDirectory}");
+
+            var result = WindowCommandService.Launch(pin);
+            Assert(result.Succeeded, $"固定项启动失败：{result.Message}");
+            Assert(WaitForFileContent(marker, out var content), "被固定的程序没有运行（未写出结果文件）");
+            Assert(
+                string.Equals(content.Trim(), directory, StringComparison.OrdinalIgnoreCase),
+                $"程序没有在快捷方式的工作目录中启动，实际：{content.Trim()}");
+        }
+        finally
+        {
+            try
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+            catch (IOException)
+            {
+                // The just-launched cmd may hold the file open for a moment; leaving a
+                // temp folder behind is preferred over failing the test during cleanup.
+            }
+            catch (UnauthorizedAccessException)
+            {
+            }
+        }
+    }
+
+    private static bool WaitForFileContent(string path, out string content)
+    {
+        for (var attempt = 0; attempt < 100; attempt++)
+        {
+            if (File.Exists(path))
+            {
+                try
+                {
+                    content = File.ReadAllText(path);
+                    return true;
+                }
+                catch (IOException)
+                {
+                    // Still being written.
+                }
+            }
+            Thread.Sleep(100);
+        }
+
+        content = string.Empty;
+        return false;
     }
 
     private static void TestBundledFonts()

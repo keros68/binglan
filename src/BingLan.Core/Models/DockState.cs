@@ -15,6 +15,18 @@ public sealed class DockPinnedApp
     public string? AppUserModelId { get; set; }
 
     /// <summary>
+    /// Command-line arguments of the source shortcut, verbatim, or null when the
+    /// program needs none. Packaged apps (app model ID) never carry arguments.
+    /// </summary>
+    public string? Arguments { get; set; }
+
+    /// <summary>
+    /// Folder the shortcut starts the program in, or null to start in the program's
+    /// own folder like Explorer does when opening an executable directly.
+    /// </summary>
+    public string? WorkingDirectory { get; set; }
+
+    /// <summary>
     /// File name of a custom icon in the app's icon folder, or null for the app's own
     /// icon. Only a bare generated name is kept, never a path.
     /// </summary>

@@ -41,7 +41,7 @@ The interface is in Simplified Chinese.
 
 Stable version: [v0.2.27](https://github.com/keros68/binglan/releases/tag/v0.2.27) · [Installer](https://github.com/keros68/binglan/releases/download/v0.2.27/BingLan-Setup-0.2.27.exe) · [Portable](https://github.com/keros68/binglan/releases/download/v0.2.27/BingLan-0.2.27-portable.zip)
 
-Preview: [v0.2.30](https://github.com/keros68/binglan/releases/tag/v0.2.30) · [Installer](https://github.com/keros68/binglan/releases/download/v0.2.30/BingLan-Setup-0.2.30.exe) · [Portable](https://github.com/keros68/binglan/releases/download/v0.2.30/BingLan-0.2.30-portable.zip). A Tray button on the right of the top bar opens the native Windows hidden-icons panel; click it again to dismiss. Quick settings and other system entries also toggle on a second click, and the tray button no longer depends on the system language. It is enabled by default and can be disabled in Top bar settings. A standalone [compatibility tool](https://github.com/keros68/binglan/releases/download/v0.2.30/BingLan-0.2.30-tray-preview.zip) is also available; see the [guide (Chinese)](docs/TRAY-PREVIEW.md).
+Preview: [v0.2.31](https://github.com/keros68/binglan/releases/tag/v0.2.31) · [Installer](https://github.com/keros68/binglan/releases/download/v0.2.31/BingLan-Setup-0.2.31.exe) · [Portable](https://github.com/keros68/binglan/releases/download/v0.2.31/BingLan-0.2.31-portable.zip). Fixed some pinned apps failing to launch from the Dock: pins now keep the shortcut's arguments and working directory and use them on launch (for example AutoCAD and game launchers); apps pinned before upgrading need to be pinned again once to pick them up. A standalone [compatibility tool](https://github.com/keros68/binglan/releases/download/v0.2.31/BingLan-0.2.31-tray-preview.zip) is also available; see the [guide (Chinese)](docs/TRAY-PREVIEW.md).
 
 1. Open [Releases](https://github.com/keros68/binglan/releases/latest) and download `BingLan-Setup-*.exe` (installer) or `BingLan-*-portable.zip` (portable).
 2. Installer: run it — it installs for the current user and needs no administrator rights. Portable: unzip anywhere and run `BingLan.exe` inside. Both include the .NET runtime and are not code-signed yet, so Windows asks for confirmation on first run.
@@ -64,7 +64,7 @@ Requires the .NET 10 SDK and PowerShell 7. Building the installer also needs Inn
 ```powershell
 dotnet build .\BingLan.slnx -c Release
 dotnet run --project .\tests\BingLan.SmokeTests\BingLan.SmokeTests.csproj -c Release
-pwsh -NoProfile -File .\installer\build.ps1 -Version 0.2.30
+pwsh -NoProfile -File .\installer\build.ps1 -Version 0.2.31
 ```
 
 Full test commands, the technical design, and the current implementation are in the [development notes (Chinese)](docs/DEVELOPMENT.md); installer details are in [docs/INSTALLER.md](docs/INSTALLER.md).

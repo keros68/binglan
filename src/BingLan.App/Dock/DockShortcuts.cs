@@ -93,11 +93,11 @@ internal static class DockShortcuts
     internal static DockPinnedApp? CreatePin(string path)
     {
         var extension = Path.GetExtension(path);
-        var target = extension.Equals(".lnk", StringComparison.OrdinalIgnoreCase)
+        var resolved = extension.Equals(".lnk", StringComparison.OrdinalIgnoreCase)
             ? ResolveShortcut(path)
-            : path;
-        if (target is null
-            || !Path.GetExtension(target).Equals(".exe", StringComparison.OrdinalIgnoreCase)
+            : null;
+        var target = resolved?.TargetPath ?? path;
+        if (!Path.GetExtension(target).Equals(".exe", StringComparison.OrdinalIgnoreCase)
             || !File.Exists(target))
         {
             return null;
@@ -109,6 +109,15 @@ internal static class DockShortcuts
             return null;
         }
 
+        // A shortcut names how the program is meant to be started; without its
+        // arguments and working directory some programs (AutoCAD, game launchers)
+        // refuse to start. Like Explorer, an empty working directory means the
+        // program's own folder.
+        app.Arguments = resolved?.Arguments;
+        app.WorkingDirectory = string.IsNullOrWhiteSpace(resolved?.WorkingDirectory)
+            ? Path.GetDirectoryName(target)
+            : resolved.WorkingDirectory;
+
         // A shortcut's own name ("微信") reads better than the program's ("Weixin").
         app.DisplayName = extension.Equals(".lnk", StringComparison.OrdinalIgnoreCase)
             ? Path.GetFileNameWithoutExtension(path)
@@ -116,7 +125,9 @@ internal static class DockShortcuts
         return app;
     }
 
-    private static string? ResolveShortcut(string shortcut)
+    private sealed record ResolvedShortcut(string TargetPath, string Arguments, string WorkingDirectory);
+
+    private static ResolvedShortcut? ResolveShortcut(string shortcut)
     {
         var shellType = Type.GetTypeFromProgID("WScript.Shell");
         if (shellType is null)
@@ -127,8 +138,19 @@ internal static class DockShortcuts
         try
         {
             dynamic shell = Activator.CreateInstance(shellType)!;
-            var target = (string)shell.CreateShortcut(shortcut).TargetPath;
-            return string.IsNullOrWhiteSpace(target) ? null : Environment.ExpandEnvironmentVariables(target);
+            var link = shell.CreateShortcut(shortcut);
+            var targetPath = (string)link.TargetPath;
+            if (string.IsNullOrWhiteSpace(targetPath))
+            {
+                return null;
+            }
+
+            return new ResolvedShortcut(
+                Environment.ExpandEnvironmentVariables(targetPath),
+                // Arguments stay verbatim: they belong to the target program and may
+                // contain text that looks like a variable (cmd's %CD%, format strings).
+                ((string)link.Arguments).Trim(),
+                Environment.ExpandEnvironmentVariables((string)link.WorkingDirectory).Trim());
         }
         catch (Exception exception) when (exception is System.Runtime.InteropServices.COMException
             or Microsoft.CSharp.RuntimeBinder.RuntimeBinderException)
