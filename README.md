@@ -39,7 +39,7 @@ Windows 11 开启系统透明效果时，Dock 和隐藏把手使用实时毛玻�
 
 稳定版：[v0.2.27](https://github.com/keros68/binglan/releases/tag/v0.2.27) · [安装版](https://github.com/keros68/binglan/releases/download/v0.2.27/BingLan-Setup-0.2.27.exe) · [免安装版](https://github.com/keros68/binglan/releases/download/v0.2.27/BingLan-0.2.27-portable.zip)
 
-预发布版：[v0.2.29](https://github.com/keros68/binglan/releases/tag/v0.2.29) · [安装版](https://github.com/keros68/binglan/releases/download/v0.2.29/BingLan-Setup-0.2.29.exe) · [免安装版](https://github.com/keros68/binglan/releases/download/v0.2.29/BingLan-0.2.29-portable.zip)。顶栏右侧提供默认开启、可在设置中关闭的“托盘”按钮，打开 Windows 原生隐藏图标面板。另附[兼容性验收工具](https://github.com/keros68/binglan/releases/download/v0.2.29/BingLan-0.2.29-tray-preview.zip)，使用步骤见[托盘验收说明](docs/TRAY-PREVIEW.md)。
+预发布版：[v0.2.30](https://github.com/keros68/binglan/releases/tag/v0.2.30) · [安装版](https://github.com/keros68/binglan/releases/download/v0.2.30/BingLan-Setup-0.2.30.exe) · [免安装版](https://github.com/keros68/binglan/releases/download/v0.2.30/BingLan-0.2.30-portable.zip)。顶栏右侧提供默认开启、可在设置中关闭的“托盘”按钮，打开 Windows 原生隐藏图标面板，再点一次收起；快速设置等系统入口同样支持再点收起，且不再依赖系统语言识别托盘按钮。另附[兼容性验收工具](https://github.com/keros68/binglan/releases/download/v0.2.30/BingLan-0.2.30-tray-preview.zip)，使用步骤见[托盘验收说明](docs/TRAY-PREVIEW.md)。
 
 1. 打开 [Releases](https://github.com/keros68/binglan/releases/latest)，下载 `BingLan-Setup-*.exe`（安装版）或 `BingLan-*-portable.zip`（免安装版）。
 2. 安装版运行安装包，按当前用户安装，不需要管理员权限；免安装版解压到任意文件夹后运行其中的 `BingLan.exe`。两者均自带 .NET 运行时，尚未加入代码签名，首次运行需按 Windows 提示手动放行。
@@ -62,7 +62,7 @@ Windows 11 开启系统透明效果时，Dock 和隐藏把手使用实时毛玻�
 ```powershell
 dotnet build .\BingLan.slnx -c Release
 dotnet run --project .\tests\BingLan.SmokeTests\BingLan.SmokeTests.csproj -c Release
-pwsh -NoProfile -File .\installer\build.ps1 -Version 0.2.29
+pwsh -NoProfile -File .\installer\build.ps1 -Version 0.2.30
 ```
 
 完整测试命令、技术方案和当前实现见[开发说明](docs/DEVELOPMENT.md)，安装包细节见[安装包](docs/INSTALLER.md)。
