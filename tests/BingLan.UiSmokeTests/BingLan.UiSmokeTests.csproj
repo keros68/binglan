@@ -5,6 +5,9 @@
     <UseWPF>true</UseWPF>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <StartupObject>Program</StartupObject>
+    <StartupObject Condition="'$(TrayCompatibilityPreview)' == 'true'">TrayCompatibilityPreviewProgram</StartupObject>
+    <OutputType Condition="'$(TrayCompatibilityPreview)' == 'true'">WinExe</OutputType>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/BingLan.App/BingLan.App.csproj" />

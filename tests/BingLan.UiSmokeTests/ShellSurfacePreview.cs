@@ -20,6 +20,7 @@ internal static class ShellSurfacePreview
 {
     internal static void Run(System.Windows.Application app)
     {
+        app.ShutdownMode = ShutdownMode.OnExplicitShutdown;
         var temp = Path.Combine(Path.GetTempPath(), $"BingLan-shell-surfaces-{Guid.NewGuid():N}");
         var output = Path.GetFullPath(Path.Combine("artifacts/shell-surfaces", DateTime.UtcNow.ToString("yyyyMMdd-HHmmss")));
         Directory.CreateDirectory(output);
@@ -34,6 +35,7 @@ internal static class ShellSurfacePreview
         state.Dock.VisibilityMode = DockVisibilityMode.SmartHide;
         state.TopBar.IsEnabled = true;
         state.TopBar.Modules.Search = false;
+        state.Taskbar.RevealOnlyAtCorners = Environment.GetCommandLineArgs().Contains("--tray-corners");
         store.Save(state);
         var coordinator = new WidgetCoordinator(interactiveQa: true, dataDirectory: temp);
         var taskbar = new TaskbarAdapter(Path.Combine(temp, "preview-taskbar.json"));
@@ -41,9 +43,15 @@ internal static class ShellSurfacePreview
         var controls = new WrapPanel();
         var status = new TextBlock { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(12) };
         var root = new StackPanel { Children = { controls, status } };
-        var host = new Window { Title = "冰蓝系统入口验收", Width = 760, Height = 250, Content = root };
+        var host = new Window { Title = "冰蓝系统入口验收", Left = 0, Top = 0,
+            Width = SystemParameters.PrimaryScreenWidth, Height = SystemParameters.PrimaryScreenHeight,
+            Content = root, ResizeMode = ResizeMode.CanMinimize };
         var mode = (originalTaskbarState & TaskbarNativeMethods.AbsAutoHide) != 0 ? "autohide" : "visible";
         var captures = 0;
+        var closing = false;
+        var cleanupCompleted = false;
+        var captureExitCleanup = false;
+        using var overflow = new TrayOverflowExperiment();
 
         async Task Capture(string name)
         {
@@ -90,7 +98,15 @@ internal static class ShellSurfacePreview
         {
             var button = new Button { Content = title, Margin = new Thickness(6), Padding = new Thickness(10, 8, 10, 8),
                 Foreground = Brushes.Black, Background = Brushes.LightGray };
-            button.Click += async (_, _) => await action();
+            button.Click += async (_, _) =>
+            {
+                try { await action(); }
+                catch (Exception exception)
+                {
+                    Console.WriteLine($"CHECK FAILED {title}: {exception}");
+                    status.Text = $"验收失败：{title}，{exception.Message}；可点击恢复任务栏或退出验收";
+                }
+            };
             controls.Children.Add(button);
         }
 
@@ -124,33 +140,106 @@ internal static class ShellSurfacePreview
             Console.WriteLine($"QUICKSETTINGS shortcut={ShellSurfaceNativeMethods.OpenQuickSettings()}");
             await Capture("quicksettings");
         });
+        async Task WaitForRestore(int before)
+        {
+            for (var check = 0; check < 30; check++)
+            {
+                if (ReadTaskbarState() != before) throw new InvalidOperationException("任务栏设置发生变化");
+                var tray = TaskbarNativeMethods.FindWindowW("Shell_TrayWnd", null);
+                if (!TrayOverflowExperiment.IsVisible && DockNativeMethods.GetWindowRect(tray, out var rect)
+                    && (((before & TaskbarNativeMethods.AbsAutoHide) == 0)
+                        || rect.Top >= System.Windows.Forms.Screen.PrimaryScreen!.Bounds.Bottom - 2)) return;
+                await Task.Delay(100);
+            }
+            throw new InvalidOperationException("关闭面板后任务栏未恢复");
+        }
         Add("原生托盘实验", async () =>
         {
-            var before = ReadTaskbarState();
-            Console.WriteLine($"OVERFLOW focus={ShellSurfaceNativeMethods.SendChord(0x5B, 0x42)} state={before}");
-            await Task.Delay(600);
-            var opened = await Task.Run(() =>
-            {
-                var tray = AutomationElement.RootElement.FindFirst(TreeScope.Children,
-                    new PropertyCondition(AutomationElement.ClassNameProperty, "Shell_TrayWnd"));
-                if (tray is null) return false;
-                foreach (AutomationElement button in tray.FindAll(TreeScope.Descendants,
-                             new PropertyCondition(AutomationElement.AutomationIdProperty, "SystemTrayIcon")))
-                {
-                    var name = button.Current.Name;
-                    if (button.Current.ClassName == "SystemTray.NormalButton"
-                        && (name == "显示隐藏的图标" || name == "Show hidden icons")
-                        && button.TryGetCurrentPattern(InvokePattern.Pattern, out var pattern)
-                        && pattern is InvokePattern invoke)
-                    {
-                        invoke.Invoke();
-                        return true;
-                    }
-                }
-                return false;
-            });
-            Console.WriteLine($"OVERFLOW invoke={opened}");
+            Console.WriteLine($"OVERFLOW result={await overflow.OpenAsync()} visible={TrayOverflowExperiment.IsVisible} state={ReadTaskbarState()}");
             await Capture("overflow");
+        });
+        Add("托盘连点实验", async () =>
+        {
+            var results = await Task.WhenAll(overflow.OpenAsync(), overflow.OpenAsync());
+            if (results.Count(result => result == "opened") != 1 || !TrayOverflowExperiment.IsVisible)
+                throw new InvalidOperationException("并发唤出未保持面板打开");
+            var repeated = await overflow.OpenAsync();
+            if (repeated != "already-open" || !TrayOverflowExperiment.IsVisible)
+                throw new InvalidOperationException("重复请求关闭了面板");
+            Console.WriteLine($"CONCURRENT results={string.Join(',', results)} repeated={repeated} visible={TrayOverflowExperiment.IsVisible}");
+            await Capture("overflow-concurrent");
+        });
+        Add("托盘循环20次", async () =>
+        {
+            var before = ReadTaskbarState();
+            host.Activate();
+            await WaitForRestore(before);
+            for (var cycle = 1; cycle <= 20; cycle++)
+            {
+                host.Activate();
+                var opened = await overflow.OpenAsync();
+                if (opened != "opened" || !TrayOverflowExperiment.IsVisible)
+                    throw new InvalidOperationException($"第 {cycle} 次唤出失败：{opened}");
+                var repeated = await overflow.OpenAsync();
+                if (repeated != "already-open" || !TrayOverflowExperiment.IsVisible)
+                    throw new InvalidOperationException($"第 {cycle} 次重复唤出失败");
+                if (cycle % 2 == 0) host.Activate();
+                else if (!await Task.Run(TrayOverflowExperiment.InvokeButton))
+                    throw new InvalidOperationException($"第 {cycle} 次关闭失败");
+                await WaitForRestore(before);
+                Console.WriteLine($"CYCLE {cycle}/20 opened=True repeated={repeated} close={(cycle % 2 == 0 ? "focus-away" : "native-button")} restored=True state={ReadTaskbarState()}");
+            }
+            await Capture("overflow-cycles-restored");
+        });
+        Add("故障恢复实验", async () =>
+        {
+            var before = ReadTaskbarState();
+            for (var attempt = 1; attempt <= 20; attempt++)
+            {
+                var result = await overflow.OpenAsync(invokeButton: false);
+                await WaitForRestore(before);
+                if (result != "injected-failure") throw new InvalidOperationException(result);
+                Console.WriteLine($"FAULT-INJECTION {attempt}/20 result={result} restored=True state={ReadTaskbarState()}");
+            }
+            await Capture("overflow-failure-restored");
+        });
+        Add("托盘保持与焦点切换", async () =>
+        {
+            var before = ReadTaskbarState();
+            var opened = await overflow.OpenAsync();
+            if (opened != "opened") throw new InvalidOperationException(opened);
+            await Task.Delay(5000);
+            if (!TrayOverflowExperiment.IsVisible) throw new InvalidOperationException("面板保持期间被关闭");
+            await Capture("overflow-held");
+            var probe = new Window { Title = "托盘焦点切换验收", Width = 450, Height = 180,
+                Content = new TextBlock { Text = "检查切换窗口后不抢回焦点", Margin = new Thickness(20) } };
+            try
+            {
+                probe.Show();
+                probe.Activate();
+                var expectedForeground = new System.Windows.Interop.WindowInteropHelper(probe).Handle;
+                await WaitForRestore(before);
+                if (DockNativeMethods.GetForegroundWindow() != expectedForeground)
+                    throw new InvalidOperationException("切换窗口后焦点被抢回");
+                Console.WriteLine($"HOLD-AND-FOCUS held=True kept-new-window=True state={ReadTaskbarState()}");
+            }
+            finally { probe.Close(); }
+        });
+        Add("托盘打开后退出", async () =>
+        {
+            var opened = await overflow.OpenAsync();
+            if (opened != "opened" || !TrayOverflowExperiment.IsVisible)
+                throw new InvalidOperationException($"退出前未打开面板：{opened}");
+            Console.WriteLine($"EXIT-WHILE-OPEN result={opened} visible=True");
+            await Capture("overflow-exit");
+            captureExitCleanup = true;
+            host.Close();
+        });
+        Add("唤出中退出", async () =>
+        {
+            var pending = overflow.OpenAsync();
+            host.Close();
+            Console.WriteLine($"EXIT-WHILE-OPENING result={await pending}");
         });
         Add("临时自动隐藏任务栏", async () =>
         {
@@ -169,14 +258,42 @@ internal static class ShellSurfacePreview
         host.Loaded += (_, _) =>
         {
             coordinator.Start();
-            status.Text = $"Windows {Environment.OSVersion.Version}\n{string.Join("\n", MonitorCatalog.GetAll().Select(m => m.Label))}\n原任务栏状态：{originalTaskbarState}";
+            status.Text = $"Windows {Environment.OSVersion.Version}\n{string.Join("\n", MonitorCatalog.GetAll().Select(m => m.Label))}\n原任务栏状态：{originalTaskbarState}；仅两角：{state.Taskbar.RevealOnlyAtCorners}";
             Console.WriteLine(status.Text);
         };
-        host.Closed += (_, _) =>
+        host.Closing += async (_, args) =>
         {
+            if (cleanupCompleted) return;
+            args.Cancel = true;
+            if (closing) return;
+            closing = true;
+            // Closing can finish synchronously when no panel is open. Resume
+            // after this event returns before issuing the second Close request.
+            await Task.Yield();
+            try
+            {
+                var before = ReadTaskbarState();
+                if (!await overflow.CloseAsync()) throw new InvalidOperationException("托盘清理尚未完成");
+                await WaitForRestore(before);
+                if (captureExitCleanup) await Capture("overflow-exit-cleaned");
+                Console.WriteLine($"EXIT-CLEANUP visible={TrayOverflowExperiment.IsVisible} state={ReadTaskbarState()}");
+                cleanupCompleted = true;
+                host.Close();
+            }
+            catch (Exception exception)
+            {
+                Console.WriteLine($"CHECK FAILED EXIT-CLEANUP: {exception}");
+                status.Text = $"退出清理失败：{exception.Message}；可恢复任务栏后重试退出";
+                closing = false;
+            }
+        };
+        host.Closed += async (_, _) =>
+        {
+            overflow.Dispose();
             taskbar.Dispose();
             coordinator.Dispose();
-            Console.WriteLine($"RESTORE taskbar={ReadTaskbarState()} original={originalTaskbarState}");
+            await Task.Delay(300);
+            Console.WriteLine($"RESTORE taskbar={ReadTaskbarState()} original={originalTaskbarState} overflow-visible={TrayOverflowExperiment.IsVisible}");
             if (ReadTaskbarState() == originalTaskbarState && !File.Exists(Path.Combine(temp, "preview-taskbar.json")))
             {
                 Directory.Delete(temp, true);

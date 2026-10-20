@@ -63,10 +63,10 @@ dotnet run --project .\src\BingLan.App\BingLan.App.csproj
 ## 安装包
 
 ```powershell
-pwsh -NoProfile -File .\installer\build.ps1 -Version 0.2.27
+pwsh -NoProfile -File .\installer\build.ps1 -Version 0.2.28
 ```
 
-生成按用户安装的 `installer\bin\BingLan-Setup-0.2.27.exe`（Inno Setup，自包含 .NET 运行时，不需要管理员权限）。安装位置、卸载行为、依赖许可证和验证状态见 [安装包](INSTALLER.md)。
+生成按用户安装的 `installer\bin\BingLan-Setup-0.2.28.exe`（Inno Setup，自包含 .NET 运行时，不需要管理员权限）。安装位置、卸载行为、依赖许可证和验证状态见 [安装包](INSTALLER.md)。v0.2.28 以预发布版提供，独立托盘验收包由 `installer/build-tray-preview.ps1` 生成；操作步骤与限制见[托盘验收说明](TRAY-PREVIEW.md)。
 
 ## 验证
 
@@ -92,6 +92,8 @@ Dock 玻璃已在 Windows 11 Build 26200、125% 缩放下检查正式 Dock 窗�
 桌面图标/文件组合整理、Pogget 行为取舍、普通便签边界和后续交付顺序见 [桌面整理盒与便签产品定义](DESKTOP-ORGANIZER-AND-NOTES.md)。
 
 ## 冰蓝 Dock 与任务栏验证
+
+原生隐藏托盘入口仍处于隔离实验阶段。`--shell-surfaces-preview` 提供连点、20 轮开合、20 次故障注入、保持与焦点切换、打开时退出及唤出中退出等手动检查；附加 `--tray-corners` 可启用仅底部两角唤出。实验按根窗口识别任务栏内部焦点，退出前等待请求结束、通过原生按钮关闭本次打开的浮层并检查任务栏收回。本机普通自动隐藏与两角模式的开合、连续失败恢复和打开后退出均已通过；其他系统版本、多屏、Explorer 重建与异常退出尚未覆盖，正式界面不提供独立托盘入口。复验步骤、观察结果和兼容范围见 [顶栏与系统入口验证](TOPBAR-QA.md)。
 
 正式 Dock 的真机结果、资源占用和已知限制见 [冰蓝 Dock 真机验证](DOCK-QA.md)；本机单屏 125% 下的点击、固定、排序、最大化、全屏、智能隐藏、Explorer 重启和强制结束恢复均已通过，多显示器与混合缩放尚未覆盖。阶段 0 隔离实验、ManagedShell 取舍和四边 AppBar 记录保留在 `design-lab/BingLan.DockSpike/README.md`。任务栏透明、模糊、自动隐藏、崩溃恢复和桌面模式的真机结果见 [Windows 任务栏适配真机验证](TASKBAR-QA.md)。清爽桌面的恢复协议与真机结果见 [清爽桌面技术设计与恢复协议](DESKTOP-CLEAN-MODE-TECHNICAL-DESIGN.md)。
 
