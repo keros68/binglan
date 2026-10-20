@@ -21,7 +21,12 @@ internal static class ShellSurfacePreview
     internal static void Run(System.Windows.Application app)
     {
         app.ShutdownMode = ShutdownMode.OnExplicitShutdown;
-        var temp = Path.Combine(Path.GetTempPath(), $"BingLan-shell-surfaces-{Guid.NewGuid():N}");
+        // One preview at a time: leftovers from a run that was killed are recovered
+        // below, which must not touch the taskbar setting of a live run.
+        using var instance = new Mutex(true, @"Local\BingLan-ShellSurfacesPreview", out var firstInstance);
+        if (!firstInstance) throw new InvalidOperationException("已有一个验收窗口在运行，请先退出它");
+        RecoverAbandonedRuns();
+        var temp = Path.Combine(Path.GetTempPath(), $"{TempPrefix}{Guid.NewGuid():N}");
         var output = Path.GetFullPath(Path.Combine("artifacts/shell-surfaces", DateTime.UtcNow.ToString("yyyyMMdd-HHmmss")));
         Directory.CreateDirectory(output);
         var store = new LocalStateStore(temp);
@@ -51,7 +56,10 @@ internal static class ShellSurfacePreview
         var closing = false;
         var cleanupCompleted = false;
         var captureExitCleanup = false;
-        using var overflow = new TrayOverflowExperiment();
+        var pendingExits = 0;
+        var slowUia = Environment.GetCommandLineArgs().Select(arg => arg.StartsWith(SlowUiaArg, StringComparison.Ordinal)
+            && int.TryParse(arg[SlowUiaArg.Length..], out var delay) ? delay : 0).Max();
+        using var overflow = new TrayOverflowExperiment(slowUia);
 
         async Task Capture(string name)
         {
@@ -184,7 +192,7 @@ internal static class ShellSurfacePreview
                 if (repeated != "already-open" || !TrayOverflowExperiment.IsVisible)
                     throw new InvalidOperationException($"第 {cycle} 次重复唤出失败");
                 if (cycle % 2 == 0) host.Activate();
-                else if (!await Task.Run(TrayOverflowExperiment.InvokeButton))
+                else if (!await overflow.CloseOwnedPanelAsync())
                     throw new InvalidOperationException($"第 {cycle} 次关闭失败");
                 await WaitForRestore(before);
                 Console.WriteLine($"CYCLE {cycle}/20 opened=True repeated={repeated} close={(cycle % 2 == 0 ? "focus-away" : "native-button")} restored=True state={ReadTaskbarState()}");
@@ -247,7 +255,7 @@ internal static class ShellSurfacePreview
             mode = "autohide";
             status.Text = $"任务栏状态：{ReadTaskbarState()}；关闭验收窗口时恢复原状态";
         });
-        Add("恢复任务栏", async () =>
+        Add("恢复启动前任务栏设置", async () =>
         {
             await taskbar.ApplyAsync(TaskbarMode.SystemDefault);
             mode = "visible";
@@ -258,7 +266,8 @@ internal static class ShellSurfacePreview
         host.Loaded += (_, _) =>
         {
             coordinator.Start();
-            status.Text = $"Windows {Environment.OSVersion.Version}\n{string.Join("\n", MonitorCatalog.GetAll().Select(m => m.Label))}\n原任务栏状态：{originalTaskbarState}；仅两角：{state.Taskbar.RevealOnlyAtCorners}";
+            status.Text = $"Windows {Environment.OSVersion.Version}\n{string.Join("\n", MonitorCatalog.GetAll().Select(m => m.Label))}\n原任务栏状态：{originalTaskbarState}；仅两角：{state.Taskbar.RevealOnlyAtCorners}"
+                + (slowUia > 0 ? $"；UIA 调用延迟：{slowUia} ms" : "");
             Console.WriteLine(status.Text);
         };
         host.Closing += async (_, args) =>
@@ -273,7 +282,22 @@ internal static class ShellSurfacePreview
             try
             {
                 var before = ReadTaskbarState();
-                if (!await overflow.CloseAsync()) throw new InvalidOperationException("托盘清理尚未完成");
+                var result = await overflow.CloseAsync();
+                if (result != "closed")
+                {
+                    // A UIA call that never returns cannot be aborted. After two such
+                    // exits the next one gives up waiting and says so in the log.
+                    if (result.EndsWith("-pending", StringComparison.Ordinal) && ++pendingExits > 2)
+                    {
+                        Console.WriteLine($"EXIT-ABANDONED reason={result} visible={TrayOverflowExperiment.IsVisible}");
+                        cleanupCompleted = true;
+                        host.Close();
+                        return;
+                    }
+                    throw new InvalidOperationException(pendingExits == 2
+                        ? $"托盘清理未完成（{result}），原生调用仍未返回；再次退出将放弃等待，请随后检查托盘浮层"
+                        : $"托盘清理未完成（{result}）");
+                }
                 await WaitForRestore(before);
                 if (captureExitCleanup) await Capture("overflow-exit-cleaned");
                 Console.WriteLine($"EXIT-CLEANUP visible={TrayOverflowExperiment.IsVisible} state={ReadTaskbarState()}");
@@ -301,6 +325,34 @@ internal static class ShellSurfacePreview
             app.Shutdown();
         };
         app.Run(host);
+    }
+
+    private const string TempPrefix = "BingLan-shell-surfaces-";
+    private const string SlowUiaArg = "--tray-slow-uia=";
+
+    /// <summary>
+    /// Restores the taskbar setting left by a run that was killed or crashed, before
+    /// this run records the "original" state. Each run keeps its checkpoint in its
+    /// own temporary directory.
+    /// </summary>
+    private static void RecoverAbandonedRuns()
+    {
+        var tempRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(Path.GetTempPath()));
+        foreach (var directory in Directory.EnumerateDirectories(tempRoot, TempPrefix + "*"))
+        {
+            var fullPath = Path.GetFullPath(directory);
+            if (!string.Equals(Path.GetDirectoryName(fullPath), tempRoot, StringComparison.OrdinalIgnoreCase)
+                || !Guid.TryParseExact(Path.GetFileName(fullPath)[TempPrefix.Length..], "N", out _)
+                || (File.GetAttributes(fullPath) & FileAttributes.ReparsePoint) != 0) continue;
+            var checkpoint = Path.Combine(directory, "preview-taskbar.json");
+            var hadCheckpoint = File.Exists(checkpoint);
+            if (!TaskbarAdapter.RecoverFromCheckpoint(checkpoint))
+                throw new InvalidOperationException(
+                    $"上次验收异常结束后未能恢复任务栏设置，请在 Windows 设置中检查“自动隐藏任务栏”后重试（{directory}）");
+            if (hadCheckpoint) Console.WriteLine($"RECOVERED previous-run={directory} taskbar={ReadTaskbarState()}");
+            try { Directory.Delete(directory, true); }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
+        }
     }
 
     private static int ReadTaskbarState()

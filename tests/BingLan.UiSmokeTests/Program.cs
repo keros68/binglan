@@ -144,6 +144,7 @@ internal static class Program
         Run("桌面模式同时设置 Dock 与任务栏", TestDesktopModeSelection, failures);
         Run("Dock 距底高度与最大化让出设置即时生效", TestDockPlacementSettings, failures);
         Run("系统入口选择与 Dock 开始菜单开关", () => ShellSurfaceTests.Run(ShowAndPump, Pump), failures);
+        Run("托盘实验未返回调用与迟到会话", TrayOverflowExperimentTests.Run, failures);
         Run("待办按 Enter 提交后文字写入状态", TestTodoEnterCommitsText, failures);
         Run("待办勾选后各行仍可被辅助技术访问", TestTodoRowsStayAccessible, failures);
         Run("托盘隐藏与显示桌面组件", TestTrayToggleDesktop, failures);
