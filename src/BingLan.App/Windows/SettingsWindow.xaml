@@ -1551,10 +1551,10 @@
                     <local:SettingsGroup>
                         <local:SettingsRow Glyph="&#xE7C4;"
                                            GlyphBrush="{DynamicResource SettingsIconIndigoBrush}"
-                                           Header="只在屏幕左下角或右下角唤出"
-                                           Description="任务栏自动隐藏时生效（包括在 Windows 设置里开启的）：碰到底边中间不弹出，移到底边左右两端才弹出；全屏应用运行时暂停">
+                                           Header="鼠标仅从底部两角唤出"
+                                           Description="任务栏自动隐藏时，鼠标碰到底边中间不弹出，移到底边左右两端才弹出；打开开始菜单等系统面板时，Windows 仍可能显示任务栏。全屏时暂停">
                             <CheckBox x:Name="RevealOnlyAtCornersCheckBox"
-                                      AutomationProperties.Name="只在屏幕左下角或右下角唤出任务栏"
+                                      AutomationProperties.Name="鼠标仅从底部两角唤出任务栏"
                                       Style="{StaticResource ToggleSwitchStyle}"
                                       Click="RevealOnlyAtCorners_Click"/>
                         </local:SettingsRow>

@@ -1,10 +1,12 @@
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Automation.Peers;
 using System.Windows.Controls;
 using BingLan.App.Services;
+using BingLan.App.Interop;
 using BingLan.App.Windows;
 using BingLan.Core.Dock;
 using BingLan.Core.Models;
@@ -16,6 +18,22 @@ internal static class ShellSurfaceTests
 {
     internal static void Run(Action<Window> show, Action pump)
     {
+        var input = typeof(ShellSurfaceNativeMethods).GetNestedType("Input", BindingFlags.NonPublic)!;
+        Assert(Marshal.SizeOf(input) == (Environment.Is64BitProcess ? 40 : 28),
+            "原生快捷键 INPUT 必须保留完整联合体尺寸");
+        Assert(ShellSurfaceService.IsQuickSettingsSurface("ControlCenterRegion", "NamedContainerAutomationPeer", "ShellHost"),
+            "应识别新版 Shell 的实际快速设置区域");
+        Assert(ShellSurfaceService.IsQuickSettingsSurface("", "ControlCenterWindow", "ShellExperienceHost"),
+            "应识别快速设置宿主窗口");
+        Assert(!ShellSurfaceService.IsQuickSettingsSurface("ControlCenterRegion", "", "Example"),
+            "第三方窗口不能当作系统面板打开成功");
+        Assert(!ShellSurfaceService.IsQuickSettingsSurface("", "Windows.UI.Core.CoreWindow", "ShellHost"),
+            "其他系统面板不能当作快速设置");
+        Assert(ShellSurfaceNativeMethods.IsSystemMenu("Shell_TrayWnd", "explorer"), "原生任务栏菜单应让 Dock 让开");
+        Assert(ShellSurfaceNativeMethods.IsSystemMenu("Xaml_WindowedPopupClass", "explorer"), "原生快捷菜单应让 Dock 让开");
+        Assert(ShellSurfaceNativeMethods.IsSystemMenu("Windows.UI.Core.CoreWindow", "StartMenuExperienceHost"), "开始菜单应让 Dock 让开");
+        Assert(!ShellSurfaceNativeMethods.IsSystemMenu("Windows.UI.Core.CoreWindow", "Example"), "普通应用不能当作系统菜单");
+        Assert(!ShellSurfaceNativeMethods.IsSystemMenu("Progman", "explorer"), "桌面不能触发系统菜单避让");
         Assert(ShellSurfaceService.IsQuickSettingsButton("SystemTrayIcon", "SystemTray.OmniButton", "Volume: 50%"),
             "快速设置入口应不依赖中文名称");
         Assert(ShellSurfaceService.IsQuickSettingsButton("SystemTrayIcon", "SystemTray.OmniButtonCenter", "音量 50%"),
@@ -39,6 +57,14 @@ internal static class ShellSurfaceTests
         try
         {
             var flags = BindingFlags.Instance | BindingFlags.NonPublic;
+            var yieldToMenu = typeof(IceBlueDockWindow).GetMethod("YieldToSystemMenu", flags)!;
+            var showDock = typeof(IceBlueDockWindow).GetMethod("ShowDock", flags)!;
+            Assert((bool)yieldToMenu.Invoke(dock, new object[] { true })! && !dock.IsVisible,
+                "系统菜单打开时 Dock 应立即收起");
+            showDock.Invoke(dock, new object[] { false });
+            Assert(!dock.IsVisible, "系统菜单打开时其他显示请求不能覆盖菜单");
+            Assert(!(bool)yieldToMenu.Invoke(dock, new object[] { false })! && dock.IsVisible,
+                "系统菜单关闭后应恢复原本显示的 Dock");
             var apply = typeof(IceBlueDockWindow).GetMethod("ApplyItems", flags)!;
             var length = typeof(IceBlueDockWindow).GetMethod("ContentLengthDip", flags)!;
             var panel = (StackPanel)dock.FindName("ItemPanel");

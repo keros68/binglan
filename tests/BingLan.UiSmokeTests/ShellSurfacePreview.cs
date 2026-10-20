@@ -47,18 +47,43 @@ internal static class ShellSurfacePreview
 
         async Task Capture(string name)
         {
-            await Task.Delay(900);
+            await Task.Delay(2000);
             var screen = System.Windows.Forms.Screen.PrimaryScreen!.Bounds;
-            var width = Math.Min(name == "start" ? 1200 : 900, screen.Width);
+            var centered = name is "start" or "quicklink";
+            var width = Math.Min(centered ? 1200 : 900, screen.Width);
             var height = Math.Min(850, screen.Height);
             using var bitmap = new System.Drawing.Bitmap(width, height);
             using var graphics = System.Drawing.Graphics.FromImage(bitmap);
-            var left = name == "start" ? screen.Left + (screen.Width - width) / 2 : screen.Right - width;
+            var left = centered ? screen.Left + (screen.Width - width) / 2 : screen.Right - width;
             graphics.CopyFromScreen(left, screen.Bottom - height, 0, 0, bitmap.Size);
             var path = Path.Combine(output, $"{++captures:00}-{mode}-{name}.png");
             bitmap.Save(path);
             status.Text = $"已保存 {path}\n任务栏状态：{ReadTaskbarState()}；原状态：{originalTaskbarState}";
             Console.WriteLine($"CAPTURE {path}");
+            TaskbarNativeMethods.EnumWindows((handle, _) =>
+            {
+                if (!DockNativeMethods.IsWindowVisible(handle)) return true;
+                var className = new System.Text.StringBuilder(256);
+                DockNativeMethods.GetClassNameW(handle, className, className.Capacity);
+                if (className.ToString() is "ControlCenterWindow" or "TopLevelWindowForOverflowXamlIsland"
+                    or "Xaml_WindowedPopupClass" or "Shell_TrayWnd")
+                {
+                    var title = new System.Text.StringBuilder(256);
+                    DockNativeMethods.GetWindowTextW(handle, title, title.Capacity);
+                    DockNativeMethods.GetWindowRect(handle, out var rect);
+                    Console.WriteLine($"NATIVE class={className} title={title} rect={rect.Left},{rect.Top},{rect.Right},{rect.Bottom}");
+                }
+                return true;
+            }, 0);
+            await Task.Run(() =>
+            {
+                var element = AutomationElement.FocusedElement;
+                for (var depth = 0; element is not null && depth < 12; depth++)
+                {
+                    Console.WriteLine($"FOCUS id={element.Current.AutomationId} class={element.Current.ClassName} offscreen={element.Current.IsOffscreen} process={element.Current.ProcessId}");
+                    element = TreeWalker.RawViewWalker.GetParent(element);
+                }
+            });
         }
 
         void Add(string title, Func<Task> action)
@@ -84,8 +109,26 @@ internal static class ShellSurfacePreview
             FindButton(dock, "打开 Windows 开始菜单").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             await Capture("start");
         });
+        Add("开始右键", async () =>
+        {
+            var dock = app.Windows.OfType<IceBlueDockWindow>().Single();
+            var args = new System.Windows.Input.MouseButtonEventArgs(System.Windows.Input.Mouse.PrimaryDevice,
+                Environment.TickCount, System.Windows.Input.MouseButton.Right)
+                { RoutedEvent = UIElement.MouseRightButtonUpEvent };
+            FindButton(dock, "打开 Windows 开始菜单").RaiseEvent(args);
+            Console.WriteLine($"QUICKLINK handled={args.Handled}");
+            await Capture("quicklink");
+        });
+        Add("原生快速设置实验", async () =>
+        {
+            Console.WriteLine($"QUICKSETTINGS shortcut={ShellSurfaceNativeMethods.OpenQuickSettings()}");
+            await Capture("quicksettings");
+        });
         Add("原生托盘实验", async () =>
         {
+            var before = ReadTaskbarState();
+            Console.WriteLine($"OVERFLOW focus={ShellSurfaceNativeMethods.SendChord(0x5B, 0x42)} state={before}");
+            await Task.Delay(600);
             var opened = await Task.Run(() =>
             {
                 var tray = AutomationElement.RootElement.FindFirst(TreeScope.Children,
@@ -121,6 +164,7 @@ internal static class ShellSurfacePreview
             mode = "visible";
             status.Text = $"任务栏状态：{ReadTaskbarState()}；原状态：{originalTaskbarState}";
         });
+        Add("检查收回", async () => await Capture("dismissed"));
         Add("退出验收", () => { host.Close(); return Task.CompletedTask; });
         host.Loaded += (_, _) =>
         {

@@ -10,11 +10,52 @@ namespace BingLan.App.Services;
 internal static class ShellSurfaceService
 {
     private static int _openingTray;
+    private static int _openingQuickLink;
 
     internal static bool OpenStartMenu() => ShellSurfaceNativeMethods.OpenStartMenu();
 
-    internal static Task<bool> OpenQuickSettingsAsync(string fallbackUri) =>
-        OpenTraySurfaceAsync(IsQuickSettingsButton, fallbackUri);
+    internal static async Task<bool> OpenQuickLinkMenuAsync()
+    {
+        if (Interlocked.CompareExchange(ref _openingQuickLink, 1, 0) != 0) return true;
+        try
+        {
+            // Shift+F10 can still be held when WPF raises the context-menu request.
+            for (var attempt = 0; attempt < 10 && ShellSurfaceNativeMethods.HasHeldModifier(); attempt++)
+            {
+                await Task.Delay(50);
+            }
+            return ShellSurfaceNativeMethods.OpenQuickLinkMenu();
+        }
+        finally
+        {
+            Volatile.Write(ref _openingQuickLink, 0);
+        }
+    }
+
+    internal static async Task<bool> OpenQuickSettingsAsync(string fallbackUri)
+    {
+        if (!OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000))
+        {
+            return await OpenTraySurfaceAsync(IsQuickSettingsButton, fallbackUri);
+        }
+        if (Interlocked.CompareExchange(ref _openingTray, 1, 0) != 0) return true;
+        try
+        {
+            return await Task.Run(async () =>
+            {
+                if (IsQuickSettingsFocused()) return true;
+                // Win+A works even when auto-hide removes the taskbar's UIA buttons.
+                // Input acceptance alone is not proof that the panel opened.
+                if (ShellSurfaceNativeMethods.OpenQuickSettings() && await WaitForQuickSettingsAsync()) return true;
+                if (TryInvokeTrayButton(IsQuickSettingsButton) && await WaitForQuickSettingsAsync()) return true;
+                return OpenSettings(fallbackUri);
+            });
+        }
+        finally
+        {
+            Volatile.Write(ref _openingTray, 0);
+        }
+    }
 
     internal static Task<bool> OpenInputMethodAsync() =>
         OpenTraySurfaceAsync(IsInputMethodButton, "ms-settings:keyboard");
@@ -30,6 +71,45 @@ internal static class ShellSurfaceService
     // Chinese/English instead of opening the layout picker. Do not infer from its name.
     internal static bool IsInputMethodButton(string id, string className, string name) =>
         id == "InputIndicatorButton";
+
+    internal static bool IsQuickSettingsSurface(string id, string className, string processName) =>
+        (id == "ControlCenterRegion" || className == "ControlCenterWindow")
+        && processName is "ShellHost" or "ShellExperienceHost";
+
+    private static async Task<bool> WaitForQuickSettingsAsync()
+    {
+        // Bound this user-triggered check; no resident polling or cached Shell objects.
+        for (var attempt = 0; attempt < 15; attempt++)
+        {
+            await Task.Delay(100);
+            if (IsQuickSettingsFocused()) return true;
+        }
+        return false;
+    }
+
+    private static bool IsQuickSettingsFocused()
+    {
+        try
+        {
+            var element = AutomationElement.FocusedElement;
+            for (var depth = 0; element is not null && depth < 12; depth++)
+            {
+                var current = element.Current;
+                if (current.AutomationId == "ControlCenterRegion" || current.ClassName == "ControlCenterWindow")
+                {
+                    using var process = Process.GetProcessById(current.ProcessId);
+                    return !current.IsOffscreen && IsQuickSettingsSurface(current.AutomationId, current.ClassName, process.ProcessName);
+                }
+                element = TreeWalker.RawViewWalker.GetParent(element);
+            }
+        }
+        catch (Exception exception) when (exception is ElementNotAvailableException
+            or InvalidOperationException or COMException or ArgumentException or Win32Exception)
+        {
+            Debug.WriteLine($"快速设置状态不可用：{exception.Message}");
+        }
+        return false;
+    }
 
     private static async Task<bool> OpenTraySurfaceAsync(
         Func<string, string, string, bool> matches, string fallbackUri)

@@ -60,6 +60,7 @@ public partial class IceBlueDockWindow : Window
     private bool _refreshRunning;
     private bool _refreshQueued;
     private bool _menuOpen;
+    private bool _suppressedBySystemMenu;
     private bool _hiddenBySmartHide;
     private bool _refreshPending;
     private bool _reservationFailureReported;
@@ -458,11 +459,11 @@ public partial class IceBlueDockWindow : Window
             Width = _state.IconSize + 16,
             Height = _state.IconSize + 16,
             Style = (Style)Resources["DockItemButtonStyle"],
-            ToolTip = "打开 Windows 开始菜单",
+            ToolTip = "打开 Windows 开始菜单；右键打开系统快捷菜单",
             Focusable = true
         };
         AutomationProperties.SetName(button, "打开 Windows 开始菜单");
-        AutomationProperties.SetHelpText(button, "打开原生 Windows 开始菜单");
+        AutomationProperties.SetHelpText(button, "单击打开 Windows 开始菜单；右键或按菜单键、Shift+F10 打开系统快捷菜单");
         button.Click += (_, _) =>
         {
             if (!ShellSurfaceService.OpenStartMenu())
@@ -470,8 +471,29 @@ public partial class IceBlueDockWindow : Window
                 CommandFailed?.Invoke("无法打开 Windows 开始菜单，请稍后重试。");
             }
         };
+        button.MouseRightButtonUp += async (_, e) =>
+        {
+            e.Handled = true;
+            await OpenQuickLinkMenuAsync();
+        };
+        button.PreviewKeyDown += async (_, e) =>
+        {
+            if (e.Key == Key.Apps || (e.Key == Key.F10 && Keyboard.Modifiers == ModifierKeys.Shift))
+            {
+                e.Handled = true;
+                if (!e.IsRepeat) await OpenQuickLinkMenuAsync();
+            }
+        };
         AddHoverZoom(button, glyph);
         return button;
+    }
+
+    private async Task OpenQuickLinkMenuAsync()
+    {
+        if (!await ShellSurfaceService.OpenQuickLinkMenuAsync())
+        {
+            CommandFailed?.Invoke("无法打开 Windows 系统快捷菜单，请稍后重试。");
+        }
     }
 
     private string DisplayNameOf(DockItem item) =>
@@ -973,6 +995,10 @@ public partial class IceBlueDockWindow : Window
             return;
         }
 
+        // Native menus own this interaction. The taskbar foreground window has no
+        // useful menu bounds, so overlap detection alone would reveal the Dock over it.
+        if (YieldToSystemMenu(ShellSurfaceNativeMethods.IsSystemMenuForeground())) return;
+
         var bounds = _appBar.Bounds;
         var foreground = ForegroundWindowRect(out var foregroundBounds, out var foregroundWindow);
         var fullScreen = foreground
@@ -1109,9 +1135,28 @@ public partial class IceBlueDockWindow : Window
         SyncHandle();
     }
 
+    private bool YieldToSystemMenu(bool active)
+    {
+        if (active)
+        {
+            _suppressedBySystemMenu = true;
+            _foregroundTimer.Interval = SmartHideCheckInterval;
+            if (IsVisible) CompleteSmartHideImmediately();
+            _handleWindow?.SetVisible(false);
+            return true;
+        }
+        if (_suppressedBySystemMenu)
+        {
+            _suppressedBySystemMenu = false;
+            if (!UsesSmartHide || _autoHide.IsShown) ShowDock();
+            SyncHandle();
+        }
+        return false;
+    }
+
     private void ShowDock(bool fromHandle = false)
     {
-        if (_closing)
+        if (_closing || _suppressedBySystemMenu)
         {
             return;
         }
@@ -1275,7 +1320,7 @@ public partial class IceBlueDockWindow : Window
         }
 
         _handleWindow.SetVisible(
-            !_trueFullScreenForeground
+            !_trueFullScreenForeground && !_suppressedBySystemMenu
             && (_hiddenBySmartHide || _handleExpanded || _handleWindow.IsDragActive));
     }
 
