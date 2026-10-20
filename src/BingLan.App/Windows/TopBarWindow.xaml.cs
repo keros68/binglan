@@ -163,6 +163,7 @@ public sealed partial class TopBarWindow : Window
     private readonly DispatcherTimer _searchDebounce;
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, ImageSource?> _searchIconCache = new(StringComparer.OrdinalIgnoreCase);
     private IReadOnlyList<TopBarSearchCandidate> _searchCandidates = [];
+    private bool _searchSourcesLoaded;
     private List<TopBarSearchCandidate> _searchResults = [];
     private readonly List<Border> _searchRowBorders = [];
     private int _searchSelected;
@@ -2564,6 +2565,7 @@ public sealed partial class TopBarWindow : Window
                     return;
                 }
                 _searchCandidates = candidates;
+                _searchSourcesLoaded = true;
                 // The first keystrokes may have run against an empty list; re-rank once
                 // the sources arrive.
                 if (_searchActive && !string.IsNullOrWhiteSpace(_searchBox?.Text))
@@ -2676,6 +2678,14 @@ public sealed partial class TopBarWindow : Window
     internal int SearchSelectedIndex => _searchSelected;
 
     internal bool SearchSessionActive => _searchActive;
+
+    /// <summary>Test seam: the background candidate load has been published to the bar.
+    /// <see cref="ITopBarEnvironment.ReadSearchCandidates"/> returning does not yet mean
+    /// the bar can search against it.</summary>
+    internal bool SearchSourcesLoaded => _searchSourcesLoaded;
+
+    /// <summary>Test seam: an IME composition is suspending search updates.</summary>
+    internal bool SearchSuspendedForComposition => _searchComposing;
     internal SearchWindow? FloatingSearchWindow => _searchWindow;
 
     /// <summary>
