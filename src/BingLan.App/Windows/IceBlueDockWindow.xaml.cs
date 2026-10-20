@@ -464,9 +464,9 @@ public partial class IceBlueDockWindow : Window
         };
         AutomationProperties.SetName(button, "打开 Windows 开始菜单");
         AutomationProperties.SetHelpText(button, "单击打开 Windows 开始菜单；右键或按菜单键、Shift+F10 打开系统快捷菜单");
-        button.Click += (_, _) =>
+        button.Click += async (_, _) =>
         {
-            if (!ShellSurfaceService.OpenStartMenu())
+            if (!await ShellSurfaceService.OpenStartMenuAsync())
             {
                 CommandFailed?.Invoke("无法打开 Windows 开始菜单，请稍后重试。");
             }
@@ -490,9 +490,14 @@ public partial class IceBlueDockWindow : Window
 
     private async Task OpenQuickLinkMenuAsync()
     {
-        if (!await ShellSurfaceService.OpenQuickLinkMenuAsync())
+        switch (await ShellSurfaceService.OpenQuickLinkMenuAsync())
         {
-            CommandFailed?.Invoke("无法打开 Windows 系统快捷菜单，请稍后重试。");
+            case ShellSurfaceResult.ElevatedForeground:
+                CommandFailed?.Invoke("当前前台是管理员程序，Windows 不允许向它发送快捷键。请先切换到其他窗口再试。");
+                break;
+            case ShellSurfaceResult.Failed:
+                CommandFailed?.Invoke("无法打开 Windows 系统快捷菜单，请稍后重试。");
+                break;
         }
     }
 

@@ -6,6 +6,7 @@ using System.Windows.Automation;
 using System.Windows.Automation.Peers;
 using System.Windows.Controls;
 using BingLan.App.Services;
+using BingLan.App.Taskbar;
 using BingLan.App.Interop;
 using BingLan.App.Windows;
 using BingLan.Core.Dock;
@@ -52,6 +53,10 @@ internal static class ShellSurfaceTests
             "中英文模式图标不能当成输入法选择器");
         Assert(!ShellSurfaceService.IsInputMethodButton("NotifyItemIcon", "SystemTray.NormalButton", "任务栏输入指示工具"),
             "输入法入口不能匹配应用托盘图标");
+        TestOverflowChevron();
+        Assert(TaskbarCornerReveal.IsTaskbarClass("Shell_TrayWnd") && TaskbarCornerReveal.IsTaskbarClass("Shell_SecondaryTrayWnd"),
+            "主副屏任务栏移动时都应立即复位两角细条");
+        Assert(!TaskbarCornerReveal.IsTaskbarClass("CabinetWClass"), "资源管理器窗口移动不能触发细条复位");
 
         var state = new DockState { IsEnabled = true, VisibilityMode = DockVisibilityMode.SmartHide };
         var dock = new IceBlueDockWindow(state);
@@ -104,6 +109,33 @@ internal static class ShellSurfaceTests
         var theme = ThemeRules.Export(appState, "系统入口验证", new ThemeArea(0, 0, 1920, 1080), new Version(0, 2, 25));
         Assert(!JsonSerializer.Serialize(theme).Contains("ShowStartMenuButton", StringComparison.Ordinal),
             "本机开始菜单开关不能进入主题包");
+    }
+
+    private static void TestOverflowChevron()
+    {
+        static TrayOverflowController.TrayButtonInfo Chevron(string name, double left) =>
+            new("SystemTrayIcon", "SystemTray.NormalButton", name, left, left + 24);
+        static TrayOverflowController.TrayButtonInfo Pinned(double left) =>
+            new("NotifyItemIcon", "SystemTray.NormalButton", "应用", left, left + 24);
+        static TrayOverflowController.TrayButtonInfo Ime(double left) =>
+            new("SystemTrayIcon", "SystemTray.NormalButton", "IME", left, left + 24);
+        static TrayOverflowController.TrayButtonInfo Omni(double left) =>
+            new("SystemTrayIcon", "SystemTray.OmniButton", "Network", left, left + 80);
+        int Find(TrayOverflowController.TrayButtonInfo[] buttons, int focused, int remembered = -1) =>
+            TrayOverflowController.FindOverflowChevron(buttons, focused, remembered, out _);
+
+        Assert(Find([Pinned(100), Chevron("Show hidden icons", 60)], -1) == 1, "已验证名称应直接匹配");
+        Assert(Find([Chevron("显示隐藏的图标", 60)], -1) == 0, "中文名称无需固定图标也能匹配");
+        TrayOverflowController.TrayButtonInfo[] german = [Chevron("Ausgeblendete Symbole einblenden", 60), Pinned(100), Pinned(124), Ime(160), Omni(200)];
+        Assert(Find(german, 0) == 0, "其他语言下 Win+B 聚焦的首个箭头应可调用");
+        Assert(Find(german, 3) == -1, "焦点在输入法模式按钮上时不能调用");
+        Assert(Find(german, -1) == -1, "没有焦点证据时不能按位置猜测");
+        Assert(Find([Chevron("Afficher", 60), Ime(160), Omni(200)], 0) == -1, "没有固定图标时无法区分箭头与输入法按钮，应失败");
+        Assert(Find([Pinned(100), Ime(160), Omni(200)], 1) == -1, "没有箭头时不能把输入法按钮当成箭头");
+        Assert(Find([Chevron("رموز", 300), Pinned(200), Pinned(176)], 0) == 0, "从右到左的任务栏应同样识别");
+        Assert(Find([Chevron("x", 110), Pinned(100)], 0) == -1, "与固定图标重叠的按钮不能当作箭头");
+        Assert(Find(german, -1, remembered: 0) == 0, "关闭时应复用本次已调用的箭头");
+        Assert(Find(german, -1, remembered: 4) == -1, "记录的元素若已不是普通托盘按钮则不能调用");
     }
 
     private static void Assert(bool condition, string message)

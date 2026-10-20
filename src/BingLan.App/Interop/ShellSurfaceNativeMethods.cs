@@ -12,6 +12,11 @@ internal static class ShellSurfaceNativeMethods
     private const ushort ControlKey = 0x11;
     private const ushort EscapeKey = 0x1B;
     private const ushort WindowsKey = 0x5B;
+    private const nint ScTaskList = 0xF130;
+    private const uint TokenQuery = 0x0008;
+    private const int TokenElevationClass = 20;
+    private const int ErrorAccessDenied = 5;
+    private const string QuickSettingsClass = "ControlCenterWindow";
 
     [StructLayout(LayoutKind.Sequential)]
     private struct Input
@@ -51,11 +56,34 @@ internal static class ShellSurfaceNativeMethods
     [DllImport("user32.dll")]
     private static extern short GetAsyncKeyState(int key);
 
+    [DllImport("advapi32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool OpenProcessToken(nint process, uint desiredAccess, out nint token);
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetTokenInformation(
+        nint token, int informationClass, out int information, int informationLength, out int returnLength);
+
     internal static bool OpenStartMenu() => SendChord(ControlKey, EscapeKey);
+
+    /// <summary>
+    /// Asks Explorer itself to open Start (WM_SYSCOMMAND/SC_TASKLIST). Unlike injected
+    /// keys this is not affected by held modifiers or by UIPI when an elevated window is
+    /// in front: the message goes to Explorer, which runs at the same integrity level.
+    /// </summary>
+    internal static bool PostStartMenuCommand()
+    {
+        var tray = TaskbarNativeMethods.FindWindowW("Shell_TrayWnd", null);
+        return tray != 0 && DockNativeMethods.PostMessageW(tray, DockNativeMethods.WmSysCommand, ScTaskList, 0);
+    }
 
     internal static bool OpenQuickLinkMenu() => SendChord(WindowsKey, 0x58);
 
     internal static bool OpenQuickSettings() => SendChord(WindowsKey, 0x41);
+
+    /// <summary>Closes the quick settings panel only while it holds the foreground.</summary>
+    internal static bool CloseQuickSettings() => IsQuickSettingsForeground() && SendKey(EscapeKey);
 
     internal static bool HasHeldModifier() =>
         new[] { 0x10, 0x11, 0x12, 0x5B, 0x5C }.Any(key => (GetAsyncKeyState(key) & 0x8000) != 0);
@@ -63,20 +91,101 @@ internal static class ShellSurfaceNativeMethods
     internal static bool IsSystemMenuForeground()
     {
         var window = DockNativeMethods.GetForegroundWindow();
-        var className = new StringBuilder(128);
-        DockNativeMethods.GetClassNameW(window, className, className.Capacity);
-        var name = className.ToString();
+        var name = ClassNameOf(window);
         if (name is not ("Shell_TrayWnd" or "Shell_SecondaryTrayWnd" or "Xaml_WindowedPopupClass"
             or "Windows.UI.Core.CoreWindow" or "ControlCenterWindow" or "TopLevelWindowForOverflowXamlIsland")) return false;
+        return ProcessNameOf(window) is { } processName && IsSystemMenu(name, processName);
+    }
+
+    internal static bool IsStartMenuForeground()
+    {
+        var window = DockNativeMethods.GetForegroundWindow();
+        return ClassNameOf(window) == "Windows.UI.Core.CoreWindow"
+            && ProcessNameOf(window) == "StartMenuExperienceHost";
+    }
+
+    internal static bool IsQuickSettingsForeground()
+    {
+        var window = DockNativeMethods.GetForegroundWindow();
+        return ClassNameOf(window) == QuickSettingsClass && IsQuickSettingsProcess(ProcessNameOf(window));
+    }
+
+    /// <summary>
+    /// Whether a quick settings host window is shown. ShellHost keeps the window while the
+    /// panel is closed, so a cloaked or empty window does not count.
+    /// </summary>
+    internal static bool IsQuickSettingsVisible()
+    {
+        var found = false;
+        DockNativeMethods.EnumWindows((window, _) =>
+        {
+            if (!DockNativeMethods.IsWindowVisible(window) || ClassNameOf(window) != QuickSettingsClass
+                || NativeMethods.IsWindowCloaked(window)
+                || !DockNativeMethods.GetWindowRect(window, out var rect)
+                || rect.Right <= rect.Left || rect.Bottom <= rect.Top) return true;
+            found = IsQuickSettingsProcess(ProcessNameOf(window));
+            return !found;
+        }, 0);
+        return found;
+    }
+
+    private static bool IsQuickSettingsProcess(string? processName) =>
+        processName is "ShellHost" or "ShellExperienceHost";
+
+    /// <summary>
+    /// UIPI silently drops input injected toward a higher-integrity foreground window
+    /// (Task Manager, apps run as administrator) while SendInput still reports success.
+    /// An elevated BingLan is not affected.
+    /// </summary>
+    internal static bool IsForegroundElevated()
+    {
+        if (Environment.IsPrivilegedProcess) return false;
+        var window = DockNativeMethods.GetForegroundWindow();
+        if (window == 0) return false;
+        DockNativeMethods.GetWindowThreadProcessId(window, out var processId);
+        if (processId == 0 || processId == (uint)Environment.ProcessId) return false;
+        var process = DockNativeMethods.OpenProcess(DockNativeMethods.ProcessQueryLimitedInformation, false, processId);
+        if (process == 0) return false;
+        try
+        {
+            if (!OpenProcessToken(process, TokenQuery, out var token))
+            {
+                // The token of a higher-integrity process may refuse the query itself.
+                return Marshal.GetLastWin32Error() == ErrorAccessDenied;
+            }
+            try
+            {
+                return GetTokenInformation(token, TokenElevationClass, out var elevated, sizeof(int), out _) && elevated != 0;
+            }
+            finally
+            {
+                DockNativeMethods.CloseHandle(token);
+            }
+        }
+        finally
+        {
+            DockNativeMethods.CloseHandle(process);
+        }
+    }
+
+    private static string ClassNameOf(nint window)
+    {
+        var className = new StringBuilder(128);
+        DockNativeMethods.GetClassNameW(window, className, className.Capacity);
+        return className.ToString();
+    }
+
+    private static string? ProcessNameOf(nint window)
+    {
         try
         {
             DockNativeMethods.GetWindowThreadProcessId(window, out var processId);
             using var process = Process.GetProcessById((int)processId);
-            return IsSystemMenu(name, process.ProcessName);
+            return process.ProcessName;
         }
         catch (Exception exception) when (exception is ArgumentException or InvalidOperationException or Win32Exception)
         {
-            return false;
+            return null;
         }
     }
 
@@ -105,6 +214,18 @@ internal static class ShellSurfaceNativeMethods
             var releases = new[] { Key(key, true), Key(modifier, true) };
             _ = SendInput((uint)releases.Length, releases, Marshal.SizeOf<Input>());
         }
+        if (sent != inputs.Length) Debug.WriteLine($"SendInput 未完整发送：{sent}/{inputs.Length} error={Marshal.GetLastWin32Error()}");
         return sent == inputs.Length;
+    }
+
+    private static bool SendKey(ushort key)
+    {
+        if (HasHeldModifier()) return false;
+        var inputs = new[]
+        {
+            new Input { Type = InputKeyboard, Data = new InputData { Keyboard = new KeyboardInput { VirtualKey = key } } },
+            new Input { Type = InputKeyboard, Data = new InputData { Keyboard = new KeyboardInput { VirtualKey = key, Flags = KeyUp } } }
+        };
+        return SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<Input>()) == inputs.Length;
     }
 }

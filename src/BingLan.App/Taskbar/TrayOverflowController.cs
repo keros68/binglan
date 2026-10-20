@@ -27,6 +27,9 @@ internal sealed class TrayOverflowController : IDisposable
     private uint _explorerProcessId;
     private nint _panelWindow;
     private long _claimUntil;
+    private long _sessionEndedAt;
+    // The button matched while opening; focus is inside the panel when closing it.
+    private int[]? _chevronRuntimeId;
     private nint _previousForeground;
     private int _opening;
     private bool _ownsPanel;
@@ -62,6 +65,19 @@ internal sealed class TrayOverflowController : IDisposable
 
     internal bool IsStopping => _stopping;
 
+    /// <summary>True while the panel on screen was opened by this controller.</summary>
+    internal bool OwnsPanel => _ownsPanel;
+
+    /// <summary>
+    /// Whether an owned panel closed within the last <paramref name="milliseconds"/>; the
+    /// click that dismissed it should not immediately reopen it.
+    /// </summary>
+    internal bool EndedWithin(long milliseconds)
+    {
+        var endedAt = Interlocked.Read(ref _sessionEndedAt);
+        return endedAt != 0 && Environment.TickCount64 - endedAt < milliseconds;
+    }
+
     /// <summary>True while a UIA toggle call has been issued and not yet returned.</summary>
     internal bool IsInvoking => _uiaCall is { IsCompleted: false };
 
@@ -83,6 +99,8 @@ internal sealed class TrayOverflowController : IDisposable
             WatchPanel(tray);
             _closeCheck.Stop();
             _focusReturn.Stop();
+            // Win+B injected toward an elevated window would be dropped without an error.
+            if (ShellSurfaceNativeMethods.IsForegroundElevated()) return "elevated-foreground";
             _previousForeground = DockNativeMethods.GetForegroundWindow();
             if (!ShellSurfaceNativeMethods.SendChord(0x5B, 0x42)) return "rejected";
             inputSent = true;
@@ -165,28 +183,43 @@ internal sealed class TrayOverflowController : IDisposable
             var tray = AutomationElement.RootElement.FindFirst(TreeScope.Children,
                 new PropertyCondition(AutomationElement.ClassNameProperty, "Shell_TrayWnd"));
             if (tray is null) return "missing";
-            foreach (AutomationElement button in tray.FindAll(TreeScope.Descendants,
-                         new PropertyCondition(AutomationElement.AutomationIdProperty, "SystemTrayIcon")))
+            var elements = tray.FindAll(TreeScope.Descendants, new OrCondition(
+                new PropertyCondition(AutomationElement.AutomationIdProperty, "SystemTrayIcon"),
+                new PropertyCondition(AutomationElement.AutomationIdProperty, PinnedIconId)));
+            var focused = AutomationElement.FocusedElement;
+            var buttons = new List<TrayButtonInfo>(elements.Count);
+            var focusedIndex = -1;
+            var rememberedIndex = -1;
+            var remembered = Volatile.Read(ref _chevronRuntimeId);
+            for (var index = 0; index < elements.Count; index++)
             {
-                var current = button.Current;
-                // These two localized names are verified candidates only. Unknown
-                // languages/structures must fail without invoking another tray icon.
-                if (current.ClassName == "SystemTray.NormalButton"
-                    && current.Name is "显示隐藏的图标" or "Show hidden icons"
-                    && current.IsEnabled
-                    && button.TryGetCurrentPattern(InvokePattern.Pattern, out var pattern)
-                    && pattern is InvokePattern invoke)
-                {
-                    if (cancellationToken.IsCancellationRequested) return "cancelled";
-                    // The panel may have closed or opened on its own during the search;
-                    // a toggle now would reverse the user's or Explorer's change.
-                    if (IsVisible != expectVisible) return "state-changed";
-                    if (!expectVisible) Interlocked.Exchange(ref _claimUntil, Environment.TickCount64 + ClaimWindowMs);
-                    _log($"OVERFLOW invoke expect-visible={expectVisible}");
-                    invoke.Invoke();
-                    if (!expectVisible) Interlocked.Exchange(ref _claimUntil, Environment.TickCount64 + ClaimWindowMs);
-                    return "invoked";
-                }
+                var current = elements[index].Current;
+                var bounds = current.BoundingRectangle;
+                buttons.Add(new TrayButtonInfo(current.AutomationId, current.ClassName, current.Name,
+                    bounds.IsEmpty ? double.NaN : bounds.Left, bounds.IsEmpty ? double.NaN : bounds.Right));
+                if (focusedIndex < 0 && focused is not null && Automation.Compare(elements[index], focused))
+                    focusedIndex = index;
+                if (rememberedIndex < 0 && remembered is not null
+                    && elements[index].GetRuntimeId().AsSpan().SequenceEqual(remembered))
+                    rememberedIndex = index;
+            }
+            var chevron = FindOverflowChevron(buttons, focusedIndex, rememberedIndex, out var match);
+            if (chevron < 0) return "missing";
+            var button = elements[chevron];
+            if (button.Current.IsEnabled
+                && button.TryGetCurrentPattern(InvokePattern.Pattern, out var pattern)
+                && pattern is InvokePattern invoke)
+            {
+                if (cancellationToken.IsCancellationRequested) return "cancelled";
+                // The panel may have closed or opened on its own during the search;
+                // a toggle now would reverse the user's or Explorer's change.
+                if (IsVisible != expectVisible) return "state-changed";
+                if (!expectVisible) Interlocked.Exchange(ref _claimUntil, Environment.TickCount64 + ClaimWindowMs);
+                Volatile.Write(ref _chevronRuntimeId, button.GetRuntimeId());
+                _log($"OVERFLOW invoke expect-visible={expectVisible} match={match}");
+                invoke.Invoke();
+                if (!expectVisible) Interlocked.Exchange(ref _claimUntil, Environment.TickCount64 + ClaimWindowMs);
+                return "invoked";
             }
             return "missing";
         }
@@ -196,6 +229,60 @@ internal sealed class TrayOverflowController : IDisposable
             _log($"OVERFLOW UIA unavailable={exception.GetType().Name}");
             return "unavailable";
         }
+    }
+
+    internal readonly record struct TrayButtonInfo(string AutomationId, string ClassName, string Name, double Left, double Right);
+
+    private const string ChevronId = "SystemTrayIcon";
+    private const string ChevronClass = "SystemTray.NormalButton";
+    private const string PinnedIconId = "NotifyItemIcon";
+    // Verified localized names; other languages use the structural match below.
+    private static readonly string[] KnownChevronNames = ["显示隐藏的图标", "Show hidden icons"];
+
+    /// <summary>
+    /// Index of the "show hidden icons" button in <paramref name="buttons"/> (tree order),
+    /// or -1. A known name matches directly. Otherwise three independent facts must agree,
+    /// so an unknown structure fails instead of toggling another icon (the IME mode
+    /// button shares the same id and class): Win+B focused it, it is the first such
+    /// button in the tree, and it sits before and outside the pinned app icons.
+    /// <paramref name="rememberedIndex"/> is the element this controller already toggled
+    /// in the current Explorer instance; closing reuses it because focus is in the panel.
+    /// </summary>
+    internal static int FindOverflowChevron(
+        IReadOnlyList<TrayButtonInfo> buttons, int focusedIndex, int rememberedIndex, out string match)
+    {
+        match = "name";
+        for (var index = 0; index < buttons.Count; index++)
+        {
+            var button = buttons[index];
+            if (button.AutomationId == ChevronId && button.ClassName == ChevronClass
+                && KnownChevronNames.Contains(button.Name, StringComparer.OrdinalIgnoreCase)) return index;
+        }
+        match = "remembered";
+        if (rememberedIndex >= 0 && rememberedIndex < buttons.Count
+            && buttons[rememberedIndex].AutomationId == ChevronId
+            && buttons[rememberedIndex].ClassName == ChevronClass) return rememberedIndex;
+        match = "focus";
+        if (focusedIndex < 0 || focusedIndex >= buttons.Count) return -1;
+        var focused = buttons[focusedIndex];
+        if (focused.AutomationId != ChevronId || focused.ClassName != ChevronClass) return -1;
+        var firstCandidate = -1;
+        var firstPinned = -1;
+        for (var index = 0; index < buttons.Count; index++)
+        {
+            if (firstCandidate < 0 && buttons[index].AutomationId == ChevronId && buttons[index].ClassName == ChevronClass)
+                firstCandidate = index;
+            if (firstPinned < 0 && buttons[index].AutomationId == PinnedIconId) firstPinned = index;
+        }
+        // Without pinned icons the chevron cannot be told apart from the IME mode button.
+        if (firstCandidate != focusedIndex || firstPinned < 0 || focusedIndex > firstPinned) return -1;
+        var pinned = buttons.Where(button => button.AutomationId == PinnedIconId
+            && !double.IsNaN(button.Left) && !double.IsNaN(button.Right)).ToList();
+        if (pinned.Count == 0 || double.IsNaN(focused.Left) || double.IsNaN(focused.Right)) return -1;
+        // Left of all pinned icons, or right of all of them on a right-to-left taskbar.
+        var outside = focused.Right <= pinned.Min(button => button.Left) + 1
+            || focused.Left >= pinned.Max(button => button.Right) - 1;
+        return outside ? focusedIndex : -1;
     }
 
     /// <summary>Close path used by the cycle check; same gates as exit cleanup.</summary>
@@ -209,6 +296,7 @@ internal sealed class TrayOverflowController : IDisposable
         if (processId == _explorerProcessId && _panelEvents != 0) return;
         if (_panelEvents != 0) DockNativeMethods.UnhookWinEvent(_panelEvents);
         _panelWindow = 0;
+        Volatile.Write(ref _chevronRuntimeId, null);
         _explorerProcessId = processId;
         _panelEvents = DockNativeMethods.SetWinEventHook(EventObjectDestroy, DockNativeMethods.EventObjectHide, 0,
             _panelEventCallback, processId, 0, DockNativeMethods.WineventOutOfContext);
@@ -246,6 +334,7 @@ internal sealed class TrayOverflowController : IDisposable
         if (!_ownsPanel) return;
         _ownsPanel = false;
         Interlocked.Exchange(ref _claimUntil, 0);
+        Interlocked.Exchange(ref _sessionEndedAt, Environment.TickCount64);
         _log($"OVERFLOW session-end source={source}");
         if (_stopping) RestoreForeground();
         else _focusReturn.Start();

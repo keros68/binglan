@@ -19,18 +19,39 @@ namespace BingLan.App.Taskbar;
 /// </summary>
 internal sealed class TaskbarCornerReveal : IDisposable
 {
+    private const uint EventObjectShow = 0x8002;
+    private const uint EventObjectLocationChange = 0x800B;
+    private const long RaiseThrottleMs = 50;
     private static readonly TimeSpan CheckInterval = TimeSpan.FromSeconds(2);
+    // With taskbar events hooked the poll is only a fallback and the auto-hide check.
+    private static readonly TimeSpan HookedCheckInterval = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan SettleDelay = TimeSpan.FromMilliseconds(80);
     private readonly Dictionary<string, EdgeStrip> _strips = new(StringComparer.OrdinalIgnoreCase);
     private readonly DispatcherTimer _timer;
+    private readonly DispatcherTimer _settle;
+    private readonly DockNativeMethods.WinEventProc _taskbarEventCallback;
+    private nint _showHook;
+    private nint _locationHook;
+    private uint _explorerProcessId;
+    private long _lastRaise;
     private bool _enabled;
     private bool _suspended;
 
     internal TaskbarCornerReveal()
     {
-        // The taskbar raises itself as it slides in and out, so the strips are put back on
-        // top regularly; the same check notices auto-hide being switched on or off.
+        // The taskbar raises itself as it slides in and out. Its show and move events put
+        // the strips back on top at once; the timer remains as a fallback and notices
+        // auto-hide being switched on or off.
         _timer = new DispatcherTimer(DispatcherPriority.Background) { Interval = CheckInterval };
         _timer.Tick += (_, _) => Update();
+        // The slide moves the bar several times; raise once more after the last move.
+        _settle = new DispatcherTimer(DispatcherPriority.Input) { Interval = SettleDelay };
+        _settle.Tick += (_, _) =>
+        {
+            _settle.Stop();
+            Raise();
+        };
+        _taskbarEventCallback = OnTaskbarEvent;
     }
 
     /// <summary>Turns the behaviour on or off.</summary>
@@ -44,6 +65,7 @@ internal sealed class TaskbarCornerReveal : IDisposable
         else
         {
             _timer.Stop();
+            _settle.Stop();
         }
         Update();
     }
@@ -84,11 +106,70 @@ internal sealed class TaskbarCornerReveal : IDisposable
             }
             strip.Place(bounds);
         }
+        if (_strips.Count > 0) WatchTaskbar();
+        else Unhook();
+    }
+
+    internal static bool IsTaskbarClass(string className) =>
+        className is "Shell_TrayWnd" or "Shell_SecondaryTrayWnd";
+
+    private void WatchTaskbar()
+    {
+        var tray = TaskbarNativeMethods.FindWindowW("Shell_TrayWnd", null);
+        if (tray == 0)
+        {
+            Unhook();
+            return;
+        }
+        // Explorer restarts with a new process; re-hook when it changed.
+        DockNativeMethods.GetWindowThreadProcessId(tray, out var processId);
+        if (processId == _explorerProcessId && _showHook != 0 && _locationHook != 0) return;
+        Unhook();
+        _explorerProcessId = processId;
+        // Two single-event hooks instead of a range keep unrelated Explorer events out.
+        _showHook = DockNativeMethods.SetWinEventHook(EventObjectShow, EventObjectShow, 0,
+            _taskbarEventCallback, processId, 0, DockNativeMethods.WineventOutOfContext);
+        _locationHook = DockNativeMethods.SetWinEventHook(EventObjectLocationChange, EventObjectLocationChange, 0,
+            _taskbarEventCallback, processId, 0, DockNativeMethods.WineventOutOfContext);
+        _timer.Interval = _showHook != 0 && _locationHook != 0 ? HookedCheckInterval : CheckInterval;
+    }
+
+    private void Unhook()
+    {
+        if (_showHook != 0) DockNativeMethods.UnhookWinEvent(_showHook);
+        if (_locationHook != 0) DockNativeMethods.UnhookWinEvent(_locationHook);
+        _showHook = 0;
+        _locationHook = 0;
+        _explorerProcessId = 0;
+        _timer.Interval = CheckInterval;
+    }
+
+    private void OnTaskbarEvent(nint hook, uint eventType, nint hwnd, int objectId, int childId, uint thread, uint time)
+    {
+        if (_strips.Count == 0 || objectId != DockNativeMethods.ObjidWindow || childId != 0 || hwnd == 0) return;
+        var className = new System.Text.StringBuilder(32);
+        DockNativeMethods.GetClassNameW(hwnd, className, className.Capacity);
+        if (!IsTaskbarClass(className.ToString())) return;
+        if (Environment.TickCount64 - _lastRaise >= RaiseThrottleMs) Raise();
+        _settle.Stop();
+        _settle.Start();
+    }
+
+    /// <summary>Puts the existing strips back above the taskbar without re-reading monitors.</summary>
+    private void Raise()
+    {
+        _lastRaise = Environment.TickCount64;
+        foreach (var strip in _strips.Values)
+        {
+            strip.Raise();
+        }
     }
 
     public void Dispose()
     {
         _timer.Stop();
+        _settle.Stop();
+        Unhook();
         foreach (var strip in _strips.Values)
         {
             strip.Close();
@@ -133,6 +214,16 @@ internal sealed class TaskbarCornerReveal : IDisposable
                 bounds.Width,
                 bounds.Height,
                 NativeMethods.SwpNoActivate);
+
+        internal void Raise() =>
+            NativeMethods.SetWindowPos(
+                new WindowInteropHelper(this).Handle,
+                DockNativeMethods.HwndTopmost,
+                0,
+                0,
+                0,
+                0,
+                NativeMethods.SwpNoMove | NativeMethods.SwpNoSize | NativeMethods.SwpNoActivate);
 
         private static SolidColorBrush CreateNearlyClear()
         {

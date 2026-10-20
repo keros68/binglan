@@ -2477,9 +2477,19 @@ public sealed class WidgetCoordinator : IDisposable
                 }
                 if (owner._exitRequested || owner._isExiting) return;
                 var controller = owner._trayOverflow ??= new TrayOverflowController();
+                // A second click closes the panel this button opened, like the native
+                // chevron. A click that already dismissed it must not reopen it.
+                if (controller.OwnsPanel && TrayOverflowController.IsVisible)
+                {
+                    if (!await controller.CloseOwnedPanelAsync() && TrayOverflowController.IsVisible
+                        && !owner._exitRequested && !owner._isExiting) ReportShellFailure();
+                    return;
+                }
+                if (controller.EndedWithin(400)) return;
                 var result = await controller.OpenAsync();
-                if (!owner._exitRequested && !owner._isExiting
-                    && result is not ("opened" or "already-open" or "busy")) ReportShellFailure();
+                if (owner._exitRequested || owner._isExiting) return;
+                if (result == "elevated-foreground") ReportElevatedForeground();
+                else if (result is not ("opened" or "already-open" or "busy")) ReportShellFailure();
             }
             catch (Exception exception) when (exception is not OutOfMemoryException)
             {
@@ -2521,6 +2531,9 @@ public sealed class WidgetCoordinator : IDisposable
 
         private void ReportShellFailure() => owner._trayIcon.ShowBalloonTip(
             4000, "系统入口暂不可用", "可将鼠标移到屏幕底边或角落唤出 Windows 任务栏。", Forms.ToolTipIcon.Info);
+
+        private void ReportElevatedForeground() => owner._trayIcon.ShowBalloonTip(
+            4000, "当前前台是管理员程序", "Windows 不允许普通程序向它发送快捷键，请先切换到其他窗口再试。", Forms.ToolTipIcon.Info);
 
         public void OpenTaskManagerPerformance()
         {
