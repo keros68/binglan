@@ -6,30 +6,78 @@ using BingLan.App.Interop;
 
 namespace BingLan.App.Services;
 
+internal enum ShellSurfaceResult
+{
+    Opened,
+    Failed,
+    /// <summary>An elevated window is in front, so injected shortcuts would be dropped.</summary>
+    ElevatedForeground
+}
+
 /// <summary>Opens Windows-owned surfaces without hosting or moving their controls.</summary>
 internal static class ShellSurfaceService
 {
+    // A click outside the panel can dismiss it just before the button handler runs;
+    // treat that click as "close" instead of reopening the panel.
+    private const long RecentCloseMs = 400;
     private static int _openingTray;
     private static int _openingQuickLink;
+    private static int _openingStart;
+    private static int _watchingQuickSettings;
+    private static long _quickSettingsClosedAt;
 
-    internal static bool OpenStartMenu() => ShellSurfaceNativeMethods.OpenStartMenu();
-
-    internal static async Task<bool> OpenQuickLinkMenuAsync()
+    internal static async Task<bool> OpenStartMenuAsync()
     {
-        if (Interlocked.CompareExchange(ref _openingQuickLink, 1, 0) != 0) return true;
+        if (Interlocked.CompareExchange(ref _openingStart, 1, 0) != 0) return true;
         try
         {
-            // Shift+F10 can still be held when WPF raises the context-menu request.
-            for (var attempt = 0; attempt < 10 && ShellSurfaceNativeMethods.HasHeldModifier(); attempt++)
+            if (ShellSurfaceNativeMethods.PostStartMenuCommand())
             {
-                await Task.Delay(50);
+                for (var check = 0; check < 16; check++)
+                {
+                    await Task.Delay(50);
+                    if (ShellSurfaceNativeMethods.IsStartMenuForeground()) return true;
+                }
+                Debug.WriteLine("开始菜单消息未确认，改用 Ctrl+Esc");
             }
-            return ShellSurfaceNativeMethods.OpenQuickLinkMenu();
+            if (ShellSurfaceNativeMethods.IsStartMenuForeground()) return true;
+            return await RunWhenModifiersReleasedAsync(ShellSurfaceNativeMethods.OpenStartMenu);
+        }
+        finally
+        {
+            Volatile.Write(ref _openingStart, 0);
+        }
+    }
+
+    internal static async Task<ShellSurfaceResult> OpenQuickLinkMenuAsync()
+    {
+        if (Interlocked.CompareExchange(ref _openingQuickLink, 1, 0) != 0) return ShellSurfaceResult.Opened;
+        try
+        {
+            // Win+X has no message equivalent; report the cause instead of a silent no-op.
+            if (ShellSurfaceNativeMethods.IsForegroundElevated()) return ShellSurfaceResult.ElevatedForeground;
+            return await RunWhenModifiersReleasedAsync(ShellSurfaceNativeMethods.OpenQuickLinkMenu)
+                ? ShellSurfaceResult.Opened
+                : ShellSurfaceResult.Failed;
         }
         finally
         {
             Volatile.Write(ref _openingQuickLink, 0);
         }
+    }
+
+    /// <summary>
+    /// Shift+F10 or a modified click can still be held when WPF raises the request. Wait
+    /// briefly; if the user keeps holding a modifier, ignore the request quietly rather
+    /// than turn it into another shortcut or report a failure.
+    /// </summary>
+    private static async Task<bool> RunWhenModifiersReleasedAsync(Func<bool> action)
+    {
+        for (var attempt = 0; attempt < 10 && ShellSurfaceNativeMethods.HasHeldModifier(); attempt++)
+        {
+            await Task.Delay(50);
+        }
+        return ShellSurfaceNativeMethods.HasHeldModifier() || action();
     }
 
     internal static async Task<bool> OpenQuickSettingsAsync(string fallbackUri)
@@ -43,12 +91,31 @@ internal static class ShellSurfaceService
         {
             return await Task.Run(async () =>
             {
-                if (IsQuickSettingsFocused()) return true;
+                // The top bar never takes activation, so an open panel keeps the
+                // foreground: a second click closes it like the native tray button.
+                if (ShellSurfaceNativeMethods.IsQuickSettingsForeground())
+                {
+                    ShellSurfaceNativeMethods.CloseQuickSettings();
+                    return true;
+                }
+                if (Environment.TickCount64 - Interlocked.Read(ref _quickSettingsClosedAt) < RecentCloseMs) return true;
                 // Win+A works even when auto-hide removes the taskbar's UIA buttons.
                 // Input acceptance alone is not proof that the panel opened.
-                if (ShellSurfaceNativeMethods.OpenQuickSettings() && await WaitForQuickSettingsAsync()) return true;
-                if (TryInvokeTrayButton(IsQuickSettingsButton) && await WaitForQuickSettingsAsync()) return true;
-                return OpenSettings(fallbackUri);
+                var injected = !ShellSurfaceNativeMethods.IsForegroundElevated()
+                    && ShellSurfaceNativeMethods.OpenQuickSettings();
+                if (injected)
+                {
+                    if (await WaitForQuickSettingsAsync()) return true;
+                    // The tray button is a toggle: invoking it now would close a panel
+                    // that opened without being detected, then open Settings on top.
+                    Debug.WriteLine("快速设置未确认出现，回退设置页");
+                }
+                else if (TryInvokeTrayButton(IsQuickSettingsButton, () => !IsQuickSettingsOpen())
+                         && await WaitForQuickSettingsAsync())
+                {
+                    return true;
+                }
+                return IsQuickSettingsOpen() || OpenSettings(fallbackUri);
             });
         }
         finally
@@ -79,12 +146,44 @@ internal static class ShellSurfaceService
     private static async Task<bool> WaitForQuickSettingsAsync()
     {
         // Bound this user-triggered check; no resident polling or cached Shell objects.
-        for (var attempt = 0; attempt < 15; attempt++)
+        for (var attempt = 0; attempt < 10; attempt++)
         {
             await Task.Delay(100);
-            if (IsQuickSettingsFocused()) return true;
+            if (!IsQuickSettingsOpen()) continue;
+            WatchQuickSettings();
+            return true;
         }
         return false;
+    }
+
+    // Native window state first; the UIA focus chain stays as the verified fallback.
+    private static bool IsQuickSettingsOpen() =>
+        ShellSurfaceNativeMethods.IsQuickSettingsForeground()
+        || ShellSurfaceNativeMethods.IsQuickSettingsVisible()
+        || IsQuickSettingsFocused();
+
+    /// <summary>
+    /// Watches only the panel this service just opened, and only until it loses the
+    /// foreground, to record when it closed. No watcher runs while the panel is closed.
+    /// </summary>
+    private static void WatchQuickSettings()
+    {
+        if (Interlocked.CompareExchange(ref _watchingQuickSettings, 1, 0) != 0) return;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                for (var check = 0; check < 3000 && ShellSurfaceNativeMethods.IsQuickSettingsForeground(); check++)
+                {
+                    await Task.Delay(100);
+                }
+                Interlocked.Exchange(ref _quickSettingsClosedAt, Environment.TickCount64);
+            }
+            finally
+            {
+                Volatile.Write(ref _watchingQuickSettings, 0);
+            }
+        });
     }
 
     private static bool IsQuickSettingsFocused()
@@ -130,7 +229,7 @@ internal static class ShellSurfaceService
         }
     }
 
-    private static bool TryInvokeTrayButton(Func<string, string, string, bool> matches)
+    private static bool TryInvokeTrayButton(Func<string, string, string, bool> matches, Func<bool>? stillWanted = null)
     {
         // Re-read after an Explorer rebuild; there is no resident polling or cached UIA element.
         for (var attempt = 0; attempt < 2; attempt++)
@@ -151,6 +250,8 @@ internal static class ShellSurfaceService
                         && button.TryGetCurrentPattern(InvokePattern.Pattern, out var pattern)
                         && pattern is InvokePattern invoke)
                     {
+                        // Re-check just before the toggle; a late panel must not be closed.
+                        if (stillWanted is not null && !stillWanted()) return true;
                         invoke.Invoke();
                         return true;
                     }

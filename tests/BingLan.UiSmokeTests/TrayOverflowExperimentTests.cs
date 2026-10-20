@@ -38,6 +38,17 @@ internal static class TrayOverflowExperimentTests
         pending.SetResult("invoked");
         Assert(!(bool)claimed.GetValue(experiment)!, "调用结束且认领期限已过时应释放归属");
 
+        using (var toggle = new TrayOverflowController())
+        {
+            Assert(!toggle.OwnsPanel && !toggle.EndedWithin(400), "新控制器没有面板会话");
+            type.GetField("_ownsPanel", flags)!.SetValue(toggle, true);
+            Assert(toggle.OwnsPanel, "本按钮打开的面板应可再次点击收起");
+            type.GetMethod("EndSession", flags)!.Invoke(toggle, ["test"]);
+            Assert(!toggle.OwnsPanel && toggle.EndedWithin(400), "面板刚被点击收起时，同一次点击不能重新打开");
+            type.GetField("_sessionEndedAt", flags)!.SetValue(toggle, Environment.TickCount64 - 1000);
+            Assert(!toggle.EndedWithin(400), "超过收起窗口后应正常重新打开");
+        }
+
         var directory = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "BingLan-tray-lifetime-" + Guid.NewGuid().ToString("N")));
         try
         {
