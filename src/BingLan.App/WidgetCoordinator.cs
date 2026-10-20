@@ -39,6 +39,8 @@ public sealed class WidgetCoordinator : IDisposable
     private readonly CityLookupService _citySearchService;
     private readonly DockHost _dock;
     private readonly TopBarHost _topBar;
+    private TrayOverflowController? _trayOverflow;
+    private Task<string>? _closingTrayOverflow;
     private readonly TaskbarAdapter _taskbar;
     private readonly CleanDesktopAdapter _cleanDesktop;
     private readonly TaskbarCornerReveal _cornerReveal = new();
@@ -63,6 +65,7 @@ public sealed class WidgetCoordinator : IDisposable
     private AppState _state;
     private SettingsWindow? _settingsWindow;
     private bool _isExiting;
+    private bool _exitRequested;
     private bool _isOrganizingDesktop;
     private bool _isApplyingDesktopExperience;
     private bool _isApplyingTaskbar;
@@ -667,6 +670,7 @@ public sealed class WidgetCoordinator : IDisposable
         {
             SaveNow();
         }
+        _isExiting = true;
         _trayIcon.Visible = false;
         var trayIconImage = _trayIcon.Icon;
         _trayIcon.Icon = null;
@@ -685,6 +689,7 @@ public sealed class WidgetCoordinator : IDisposable
         _taskbar.Dispose();
         _cleanDesktop.Dispose();
         _topBar.Dispose();
+        _trayOverflow?.Dispose();
         _performanceSampler.Dispose();
     }
 
@@ -2154,10 +2159,51 @@ public sealed class WidgetCoordinator : IDisposable
         }
     }
 
-    private void Exit()
+    internal Task<string> CloseTrayOverflowAsync()
     {
-        if (_isExiting)
+        if (_closingTrayOverflow is { } pending) return pending;
+        if (_trayOverflow is not { } controller) return Task.FromResult("closed");
+        return _closingTrayOverflow = CloseControllerAsync(controller);
+    }
+
+    private async Task<string> CloseControllerAsync(TrayOverflowController controller)
+    {
+        // Install the shared task before cleanup can finish synchronously.
+        await Task.Yield();
+        try
         {
+            var result = await controller.CloseAsync();
+            if (result == "closed")
+            {
+                controller.Dispose();
+                if (ReferenceEquals(_trayOverflow, controller)) _trayOverflow = null;
+            }
+            return result;
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            Debug.WriteLine($"系统托盘清理失败：{exception}");
+            return "failed";
+        }
+        finally
+        {
+            _closingTrayOverflow = null;
+        }
+    }
+
+    private async void Exit()
+    {
+        if (_isExiting || _exitRequested)
+        {
+            return;
+        }
+        _exitRequested = true;
+        var trayClosed = await CloseTrayOverflowAsync();
+        if (trayClosed != "closed" && System.Windows.MessageBox.Show(
+                "Windows 托盘面板尚未关闭。是否仍要退出？\n退出后可点击其他窗口收起面板。",
+                "退出冰蓝桌面", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) != MessageBoxResult.Yes)
+        {
+            _exitRequested = false;
             return;
         }
         _isExiting = true;
@@ -2417,6 +2463,39 @@ public sealed class WidgetCoordinator : IDisposable
         public void SearchLayoutChanged() => owner.ScheduleSave();
 
         public void OpenTopBarSettings() => owner.OpenSettings("TopBar");
+
+        public async void OpenTrayOverflow()
+        {
+            if (owner._exitRequested || owner._isExiting || owner._closingTrayOverflow is not null) return;
+            try
+            {
+                if (owner._trayOverflow is { IsStopping: true }
+                    && await owner.CloseTrayOverflowAsync() != "closed")
+                {
+                    ReportShellFailure();
+                    return;
+                }
+                if (owner._exitRequested || owner._isExiting) return;
+                var controller = owner._trayOverflow ??= new TrayOverflowController();
+                var result = await controller.OpenAsync();
+                if (!owner._exitRequested && !owner._isExiting
+                    && result is not ("opened" or "already-open" or "busy")) ReportShellFailure();
+            }
+            catch (Exception exception) when (exception is not OutOfMemoryException)
+            {
+                Debug.WriteLine($"系统托盘入口不可用：{exception}");
+                if (!owner._isExiting) ReportShellFailure();
+            }
+        }
+
+        public async void CloseTrayOverflow()
+        {
+            if (owner._isExiting) return;
+            var result = await owner.CloseTrayOverflowAsync();
+            if (result != "closed" && !owner._isExiting && !owner._exitRequested)
+                owner._trayIcon.ShowBalloonTip(4000, "系统托盘尚未关闭",
+                    "可点击其他窗口收起面板，或稍后重试退出冰蓝桌面。", Forms.ToolTipIcon.Info);
+        }
 
         public async void OpenQuickSettings(TopBarModuleKind kind)
         {

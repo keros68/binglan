@@ -29,7 +29,8 @@ public enum TopBarModuleKind
     Network,
     Battery,
     Clock,
-    Search
+    Search,
+    TrayOverflow
 }
 
 public sealed class TopBarModuleSwitches
@@ -44,6 +45,7 @@ public sealed class TopBarModuleSwitches
     public bool Battery { get; set; } = true;
     public bool Clock { get; set; } = true;
     public bool Search { get; set; } = true;
+    public bool TrayOverflow { get; set; } = true;
 }
 
 /// <summary>
@@ -123,6 +125,7 @@ public static class TopBarRules
         TopBarModuleKind.Battery => switches.Battery,
         TopBarModuleKind.Clock => switches.Clock,
         TopBarModuleKind.Search => switches.Search,
+        TopBarModuleKind.TrayOverflow => switches.TrayOverflow,
         _ => false
     };
 
@@ -140,6 +143,7 @@ public static class TopBarRules
             case TopBarModuleKind.Battery: switches.Battery = on; break;
             case TopBarModuleKind.Clock: switches.Clock = on; break;
             case TopBarModuleKind.Search: switches.Search = on; break;
+            case TopBarModuleKind.TrayOverflow: switches.TrayOverflow = on; break;
         }
     }
 

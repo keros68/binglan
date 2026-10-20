@@ -59,7 +59,7 @@ internal static class ShellSurfacePreview
         var pendingExits = 0;
         var slowUia = Environment.GetCommandLineArgs().Select(arg => arg.StartsWith(SlowUiaArg, StringComparison.Ordinal)
             && int.TryParse(arg[SlowUiaArg.Length..], out var delay) ? delay : 0).Max();
-        using var overflow = new TrayOverflowExperiment(slowUia);
+        using var overflow = new TrayOverflowController(slowUia, Console.WriteLine);
 
         async Task Capture(string name)
         {
@@ -154,7 +154,7 @@ internal static class ShellSurfacePreview
             {
                 if (ReadTaskbarState() != before) throw new InvalidOperationException("任务栏设置发生变化");
                 var tray = TaskbarNativeMethods.FindWindowW("Shell_TrayWnd", null);
-                if (!TrayOverflowExperiment.IsVisible && DockNativeMethods.GetWindowRect(tray, out var rect)
+                if (!TrayOverflowController.IsVisible && DockNativeMethods.GetWindowRect(tray, out var rect)
                     && (((before & TaskbarNativeMethods.AbsAutoHide) == 0)
                         || rect.Top >= System.Windows.Forms.Screen.PrimaryScreen!.Bounds.Bottom - 2)) return;
                 await Task.Delay(100);
@@ -163,18 +163,36 @@ internal static class ShellSurfacePreview
         }
         Add("原生托盘实验", async () =>
         {
-            Console.WriteLine($"OVERFLOW result={await overflow.OpenAsync()} visible={TrayOverflowExperiment.IsVisible} state={ReadTaskbarState()}");
+            Console.WriteLine($"OVERFLOW result={await overflow.OpenAsync()} visible={TrayOverflowController.IsVisible} state={ReadTaskbarState()}");
             await Capture("overflow");
+        });
+        Add("顶栏托盘入口", async () =>
+        {
+            var topbar = app.Windows.OfType<TopBarWindow>().Single();
+            FindButton(topbar, "托盘模块").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            await Capture("topbar-overflow");
+            if (!TrayOverflowController.IsVisible) throw new InvalidOperationException("顶栏托盘面板未出现");
+        });
+        Add("顶栏托盘打开后退出", async () =>
+        {
+            var topbar = app.Windows.OfType<TopBarWindow>().Single();
+            FindButton(topbar, "托盘模块").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            await Capture("topbar-overflow-exit");
+            if (!TrayOverflowController.IsVisible) throw new InvalidOperationException("顶栏托盘面板未出现");
+            Console.WriteLine($"TOPBAR-EXIT visible={TrayOverflowController.IsVisible}");
+            topbar.ContextMenu.Items.OfType<System.Windows.Controls.MenuItem>()
+                .Single(item => (string)item.Header == "退出冰蓝桌面")
+                .RaiseEvent(new RoutedEventArgs(System.Windows.Controls.MenuItem.ClickEvent));
         });
         Add("托盘连点实验", async () =>
         {
             var results = await Task.WhenAll(overflow.OpenAsync(), overflow.OpenAsync());
-            if (results.Count(result => result == "opened") != 1 || !TrayOverflowExperiment.IsVisible)
+            if (results.Count(result => result == "opened") != 1 || !TrayOverflowController.IsVisible)
                 throw new InvalidOperationException("并发唤出未保持面板打开");
             var repeated = await overflow.OpenAsync();
-            if (repeated != "already-open" || !TrayOverflowExperiment.IsVisible)
+            if (repeated != "already-open" || !TrayOverflowController.IsVisible)
                 throw new InvalidOperationException("重复请求关闭了面板");
-            Console.WriteLine($"CONCURRENT results={string.Join(',', results)} repeated={repeated} visible={TrayOverflowExperiment.IsVisible}");
+            Console.WriteLine($"CONCURRENT results={string.Join(',', results)} repeated={repeated} visible={TrayOverflowController.IsVisible}");
             await Capture("overflow-concurrent");
         });
         Add("托盘循环20次", async () =>
@@ -186,10 +204,10 @@ internal static class ShellSurfacePreview
             {
                 host.Activate();
                 var opened = await overflow.OpenAsync();
-                if (opened != "opened" || !TrayOverflowExperiment.IsVisible)
+                if (opened != "opened" || !TrayOverflowController.IsVisible)
                     throw new InvalidOperationException($"第 {cycle} 次唤出失败：{opened}");
                 var repeated = await overflow.OpenAsync();
-                if (repeated != "already-open" || !TrayOverflowExperiment.IsVisible)
+                if (repeated != "already-open" || !TrayOverflowController.IsVisible)
                     throw new InvalidOperationException($"第 {cycle} 次重复唤出失败");
                 if (cycle % 2 == 0) host.Activate();
                 else if (!await overflow.CloseOwnedPanelAsync())
@@ -217,7 +235,7 @@ internal static class ShellSurfacePreview
             var opened = await overflow.OpenAsync();
             if (opened != "opened") throw new InvalidOperationException(opened);
             await Task.Delay(5000);
-            if (!TrayOverflowExperiment.IsVisible) throw new InvalidOperationException("面板保持期间被关闭");
+            if (!TrayOverflowController.IsVisible) throw new InvalidOperationException("面板保持期间被关闭");
             await Capture("overflow-held");
             var probe = new Window { Title = "托盘焦点切换验收", Width = 450, Height = 180,
                 Content = new TextBlock { Text = "检查切换窗口后不抢回焦点", Margin = new Thickness(20) } };
@@ -236,7 +254,7 @@ internal static class ShellSurfacePreview
         Add("托盘打开后退出", async () =>
         {
             var opened = await overflow.OpenAsync();
-            if (opened != "opened" || !TrayOverflowExperiment.IsVisible)
+            if (opened != "opened" || !TrayOverflowController.IsVisible)
                 throw new InvalidOperationException($"退出前未打开面板：{opened}");
             Console.WriteLine($"EXIT-WHILE-OPEN result={opened} visible=True");
             await Capture("overflow-exit");
@@ -283,13 +301,14 @@ internal static class ShellSurfacePreview
             {
                 var before = ReadTaskbarState();
                 var result = await overflow.CloseAsync();
+                if (result == "closed") result = await coordinator.CloseTrayOverflowAsync();
                 if (result != "closed")
                 {
                     // A UIA call that never returns cannot be aborted. After two such
                     // exits the next one gives up waiting and says so in the log.
                     if (result.EndsWith("-pending", StringComparison.Ordinal) && ++pendingExits > 2)
                     {
-                        Console.WriteLine($"EXIT-ABANDONED reason={result} visible={TrayOverflowExperiment.IsVisible}");
+                        Console.WriteLine($"EXIT-ABANDONED reason={result} visible={TrayOverflowController.IsVisible}");
                         cleanupCompleted = true;
                         host.Close();
                         return;
@@ -300,7 +319,7 @@ internal static class ShellSurfacePreview
                 }
                 await WaitForRestore(before);
                 if (captureExitCleanup) await Capture("overflow-exit-cleaned");
-                Console.WriteLine($"EXIT-CLEANUP visible={TrayOverflowExperiment.IsVisible} state={ReadTaskbarState()}");
+                Console.WriteLine($"EXIT-CLEANUP visible={TrayOverflowController.IsVisible} state={ReadTaskbarState()}");
                 cleanupCompleted = true;
                 host.Close();
             }
@@ -317,7 +336,7 @@ internal static class ShellSurfacePreview
             taskbar.Dispose();
             coordinator.Dispose();
             await Task.Delay(300);
-            Console.WriteLine($"RESTORE taskbar={ReadTaskbarState()} original={originalTaskbarState} overflow-visible={TrayOverflowExperiment.IsVisible}");
+            Console.WriteLine($"RESTORE taskbar={ReadTaskbarState()} original={originalTaskbarState} overflow-visible={TrayOverflowController.IsVisible}");
             if (ReadTaskbarState() == originalTaskbarState && !File.Exists(Path.Combine(temp, "preview-taskbar.json")))
             {
                 Directory.Delete(temp, true);
@@ -325,6 +344,7 @@ internal static class ShellSurfacePreview
             app.Shutdown();
         };
         app.Run(host);
+        Console.WriteLine($"PREVIEW-END taskbar={ReadTaskbarState()} original={originalTaskbarState} overflow-visible={TrayOverflowController.IsVisible}");
     }
 
     private const string TempPrefix = "BingLan-shell-surfaces-";

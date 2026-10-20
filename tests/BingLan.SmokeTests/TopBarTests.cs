@@ -105,6 +105,18 @@ public static class TopBarTests
             Assert(reloaded.TopBar.VisibilityMode == TopBarVisibilityMode.SmartHide, "显示方式持久化");
             Assert(!TopBarRules.IsModuleOn(reloaded.TopBar.Modules, TopBarModuleKind.Network), "模块开关持久化");
 
+            var v32 = JsonSerializer.SerializeToNode(state)!;
+            v32["SchemaVersion"] = 32;
+            v32["TopBar"]!["Modules"]!.AsObject().Remove("TrayOverflow");
+            File.WriteAllText(store.StatePath, v32.ToJsonString());
+            var withTray = store.Load();
+            Assert(withTray.SchemaVersion == AppState.CurrentSchemaVersion && withTray.TopBar.Modules.TrayOverflow,
+                "v32 迁移后默认显示托盘入口");
+            Assert(!withTray.TopBar.Modules.Network && withTray.TopBar.IsEnabled, "迁移保留其他顶栏设置");
+            TopBarRules.SetModule(withTray.TopBar.Modules, TopBarModuleKind.TrayOverflow, false);
+            store.Save(withTray);
+            Assert(!store.Load().TopBar.Modules.TrayOverflow, "托盘入口关闭后持久化，不在重载时重新开启");
+
             // A v26 file has no TopBar node; loading gives a bar that is off.
             var v26 = JsonSerializer.SerializeToNode(state);
             v26!["SchemaVersion"] = 26;
@@ -308,6 +320,7 @@ public static class TopBarTests
         state.TopBar.IsEnabled = true;
         state.TopBar.VisibilityMode = TopBarVisibilityMode.SmartHide;
         TopBarRules.SetModule(state.TopBar.Modules, TopBarModuleKind.InputMethod, false);
+        TopBarRules.SetModule(state.TopBar.Modules, TopBarModuleKind.TrayOverflow, false);
         state.TopBar.FollowCardLook = false;
         state.TopBar.SurfaceColor = "#112233";
         state.TopBar.SurfaceOpacity = 0.5d;
@@ -318,6 +331,7 @@ public static class TopBarTests
         Assert(package.Bindings.TopBarEnabled, "导出顶栏开关");
         Assert(package.Bindings.TopBarVisibility == TopBarVisibilityMode.SmartHide, "导出显示方式");
         Assert(!package.Bindings.TopBarModules!.InputMethod, "导出模块开关");
+        Assert(!package.Bindings.TopBarModules.TrayOverflow, "导出托盘入口开关");
         Assert(!package.Bindings.TopBarFollowCardLook, "导出自定义外观");
         Assert(package.Bindings.TopBarSurfaceColor == "#112233", "导出自定义颜色");
 
@@ -332,6 +346,7 @@ public static class TopBarTests
         Assert(target.IsEnabled, "导入顶栏开关");
         Assert(target.VisibilityMode == TopBarVisibilityMode.SmartHide, "导入显示方式");
         Assert(!TopBarRules.IsModuleOn(target.Modules, TopBarModuleKind.InputMethod), "导入模块开关");
+        Assert(!target.Modules.TrayOverflow, "导入保留托盘入口开关");
         Assert(target.MonitorDeviceName == "\\\\.\\DISPLAY7", "导入不动显示器");
 
         // 旧主题（无顶栏字段）导入：关闭顶栏、保留本机模块开关。

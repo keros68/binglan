@@ -224,6 +224,14 @@ internal static class SettingsWindowTests
             volume.IsChecked = false;
             Pump();
             Assert(!topBar.Modules.Volume, "模块开关应写入状态");
+            var tray = Require<CheckBox>(window, "TopBarTrayOverflowCheckBox");
+            if (OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000))
+            {
+                Assert(tray.IsChecked == true && tray.IsVisible, "系统托盘入口默认开启且可设置");
+                tray.IsChecked = false;
+                Pump();
+                Assert(!topBar.Modules.TrayOverflow, "托盘入口开关应写入状态");
+            }
 
             var smartHide = Require<RadioButton>(window, "TopBarSmartHideRadio");
             smartHide.IsChecked = true;
@@ -267,9 +275,10 @@ internal static class SettingsWindowTests
             {
                 window.Width = width;
                 Pump();
-                var cells = moduleGrid.Children.OfType<CheckBox>().ToArray();
-                Assert(cells.Length == 10 && moduleGrid.Columns is >= 2 and <= 5 && cells.All(cell => cell.ActualWidth >= 110),
-                    "窄窗与宽窗中十个模块应按等宽列排布，保留文字空间");
+                var cells = moduleGrid.Children.OfType<CheckBox>().Where(cell => cell.Visibility != Visibility.Collapsed).ToArray();
+                var count = OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000) ? 11 : 10;
+                Assert(cells.Length == count && moduleGrid.Columns is >= 2 and <= 5 && cells.All(cell => cell.ActualWidth >= 110),
+                    "窄窗与宽窗中模块应按等宽列排布，保留文字空间");
                 Assert(moduleGrid.Parent is Border { Padding.Left: >= 16 }, "模块区应与分组边框保持内边距");
                 var first = cells[0].TranslatePoint(new Point(0, 0), moduleGrid);
                 var nextRow = cells[moduleGrid.Columns].TranslatePoint(new Point(0, 0), moduleGrid);

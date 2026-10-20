@@ -11,6 +11,7 @@ using System.Windows.Threading;
 using BingLan.App.Dock;
 using BingLan.App.Interop;
 using BingLan.App.TopBar;
+using BingLan.App.Taskbar;
 using BingLan.Core.Dock;
 using BingLan.Core.Models;
 using BingLan.Core.Services;
@@ -59,6 +60,10 @@ internal interface ITopBarEnvironment
     void OpenQuickSettings(TopBarModuleKind kind);
 
     void OpenInputMethod();
+
+    void OpenTrayOverflow();
+
+    void CloseTrayOverflow();
 
     /// <summary>Opens Task Manager and lands on its performance page.</summary>
     void OpenTaskManagerPerformance();
@@ -363,6 +368,7 @@ public sealed partial class TopBarWindow : Window
     private void OnClosing(object? sender, System.ComponentModel.CancelEventArgs e)
     {
         _closing = true;
+        _environment.CloseTrayOverflow();
         EndSearchSession();
         _everythingSearch?.Dispose();
         _searchCancellation?.Dispose();
@@ -533,6 +539,14 @@ public sealed partial class TopBarWindow : Window
             () => _environment.OpenQuickSettings(TopBarModuleKind.Network), GlyphWifiOff);
         AddModule(TopBarModuleKind.Volume, RightModules, "音量",
             () => _environment.OpenQuickSettings(TopBarModuleKind.Volume), GlyphVolume);
+        if (TrayOverflowController.IsSupported)
+        {
+            if (!_state.Modules.TrayOverflow) _environment.CloseTrayOverflow();
+            AddModule(TopBarModuleKind.TrayOverflow, RightModules, "托盘", _environment.OpenTrayOverflow, "\uE70E");
+            if (ModuleText(TopBarModuleKind.TrayOverflow) is { } trayText) trayText.Text = "托盘";
+            if (_modules.TryGetValue(TopBarModuleKind.TrayOverflow, out var trayButton))
+                trayButton.ToolTip = "打开 Windows 隐藏的托盘图标";
+        }
         AddModule(TopBarModuleKind.InputMethod, RightModules, "输入法", _environment.OpenInputMethod);
         StyleInputMethodModule();
         if (TopBarRules.IsModuleOn(_state.Modules, TopBarModuleKind.Attention))

@@ -379,6 +379,7 @@ public static class ThemeRules
         Network = source.Network,
         Battery = source.Battery,
         Search = source.Search,
+        TrayOverflow = source.TrayOverflow,
         Clock = source.Clock
     };
 

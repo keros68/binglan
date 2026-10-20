@@ -1,6 +1,6 @@
 # 托盘兼容性验收工具
 
-v0.2.28 是预发布版。常规程序仍不提供独立托盘入口；`BingLan-0.2.28-tray-preview.zip` 用于在 Windows 11 x64 上测试原生隐藏图标面板的唤出、关闭和任务栏恢复。该工具自带 .NET 运行时，无需安装或管理员权限。
+v0.2.29 是预发布版，安装版和免安装版均提供顶栏“托盘”按钮。`BingLan-0.2.29-tray-preview.zip` 是独立兼容性验收工具，用于在 Windows 11 x64 上检查原生隐藏图标面板的唤出、关闭和任务栏恢复。该工具自带 .NET 运行时，无需安装或管理员权限。
 
 ## 使用
 
@@ -29,7 +29,9 @@ v0.2.28 是预发布版。常规程序仍不提供独立托盘入口；`BingLan-
 ## 从源码打包
 
 ```powershell
-pwsh -NoProfile -File .\installer\build-tray-preview.ps1 -Version 0.2.28
+pwsh -NoProfile -File .\installer\build-tray-preview.ps1 -Version 0.2.29
 ```
 
 此命令只为验收包选择独立启动入口，不改变常规测试入口或正式程序。
+
+验收窗口还提供“顶栏托盘入口”和“顶栏托盘打开后退出”，调用正式顶栏按钮与应用退出命令，使用同一个应用宿主管理面板清理。

@@ -497,6 +497,19 @@ internal static class TopBarWindowTests
                 "系统状态点击应保留对应模块，以便回退到各自设置页");
             Invoke(ButtonByName(bar, "输入法模块"));
             Assert(environment.InputMethodRequested == 1, "点击输入法应打开系统选择器");
+            if (OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000))
+            {
+                var tray = ButtonByName(bar, "托盘模块");
+                Assert(tray.ActualWidth >= 32 && tray.ActualHeight >= 32, "托盘入口应有可点击的热区");
+                Invoke(tray);
+                Assert(environment.TrayOverflowRequested == 1, "托盘按钮应调用原生面板入口");
+                state.Modules.TrayOverflow = false;
+                bar.ApplyState();
+                pump();
+                Assert(!AllButtons(bar).Any(button => AutomationProperties.GetName(button) == "托盘模块"),
+                    "关闭托盘模块应移除入口");
+                Assert(environment.TrayOverflowClosed > 0, "关闭托盘模块应清理本次面板会话");
+            }
             Invoke(ButtonByName(bar, "性能模块"));
             if (environment.TaskManagerRequested != 1)
             {
@@ -1736,6 +1749,11 @@ internal static class TopBarWindowTests
         }
 
         public void OpenInputMethod() => InputMethodRequested++;
+
+        internal int TrayOverflowRequested { get; private set; }
+        internal int TrayOverflowClosed { get; private set; }
+        public void OpenTrayOverflow() => TrayOverflowRequested++;
+        public void CloseTrayOverflow() => TrayOverflowClosed++;
 
         public void OpenTaskManagerPerformance() => TaskManagerRequested++;
 

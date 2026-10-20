@@ -31,6 +31,8 @@ internal static class ShellSurfaceTests
             "其他系统面板不能当作快速设置");
         Assert(ShellSurfaceNativeMethods.IsSystemMenu("Shell_TrayWnd", "explorer"), "原生任务栏菜单应让 Dock 让开");
         Assert(ShellSurfaceNativeMethods.IsSystemMenu("Xaml_WindowedPopupClass", "explorer"), "原生快捷菜单应让 Dock 让开");
+        Assert(ShellSurfaceNativeMethods.IsSystemMenu("TopLevelWindowForOverflowXamlIsland", "explorer"), "原生托盘浮层应让 Dock 让开");
+        Assert(!ShellSurfaceNativeMethods.IsSystemMenu("TopLevelWindowForOverflowXamlIsland", "Example"), "其他程序不能冒充托盘面板");
         Assert(ShellSurfaceNativeMethods.IsSystemMenu("Windows.UI.Core.CoreWindow", "StartMenuExperienceHost"), "开始菜单应让 Dock 让开");
         Assert(!ShellSurfaceNativeMethods.IsSystemMenu("Windows.UI.Core.CoreWindow", "Example"), "普通应用不能当作系统菜单");
         Assert(!ShellSurfaceNativeMethods.IsSystemMenu("Progman", "explorer"), "桌面不能触发系统菜单避让");

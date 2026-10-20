@@ -1332,6 +1332,8 @@
                                               AutomationProperties.Name="电量模块" Checked="TopBarSetting_Changed" Unchecked="TopBarSetting_Changed"/>
                                     <CheckBox x:Name="TopBarSearchCheckBox" Content="搜索" Margin="0,8,12,8"
                                               AutomationProperties.Name="搜索模块" Checked="TopBarSetting_Changed" Unchecked="TopBarSetting_Changed"/>
+                                    <CheckBox x:Name="TopBarTrayOverflowCheckBox" Content="系统托盘" Margin="0,8,12,8"
+                                              AutomationProperties.Name="系统托盘模块" Checked="TopBarSetting_Changed" Unchecked="TopBarSetting_Changed"/>
                                 </UniformGrid>
                             </Border>
                         </local:SettingsGroup>

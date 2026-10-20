@@ -67,7 +67,7 @@ internal static class ShellSurfaceNativeMethods
         DockNativeMethods.GetClassNameW(window, className, className.Capacity);
         var name = className.ToString();
         if (name is not ("Shell_TrayWnd" or "Shell_SecondaryTrayWnd" or "Xaml_WindowedPopupClass"
-            or "Windows.UI.Core.CoreWindow" or "ControlCenterWindow")) return false;
+            or "Windows.UI.Core.CoreWindow" or "ControlCenterWindow" or "TopLevelWindowForOverflowXamlIsland")) return false;
         try
         {
             DockNativeMethods.GetWindowThreadProcessId(window, out var processId);
@@ -81,7 +81,7 @@ internal static class ShellSurfaceNativeMethods
     }
 
     internal static bool IsSystemMenu(string className, string processName) =>
-        (processName == "explorer" && className is "Shell_TrayWnd" or "Shell_SecondaryTrayWnd" or "Xaml_WindowedPopupClass")
+        (processName == "explorer" && className is "Shell_TrayWnd" or "Shell_SecondaryTrayWnd" or "Xaml_WindowedPopupClass" or "TopLevelWindowForOverflowXamlIsland")
         || (processName == "StartMenuExperienceHost" && className == "Windows.UI.Core.CoreWindow")
         || (processName is "ShellHost" or "ShellExperienceHost" && className == "ControlCenterWindow");
 

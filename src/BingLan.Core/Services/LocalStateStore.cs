@@ -493,6 +493,13 @@ public sealed class LocalStateStore
             state.Dock.ShowStartMenuButton = true;
             state.SchemaVersion = 32;
         }
+        if (state.SchemaVersion < 33)
+        {
+            state.TopBar ??= new TopBarState();
+            state.TopBar.Modules ??= new TopBarModuleSwitches();
+            state.TopBar.Modules.TrayOverflow = true;
+            state.SchemaVersion = 33;
+        }
         state.Updates ??= new UpdateState();
         state.QuickPlaces = QuickPlaceRules.Normalize(state.QuickPlaces);
         state.DismissedDesktopCategories = (state.DismissedDesktopCategories ?? [])

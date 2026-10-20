@@ -24,7 +24,7 @@ BingLan Desktop (冰蓝桌面) is a Windows 11 desktop companion built with .NET
 - **Multiple monitors**: cards remember a position for each monitor setup. Unplug a laptop's external monitor and plug it back in, and the cards return to where they were on two screens.
 - **Quick launch**: a row of line icons for This PC, Desktop, Documents, Downloads, Pictures, and the Recycle Bin by default. Icons, names, and targets are customizable; a target can be a folder, program, or file.
 - **Dock**: pinned and running apps in separate sections, with a badge on apps that need attention. A button at the left opens the native Windows Start menu; it is shown by default and can be turned off in Dock settings. Right-click it to open the native Windows Quick Link menu. Drag a program or shortcut onto the dock to pin it; colour, opacity, and icon size are adjustable. Floating bars and small tools you don't want on the dock can be hidden from its right-click menu.
-- **Taskbar**: default, transparent, blurred, or auto-hide. Move the pointer to the bottom edge to reveal the native taskbar; pointer activation can optionally be restricted to the two bottom corners. Windows may still show the taskbar when opening native system panels. Hidden tray icons remain accessible through the native taskbar; a separate tray entry is not available yet. The original state comes back on exit or after a crash.
+- **Taskbar**: default, transparent, blurred, or auto-hide. Move the pointer to the bottom edge to reveal the native taskbar; pointer activation can optionally be restricted to the two bottom corners. Windows may still show the taskbar when opening native system panels. Hidden tray icons remain accessible through the native taskbar; the preview also provides a top-bar entry. The original state comes back on exit or after a crash.
 - **Top bar**: shows time, to-dos, weather, performance, and system status. Battery, network, and volume buttons open Windows Quick Settings when available, otherwise their respective Settings pages. The input-method button opens the system picker when available, otherwise Language settings; it does not switch input modes automatically.
 - **Search**: a centered top-bar field, a movable and resizable separate field, or a top-bar icon. Searches desktop entries, Start-menu apps, and files already indexed by Windows by default. Optional Everything integration falls back to Windows Search when unavailable. If neither index is available, desktop and app search remains usable. BingLan does not change indexing scope, maintain an additional index, or search file contents.
 - **Resource use**: measured on one 1440p Windows 11 PC, BingLan uses about 56–58 MB of memory; Rainmeter, Pogget, Nexus Dock, and TranslucentTB, the tools it replaces, used about 77.5 MB together (Task Manager "Memory" column, single measurement; varies with the machine and number of cards).
@@ -41,7 +41,7 @@ The interface is in Simplified Chinese.
 
 Stable version: [v0.2.27](https://github.com/keros68/binglan/releases/tag/v0.2.27) · [Installer](https://github.com/keros68/binglan/releases/download/v0.2.27/BingLan-Setup-0.2.27.exe) · [Portable](https://github.com/keros68/binglan/releases/download/v0.2.27/BingLan-0.2.27-portable.zip)
 
-Preview: [v0.2.28](https://github.com/keros68/binglan/releases/tag/v0.2.28), including a standalone [tray compatibility tool](https://github.com/keros68/binglan/releases/download/v0.2.28/BingLan-0.2.28-tray-preview.zip). The recovery and exit cleanup fixes are available in this tool; the regular app still has no dedicated tray-overflow entry. See the [preview guide (Chinese)](docs/TRAY-PREVIEW.md).
+Preview: [v0.2.29](https://github.com/keros68/binglan/releases/tag/v0.2.29) · [Installer](https://github.com/keros68/binglan/releases/download/v0.2.29/BingLan-Setup-0.2.29.exe) · [Portable](https://github.com/keros68/binglan/releases/download/v0.2.29/BingLan-0.2.29-portable.zip). A Tray button on the right of the top bar opens the native Windows hidden-icons panel. It is enabled by default and can be disabled in Top bar settings. A standalone [compatibility tool](https://github.com/keros68/binglan/releases/download/v0.2.29/BingLan-0.2.29-tray-preview.zip) is also available; see the [guide (Chinese)](docs/TRAY-PREVIEW.md).
 
 1. Open [Releases](https://github.com/keros68/binglan/releases/latest) and download `BingLan-Setup-*.exe` (installer) or `BingLan-*-portable.zip` (portable).
 2. Installer: run it — it installs for the current user and needs no administrator rights. Portable: unzip anywhere and run `BingLan.exe` inside. Both include the .NET runtime and are not code-signed yet, so Windows asks for confirmation on first run.
@@ -64,7 +64,7 @@ Requires the .NET 10 SDK and PowerShell 7. Building the installer also needs Inn
 ```powershell
 dotnet build .\BingLan.slnx -c Release
 dotnet run --project .\tests\BingLan.SmokeTests\BingLan.SmokeTests.csproj -c Release
-pwsh -NoProfile -File .\installer\build.ps1 -Version 0.2.28
+pwsh -NoProfile -File .\installer\build.ps1 -Version 0.2.29
 ```
 
 Full test commands, the technical design, and the current implementation are in the [development notes (Chinese)](docs/DEVELOPMENT.md); installer details are in [docs/INSTALLER.md](docs/INSTALLER.md).

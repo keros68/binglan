@@ -1744,6 +1744,9 @@ public partial class SettingsWindow : Window
             TopBarNetworkCheckBox.IsChecked = state.Modules.Network;
             TopBarBatteryCheckBox.IsChecked = state.Modules.Battery;
             TopBarSearchCheckBox.IsChecked = state.Modules.Search;
+            TopBarTrayOverflowCheckBox.IsChecked = state.Modules.TrayOverflow;
+            TopBarTrayOverflowCheckBox.Visibility = OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000)
+                ? Visibility.Visible : Visibility.Collapsed;
             TopBarEverythingCheckBox.IsChecked = state.UseEverything;
             SearchPresentationComboBox.SelectedIndex = (int)state.SearchPresentation;
             LoadSearchAppearance();
@@ -1796,6 +1799,7 @@ public partial class SettingsWindow : Window
         state.Modules.Network = TopBarNetworkCheckBox.IsChecked == true;
         state.Modules.Battery = TopBarBatteryCheckBox.IsChecked == true;
         state.Modules.Search = TopBarSearchCheckBox.IsChecked == true;
+        state.Modules.TrayOverflow = TopBarTrayOverflowCheckBox.IsChecked == true;
         state.UseEverything = TopBarEverythingCheckBox.IsChecked == true;
         if (TopBarMonitorComboBox.SelectedItem is ComboBoxItem { Tag: string deviceName })
         {
