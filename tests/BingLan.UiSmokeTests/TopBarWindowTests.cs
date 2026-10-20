@@ -633,9 +633,7 @@ internal static class TopBarWindowTests
             Assert(WaitUntil(pump, () => environment.CandidateReads > 0),
                 "会话开始应在后台读取搜索数据源");
 
-            box.Text = "wx";
-            bar.PumpSearch();
-            Assert(WaitUntil(pump, () => bar.SearchResults.Count > 0), "拼音首字母应给出结果");
+            TypeQueryAndAwaitResults(bar, environment, "wx", pump);
             var flyout = bar.SearchFlyout
                 ?? throw new InvalidOperationException("有结果时应打开结果浮层");
             Assert(flyout.IsOpen, "结果浮层应处于打开状态");
@@ -682,9 +680,7 @@ internal static class TopBarWindowTests
             // produces), which once slipped past the box's key handling.
             bar.BeginSearchSession();
             pump();
-            box.Text = "wx";
-            bar.PumpSearch();
-            Assert(WaitUntil(pump, () => bar.SearchResults.Count > 0), "再次搜索应有结果");
+            TypeQueryAndAwaitResults(bar, environment, "wx", pump);
             PressKey(box, System.Windows.Input.Key.Return);
             pump();
             Assert(environment.OpenedTargets.Count == 2
@@ -813,6 +809,7 @@ internal static class TopBarWindowTests
                 Assert((InputMethod.Current.ImeConversionMode & ImeConversionModeValues.Native) != 0,
                     "重新打开搜索应恢复中文转换，即使输入框保留逻辑焦点、没有再次触发焦点事件");
             }
+            Assert(WaitUntil(pump, () => bar.SearchSourcesLoaded), "输入前后台候选应已发布到顶栏");
             box.Text = "wx";
             bar.PumpSearch();
             Assert(WaitUntil(pump, () => bar.SearchResults.Count > 0), "搜索应有结果");
@@ -1051,9 +1048,7 @@ internal static class TopBarWindowTests
                 $"{string.Join("；", focusChanges)}）");
             Assert(WaitUntil(pump, () => environment.CandidateReads > 0),
                 "会话开始应在后台读取搜索数据源");
-            box.Text = "wx";
-            bar.PumpSearch();
-            Assert(WaitUntil(pump, () => bar.SearchResults.Count > 0), "拼音首字母应给出结果");
+            TypeQueryAndAwaitResults(bar, environment, "wx", pump);
             var flyout = bar.SearchFlyout
                 ?? throw new InvalidOperationException("有结果时应打开结果浮层");
             Assert(WaitUntil(pump, () => LogicalDescendants(flyout.Child)
@@ -1123,54 +1118,69 @@ internal static class TopBarWindowTests
             // posted messages alone can be followed by a stale WM_MOUSELEAVE.
             // A separate entry point guarantees movement even at the row centre.
             var entryX = targetX - Math.Min(16, (int)((bottomRight.X - topLeft.X) / 4d));
-            MoveMouseTo(entryX, targetY);
-            Assert(WaitUntil(pump, () => row.IsMouseOver), "系统鼠标移动应命中结果行");
-            MoveMouseTo(targetX, targetY);
-            var ready = WaitUntil(pump, () => GetForegroundWindow() == barHandle
-                && bar.SearchSessionActive && row.IsMouseOver);
-            GetCursorPos(out var readyCursor);
-            Assert(ready,
-                $"发送点击前顶栏应保持前台，WPF 鼠标应命中结果行（前台 {GetForegroundWindow():X}，顶栏 {barHandle:X}，" +
-                $"会话 {bar.SearchSessionActive}，WPF 激活 {bar.IsActive}，焦点 {box.IsKeyboardFocused}，" +
-                $"鼠标 {readyCursor.X},{readyCursor.Y}，原生命中 {WindowFromPoint(readyCursor):X}，浮层 {source.Handle:X}，" +
-                $"WPF 命中 {System.Windows.Input.Mouse.DirectlyOver?.GetType().Name ?? "无"}，位置 {System.Windows.Input.Mouse.GetPosition(row)}）");
-            Assert(WindowFromPoint(readyCursor) == source.Handle,
-                "发送系统点击前鼠标应仍在结果浮层，避免点击其他应用");
-            SendMouseInputs(new MouseInput { Flags = MouseLeftDown });
-            try
+            // A displaced physical cursor is ambient desktop interference, not a
+            // product bug, so the click is retried once when the cursor moved away
+            // between the readiness check and the release. A cursor that stayed on
+            // the row without opening it must fail loudly instead.
+            var openedByClick = false;
+            for (var clickAttempt = 1; clickAttempt <= 2 && !openedByClick; clickAttempt++)
             {
-                Assert(WaitUntil(pump, () => rawDownCount > 0), "结果浮层应收到鼠标按下");
-                // A physical click leaves time for focus events between down and up.
-                // Sending both messages in one batch can hide premature teardown.
-                var releaseAt = Environment.TickCount64 + 150;
-                while (Environment.TickCount64 < releaseAt)
+                MoveMouseTo(entryX, targetY);
+                Assert(WaitUntil(pump, () => row.IsMouseOver), "系统鼠标移动应命中结果行");
+                MoveMouseTo(targetX, targetY);
+                var ready = WaitUntil(pump, () => GetForegroundWindow() == barHandle
+                    && bar.SearchSessionActive && row.IsMouseOver);
+                GetCursorPos(out var readyCursor);
+                Assert(ready,
+                    $"发送点击前顶栏应保持前台，WPF 鼠标应命中结果行（前台 {GetForegroundWindow():X}，顶栏 {barHandle:X}，" +
+                    $"会话 {bar.SearchSessionActive}，WPF 激活 {bar.IsActive}，焦点 {box.IsKeyboardFocused}，" +
+                    $"鼠标 {readyCursor.X},{readyCursor.Y}，原生命中 {WindowFromPoint(readyCursor):X}，浮层 {source.Handle:X}，" +
+                    $"WPF 命中 {System.Windows.Input.Mouse.DirectlyOver?.GetType().Name ?? "无"}，位置 {System.Windows.Input.Mouse.GetPosition(row)}）");
+                Assert(WindowFromPoint(readyCursor) == source.Handle,
+                    "发送系统点击前鼠标应仍在结果浮层，避免点击其他应用");
+                SendMouseInputs(new MouseInput { Flags = MouseLeftDown });
+                try
                 {
-                    pump();
-                    Thread.Sleep(10);
+                    Assert(WaitUntil(pump, () => rawDownCount > 0), "结果浮层应收到鼠标按下");
+                    // A physical click leaves time for focus events between down and up.
+                    // Sending both messages in one batch can hide premature teardown.
+                    var releaseAt = Environment.TickCount64 + 150;
+                    while (Environment.TickCount64 < releaseAt)
+                    {
+                        pump();
+                        Thread.Sleep(10);
+                    }
+                    Assert(bar.SearchSessionActive && flyout.IsOpen && box.IsKeyboardFocused,
+                        $"按住结果行时搜索框应保留焦点且浮层保持打开（会话 {bar.SearchSessionActive}，浮层 {flyout.IsOpen}，焦点 {System.Windows.Input.Keyboard.FocusedElement?.GetType().Name}，{string.Join("；", focusChanges)}）");
                 }
-                Assert(bar.SearchSessionActive && flyout.IsOpen && box.IsKeyboardFocused,
-                    $"按住结果行时搜索框应保留焦点且浮层保持打开（会话 {bar.SearchSessionActive}，浮层 {flyout.IsOpen}，焦点 {System.Windows.Input.Keyboard.FocusedElement?.GetType().Name}，{string.Join("；", focusChanges)}）");
-            }
-            finally
-            {
-                SendMouseInputs(new MouseInput { Flags = MouseLeftUp });
-            }
-            if (!WaitUntil(pump, () => environment.OpenedTargets.Count >= 1))
-            {
-                GetWindowRect(source.Handle, out var popupRect);
+                finally
+                {
+                    SendMouseInputs(new MouseInput { Flags = MouseLeftUp });
+                }
+                openedByClick = WaitUntil(pump, () => environment.OpenedTargets.Count >= 1);
+                if (openedByClick)
+                {
+                    break;
+                }
                 GetCursorPos(out var actualCursor);
-                var cursorWindow = WindowFromPoint(actualCursor);
-                GetWindowThreadProcessId(cursorWindow, out var cursorProcess);
-                throw new InvalidOperationException(
-                    "点击结果行应打开该结果" +
-                    $"（浮层收到原始按下/抬起 {rawDownCount}/{rawUpCount}，" +
-                    $"顶栏 WPF 激活 {bar.IsActive}，鼠标命中 {System.Windows.Input.Mouse.DirectlyOver?.GetType().Name ?? "无"}，" +
-                    $"卡片收到抬起 {cardSawClick}，行收到抬起 {rowSawClick}，" +
-                    $"会话活跃 {bar.SearchSessionActive}，结果数 {bar.SearchResults.Count}，" +
-                    $"浮层矩形 {popupRect.Left},{popupRect.Top}-{popupRect.Right},{popupRect.Bottom}，" +
-                    $"行心 {targetX},{targetY}，实际鼠标 {actualCursor.X},{actualCursor.Y}，" +
-                    $"命中窗口 {cursorWindow:X}/进程 {cursorProcess}，浮层 {source.Handle:X}，" +
-                    $"前台 {GetForegroundWindow():X}，顶栏 {new WindowInteropHelper(bar).Handle:X}，捕获 {GetCapture():X}）");
+                var displaced = Math.Abs(actualCursor.X - targetX) > 16 || Math.Abs(actualCursor.Y - targetY) > 16;
+                if (clickAttempt >= 2 || !displaced)
+                {
+                    GetWindowRect(source.Handle, out var popupRect);
+                    var cursorWindow = WindowFromPoint(actualCursor);
+                    GetWindowThreadProcessId(cursorWindow, out var cursorProcess);
+                    throw new InvalidOperationException(
+                        "点击结果行应打开该结果" +
+                        $"（浮层收到原始按下/抬起 {rawDownCount}/{rawUpCount}，" +
+                        $"顶栏 WPF 激活 {bar.IsActive}，鼠标命中 {System.Windows.Input.Mouse.DirectlyOver?.GetType().Name ?? "无"}，" +
+                        $"卡片收到抬起 {cardSawClick}，行收到抬起 {rowSawClick}，" +
+                        $"会话活跃 {bar.SearchSessionActive}，结果数 {bar.SearchResults.Count}，" +
+                        $"浮层矩形 {popupRect.Left},{popupRect.Top}-{popupRect.Right},{popupRect.Bottom}，" +
+                        $"行心 {targetX},{targetY}，实际鼠标 {actualCursor.X},{actualCursor.Y}，" +
+                        $"命中窗口 {cursorWindow:X}/进程 {cursorProcess}，浮层 {source.Handle:X}，" +
+                        $"前台 {GetForegroundWindow():X}，顶栏 {new WindowInteropHelper(bar).Handle:X}，捕获 {GetCapture():X}）");
+                }
+                Assert(bar.SearchSessionActive && flyout.IsOpen, "点击被环境移开重试前，会话与浮层应保持打开");
             }
             Assert(environment.OpenedTargets[0] == @"C:\Users\a\Desktop\微信.lnk",
                 "点击的首行应是微信");
@@ -1278,6 +1288,8 @@ internal static class TopBarWindowTests
                 ForceForeground(new WindowInteropHelper(input).Handle);
                 bar.SearchBox!.Focus();
                 Assert(WaitUntil(pump, () => bar.SearchBox.IsKeyboardFocused && environment.CandidateReads > 0), "右键测试先取得搜索焦点");
+                InputMethod.Current.ImeConversionMode = ImeConversionModeValues.Alphanumeric;
+                Assert(WaitUntil(pump, () => bar.SearchSourcesLoaded), "右键测试输入前后台候选应已发布");
                 bar.SearchBox.Text = "wx";
                 bar.PumpSearch();
                 Assert(WaitUntil(pump, () => bar.SearchResults.Count > 0 && LogicalDescendants(bar.SearchFlyout?.Child)
@@ -1416,9 +1428,7 @@ internal static class TopBarWindowTests
                         "独立搜索应激活自己的输入框");
                     Assert(floating.IsVisible, "热键会话应展开独立搜索框");
                     Assert(Window.GetWindow(bar.SearchHost) == floating, "独立模式应复用原搜索控件");
-                    bar.SearchBox.Text = "wx";
-                    bar.PumpSearch();
-                    Assert(WaitUntil(pump, () => bar.SearchResults.Count > 0), "独立搜索应显示原有结果");
+                    TypeQueryAndAwaitResults(bar, environment, "wx", pump);
                     PressKey(bar.SearchBox, System.Windows.Input.Key.Return);
                     Assert(WaitUntil(pump, () => environment.OpenedTargets.Count == 1), "独立搜索 Enter 应打开结果");
                     Assert(floating.IsVisible == (mode == SearchPresentation.Floating), "完成搜索后图标模式应收起");
@@ -1677,6 +1687,26 @@ internal static class TopBarWindowTests
             Thread.Sleep(25);
         }
         return condition();
+    }
+
+    /// <summary>
+    /// Types a plain query and waits for results. Typing waits for the background
+    /// candidate load to be published first: CandidateReads increments before
+    /// publication, so a first search could otherwise run against an empty list and
+    /// depend on the re-rank rescue winning a race with session teardown on a busy
+    /// desktop. The conversion mode is forced to alphanumeric so ambient typing on
+    /// the live desktop cannot open a real IME composition over the focused box and
+    /// silently suspend every later search.
+    /// </summary>
+    private static void TypeQueryAndAwaitResults(TopBarWindow bar, FakeEnvironment environment, string query, Action pump)
+    {
+        InputMethod.Current.ImeConversionMode = ImeConversionModeValues.Alphanumeric;
+        Assert(WaitUntil(pump, () => bar.SearchSourcesLoaded), "后台候选应已发布到顶栏");
+        bar.SearchBox!.Text = query;
+        bar.PumpSearch();
+        Assert(WaitUntil(pump, () => bar.SearchResults.Count > 0),
+            $"搜索应给出结果（已发布 {bar.SearchSourcesLoaded}，候选读取 {environment.CandidateReads}，" +
+            $"会话 {bar.SearchSessionActive}，组合中 {bar.SearchSuspendedForComposition}）");
     }
 
     private static IEnumerable<DependencyObject> LogicalDescendants(DependencyObject? root)
