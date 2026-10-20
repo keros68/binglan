@@ -100,9 +100,16 @@ internal static class ShellSurfaceNativeMethods
     internal static bool IsStartMenuForeground()
     {
         var window = DockNativeMethods.GetForegroundWindow();
-        return ClassNameOf(window) == "Windows.UI.Core.CoreWindow"
-            && ProcessNameOf(window) == "StartMenuExperienceHost";
+        return ProcessNameOf(window) is { } processName && IsStartMenuSurface(ClassNameOf(window), processName);
     }
+
+    /// <summary>
+    /// The Start menu is a CoreWindow of StartMenuExperienceHost; Windows 11 24H2+ hosts
+    /// the same menu under SearchHost instead, verified live on 25H2 build 26200.
+    /// </summary>
+    internal static bool IsStartMenuSurface(string className, string processName) =>
+        className == "Windows.UI.Core.CoreWindow"
+        && processName is "StartMenuExperienceHost" or "SearchHost";
 
     internal static bool IsQuickSettingsForeground()
     {
@@ -191,7 +198,7 @@ internal static class ShellSurfaceNativeMethods
 
     internal static bool IsSystemMenu(string className, string processName) =>
         (processName == "explorer" && className is "Shell_TrayWnd" or "Shell_SecondaryTrayWnd" or "Xaml_WindowedPopupClass" or "TopLevelWindowForOverflowXamlIsland")
-        || (processName == "StartMenuExperienceHost" && className == "Windows.UI.Core.CoreWindow")
+        || IsStartMenuSurface(className, processName)
         || (processName is "ShellHost" or "ShellExperienceHost" && className == "ControlCenterWindow");
 
     internal static bool SendChord(ushort modifier, ushort key)

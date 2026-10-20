@@ -35,6 +35,9 @@ internal static class ShellSurfaceTests
         Assert(ShellSurfaceNativeMethods.IsSystemMenu("TopLevelWindowForOverflowXamlIsland", "explorer"), "原生托盘浮层应让 Dock 让开");
         Assert(!ShellSurfaceNativeMethods.IsSystemMenu("TopLevelWindowForOverflowXamlIsland", "Example"), "其他程序不能冒充托盘面板");
         Assert(ShellSurfaceNativeMethods.IsSystemMenu("Windows.UI.Core.CoreWindow", "StartMenuExperienceHost"), "开始菜单应让 Dock 让开");
+        Assert(ShellSurfaceNativeMethods.IsSystemMenu("Windows.UI.Core.CoreWindow", "SearchHost"), "25H2 由 SearchHost 宿主开始菜单，也应让 Dock 让开");
+        Assert(ShellSurfaceNativeMethods.IsStartMenuSurface("Windows.UI.Core.CoreWindow", "SearchHost"), "开始菜单确认应接受 25H2 的 SearchHost 宿主");
+        Assert(!ShellSurfaceNativeMethods.IsStartMenuSurface("Xaml_WindowedPopupClass", "SearchHost"), "非 CoreWindow 不能当作开始菜单");
         Assert(!ShellSurfaceNativeMethods.IsSystemMenu("Windows.UI.Core.CoreWindow", "Example"), "普通应用不能当作系统菜单");
         Assert(!ShellSurfaceNativeMethods.IsSystemMenu("Progman", "explorer"), "桌面不能触发系统菜单避让");
         Assert(ShellSurfaceService.IsQuickSettingsButton("SystemTrayIcon", "SystemTray.OmniButton", "Volume: 50%"),
