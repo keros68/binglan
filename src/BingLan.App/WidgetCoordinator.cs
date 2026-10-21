@@ -270,6 +270,9 @@ public sealed class WidgetCoordinator : IDisposable
 
         RunShellStep("Dock ", _dock.Apply);
         RunShellStep("顶端信息条", _topBar.Apply);
+        // A bar-only desktop has no information card whose load would start the shared
+        // sampler, so the bar brings it up itself here.
+        RunShellStep("共享采样", UpdateSamplingMode);
         await ApplyTaskbarModeAsync();
         StartupLog.Write("任务栏模式已应用");
         RunShellStep("任务栏两角唤出", () => _cornerReveal.SetEnabled(_state.Taskbar.RevealOnlyAtCorners));
@@ -530,6 +533,7 @@ public sealed class WidgetCoordinator : IDisposable
                 _dock.Apply();
                 ApplyDesktopExperience(_state.DesktopExperience);
                 _topBar.Apply();
+                UpdateSamplingMode();
                 _ = ApplyTaskbarModeAsync();
                 SaveNow();
             },
@@ -589,12 +593,26 @@ public sealed class WidgetCoordinator : IDisposable
         SaveNow();
     }
 
-    private void UpdateSamplingMode() =>
-        _performanceSampler.SetMode(PerformanceSamplingRules.ResolveMode(
-            _fullScreenWatcher.IsFullScreenInFront,
-            // The top bar reads the same snapshots, so an enabled bar keeps the clock
-            // ticking even when the desktop cards are hidden.
-            _desktopHidden && !_state.TopBar.IsEnabled));
+    private void UpdateSamplingMode()
+    {
+        // The top bar reads the same snapshots, so an enabled bar keeps the clock
+        // ticking even when the desktop cards are hidden — and with the last card
+        // removed it is the only listener left, so it also keeps the sampler running.
+        // Nobody is listening only when there is neither a card window nor a bar.
+        if (_windows.OfType<InformationWidgetWindow>().Any() || _state.TopBar.IsEnabled)
+        {
+            // A bar-only setup has no card window to start the sampler on load.
+            if (!_performanceSampler.IsRunning)
+            {
+                _performanceSampler.Start();
+            }
+            _performanceSampler.SetMode(PerformanceSamplingRules.ResolveMode(
+                _fullScreenWatcher.IsFullScreenInFront,
+                _desktopHidden && !_state.TopBar.IsEnabled));
+            return;
+        }
+        _performanceSampler.Stop();
+    }
 
     // Runs after monitors are added, removed or rearranged, or scaling changes.
     private void OnDisplaySettingsChanged(object? sender, EventArgs e) => OnDisplayLayoutChanged();
@@ -1623,10 +1641,7 @@ public sealed class WidgetCoordinator : IDisposable
         _windows.Remove(window);
         window.CanClose = true;
         window.Close();
-        if (!_windows.OfType<InformationWidgetWindow>().Any())
-        {
-            _performanceSampler.Stop();
-        }
+        UpdateSamplingMode();
         SaveNow();
     }
 
@@ -1722,6 +1737,7 @@ public sealed class WidgetCoordinator : IDisposable
         _dock.Apply();
         ThemeRules.ApplyTopBar(package, _state.TopBar);
         _topBar.Apply();
+        UpdateSamplingMode();
         SaveNow();
         _settingsWindow?.RefreshDockSettings();
         _settingsWindow?.RefreshTopBarSettings();

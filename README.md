@@ -39,6 +39,8 @@ Windows 11 开启系统透明效果时，Dock 和隐藏把手使用实时毛玻�
 
 稳定版：[v0.2.32](https://github.com/keros68/binglan/releases/tag/v0.2.32) · [安装版](https://github.com/keros68/binglan/releases/download/v0.2.32/BingLan-Setup-0.2.32.exe) · [免安装版](https://github.com/keros68/binglan/releases/download/v0.2.32/BingLan-0.2.32-portable.zip)。修复分组盒、应用选择器和顶栏搜索中图标分辨率偏低的问题：图标改从系统图像列表取最高分辨率帧（最高 256×256）再高质量缩小显示，高 DPI 下不再发糊。修复关闭“清爽桌面”后桌面图标未恢复的问题：恢复记录丢失时关闭也会直接恢复显示，图标本就处于隐藏状态时开启会提示先显示图标；分组盒设置里新增“桌面上的原文件”提示，可一键跳转开启清爽桌面。另附[兼容性验收工具](https://github.com/keros68/binglan/releases/download/v0.2.32/BingLan-0.2.32-tray-preview.zip)，使用步骤见[托盘验收说明](docs/TRAY-PREVIEW.md)。
 
+预发布版：[v0.2.33](https://github.com/keros68/binglan/releases/tag/v0.2.33) · [安装版](https://github.com/keros68/binglan/releases/download/v0.2.33/BingLan-Setup-0.2.33.exe) · [免安装版](https://github.com/keros68/binglan/releases/download/v0.2.33/BingLan-0.2.33-portable.zip)。修复关闭全部桌面信息组件、只开顶端信息条时，顶栏时钟、天气和性能不再刷新的问题：共享采样服务改由应用启动时统一拉起，顶栏启用期间保持运行，删除全部信息卡片或重启后同样正常更新。另附[兼容性验收工具](https://github.com/keros68/binglan/releases/download/v0.2.33/BingLan-0.2.33-tray-preview.zip)，使用步骤见[托盘验收说明](docs/TRAY-PREVIEW.md)。
+
 1. 打开 [Releases](https://github.com/keros68/binglan/releases/latest)，下载 `BingLan-Setup-*.exe`（安装版）或 `BingLan-*-portable.zip`（免安装版）。
 2. 安装版运行安装包，按当前用户安装，不需要管理员权限；免安装版解压到任意文件夹后运行其中的 `BingLan.exe`。两者均自带 .NET 运行时，尚未加入代码签名，首次运行需按 Windows 提示手动放行。
 3. 免安装版更新时重新下载 zip 覆盖，不要使用应用内“下载并安装”（它安装的是安装版）；与已安装版本不要同时运行。
@@ -60,7 +62,7 @@ Windows 11 开启系统透明效果时，Dock 和隐藏把手使用实时毛玻�
 ```powershell
 dotnet build .\BingLan.slnx -c Release
 dotnet run --project .\tests\BingLan.SmokeTests\BingLan.SmokeTests.csproj -c Release
-pwsh -NoProfile -File .\installer\build.ps1 -Version 0.2.32
+pwsh -NoProfile -File .\installer\build.ps1 -Version 0.2.33
 ```
 
 完整测试命令、技术方案和当前实现见[开发说明](docs/DEVELOPMENT.md)，安装包细节见[安装包](docs/INSTALLER.md)。

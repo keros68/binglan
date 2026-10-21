@@ -150,6 +150,7 @@ internal static class Program
         Run("待办按 Enter 提交后文字写入状态", TestTodoEnterCommitsText, failures);
         Run("待办勾选后各行仍可被辅助技术访问", TestTodoRowsStayAccessible, failures);
         Run("托盘隐藏与显示桌面组件", TestTrayToggleDesktop, failures);
+        Run("只开顶栏时共享采样保持运行", TestTopBarOnlyKeepsSamplerAlive, failures);
         Run("Shell 隐藏或最小化组件后自动恢复显示", TestShellHideAndMinimizeRecovery, failures);
         Run("显示桌面时组件提升到任务栏下方、恢复后回落", TestDesktopSurfaceRaiseAndLower, failures);
         Run("组件恢复默认位置", TestResetComponentPlacement, failures);
@@ -2360,6 +2361,90 @@ internal static class Program
             Directory.Delete(temp, true);
         }
     }
+
+    // 社区反馈的冻结配置：信息组件全部关闭、只留顶栏。顶栏的时间/天气/性能都靠共享
+    // 采样服务的 Sampled 事件刷新，而原先启动它的只有信息卡片窗口的加载逻辑——卡片
+    // 删光或从未创建时，顶栏从启动起就停止更新，重启也无法自愈。
+    private static void TestTopBarOnlyKeepsSamplerAlive()
+    {
+        var temp = Path.Combine(Path.GetTempPath(), $"BingLan-sampler-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(temp);
+        var coordinator = new WidgetCoordinator(interactiveQa: true, dataDirectory: temp);
+        try
+        {
+            var state = typeof(WidgetCoordinator)
+                .GetField("_state", System.Reflection.BindingFlags.Instance |
+                    System.Reflection.BindingFlags.NonPublic)
+                ?.GetValue(coordinator) as AppState ??
+                throw new InvalidOperationException("应用状态没有创建");
+            foreach (var kind in new[]
+                     {
+                         DesktopComponentKind.TimeDate,
+                         DesktopComponentKind.Greeting,
+                         DesktopComponentKind.Weather,
+                         DesktopComponentKind.Performance
+                     })
+            {
+                state.DesktopExperience.GetComponent(kind).IsVisible = false;
+            }
+            state.TopBar.IsEnabled = true;
+
+            coordinator.Start();
+            // The shell steps ride the dispatcher queue; within the logon window they
+            // also wait for the desktop to settle, so the wait outlasts that delay.
+            var deadline = DateTime.UtcNow.AddSeconds(30);
+            while (!SamplerOf(coordinator).IsRunning && DateTime.UtcNow < deadline)
+            {
+                Pump();
+                Thread.Sleep(50);
+            }
+            Assert(
+                SamplerOf(coordinator).IsRunning,
+                "只开顶栏时共享采样服务应运行，顶栏时间/天气/性能才有刷新来源");
+            Assert(
+                Application.Current.Windows.OfType<TopBarWindow>().Any(window => window.IsLoaded),
+                "顶栏窗口应随启动打开");
+
+            state.TopBar.IsEnabled = false;
+            InvokeApplyTopBar(coordinator);
+            Pump();
+            Assert(
+                !SamplerOf(coordinator).IsRunning,
+                "没有信息卡片且顶栏关闭后，采样服务应停止");
+
+            state.TopBar.IsEnabled = true;
+            InvokeApplyTopBar(coordinator);
+            Pump();
+            Assert(
+                SamplerOf(coordinator).IsRunning,
+                "重新启用顶栏后采样服务应随之恢复，不依赖任何卡片窗口");
+        }
+        finally
+        {
+            coordinator.Dispose();
+            foreach (var window in Application.Current.Windows.OfType<WidgetWindowBase>().ToList())
+            {
+                window.CanClose = true;
+                window.Close();
+            }
+            Pump();
+            Directory.Delete(temp, true);
+        }
+    }
+
+    private static IPerformanceSamplingService SamplerOf(WidgetCoordinator coordinator) =>
+        typeof(WidgetCoordinator)
+            .GetField("_performanceSampler", System.Reflection.BindingFlags.Instance |
+                System.Reflection.BindingFlags.NonPublic)
+            ?.GetValue(coordinator) as IPerformanceSamplingService ??
+        throw new InvalidOperationException("共享采样服务没有创建");
+
+    private static void InvokeApplyTopBar(WidgetCoordinator coordinator) =>
+        (typeof(WidgetCoordinator)
+            .GetMethod("ApplyTopBar", System.Reflection.BindingFlags.Instance |
+                System.Reflection.BindingFlags.NonPublic)
+            ?? throw new InvalidOperationException("找不到顶栏应用方法"))
+        .Invoke(coordinator, null);
 
     // "显示桌面" and "最小化所有窗口" reach a card either as ShowWindow(SW_HIDE) or as
     // ShowWindow(SW_MINIMIZE); on Windows builds that do not skip tool windows the card
