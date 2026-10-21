@@ -52,6 +52,7 @@ Run("检查更新结果与请求内容（离线桩）", UpdateServiceTests.TestC
 Run("更新安装包大小与 SHA-256 校验", UpdateServiceTests.TestVerifiedDownload);
 Run("更新设置 v20 迁移与保存", UpdateServiceTests.TestStateMigration);
 Run("清爽桌面识别用户接管", CleanDesktopTests.TestTakeoverDetection);
+Run("清爽桌面无记录时关闭仍恢复显示", CleanDesktopTests.TestTurnOffWithoutRecordPlan);
 Run("清爽桌面检查点往返与拒绝", CleanDesktopTests.TestCheckpointRoundTripAndRejection);
 Run("清爽桌面设置迁移", CleanDesktopTests.TestSettingMigration);
 Run("空状态文件从备份恢复且不覆盖备份", CleanDesktopTests.TestEmptyStateFallsBackToBackup);

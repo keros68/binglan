@@ -240,6 +240,7 @@ internal sealed class AppPickerDialog : Window
         icon.SetValue(WidthProperty, 24d);
         icon.SetValue(HeightProperty, 24d);
         icon.SetValue(MarginProperty, new Thickness(8, 0, 10, 0));
+        icon.SetValue(RenderOptions.BitmapScalingModeProperty, BitmapScalingMode.HighQuality);
         icon.SetBinding(Image.SourceProperty, new Binding(nameof(AppChoice.Icon)));
         row.AppendChild(icon);
 

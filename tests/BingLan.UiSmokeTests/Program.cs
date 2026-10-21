@@ -137,6 +137,7 @@ internal static class Program
         Run("分组盒自动刷新开关默认关闭并按需写回", TestFileBoxAutomationToggle, failures);
         Run("桌面分组盒显示名称与盒间转移", TestFileBoxRenameAndTransfer, failures);
         Run("桌面分组盒图标与列表视图切换", TestFileBoxViewModeSwitch, failures);
+        Run("卡片图标取高分辨率帧而非 32px 拉伸", TestIconProviderReturnsHighResolutionFrames, failures);
         Run("屏幕阅读器名称、Tab 顺序与实际 DPI 边界", TestAccessibilityAndKeyboardNavigation, failures);
         Run("高对比度系统色切换与冰蓝材质恢复", TestHighContrastThemeSwitch, failures);
         Run("单实例门禁占用与释放", TestSingleInstanceGate, failures);
@@ -1581,6 +1582,28 @@ internal static class Program
             window.Close();
             Directory.Delete(temp, recursive: true);
         }
+    }
+
+    private static void TestIconProviderReturnsHighResolutionFrames()
+    {
+        BitmapSource FrameOf(ImageSource? icon, string what)
+        {
+            Assert(icon is BitmapSource, $"{what}没有取到位图图标");
+            return (BitmapSource)icon!;
+        }
+
+        var executablePath = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.Windows),
+            "explorer.exe");
+        var fileIcon = FrameOf(ShellIconProvider.GetIcon(executablePath), "explorer.exe");
+        Assert(
+            Math.Max(fileIcon.PixelWidth, fileIcon.PixelHeight) >= 48,
+            $"文件图标帧只有 {fileIcon.PixelWidth}×{fileIcon.PixelHeight}，卡片高 DPI 下会被拉糊");
+
+        var shellIcon = FrameOf(ShellIconProvider.GetIcon("shell:MyComputerFolder"), "系统位置");
+        Assert(
+            Math.Max(shellIcon.PixelWidth, shellIcon.PixelHeight) >= 48,
+            $"系统位置图标帧只有 {shellIcon.PixelWidth}×{shellIcon.PixelHeight}，卡片高 DPI 下会被拉糊");
     }
 
     private static void TestFileBoxWindow()

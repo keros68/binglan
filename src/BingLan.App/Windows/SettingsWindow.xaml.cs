@@ -240,6 +240,7 @@ public partial class SettingsWindow : Window
         {
             SelectedWidgetAppearanceHost.Content = null;
             FileBoxCollectPanel.Visibility = Visibility.Collapsed;
+            FileBoxDesktopHintPanel.Visibility = Visibility.Collapsed;
             SelectedWidgetEditorPanel.Visibility = Visibility.Collapsed;
             BuiltInComponentEditorPanel.Visibility = Visibility.Visible;
             LoadSelectedComponentEditor(kind, entry.Window);
@@ -818,6 +819,8 @@ public partial class SettingsWindow : Window
     private void LoadFileBoxCollect(FileBoxWindow? box)
     {
         FileBoxCollectPanel.Visibility = box is null ? Visibility.Collapsed : Visibility.Visible;
+        FileBoxDesktopHintPanel.Visibility = box is null ? Visibility.Collapsed : Visibility.Visible;
+        RefreshFileBoxCleanDesktopHint();
         if (box is null)
         {
             return;
@@ -1028,6 +1031,7 @@ public partial class SettingsWindow : Window
         {
             _loadingCleanDesktop = false;
         }
+        RefreshFileBoxCleanDesktopHint();
 
         // A restore that did not complete stays visible here until it is resolved.
         var notice = _maintenance.CleanDesktopNotice();
@@ -1247,6 +1251,20 @@ public partial class SettingsWindow : Window
             CleanDesktopCheckBox.IsEnabled = true;
             RefreshCleanDesktopSettings();
         }
+    }
+
+    // 收纳只记录位置，桌面上的原文件仍可见；分组盒设置里指向清爽桌面开关，避免用户找不到隐藏入口。
+    private void RefreshFileBoxCleanDesktopHint()
+    {
+        var enabled = _maintenance.IsCleanDesktopEnabled();
+        GoToCleanDesktopButton.IsEnabled = !enabled;
+        GoToCleanDesktopButton.Content = enabled ? "清爽桌面已开启" : "前往开启清爽桌面";
+    }
+
+    private void GoToCleanDesktop_Click(object sender, RoutedEventArgs e)
+    {
+        SelectNavigationPage("Appearance");
+        CleanDesktopRow.BringIntoView();
     }
 
     private void OpenDataDirectory_Click(object sender, RoutedEventArgs e) =>

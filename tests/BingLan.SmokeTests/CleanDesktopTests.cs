@@ -42,6 +42,18 @@ internal static class CleanDesktopTests
         Check(!CleanDesktopRules.IsTakenOver(false, RealDesktopFlags), "未开启时不是接管");
     }
 
+    internal static void TestTurnOffWithoutRecordPlan()
+    {
+        Check(
+            CleanDesktopRules.TurnOffMustShowIcons(false, RealDesktopFlags | CleanDesktopRules.NoIconsFlag),
+            "检查点丢失而图标仍隐藏时，关闭必须恢复显示而不是虚报成功");
+        Check(
+            !CleanDesktopRules.TurnOffMustShowIcons(true, RealDesktopFlags | CleanDesktopRules.NoIconsFlag),
+            "有检查点时应按检查点恢复，不走兜底");
+        Check(!CleanDesktopRules.TurnOffMustShowIcons(false, RealDesktopFlags),
+            "检查点丢失但图标可见时无需写入");
+    }
+
     internal static void TestCheckpointRoundTripAndRejection()
     {
         var checkpoint = new CleanDesktopCheckpoint

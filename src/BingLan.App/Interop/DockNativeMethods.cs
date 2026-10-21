@@ -59,6 +59,7 @@ internal static class DockNativeMethods
     internal const uint ShgfiPidl = 0x00000008;
     internal const uint FileAttributeNormal = 0x00000080;
     internal const int ShilExtraLarge = 2;
+    internal const int ShilJumbo = 4;
     internal const uint IldTransparent = 0x00000001;
 
     internal static readonly nint HwndBottom = 1;

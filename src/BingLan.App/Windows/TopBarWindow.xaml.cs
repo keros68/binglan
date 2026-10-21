@@ -1803,6 +1803,7 @@ public sealed partial class TopBarWindow : Window
             VerticalAlignment = VerticalAlignment.Center,
             Source = _searchIconCache.GetValueOrDefault(candidate.Path)
         };
+        RenderOptions.SetBitmapScalingMode(icon, BitmapScalingMode.HighQuality);
         var name = new TextBlock
         {
             Text = candidate.DisplayName,

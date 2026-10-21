@@ -98,4 +98,12 @@ public static class CleanDesktopRules
     /// </summary>
     public static bool IsTakenOver(bool holdingHidden, uint currentFlags) =>
         holdingHidden && !AreIconsHidden(currentFlags);
+
+    /// <summary>
+    /// Whether an explicit turn-off has to show the icons even though there is no
+    /// usable checkpoint: while the toggle was on, the mode held the hidden state, so
+    /// a lost record must not end in a reported success with the desktop still hidden.
+    /// </summary>
+    public static bool TurnOffMustShowIcons(bool hasCheckpoint, uint currentFlags) =>
+        !hasCheckpoint && AreIconsHidden(currentFlags);
 }

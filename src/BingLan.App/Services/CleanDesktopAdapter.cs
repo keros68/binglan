@@ -12,7 +12,9 @@ namespace BingLan.App.Services;
 /// original state in a checkpoint before the first write, restores on turn-off, on exit,
 /// on the next start after a crash and from the uninstaller, and changes nothing but the
 /// icon visibility flag: no files, icon positions or Explorer processes are touched.
-/// All Shell calls run one at a time off the UI thread.
+/// A hide is only claimed with its checkpoint behind it, and a turn-off never ends in a
+/// reported success with the icons still hidden. All Shell calls run one at a time off
+/// the UI thread.
 /// </summary>
 internal sealed class CleanDesktopAdapter : IDisposable
 {
@@ -45,15 +47,15 @@ internal sealed class CleanDesktopAdapter : IDisposable
     internal event Action? TakenOver;
 
     /// <summary>
-    /// Hides the icons. Returns an empty string on success, otherwise why not. When the
-    /// state before a previous hide is unknown, icons that are already hidden are not
-    /// taken over, since turning clean desktop off could then not bring them back.
+    /// Hides the icons. Returns an empty string on success, otherwise why not. Icons
+    /// that are already hidden are never taken over: without a record of the hide,
+    /// turning clean desktop off could not bring them back.
     /// </summary>
-    internal async Task<string> EnableAsync(bool originalStateKnown)
+    internal async Task<string> EnableAsync()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         var problem = await RunShellAsync(
-            () => WithMachineLock(() => Hide(_checkpointPath, originalStateKnown), "桌面图标正由另一个冰蓝桌面进程处理，请稍后再试"));
+            () => WithMachineLock(() => Hide(_checkpointPath), "桌面图标正由另一个冰蓝桌面进程处理，请稍后再试"));
         IsActive = problem.Length == 0 && !_disposed;
         if (IsActive)
         {
@@ -67,7 +69,7 @@ internal sealed class CleanDesktopAdapter : IDisposable
     {
         _takeoverTimer.Stop();
         IsActive = false;
-        return await RunShellAsync(() => WithMachineLock(() => RecoverFromCheckpoint(_checkpointPath), false));
+        return await RunShellAsync(() => WithMachineLock(() => ShowIconsForTurnOff(_checkpointPath), false));
     }
 
     /// <summary>
@@ -166,12 +168,14 @@ internal sealed class CleanDesktopAdapter : IDisposable
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
+            StartupLog.Write("桌面图标检查点读取失败，未改动桌面");
             return false;
         }
 
         if (checkpoint is null)
         {
             TryMove(checkpointPath, InvalidCheckpointPath(checkpointPath));
+            StartupLog.Write("桌面图标检查点损坏，已移旁，未改动桌面");
             return false;
         }
 
@@ -183,29 +187,69 @@ internal sealed class CleanDesktopAdapter : IDisposable
             if (CleanDesktopRules.NeedsRestore(checkpoint, view.ReadFolderFlags())
                 && !view.SetIconsHidden(checkpoint.OriginalIconsHidden))
             {
+                StartupLog.Write("桌面图标未能按检查点恢复，下次启动会再次尝试");
                 return false;
             }
             File.Delete(checkpointPath);
+            StartupLog.Write("已按检查点恢复桌面图标");
             return true;
         }
         catch (Exception exception) when (IsShellFailure(exception))
         {
             Debug.WriteLine($"桌面图标恢复失败：{exception.Message}");
+            StartupLog.Write($"桌面图标恢复失败：{exception.Message}");
             return false;
         }
     }
 
-    private static string Hide(string checkpointPath, bool originalStateKnown)
+    /// <summary>
+    /// Shows the icons again for an explicit turn-off. The checkpoint is the record of
+    /// the state to return to; when it is missing or unusable while the icons are still
+    /// hidden, the mode was holding them without its record and they are shown anyway,
+    /// instead of reporting a success that changed nothing.
+    /// </summary>
+    private static bool ShowIconsForTurnOff(string checkpointPath)
+    {
+        try
+        {
+            if (File.Exists(checkpointPath) && RecoverFromCheckpoint(checkpointPath))
+            {
+                return true;
+            }
+
+            using var view = DesktopShellView.Open();
+            if (!CleanDesktopRules.TurnOffMustShowIcons(false, view.ReadFolderFlags()))
+            {
+                return true;
+            }
+            if (view.SetIconsHidden(false))
+            {
+                StartupLog.Write("桌面图标检查点缺失，关闭清爽桌面时已直接恢复显示");
+                return true;
+            }
+            StartupLog.Write("关闭清爽桌面时未能恢复显示：Windows 未接受写入");
+            return false;
+        }
+        catch (Exception exception) when (IsShellFailure(exception))
+        {
+            Debug.WriteLine($"关闭清爽桌面恢复失败：{exception.Message}");
+            StartupLog.Write($"关闭清爽桌面恢复失败：{exception.Message}");
+            return false;
+        }
+    }
+
+    private static string Hide(string checkpointPath)
     {
         try
         {
             using var view = DesktopShellView.Open();
             if (!CleanDesktopRules.NeedsHide(view.ReadFolderFlags()))
             {
-                // Already hidden by the user: nothing of ours to restore later.
-                return originalStateKnown
-                    ? string.Empty
-                    : "桌面图标当前处于隐藏状态，无法确认原来的设置。请先在桌面右键菜单“查看”中显示桌面图标，再开启清爽桌面";
+                // Hidden outside this record, whether by the user or after the record
+                // was lost: turning clean desktop off could not bring the icons back,
+                // so the mode refuses instead of claiming a hide it cannot undo.
+                StartupLog.Write("开启清爽桌面被拒：桌面图标当前处于隐藏状态");
+                return "桌面图标当前处于隐藏状态。请先在桌面右键菜单“查看”中勾选“显示桌面图标”，再开启清爽桌面";
             }
 
             var checkpoint = new CleanDesktopCheckpoint { OriginalIconsHidden = false };
@@ -216,16 +260,18 @@ internal sealed class CleanDesktopAdapter : IDisposable
             {
                 checkpoint.Phase = CleanDesktopPhase.Applied;
                 WriteCheckpoint(checkpointPath, checkpoint);
+                StartupLog.Write("清爽桌面已隐藏桌面图标");
                 return string.Empty;
             }
 
             return RecoverFromCheckpoint(checkpointPath)
                 ? "Windows 没有接受隐藏桌面图标"
-                : "Windows 没有接受隐藏桌面图标，恢复未完成，下次启动时会再次恢复";
+                : "Windows 没有接受隐藏桌面图标，恢复未完成，下次启动时会再次尝试";
         }
         catch (Exception exception) when (IsShellFailure(exception))
         {
             Debug.WriteLine($"清爽桌面开启失败：{exception.Message}");
+            StartupLog.Write($"清爽桌面开启失败：{exception.Message}");
             RecoverFromCheckpoint(checkpointPath);
             return "当前桌面不支持清爽模式";
         }
@@ -268,6 +314,7 @@ internal sealed class CleanDesktopAdapter : IDisposable
                 TryDelete(InvalidCheckpointPath(_checkpointPath));
                 return true;
             }, false));
+            StartupLog.Write("用户重新显示了桌面图标，清爽桌面已退出");
             TakenOver?.Invoke();
         }
         finally

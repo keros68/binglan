@@ -10,10 +10,6 @@ namespace BingLan.App.Interop;
 
 internal static class ShellIconProvider
 {
-    private const uint ShgfiIcon = 0x000000100;
-    private const uint ShgfiLargeIcon = 0x000000000;
-    private const uint ShgfiPidl = 0x000000008;
-
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     private struct ShellFileInfo
     {
@@ -73,8 +69,8 @@ internal static class ShellIconProvider
             0,
             out var info,
             (uint)Marshal.SizeOf<ShellFileInfo>(),
-            ShgfiIcon | ShgfiLargeIcon);
-        return result == 0 || info.IconHandle == 0 ? null : ToImageSource(info.IconHandle);
+            DockNativeMethods.ShgfiSysIconIndex);
+        return result != 0 ? FromSystemImageList(info.IconIndex) : null;
     }
 
     private static ImageSource? GetShellNamespaceIcon(string shellPath)
@@ -91,13 +87,48 @@ internal static class ShellIconProvider
                 0,
                 out var info,
                 (uint)Marshal.SizeOf<ShellFileInfo>(),
-                ShgfiIcon | ShgfiLargeIcon | ShgfiPidl);
-            return result == 0 || info.IconHandle == 0 ? null : ToImageSource(info.IconHandle);
+                DockNativeMethods.ShgfiSysIconIndex | DockNativeMethods.ShgfiPidl);
+            return result != 0 ? FromSystemImageList(info.IconIndex) : null;
         }
         finally
         {
             ILFree(itemIdList);
         }
+    }
+
+    // 卡片网格在高 DPI 下把图标画到 60+ 物理像素，SHGFI_LARGEICON 只有 32px 帧会被拉糊；
+    // 系统图像列表能给出图标自带的最大帧，显示端再由 WPF 高质量缩小。
+    private static ImageSource? FromSystemImageList(int iconIndex)
+    {
+        foreach (var listSize in new[] { DockNativeMethods.ShilJumbo, DockNativeMethods.ShilExtraLarge })
+        {
+            if (DockNativeMethods.SHGetImageList(
+                    listSize,
+                    DockNativeMethods.ImageListId,
+                    out var imageList) != 0
+                || imageList == 0)
+            {
+                continue;
+            }
+
+            try
+            {
+                var iconHandle = DockNativeMethods.ImageList_GetIcon(
+                    imageList,
+                    iconIndex,
+                    DockNativeMethods.IldTransparent);
+                if (iconHandle != 0)
+                {
+                    return ToImageSource(iconHandle);
+                }
+            }
+            finally
+            {
+                Marshal.Release(imageList);
+            }
+        }
+
+        return null;
     }
 
     private static ImageSource? ToImageSource(nint iconHandle)
@@ -107,7 +138,7 @@ internal static class ShellIconProvider
             var source = Imaging.CreateBitmapSourceFromHIcon(
                 iconHandle,
                 Int32Rect.Empty,
-                BitmapSizeOptions.FromWidthAndHeight(40, 40));
+                BitmapSizeOptions.FromEmptyOptions());
             source.Freeze();
             return source;
         }

@@ -225,7 +225,8 @@
 
                     <TextBlock Style="{StaticResource SectionHeaderStyle}" Text="桌面"/>
                     <local:SettingsGroup>
-                    <local:SettingsRow Glyph="&#xE7F4;"
+                    <local:SettingsRow x:Name="CleanDesktopRow"
+                                       Glyph="&#xE7F4;"
                                        GlyphBrush="{DynamicResource SettingsIconTealBrush}"
                                        Header="清爽桌面"
                                        Description="隐藏 Windows 桌面图标，只显示冰蓝桌面组件">
@@ -999,6 +1000,19 @@
                                                          ToolTip="用空格或逗号分隔，例如：psd ai dwg"
                                                          LostFocus="FileBoxCollect_Changed"/>
                                             </StackPanel>
+                                        </StackPanel>
+                                    </Border>
+                                </StackPanel>
+                                <StackPanel x:Name="FileBoxDesktopHintPanel" Visibility="Collapsed">
+                                    <TextBlock Style="{StaticResource SectionHeaderStyle}" Text="桌面上的原文件"/>
+                                    <Border Style="{StaticResource SettingsPanelStyle}">
+                                        <StackPanel>
+                                            <TextBlock Margin="0,0,0,10"
+                                                       Style="{StaticResource CaptionStyle}"
+                                                       Text="收纳只记录位置，不移动也不隐藏原文件，所以桌面上的项目仍然可见。要隐藏 Windows 桌面图标（包括未收纳的项目），请开启“清爽桌面”；关闭或退出冰蓝桌面时自动恢复。"/>
+                                            <Button x:Name="GoToCleanDesktopButton"
+                                                    Content="前往开启清爽桌面"
+                                                    Click="GoToCleanDesktop_Click"/>
                                         </StackPanel>
                                     </Border>
                                 </StackPanel>

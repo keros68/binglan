@@ -1321,7 +1321,7 @@ public sealed class WidgetCoordinator : IDisposable
                 ScheduleSave();
                 return await _cleanDesktop.DisableAsync()
                     ? "桌面图标已恢复"
-                    : "桌面图标未能恢复，下次启动时会再次尝试";
+                    : "桌面图标未能恢复，可在桌面右键菜单“查看”中勾选“显示桌面图标”";
             }
 
             // This PC, the Recycle Bin and the other places stay one click away in the row
@@ -1334,7 +1334,7 @@ public sealed class WidgetCoordinator : IDisposable
                 _settingsWindow?.RefreshDesktopExperience();
             }
 
-            var problem = await _cleanDesktop.EnableAsync(_cleanDesktopRecovered);
+            var problem = await _cleanDesktop.EnableAsync();
             _state.CleanDesktopEnabled = problem.Length == 0;
             // A successful turn-on either recorded visible icons or found them hidden with
             // a known history, so the original state is known again from here on.
