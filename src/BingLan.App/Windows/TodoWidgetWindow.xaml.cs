@@ -14,6 +14,10 @@ public partial class TodoWidgetWindow : WidgetWindowBase
     // The weekly view shows this many calendar rows, Monday first.
     private const int WeeklyRowCount = 5;
 
+    // Minimum card widths: the weekly grid needs wider columns than the today list.
+    private const double ListMinimumWidth = 226;
+    private const double WeeklyMinimumWidth = 520;
+
     private readonly ObservableCollection<TodoItemState> _items;
     private readonly Dictionary<DateTime, WeekCellView> _cellsByDate = [];
     private string? _textBeforeEdit;
@@ -309,6 +313,9 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         WeekHost.Visibility = State.WeeklyView ? Visibility.Visible : Visibility.Collapsed;
         ViewModeButton.Content = State.WeeklyView ? "列表" : "周历";
         ClearCompletedButton.Visibility = State.WeeklyView ? Visibility.Collapsed : Visibility.Visible;
+        // Seven day cells only stay readable when each column has room for text;
+        // the today list stays comfortable at the card's original minimum width.
+        MinWidth = State.WeeklyView ? WeeklyMinimumWidth : ListMinimumWidth;
         if (State.WeeklyView)
         {
             RenderWeekView();
