@@ -2385,7 +2385,7 @@ public sealed class WidgetCoordinator : IDisposable
         }
 
         public int CountIncompleteTodos() =>
-            TopBarModuleRules.CountIncompleteTodos(owner._state.TodoWidgets);
+            TopBarModuleRules.CountIncompleteTodosToday(owner._state.TodoWidgets);
 
         public TopBarTodoList? ReadTodoList() =>
             owner._state.TodoWidgets.FirstOrDefault() is { } todo
@@ -2393,6 +2393,7 @@ public sealed class WidgetCoordinator : IDisposable
                     todo.Title,
                     todo.Items
                         .Where(item => !string.IsNullOrWhiteSpace(item.Text))
+                        .Where(item => TodoService.BelongsToTodayList(item, DateTime.Today))
                         .ToList())
                 : null;
 

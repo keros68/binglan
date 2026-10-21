@@ -21,6 +21,15 @@ public static class TopBarModuleRules
         widgets.Sum(widget => widget.Items.Count(item =>
             !item.IsCompleted && !string.IsNullOrWhiteSpace(item.Text)));
 
+    /// <summary>
+    /// How many to-do items are still open for today: undated entries plus entries
+    /// placed on today's cell, so tasks scheduled on other days stay out of the badge.
+    /// </summary>
+    public static int CountIncompleteTodosToday(IEnumerable<TodoWidgetState> widgets) =>
+        widgets.Sum(widget => widget.Items.Count(item =>
+            !item.IsCompleted && !string.IsNullOrWhiteSpace(item.Text) &&
+            (item.Date is null || item.Date.Value == DateTime.Today)));
+
     public static TopBarBatteryStatus ClassifyBattery(int acLineStatus, int batteryFlag) =>
         acLineStatus switch
         {

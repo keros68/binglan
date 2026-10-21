@@ -99,6 +99,9 @@ public sealed class TodoWidgetState
     public Guid Id { get; set; } = Guid.NewGuid();
     public string Title { get; set; } = "今日待办";
     public bool HideCompleted { get; set; }
+
+    /// <summary>Whether the card shows the five-week calendar view instead of today's list.</summary>
+    public bool WeeklyView { get; set; }
     public bool IsLocked { get; set; }
     public WidgetAppearanceState Appearance { get; set; } = new();
     public double CornerRadius
@@ -143,6 +146,19 @@ public sealed class TodoItemState : INotifyPropertyChanged
         }
     }
     public int Order { get; set; }
+
+    /// <summary>
+    /// The calendar day this entry sits on in the weekly view; null keeps it on the
+    /// today list. Compared by wall-clock ticks, so the JSON round trip's unspecified
+    /// kind still matches a locally built date.
+    /// </summary>
+    public DateTime? Date { get; set; }
+
+    /// <summary>When the entry was created; null for entries made before dates were tracked.</summary>
+    public DateTimeOffset? CreatedDate { get; set; }
+
+    /// <summary>When the entry was last marked complete; null while it is open.</summary>
+    public DateTimeOffset? CompletedDate { get; set; }
 
     public event PropertyChangedEventHandler? PropertyChanged;
 

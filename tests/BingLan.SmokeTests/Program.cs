@@ -2,6 +2,7 @@ using BingLan.Core.Models;
 using BingLan.Core.Services;
 using BingLan.Core.Taskbar;
 using BingLan.Core.Themes;
+using BingLan.Core.TopBar;
 using BingLan.SmokeTests;
 using System.IO.Compression;
 using System.Text;
@@ -9,6 +10,10 @@ using System.Text.Json;
 
 var failures = new List<string>();
 Run("待办编辑、勾选、排序", TestTodo);
+Run("待办日期字段、完成时间与周历规则", TestTodoDates);
+Run("待办日期持久化与官方版本兼容", TestTodoDatePersistence);
+Run("周历农历标注", TestLunarDayText);
+Run("顶栏只统计今日待办", TestTopBarTodayCount);
 Run("文件映射去重与移除", TestMappings);
 Run("桌面项目导入去重、排序与持久化", TestDesktopGrouping);
 Run("桌面软件、文件夹和文件安全分类", TestDesktopClassification);
@@ -111,6 +116,149 @@ static void TestTodo()
     Assert(widget.Items.Count == 1 && widget.Items[0].Id == second.Id && widget.Items[0].Order == 0,
         "清理已完成后应保留未完成待办并重新排序");
     Assert(TodoService.RemoveCompleted(widget) == 0, "没有已完成待办时不应删除");
+}
+
+static void TestTodoDates()
+{
+    var widget = new TodoWidgetState();
+    var monday = DateTime.Today.AddDays(-(((int)DateTime.Today.DayOfWeek + 6) % 7));
+    var tuesday = monday.AddDays(1);
+
+    var undated = TodoService.Add(widget, "无日期");
+    Assert(undated.CreatedDate is not null, "新建待办应记录创建时间");
+    Assert(undated.Date is null && undated.CompletedDate is null, "默认待办无日期无完成时间");
+
+    var dated = TodoService.Add(widget, "周二任务", tuesday);
+    Assert(dated.Date == tuesday, "周历新增待办应落到指定日期");
+    Assert(TodoService.ItemsForDate(widget, tuesday).Single().Id == dated.Id, "按日期取待办结果错误");
+    Assert(!TodoService.ItemsForDate(widget, monday).Any(), "未放置的日期不应有待办");
+
+    Assert(TodoService.SetCompleted(widget, dated.Id, true), "应能勾选待办");
+    Assert(dated.IsCompleted && dated.CompletedDate is not null, "勾选后应记录完成时间");
+    Assert(TodoService.SetCompleted(widget, dated.Id, false), "应能取消勾选");
+    Assert(!dated.IsCompleted && dated.CompletedDate is null, "取消勾选应清空完成时间");
+    Assert(TodoService.SetCompleted(widget, dated.Id, true), "应能重新勾选");
+    Assert(dated.CompletedDate is not null, "重新勾选应重新记录完成时间");
+
+    // Stamping follows the flag, covering the paths that toggle IsCompleted directly.
+    var stamped = TodoService.Add(widget, "顶栏勾选", monday);
+    stamped.IsCompleted = true;
+    TodoService.StampCompletion(stamped);
+    Assert(stamped.CompletedDate is not null, "直接勾选后也应记录完成时间");
+    stamped.IsCompleted = false;
+    TodoService.StampCompletion(stamped);
+    Assert(stamped.CompletedDate is null, "直接取消后应清空完成时间");
+
+    // Moving inside one day only swaps neighbours of that day.
+    var anotherTuesday = TodoService.Add(widget, "周二第二条", tuesday);
+    Assert(TodoService.MoveWithinDate(widget, anotherTuesday.Id, -1), "同日内应可上移");
+    var tuesdayItems = TodoService.ItemsForDate(widget, tuesday).ToList();
+    Assert(
+        tuesdayItems[0].Id == anotherTuesday.Id && tuesdayItems[1].Id == dated.Id,
+        "同日内上移应只交换同日条目");
+    Assert(
+        widget.Items.OrderBy(x => x.Order).Select(x => x.Order)
+            .SequenceEqual(Enumerable.Range(0, widget.Items.Count)),
+        "移动后全局顺序应重新编号");
+    Assert(!TodoService.MoveWithinDate(widget, undated.Id, -1), "无日期待办不应参与同日移动");
+
+    var todayEntry = TodoService.Add(widget, "今日格子", DateTime.Today);
+    Assert(TodoService.BelongsToTodayList(undated, DateTime.Today), "无日期待办属于今日列表");
+    Assert(TodoService.BelongsToTodayList(todayEntry, DateTime.Today), "今日格子待办属于今日列表");
+    Assert(!TodoService.BelongsToTodayList(dated, DateTime.Today), "其他日期待办不属于今日列表");
+
+    // Clearing completed entries only reaches the today scope, never dated history.
+    todayEntry.IsCompleted = true;
+    undated.IsCompleted = true;
+    Assert(
+        TodoService.RemoveCompleted(widget, x => TodoService.BelongsToTodayList(x, DateTime.Today)) >= 2,
+        "清理今日应删除今日范围内的已完成待办");
+    Assert(widget.Items.Any(x => x.Id == dated.Id), "其他日期的已完成历史不应被清理");
+    Assert(!widget.Items.Any(x => x.Id == todayEntry.Id), "今日已完成待办应被清理");
+    Assert(!widget.Items.Any(x => x.Id == undated.Id), "今日范围内已完成待办应被清理");
+}
+
+static void TestTodoDatePersistence()
+{
+    var temp = Path.Combine(Path.GetTempPath(), $"BingLan-todo-dates-{Guid.NewGuid():N}");
+    Directory.CreateDirectory(temp);
+    try
+    {
+        var store = new LocalStateStore(temp);
+        var state = store.Load();
+        var widget = state.TodoWidgets[0];
+        widget.WeeklyView = true;
+        var dated = TodoService.Add(widget, "带日期", new DateTime(2026, 10, 20));
+        TodoService.SetCompleted(widget, dated.Id, true);
+        store.Save(state);
+
+        var restored = store.Load().TodoWidgets.Single();
+        Assert(restored.WeeklyView, "周历视图开关未持久化");
+        var restoredItem = restored.Items.Single(x => x.Text == "带日期");
+        Assert(restoredItem.Date == new DateTime(2026, 10, 20), "待办日期未持久化");
+        Assert(
+            restoredItem.CreatedDate is not null && restoredItem.CompletedDate is not null,
+            "创建与完成时间未持久化");
+        Assert(store.Load().SchemaVersion == AppState.CurrentSchemaVersion, "日期字段不应改变 Schema 版本");
+
+        // A file written by the official build carries no date fields; it must load,
+        // and saving it again must stay on the schema the official build can read.
+        File.WriteAllText(
+            store.StatePath,
+            """
+            {
+              "SchemaVersion": 33,
+              "TodoWidgets": [
+                {
+                  "Title": "官方版数据",
+                  "HideCompleted": false,
+                  "Items": [
+                    { "Id": "11111111-2222-3333-4444-555555555555", "Text": "官方待办", "IsCompleted": true, "Order": 0 }
+                  ]
+                }
+              ]
+            }
+            """);
+        var fromOfficial = store.Load().TodoWidgets.Single();
+        Assert(fromOfficial.Items.Single().Date is null, "官方数据读取后不应凭空出现日期");
+        store.Save(store.Load());
+        using var saved = JsonDocument.Parse(File.ReadAllText(store.StatePath));
+        Assert(
+            saved.RootElement.GetProperty("SchemaVersion").GetInt32() == AppState.CurrentSchemaVersion,
+            "保存后 Schema 版本应保持官方可读的当前版本");
+        Assert(
+            !saved.RootElement.GetProperty("TodoWidgets")[0].TryGetProperty("Date", out var dateProperty)
+                || dateProperty.ValueKind == JsonValueKind.Null,
+            "官方数据保存后不应写入有值的日期字段");
+    }
+    finally
+    {
+        Directory.Delete(temp, true);
+    }
+}
+
+static void TestLunarDayText()
+{
+    // 2026-02-17 是农历正月初一（春节），随后两天依次推算。
+    Assert(LunarDayText.For(new DateTime(2026, 2, 17)) == "正月", "春节应显示月名正月");
+    Assert(LunarDayText.For(new DateTime(2026, 2, 18)) == "初二", "春节次日应为初二");
+    Assert(LunarDayText.For(new DateTime(2026, 3, 4)) == "十六", "春节后十五天应为正月十六");
+    Assert(LunarDayText.For(new DateTime(1900, 1, 1)) == "", "历法范围外不应抛异常");
+    Assert(LunarDayText.For(new DateTime(2150, 1, 1)) == "", "历法上限外不应抛异常");
+}
+
+static void TestTopBarTodayCount()
+{
+    var widget = new TodoWidgetState();
+    var today = DateTime.Today;
+    TodoService.Add(widget, "无日期未完成");
+    TodoService.Add(widget, "今日格子", today);
+    TodoService.Add(widget, "明日格子", today.AddDays(1));
+    var done = TodoService.Add(widget, "今日已完成", today);
+    done.IsCompleted = true;
+    Assert(TopBarModuleRules.CountIncompleteTodosToday([widget]) == 2,
+        "顶栏应只统计无日期与今日的未完成待办");
+    Assert(TopBarModuleRules.CountIncompleteTodosToday([]) == 0, "无待办卡计 0");
 }
 
 static void TestDesktopClassification()

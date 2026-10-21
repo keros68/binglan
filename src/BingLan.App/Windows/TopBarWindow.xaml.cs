@@ -1206,6 +1206,7 @@ public sealed partial class TopBarWindow : Window
         {
             // One behaviour, like the card's checkbox: the row toggles completion.
             item.IsCompleted = !item.IsCompleted;
+            TodoService.StampCompletion(item);
             _environment.TodoItemToggled();
         };
         return row;

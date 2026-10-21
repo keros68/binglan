@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -10,8 +11,13 @@ namespace BingLan.App.Windows;
 
 public partial class TodoWidgetWindow : WidgetWindowBase
 {
+    // The weekly view shows this many calendar rows, Monday first.
+    private const int WeeklyRowCount = 5;
+
     private readonly ObservableCollection<TodoItemState> _items;
+    private readonly Dictionary<DateTime, WeekCellView> _cellsByDate = [];
     private string? _textBeforeEdit;
+    private int _weekOffset;
 
     public TodoWidgetWindow(TodoWidgetState state)
     {
@@ -24,7 +30,7 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         TodoList.ItemContainerGenerator.StatusChanged += (_, _) => ApplyCompletedVisibility();
         ApplyPlacement(state.Placement, state.IsLocked);
         WidgetCornerRadius = state.CornerRadius;
-        RefreshSummary();
+        ApplyViewMode();
     }
 
     public TodoWidgetState State { get; }
@@ -52,10 +58,16 @@ public partial class TodoWidgetWindow : WidgetWindowBase
 
     private void Add_Click(object sender, RoutedEventArgs e)
     {
-        var item = TodoService.Add(State);
-        _items.Add(item);
         CaptureState();
-        RefreshSummary();
+        var item = State.WeeklyView
+            ? TodoService.Add(State, "", DateTime.Today)
+            : TodoService.Add(State);
+        _items.Add(item);
+        if (State.WeeklyView && _cellsByDate.TryGetValue(DateTime.Today, out var cell))
+        {
+            cell.Items.Add(item);
+            RefreshSummary();
+        }
         NotifyStateChanged();
 
         Dispatcher.BeginInvoke(() =>
@@ -74,6 +86,10 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         if (!IsLoaded)
         {
             return;
+        }
+        if (sender is FrameworkElement { DataContext: TodoItemState item })
+        {
+            TodoService.StampCompletion(item);
         }
         ApplyCompletedVisibility();
         RefreshSummary();
@@ -113,7 +129,10 @@ public partial class TodoWidgetWindow : WidgetWindowBase
     private void ClearCompleted_Click(object sender, RoutedEventArgs e)
     {
         CaptureState();
-        if (TodoService.RemoveCompleted(State) == 0)
+        // Only today's completed entries are cleaned; dated history in the weekly
+        // view stays until it is deleted one by one.
+        if (TodoService.RemoveCompleted(
+                State, x => TodoService.BelongsToTodayList(x, DateTime.Today)) == 0)
         {
             return;
         }
@@ -137,11 +156,31 @@ public partial class TodoWidgetWindow : WidgetWindowBase
             return;
         }
         CaptureState();
-        if (!TodoService.Move(State, item.Id, offset))
+        bool moved;
+        DateTime? movedDate = null;
+        if (State.WeeklyView && item.Date is { } date)
+        {
+            moved = TodoService.MoveWithinDate(State, item.Id, offset);
+            movedDate = date;
+        }
+        else
+        {
+            moved = TodoService.MoveWithinScope(
+                State, item.Id, offset, x => TodoService.BelongsToTodayList(x, DateTime.Today));
+        }
+        if (!moved)
         {
             return;
         }
-        ReloadItems();
+
+        if (movedDate is { } cellDate && _cellsByDate.TryGetValue(cellDate, out var movedCell))
+        {
+            ResortCell(movedCell);
+        }
+        else
+        {
+            ReloadItems();
+        }
         NotifyStateChanged();
     }
 
@@ -152,6 +191,10 @@ public partial class TodoWidgetWindow : WidgetWindowBase
             return;
         }
         _items.Remove(item);
+        if (item.Date is { } date && _cellsByDate.TryGetValue(date, out var cell))
+        {
+            cell.Items.Remove(item);
+        }
         TodoService.Remove(State, item.Id);
         CaptureState();
         RefreshSummary();
@@ -161,9 +204,170 @@ public partial class TodoWidgetWindow : WidgetWindowBase
     private void ToggleCompletedVisibility_Click(object sender, RoutedEventArgs e)
     {
         State.HideCompleted = !State.HideCompleted;
-        ApplyCompletedVisibility();
+        if (State.WeeklyView)
+        {
+            // The weekly rows read HideCompleted through style triggers, which only
+            // re-evaluate when the row containers are rebuilt.
+            RenderWeekView();
+        }
+        else
+        {
+            ApplyCompletedVisibility();
+        }
         RefreshSummary();
         NotifyStateChanged();
+    }
+
+    private void ToggleViewMode_Click(object sender, RoutedEventArgs e)
+    {
+        State.WeeklyView = !State.WeeklyView;
+        ApplyViewMode();
+        NotifyStateChanged();
+    }
+
+    private void WeekPrev_Click(object sender, RoutedEventArgs e)
+    {
+        _weekOffset--;
+        RenderWeekView();
+    }
+
+    private void WeekNext_Click(object sender, RoutedEventArgs e)
+    {
+        _weekOffset++;
+        RenderWeekView();
+    }
+
+    private void WeekToday_Click(object sender, RoutedEventArgs e)
+    {
+        _weekOffset = 0;
+        RenderWeekView();
+    }
+
+    private void WeekCellSurface_Click(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: WeekCellView } surface
+            && FindDirectVisualChild<System.Windows.Controls.TextBox>(surface) is { } editor)
+        {
+            editor.Visibility = Visibility.Visible;
+            editor.Focus();
+            e.Handled = true;
+        }
+    }
+
+    private void WeekCellEditor_KeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.TextBox editor)
+        {
+            return;
+        }
+        if (e.Key is Key.Enter or Key.Escape)
+        {
+            var text = editor.Text.Trim();
+            if (e.Key == Key.Enter && editor.DataContext is WeekCellView cell && text.Length > 0)
+            {
+                AddWeeklyItem(cell, text);
+            }
+            editor.Clear();
+            CloseCellEditor(editor);
+            e.Handled = true;
+        }
+    }
+
+    private void WeekCellEditor_LostFocus(object sender, RoutedEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.TextBox editor)
+        {
+            return;
+        }
+        var text = editor.Text.Trim();
+        if (editor.DataContext is WeekCellView cell && text.Length > 0)
+        {
+            AddWeeklyItem(cell, text);
+        }
+        CloseCellEditor(editor);
+    }
+
+    private void AddWeeklyItem(WeekCellView cell, string text)
+    {
+        CaptureState();
+        var item = TodoService.Add(State, text, cell.Date);
+        _items.Add(item);
+        cell.Items.Add(item);
+        RefreshSummary();
+        NotifyStateChanged();
+    }
+
+    private static void CloseCellEditor(System.Windows.Controls.TextBox editor)
+    {
+        editor.Text = "";
+        editor.Visibility = Visibility.Collapsed;
+    }
+
+    private void ApplyViewMode()
+    {
+        ListHost.Visibility = State.WeeklyView ? Visibility.Collapsed : Visibility.Visible;
+        WeekHost.Visibility = State.WeeklyView ? Visibility.Visible : Visibility.Collapsed;
+        ViewModeButton.Content = State.WeeklyView ? "列表" : "周历";
+        ClearCompletedButton.Visibility = State.WeeklyView ? Visibility.Collapsed : Visibility.Visible;
+        if (State.WeeklyView)
+        {
+            RenderWeekView();
+        }
+        else
+        {
+            RefreshSummary();
+        }
+    }
+
+    private void RenderWeekView()
+    {
+        var firstMonday = MondayOf(DateTime.Today).AddDays(7 * (_weekOffset - 1));
+        var lastDay = firstMonday.AddDays(7 * WeeklyRowCount - 1);
+        WeekRange.Text = $"{firstMonday:M月d日} – {lastDay:M月d日}";
+        WeekTodayButton.Visibility = _weekOffset == 0 ? Visibility.Collapsed : Visibility.Visible;
+
+        _cellsByDate.Clear();
+        var rows = new List<WeekRowView>(WeeklyRowCount);
+        for (var row = 0; row < WeeklyRowCount; row++)
+        {
+            var monday = firstMonday.AddDays(row * 7);
+            var days = new List<WeekCellView>(7);
+            for (var day = 0; day < 7; day++)
+            {
+                var date = monday.AddDays(day);
+                var cell = new WeekCellView
+                {
+                    Date = date,
+                    DayNumber = date.Day.ToString(),
+                    LunarText = LunarDayText.For(date),
+                    IsToday = date == DateTime.Today,
+                    IsWeekend = date.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday
+                };
+                foreach (var entry in State.Items.Where(x => x.Date == date).OrderBy(x => x.Order))
+                {
+                    cell.Items.Add(entry);
+                }
+                _cellsByDate[date] = cell;
+                days.Add(cell);
+            }
+            rows.Add(new WeekRowView { WeekNumber = GetIsoWeekNumber(monday), Days = days });
+        }
+        WeekRows.ItemsSource = rows;
+        RefreshSummary();
+    }
+
+    private void ResortCell(WeekCellView cell)
+    {
+        var ordered = State.Items
+            .Where(x => x.Date == cell.Date)
+            .OrderBy(x => x.Order)
+            .ToList();
+        cell.Items.Clear();
+        foreach (var entry in ordered)
+        {
+            cell.Items.Add(entry);
+        }
+        RefreshSummary();
     }
 
     private void ReloadItems()
@@ -194,11 +398,44 @@ public partial class TodoWidgetWindow : WidgetWindowBase
     // Blank rows are places to type, not tasks, so they are left out of the count.
     private void RefreshSummary()
     {
-        var written = _items.Where(x => !string.IsNullOrWhiteSpace(x.Text)).ToList();
-        var completed = written.Count(x => x.IsCompleted);
-        SummaryText.Text = written.Count == 0 ? "写下第一条待办" : $"{completed}/{written.Count} 已完成";
+        if (State.WeeklyView)
+        {
+            var firstMonday = MondayOf(DateTime.Today).AddDays(7 * (_weekOffset - 1));
+            var lastDay = firstMonday.AddDays(7 * WeeklyRowCount - 1);
+            var written = _items
+                .Where(x => !string.IsNullOrWhiteSpace(x.Text)
+                    && x.Date is { } date && date >= firstMonday && date <= lastDay)
+                .ToList();
+            var completed = written.Count(x => x.IsCompleted);
+            SummaryText.Text = written.Count == 0 ? "这段时间还没有记录" : $"{completed}/{written.Count} 已完成";
+            CompletedVisibilityButton.Content = State.HideCompleted ? "显示已完成" : "隐藏已完成";
+            return;
+        }
+
+        var listed = _items.Where(x => !string.IsNullOrWhiteSpace(x.Text)).ToList();
+        var done = listed.Count(x => x.IsCompleted);
+        SummaryText.Text = listed.Count == 0 ? "写下第一条待办" : $"{done}/{listed.Count} 已完成";
         ClearCompletedButton.IsEnabled = _items.Any(x => x.IsCompleted);
         CompletedVisibilityButton.Content = State.HideCompleted ? "显示已完成" : "隐藏已完成";
+    }
+
+    private static DateTime MondayOf(DateTime date) =>
+        date.AddDays(-(((int)date.DayOfWeek + 6) % 7));
+
+    private static int GetIsoWeekNumber(DateTime date) =>
+        CultureInfo.InvariantCulture.Calendar.GetWeekOfYear(
+            date, CalendarWeekRule.FirstFourDayWeek, DayOfWeek.Monday);
+
+    private static T? FindDirectVisualChild<T>(DependencyObject parent) where T : DependencyObject
+    {
+        for (var i = 0; i < System.Windows.Media.VisualTreeHelper.GetChildrenCount(parent); i++)
+        {
+            if (System.Windows.Media.VisualTreeHelper.GetChild(parent, i) is T child)
+            {
+                return child;
+            }
+        }
+        return null;
     }
 
     private static T? FindVisualChild<T>(DependencyObject parent) where T : DependencyObject
