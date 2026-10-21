@@ -117,6 +117,7 @@ public sealed class TodoItemState : INotifyPropertyChanged
 {
     private string _text = "";
     private bool _isCompleted;
+    private DateTime? _date;
 
     public Guid Id { get; set; } = Guid.NewGuid();
     public string Text
@@ -149,10 +150,16 @@ public sealed class TodoItemState : INotifyPropertyChanged
 
     /// <summary>
     /// The calendar day this entry sits on in the weekly view; null keeps it on the
-    /// today list. Compared by wall-clock ticks, so the JSON round trip's unspecified
-    /// kind still matches a locally built date.
+    /// today list. Stored as an Unspecified-kind midnight so the JSON round trip keeps
+    /// the same ticks even when the file moves between time zones.
     /// </summary>
-    public DateTime? Date { get; set; }
+    public DateTime? Date
+    {
+        get => _date;
+        set => _date = value is { } date
+            ? DateTime.SpecifyKind(date.Date, DateTimeKind.Unspecified)
+            : null;
+    }
 
     /// <summary>When the entry was created; null for entries made before dates were tracked.</summary>
     public DateTimeOffset? CreatedDate { get; set; }

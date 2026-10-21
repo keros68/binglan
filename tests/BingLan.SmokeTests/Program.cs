@@ -135,10 +135,23 @@ static void TestTodoDates()
 
     Assert(TodoService.SetCompleted(widget, dated.Id, true), "应能勾选待办");
     Assert(dated.IsCompleted && dated.CompletedDate is not null, "勾选后应记录完成时间");
+    var stampedAt = dated.CompletedDate!.Value;
+    Assert(TodoService.SetCompleted(widget, dated.Id, true) == false, "重复勾选同状态应返回 false 且不盖戳");
+    Assert(dated.CompletedDate == stampedAt, "重复勾选不应改写完成时间");
     Assert(TodoService.SetCompleted(widget, dated.Id, false), "应能取消勾选");
     Assert(!dated.IsCompleted && dated.CompletedDate is null, "取消勾选应清空完成时间");
     Assert(TodoService.SetCompleted(widget, dated.Id, true), "应能重新勾选");
     Assert(dated.CompletedDate is not null, "重新勾选应重新记录完成时间");
+
+    // Container regeneration replays Checked events; stamping must be idempotent
+    // so render passes never rewrite completion times.
+    var idempotent = TodoService.Add(widget, "幂等盖戳", monday);
+    idempotent.IsCompleted = true;
+    TodoService.StampCompletion(idempotent);
+    var firstStamp = idempotent.CompletedDate;
+    Thread.Sleep(2);
+    TodoService.StampCompletion(idempotent);
+    Assert(idempotent.CompletedDate == firstStamp, "重复盖戳应保持原完成时间不变");
 
     // Stamping follows the flag, covering the paths that toggle IsCompleted directly.
     var stamped = TodoService.Add(widget, "顶栏勾选", monday);
@@ -197,6 +210,10 @@ static void TestTodoDatePersistence()
         var restoredItem = restored.Items.Single(x => x.Text == "带日期");
         Assert(restoredItem.Date == new DateTime(2026, 10, 20), "待办日期未持久化");
         Assert(
+            restoredItem.Date!.Value.Kind == DateTimeKind.Unspecified
+                && restoredItem.Date.Value.TimeOfDay == TimeSpan.Zero,
+            "待办日期应为无时区种类的午夜值");
+        Assert(
             restoredItem.CreatedDate is not null && restoredItem.CompletedDate is not null,
             "创建与完成时间未持久化");
         Assert(store.Load().SchemaVersion == AppState.CurrentSchemaVersion, "日期字段不应改变 Schema 版本");
@@ -243,6 +260,9 @@ static void TestLunarDayText()
     Assert(LunarDayText.For(new DateTime(2026, 2, 17)) == "正月", "春节应显示月名正月");
     Assert(LunarDayText.For(new DateTime(2026, 2, 18)) == "初二", "春节次日应为初二");
     Assert(LunarDayText.For(new DateTime(2026, 3, 4)) == "十六", "春节后十五天应为正月十六");
+    // 2025 年有闰六月，2025-07-25 为闰六月初一（外部可查证锚点）。
+    Assert(LunarDayText.For(new DateTime(2025, 7, 25)) == "闰六月", "闰月初一应显示闰月月名");
+    Assert(LunarDayText.For(new DateTime(2025, 7, 26)) == "初二", "闰月初二应显示日名");
     Assert(LunarDayText.For(new DateTime(1900, 1, 1)) == "", "历法范围外不应抛异常");
     Assert(LunarDayText.For(new DateTime(2150, 1, 1)) == "", "历法上限外不应抛异常");
 }

@@ -88,9 +88,20 @@ public static class TodoService
     /// <summary>
     /// Stamps when an entry was completed from its current state, so every toggle
     /// path (card checkbox, weekly cell, top bar row) records the same field.
+    /// Idempotent: re-running it on container regeneration never rewrites an
+    /// existing stamp, so render passes cannot distort completion times.
     /// </summary>
-    public static void StampCompletion(TodoItemState item) =>
-        item.CompletedDate = item.IsCompleted ? DateTimeOffset.Now : null;
+    public static void StampCompletion(TodoItemState item)
+    {
+        if (item.IsCompleted && item.CompletedDate is null)
+        {
+            item.CompletedDate = DateTimeOffset.Now;
+        }
+        else if (!item.IsCompleted && item.CompletedDate is not null)
+        {
+            item.CompletedDate = null;
+        }
+    }
 
     public static bool Move(TodoWidgetState widget, Guid itemId, int offset)
     {

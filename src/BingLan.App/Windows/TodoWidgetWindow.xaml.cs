@@ -18,6 +18,10 @@ public partial class TodoWidgetWindow : WidgetWindowBase
     private const double ListMinimumWidth = 226;
     private const double WeeklyMinimumWidth = 520;
 
+    // Paging far enough to overflow DateTime.AddDays would throw; a century of weeks
+    // is far beyond any real back-tracking session.
+    private const int WeeklyOffsetLimit = 5200;
+
     private readonly ObservableCollection<TodoItemState> _items;
     private readonly Dictionary<DateTime, WeekCellView> _cellsByDate = [];
     private string? _textBeforeEdit;
@@ -70,8 +74,8 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         if (State.WeeklyView && _cellsByDate.TryGetValue(DateTime.Today, out var cell))
         {
             cell.Items.Add(item);
-            RefreshSummary();
         }
+        RefreshSummary();
         NotifyStateChanged();
 
         Dispatcher.BeginInvoke(() =>
@@ -231,13 +235,13 @@ public partial class TodoWidgetWindow : WidgetWindowBase
 
     private void WeekPrev_Click(object sender, RoutedEventArgs e)
     {
-        _weekOffset--;
+        _weekOffset = Math.Max(_weekOffset - 1, -WeeklyOffsetLimit);
         RenderWeekView();
     }
 
     private void WeekNext_Click(object sender, RoutedEventArgs e)
     {
-        _weekOffset++;
+        _weekOffset = Math.Min(_weekOffset + 1, WeeklyOffsetLimit);
         RenderWeekView();
     }
 
@@ -318,6 +322,9 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         MinWidth = State.WeeklyView ? WeeklyMinimumWidth : ListMinimumWidth;
         if (State.WeeklyView)
         {
+            // MinWidth alone only clamps later layout passes; widen an already
+            // narrower card right away so the grid is readable from the first frame.
+            Width = Math.Max(Width, WeeklyMinimumWidth);
             RenderWeekView();
         }
         else
@@ -387,17 +394,20 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         RefreshSummary();
     }
 
-    // Completed rows are hidden in place rather than filtered out of the list, so the other
-    // rows keep their controls and stay reachable for screen readers and other assistive tools.
+    // Rows outside the today scope and completed rows are hidden in place rather than
+    // filtered out of the list, so the other rows keep their controls and stay reachable
+    // for screen readers and other assistive tools. _items itself stays complete so
+    // CaptureState keeps persisting every entry, dated or not.
     private void ApplyCompletedVisibility()
     {
+        var today = DateTime.Today;
         foreach (var item in _items)
         {
             if (TodoList.ItemContainerGenerator.ContainerFromItem(item) is UIElement row)
             {
-                row.Visibility = State.HideCompleted && item.IsCompleted
-                    ? Visibility.Collapsed
-                    : Visibility.Visible;
+                var visible = TodoService.BelongsToTodayList(item, today)
+                    && (!State.HideCompleted || !item.IsCompleted);
+                row.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
             }
         }
     }
@@ -419,7 +429,11 @@ public partial class TodoWidgetWindow : WidgetWindowBase
             return;
         }
 
-        var listed = _items.Where(x => !string.IsNullOrWhiteSpace(x.Text)).ToList();
+        var today = DateTime.Today;
+        var listed = _items
+            .Where(x => !string.IsNullOrWhiteSpace(x.Text)
+                && TodoService.BelongsToTodayList(x, today))
+            .ToList();
         var done = listed.Count(x => x.IsCompleted);
         SummaryText.Text = listed.Count == 0 ? "写下第一条待办" : $"{done}/{listed.Count} 已完成";
         ClearCompletedButton.IsEnabled = _items.Any(x => x.IsCompleted);
