@@ -838,12 +838,17 @@ public partial class TodoWidgetWindow : WidgetWindowBase
     {
         // Scrolling moves the rows under a stationary cursor: the dwell anchor
         // and the lift's slot snapshot both go stale. Drop the lift and let
-        // the scroll proceed (not handled here).
+        // the scroll proceed. During a drag the snapshot must not go stale at
+        // all, so scrolling is suppressed until release.
         if (_peekDragPhase == PeekDragPhase.HoverArmed)
         {
             CancelPeekDrag();
+            _peekDwellTimer?.Stop();
         }
-        _peekDwellTimer?.Stop();
+        else if (_peekDragPhase == PeekDragPhase.Dragging)
+        {
+            e.Handled = true;
+        }
     }
 
     private void WeekPeekPrevDay_Click(object sender, RoutedEventArgs e) => NavigatePeekDay(-1);
