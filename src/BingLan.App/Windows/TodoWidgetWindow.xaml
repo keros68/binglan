@@ -342,7 +342,7 @@
                         <TextBlock x:Name="WeekRange"
                                    TextAlignment="Center"
                                    VerticalAlignment="Center"
-                                   FontSize="11.5"
+                                   FontSize="13.5"
                                    Foreground="{Binding WidgetSecondaryTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
                     </DockPanel>
 
@@ -356,33 +356,34 @@
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="*"/>
                         </Grid.ColumnDefinitions>
-                        <TextBlock Text="周一" FontSize="10" TextAlignment="Center" Opacity="0.75"
-                                   Foreground="{Binding WidgetSecondaryTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
-                        <TextBlock Grid.Column="1" Text="周二" FontSize="10" TextAlignment="Center" Opacity="0.75"
-                                   Foreground="{Binding WidgetSecondaryTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
-                        <TextBlock Grid.Column="2" Text="周三" FontSize="10" TextAlignment="Center" Opacity="0.75"
-                                   Foreground="{Binding WidgetSecondaryTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
-                        <TextBlock Grid.Column="3" Text="周四" FontSize="10" TextAlignment="Center" Opacity="0.75"
-                                   Foreground="{Binding WidgetSecondaryTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
-                        <TextBlock Grid.Column="4" Text="周五" FontSize="10" TextAlignment="Center" Opacity="0.75"
-                                   Foreground="{Binding WidgetSecondaryTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
-                        <TextBlock Grid.Column="5" Text="周六" FontSize="10" TextAlignment="Center" Opacity="0.75"
-                                   Foreground="{Binding WidgetSecondaryTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
-                        <TextBlock Grid.Column="6" Text="周日" FontSize="10" TextAlignment="Center" Opacity="0.75"
-                                   Foreground="{Binding WidgetSecondaryTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
+                        <TextBlock Text="周一" FontSize="10" FontWeight="Bold" TextAlignment="Center"
+                                   Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
+                        <TextBlock Grid.Column="1" Text="周二" FontSize="10" FontWeight="Bold" TextAlignment="Center"
+                                   Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
+                        <TextBlock Grid.Column="2" Text="周三" FontSize="10" FontWeight="Bold" TextAlignment="Center"
+                                   Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
+                        <TextBlock Grid.Column="3" Text="周四" FontSize="10" FontWeight="Bold" TextAlignment="Center"
+                                   Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
+                        <TextBlock Grid.Column="4" Text="周五" FontSize="10" FontWeight="Bold" TextAlignment="Center"
+                                   Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
+                        <TextBlock Grid.Column="5" Text="周六" FontSize="10" FontWeight="Bold" TextAlignment="Center"
+                                   Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
+                        <TextBlock Grid.Column="6" Text="周日" FontSize="10" FontWeight="Bold" TextAlignment="Center"
+                                   Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
                     </Grid>
 
-                    <!-- Five equal rows fill the card height, like a real month grid;
-                         overflow inside a cell is clipped rather than scrolled. -->
+                    <!-- Month-aligned rows: the row count varies with month breaks, so
+                         the panel's row count follows the rendered list. -->
                     <ItemsControl x:Name="WeekRows"
                                   Grid.Row="2"
                                   Margin="0,2,0,2"
                                   ClipToBounds="True"
                                   Focusable="False"
-                                  IsTabStop="False">
+                                  IsTabStop="False"
+                                  ItemsSource="{Binding}">
                         <ItemsControl.ItemsPanel>
                             <ItemsPanelTemplate>
-                                <UniformGrid Rows="5"/>
+                                <UniformGrid Rows="{Binding Count, FallbackValue=5}"/>
                             </ItemsPanelTemplate>
                         </ItemsControl.ItemsPanel>
                         <ItemsControl.ItemTemplate>
@@ -411,6 +412,9 @@
                                                                         <Setter Property="BorderBrush" Value="#D9A441"/>
                                                                         <Setter Property="BorderThickness" Value="1.5"/>
                                                                     </DataTrigger>
+                                                                    <DataTrigger Binding="{Binding IsFiller}" Value="True">
+                                                                        <Setter Property="IsHitTestVisible" Value="False"/>
+                                                                    </DataTrigger>
                                                                 </Style.Triggers>
                                                             </Style>
                                                         </Border.Style>
@@ -426,14 +430,26 @@
                                                                             <DataTrigger Binding="{Binding IsWeekend}" Value="True">
                                                                                 <Setter Property="Opacity" Value="0.45"/>
                                                                             </DataTrigger>
+                                                                            <DataTrigger Binding="{Binding IsFiller}" Value="True">
+                                                                                <Setter Property="Background" Value="{x:Null}"/>
+                                                                            </DataTrigger>
                                                                         </Style.Triggers>
                                                                     </Style>
                                                                 </Border.Style>
                                                             </Border>
                                                             <StackPanel>
+                                                                <StackPanel.Style>
+                                                                    <Style TargetType="StackPanel">
+                                                                        <Style.Triggers>
+                                                                            <DataTrigger Binding="{Binding IsFiller}" Value="True">
+                                                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                                                            </DataTrigger>
+                                                                        </Style.Triggers>
+                                                                    </Style>
+                                                                </StackPanel.Style>
                                                                 <StackPanel Orientation="Horizontal">
                                                                     <TextBlock Text="{Binding DayNumber}"
-                                                                               FontSize="10.5"
+                                                                               FontSize="12.5"
                                                                                FontWeight="SemiBold"
                                                                                Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
                                                                     <TextBlock Text="{Binding LunarText}"

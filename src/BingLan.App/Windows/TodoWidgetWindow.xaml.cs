@@ -340,39 +340,79 @@ public partial class TodoWidgetWindow : WidgetWindowBase
 
     private void RenderWeekView()
     {
+        // The window still slides one week per page, but rows are month-aligned:
+        // when a month ends mid-week the row ends there and the next month starts
+        // on a fresh row at its own weekday column, so months read at a glance.
         var firstMonday = MondayOf(DateTime.Today).AddDays(7 * (_weekOffset - 1));
         var lastDay = firstMonday.AddDays(7 * WeeklyRowCount - 1);
         WeekRange.Text = $"{firstMonday:M月d日} – {lastDay:M月d日}";
         WeekTodayButton.Visibility = _weekOffset == 0 ? Visibility.Collapsed : Visibility.Visible;
 
         _cellsByDate.Clear();
-        var rows = new List<WeekRowView>(WeeklyRowCount);
-        for (var row = 0; row < WeeklyRowCount; row++)
+        var rows = new List<WeekRowView>();
+        var current = new List<WeekCellView>(7);
+        var currentMonth = -1;
+        var weekdayCursor = -1;
+        for (var index = 0; index < 7 * WeeklyRowCount; index++)
         {
-            var monday = firstMonday.AddDays(row * 7);
-            var days = new List<WeekCellView>(7);
-            for (var day = 0; day < 7; day++)
+            var date = firstMonday.AddDays(index);
+            if (date.Month != currentMonth)
             {
-                var date = monday.AddDays(day);
-                var cell = new WeekCellView
+                if (current.Count > 0)
                 {
-                    Date = date,
-                    DayNumber = date.Day.ToString(),
-                    LunarText = LunarDayText.For(date),
-                    IsToday = date == DateTime.Today,
-                    IsWeekend = date.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday
-                };
-                foreach (var entry in State.Items.Where(x => x.Date == date).OrderBy(x => x.Order))
-                {
-                    cell.Items.Add(entry);
+                    PadRow(current, weekdayCursor);
+                    rows.Add(new WeekRowView { Days = current });
                 }
-                _cellsByDate[date] = cell;
-                days.Add(cell);
+                current = new List<WeekCellView>(7);
+                currentMonth = date.Month;
+                weekdayCursor = 0;
+                // The month's first row starts at its own weekday column.
+                for (var lead = ((int)date.DayOfWeek + 6) % 7; lead > 0; lead--)
+                {
+                    current.Add(WeekCellView.Filler);
+                    weekdayCursor++;
+                }
             }
-            rows.Add(new WeekRowView { Days = days });
+
+            var cell = new WeekCellView
+            {
+                Date = date,
+                DayNumber = date.Day.ToString(),
+                LunarText = LunarDayText.For(date),
+                IsToday = date == DateTime.Today,
+                IsWeekend = date.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday
+            };
+            foreach (var entry in State.Items.Where(x => x.Date == date).OrderBy(x => x.Order))
+            {
+                cell.Items.Add(entry);
+            }
+            _cellsByDate[date] = cell;
+            current.Add(cell);
+            weekdayCursor = (weekdayCursor + 1) % 7;
+            if (weekdayCursor == 0)
+            {
+                rows.Add(new WeekRowView { Days = current });
+                current = new List<WeekCellView>(7);
+            }
         }
+        if (current.Count > 0)
+        {
+            PadRow(current, weekdayCursor);
+            rows.Add(new WeekRowView { Days = current });
+        }
+
+        WeekRows.DataContext = rows;
         WeekRows.ItemsSource = rows;
         RefreshSummary();
+    }
+
+    private static void PadRow(List<WeekCellView> row, int weekdayCursor)
+    {
+        while (row.Count < 7)
+        {
+            row.Insert(weekdayCursor, WeekCellView.Filler);
+            weekdayCursor++;
+        }
     }
 
     private void ResortCell(WeekCellView cell)
