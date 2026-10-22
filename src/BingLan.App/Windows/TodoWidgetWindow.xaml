@@ -359,19 +359,19 @@
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="*"/>
                         </Grid.ColumnDefinitions>
-                        <TextBlock Text="周一" FontSize="11.5" FontWeight="Bold" TextAlignment="Center"
+                        <TextBlock Text="周一" FontSize="11.5" FontWeight="Bold" TextAlignment="Left" Margin="6,0,0,0"
                                    Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
-                        <TextBlock Grid.Column="1" Text="周二" FontSize="11.5" FontWeight="Bold" TextAlignment="Center"
+                        <TextBlock Grid.Column="1" Text="周二" FontSize="11.5" FontWeight="Bold" TextAlignment="Left" Margin="6,0,0,0"
                                    Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
-                        <TextBlock Grid.Column="2" Text="周三" FontSize="11.5" FontWeight="Bold" TextAlignment="Center"
+                        <TextBlock Grid.Column="2" Text="周三" FontSize="11.5" FontWeight="Bold" TextAlignment="Left" Margin="6,0,0,0"
                                    Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
-                        <TextBlock Grid.Column="3" Text="周四" FontSize="11.5" FontWeight="Bold" TextAlignment="Center"
+                        <TextBlock Grid.Column="3" Text="周四" FontSize="11.5" FontWeight="Bold" TextAlignment="Left" Margin="6,0,0,0"
                                    Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
-                        <TextBlock Grid.Column="4" Text="周五" FontSize="11.5" FontWeight="Bold" TextAlignment="Center"
+                        <TextBlock Grid.Column="4" Text="周五" FontSize="11.5" FontWeight="Bold" TextAlignment="Left" Margin="6,0,0,0"
                                    Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
-                        <TextBlock Grid.Column="5" Text="周六" FontSize="11.5" TextAlignment="Center"
+                        <TextBlock Grid.Column="5" Text="周六" FontSize="11.5" TextAlignment="Left" Margin="6,0,0,0"
                                    Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
-                        <TextBlock Grid.Column="6" Text="周日" FontSize="11.5" TextAlignment="Center"
+                        <TextBlock Grid.Column="6" Text="周日" FontSize="11.5" TextAlignment="Left" Margin="6,0,0,0"
                                    Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
                     </Grid>
 
