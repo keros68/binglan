@@ -47,6 +47,7 @@ public partial class TodoWidgetWindow : WidgetWindowBase
     private int _peekFromIndex;
     private int _peekTargetIndex;
     private PeekDragPhase _peekDragPhase = PeekDragPhase.Idle;
+    private System.Windows.Input.Cursor? _savedCursor;
 
     private enum PeekDragPhase
     {
@@ -398,7 +399,7 @@ public partial class TodoWidgetWindow : WidgetWindowBase
     // The collection is only moved once, on release. All cancel paths funnel
     // through CancelPeekDrag().
     // ------------------------------------------------------------------
-    private void TodoWindow_PeekPreviewMouseLeftButtonDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    protected override void OnPreviewMouseLeftButtonDown(System.Windows.Input.MouseButtonEventArgs e)
     {
         if (WeekPeekOverlay.Visibility != Visibility.Visible || _peekDragPhase != PeekDragPhase.Idle)
         {
@@ -427,7 +428,7 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         _peekLongPressTimer.Start();
     }
 
-    private void TodoWindow_PeekPreviewMouseMove(object sender, System.Windows.Input.MouseEventArgs e)
+    protected override void OnPreviewMouseMove(System.Windows.Input.MouseEventArgs e)
     {
         if (_peekDragPhase == PeekDragPhase.Pressed)
         {
@@ -447,7 +448,7 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         }
     }
 
-    private void TodoWindow_PeekPreviewMouseUp(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    protected override void OnPreviewMouseLeftButtonUp(System.Windows.Input.MouseButtonEventArgs e)
     {
         if (_peekDragPhase == PeekDragPhase.Pressed)
         {
@@ -463,7 +464,7 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         }
     }
 
-    private void TodoWindow_PeekPreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    protected override void OnPreviewKeyDown(System.Windows.Input.KeyEventArgs e)
     {
         if (_peekDragPhase == PeekDragPhase.Dragging && e.Key == Key.Escape)
         {
@@ -913,6 +914,10 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         RefreshSummary();
         NotifyStateChanged();
     }
+
+    // ------------------------------------------------------------------
+    // Long-press drag reordering inside the day peek popup.
+    // State machine: Idle → Pressed(mouse down on a row) → Armed(300 ms held,
 
     private void AddWeeklyItem(WeekCellView cell, string text)
     {
