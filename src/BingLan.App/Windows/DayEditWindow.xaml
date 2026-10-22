@@ -1,0 +1,68 @@
+<Window x:Class="BingLan.App.Windows.DayEditWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="当日待办"
+        Width="360"
+        Height="430"
+        MinWidth="300"
+        MinHeight="260"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        Background="Transparent"
+        ShowInTaskbar="False"
+        WindowStartupLocation="CenterOwner"
+        FontFamily="{StaticResource UiFont}"
+        Foreground="{DynamicResource PrimaryTextBrush}">
+    <Border CornerRadius="10"
+            Background="{DynamicResource WidgetItemSurfaceBrush}"
+            BorderBrush="{DynamicResource WidgetControlBorderBrush}"
+            BorderThickness="1">
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+            <Border Margin="10,10,10,4"
+                    Padding="14,9"
+                    CornerRadius="6"
+                    Background="{DynamicResource WidgetHeaderBrush}">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock x:Name="DateTitle"
+                               VerticalAlignment="Center"
+                               FontSize="15"
+                               FontWeight="SemiBold"
+                               Foreground="{DynamicResource PrimaryTextBrush}"/>
+                    <Button Grid.Column="1"
+                            AutomationProperties.Name="保存当日待办"
+                            Width="30"
+                            Height="28"
+                            Padding="0"
+                            Foreground="{DynamicResource PrimaryTextBrush}"
+                            Background="{DynamicResource WidgetControlBrush}"
+                            BorderBrush="{DynamicResource WidgetControlBorderBrush}"
+                            FontSize="15"
+                            Content="✓"
+                            ToolTip="保存并关闭"
+                            Click="Commit_Click"/>
+                </Grid>
+            </Border>
+            <TextBox x:Name="Editor"
+                     Grid.Row="1"
+                     Margin="10,6,10,10"
+                     AutomationProperties.Name="当日待办内容"
+                     AcceptsReturn="True"
+                     TextWrapping="Wrap"
+                     VerticalScrollBarVisibility="Auto"
+                     VerticalContentAlignment="Top"
+                     FontSize="13"
+                     Padding="8,6"
+                     Background="Transparent"
+                     BorderThickness="0"
+                     PreviewKeyDown="Editor_PreviewKeyDown"/>
+        </Grid>
+    </Border>
+</Window>

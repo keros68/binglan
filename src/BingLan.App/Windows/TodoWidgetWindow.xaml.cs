@@ -10,8 +10,9 @@ namespace BingLan.App.Windows;
 
 public partial class TodoWidgetWindow : WidgetWindowBase
 {
-    // The weekly view shows this many calendar rows, Monday first.
-    private const int WeeklyRowCount = 5;
+    // The weekly view shows four calendar rows, Monday first — 28 days span at most
+    // two months, so month breaks never crowd together.
+    private const int WeeklyRowCount = 4;
 
     // Minimum card sizes: the weekly grid needs wider columns and taller rows than
     // the today list, which stays comfortable at the card's original minimums.
@@ -28,6 +29,7 @@ public partial class TodoWidgetWindow : WidgetWindowBase
     private readonly Dictionary<DateTime, WeekCellView> _cellsByDate = [];
     private string? _textBeforeEdit;
     private int _weekOffset;
+    private DayEditWindow? _dayEditor;
 
     public TodoWidgetWindow(TodoWidgetState state)
     {
@@ -255,13 +257,59 @@ public partial class TodoWidgetWindow : WidgetWindowBase
 
     private void WeekCellSurface_Click(object sender, MouseButtonEventArgs e)
     {
-        if (sender is FrameworkElement { DataContext: WeekCellView } surface
-            && FindDirectVisualChild<System.Windows.Controls.TextBox>(surface) is { } editor)
+        if (sender is not FrameworkElement { DataContext: WeekCellView cell } surface || cell.IsFiller)
+        {
+            return;
+        }
+
+        if (e.ClickCount >= 2)
+        {
+            // A double-click opens the day editor; any inline editor gives way to it.
+            if (FindNamedDescendant(surface, "WeekCellEditor") is { } openEditor)
+            {
+                CloseCellEditor(openEditor);
+            }            OpenDayEditor(cell);
+            e.Handled = true;
+            return;
+        }
+
+        if (FindNamedDescendant(surface, "WeekCellEditor") is { } editor)
         {
             editor.Visibility = Visibility.Visible;
             editor.Focus();
             e.Handled = true;
         }
+    }
+
+    private void OpenDayEditor(WeekCellView cell)
+    {
+        // One day editor at a time; opening another day commits the previous one first.
+        _dayEditor?.Close();
+
+        var lines = State.Items
+            .Where(x => x.Date == cell.Date)
+            .OrderBy(x => x.Order)
+            .Select(x => x.Text)
+            .Where(text => text.Length > 0)
+            .ToList();
+        _dayEditor = new DayEditWindow(cell.Date, lines) { Owner = this };
+        _dayEditor.Committed += (date, committedLines) => CommitDayEditor(date, committedLines);
+        _dayEditor.Closed += (_, _) => _dayEditor = null;
+        _dayEditor.Show();
+        _dayEditor.Activate();
+    }
+
+    private void CommitDayEditor(DateTime date, IReadOnlyList<string> lines)
+    {
+        CaptureState();
+        TodoService.SyncDayItems(State, date, lines);
+        ReloadItems();
+        if (_cellsByDate.TryGetValue(date, out var cell))
+        {
+            ResortCell(cell);
+        }
+        RefreshSummary();
+        NotifyStateChanged();
     }
 
     private void WeekCellEditor_KeyDown(object sender, System.Windows.Input.KeyEventArgs e)
@@ -307,9 +355,12 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         NotifyStateChanged();
     }
 
-    private static void CloseCellEditor(System.Windows.Controls.TextBox editor)
+    private static void CloseCellEditor(System.Windows.FrameworkElement editor)
     {
-        editor.Text = "";
+        if (editor is System.Windows.Controls.TextBox box)
+        {
+            box.Text = "";
+        }
         editor.Visibility = Visibility.Collapsed;
     }
 
@@ -488,13 +539,20 @@ public partial class TodoWidgetWindow : WidgetWindowBase
     private static DateTime MondayOf(DateTime date) =>
         date.AddDays(-(((int)date.DayOfWeek + 6) % 7));
 
-    private static T? FindDirectVisualChild<T>(DependencyObject parent) where T : DependencyObject
+    // The cell's inline editor sits deep in the template (Border > Grid > StackPanel),
+    // so it is found by its registered name rather than by tree depth.
+    private static FrameworkElement? FindNamedDescendant(DependencyObject parent, string name)
     {
         for (var i = 0; i < System.Windows.Media.VisualTreeHelper.GetChildrenCount(parent); i++)
         {
-            if (System.Windows.Media.VisualTreeHelper.GetChild(parent, i) is T child)
+            var child = System.Windows.Media.VisualTreeHelper.GetChild(parent, i);
+            if (child is FrameworkElement element && element.Name == name)
             {
-                return child;
+                return element;
+            }
+            if (FindNamedDescendant(child, name) is { } found)
+            {
+                return found;
             }
         }
         return null;

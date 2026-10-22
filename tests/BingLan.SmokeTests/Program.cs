@@ -11,6 +11,7 @@ using System.Text.Json;
 var failures = new List<string>();
 Run("待办编辑、勾选、排序", TestTodo);
 Run("待办日期字段、完成时间与周历规则", TestTodoDates);
+Run("按日同步待办行", TestSyncDayItems);
 Run("待办日期持久化与官方版本兼容", TestTodoDatePersistence);
 Run("周历农历标注", TestLunarDayText);
 Run("顶栏只统计今日待办", TestTopBarTodayCount);
@@ -189,6 +190,43 @@ static void TestTodoDates()
     Assert(widget.Items.Any(x => x.Id == dated.Id), "其他日期的已完成历史不应被清理");
     Assert(!widget.Items.Any(x => x.Id == todayEntry.Id), "今日已完成待办应被清理");
     Assert(!widget.Items.Any(x => x.Id == undated.Id), "今日范围内已完成待办应被清理");
+}
+
+static void TestSyncDayItems()
+{
+    var widget = new TodoWidgetState();
+    var monday = DateTime.Today.AddDays(-(((int)DateTime.Today.DayOfWeek + 6) % 7));
+    var first = TodoService.Add(widget, "原始一", monday);
+    first.IsCompleted = true;
+    TodoService.StampCompletion(first);
+    TodoService.Add(widget, "原始二", monday);
+    TodoService.Add(widget, "别的一天", monday.AddDays(1));
+
+    // 编辑框提交：带序号前缀与空行的文本，按行同步当天的条目。
+    var kept = TodoService.SyncDayItems(widget, monday, new[] { "1. 更新一", "2. 更新二", "", "3. 新增三" });
+    Assert(kept == 3, "同步后当天应保留三条");
+    var dayItems = TodoService.ItemsForDate(widget, monday).ToList();
+    Assert(
+        dayItems[0].Text == "更新一" && dayItems[0].IsCompleted && dayItems[0].CompletedDate is not null,
+        "已有序目应更新文本且保留完成状态");
+    Assert(dayItems[1].Text == "更新二" && !dayItems[1].IsCompleted, "未完成序目不应被误标完成");
+    Assert(
+        dayItems[2].Text == "新增三" && dayItems[2].Date == monday && dayItems[2].CreatedDate is not null,
+        "新增行应落到当天并记录创建时间");
+    Assert(
+        TodoService.ItemsForDate(widget, monday.AddDays(1)).Single().Text == "别的一天",
+        "其他日期的条目不应被同步波及");
+
+    // 行数变少：多余条目按末尾删除。
+    TodoService.SyncDayItems(widget, monday, new[] { "1. 只留一条" });
+    var reduced = TodoService.ItemsForDate(widget, monday).ToList();
+    Assert(reduced.Count == 1 && reduced[0].Text == "只留一条", "行数变少应删除末尾多余条目");
+
+    // 数字开头的正文不应被当成序号剥掉。
+    TodoService.SyncDayItems(widget, monday, new[] { "3D建模实训", "42" });
+    var numbered = TodoService.ItemsForDate(widget, monday).ToList();
+    Assert(numbered.Count == 2 && numbered[0].Text == "3D建模实训" && numbered[1].Text == "42",
+        "数字开头的正文不应被误剥序号");
 }
 
 static void TestTodoDatePersistence()

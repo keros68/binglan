@@ -154,6 +154,66 @@ public static class TodoService
         widget.Items.Where(x => x.Date == date).OrderBy(x => x.Order).ToList();
 
     /// <summary>
+    /// Replaces one calendar day's entries with the given editor lines, in order:
+    /// surviving entries keep their completion state while only the text updates,
+    /// missing lines become new entries, surplus entries are removed, and blank
+    /// lines are skipped. A leading "1. "/"1、" numbering prefix is display sugar
+    /// and is stripped, while content like "3D建模" survives untouched.
+    /// Returns how many entries the day holds afterwards.
+    /// </summary>
+    public static int SyncDayItems(TodoWidgetState widget, DateTime date, IReadOnlyList<string> lines)
+    {
+        var texts = lines
+            .Select(StripNumberPrefix)
+            .Where(line => line.Length > 0)
+            .ToList();
+
+        var dayItems = ItemsForDate(widget, date);
+        var total = Math.Max(texts.Count, dayItems.Count);
+        for (var index = 0; index < total; index++)
+        {
+            if (index < texts.Count && index < dayItems.Count)
+            {
+                dayItems[index].Text = texts[index];
+            }
+            else if (index < texts.Count)
+            {
+                Add(widget, texts[index], date);
+            }
+            else
+            {
+                Remove(widget, dayItems[index].Id);
+            }
+        }
+        return ItemsForDate(widget, date).Count;
+    }
+
+    private static string StripNumberPrefix(string line)
+    {
+        var trimmed = line.Trim();
+        var index = 0;
+        while (index < trimmed.Length && char.IsAsciiDigit(trimmed[index]))
+        {
+            index++;
+        }
+        if (index == 0)
+        {
+            return trimmed;
+        }
+        var after = index;
+        if (after < trimmed.Length && (trimmed[after] == '.' || trimmed[after] == '、' || trimmed[after] == '．'))
+        {
+            after++;
+            while (after < trimmed.Length && char.IsWhiteSpace(trimmed[after]))
+            {
+                after++;
+            }
+            return trimmed[after..];
+        }
+        return trimmed;
+    }
+
+    /// <summary>
     /// Which entries the today list shows: undated ones plus entries placed on today,
     /// so a task written into today's cell appears in both views.
     /// </summary>
