@@ -284,6 +284,10 @@ public partial class TodoWidgetWindow : WidgetWindowBase
 
     private void WeekCellSurface_Click(object sender, MouseButtonEventArgs e)
     {
+        // Handled up front: both dispatch paths (header bubble, body scroller
+        // re-dispatch) want the event consumed on every branch, including the
+        // early returns.
+        e.Handled = true;
         if (sender is not FrameworkElement { DataContext: WeekCellView cell } surface || cell.IsFiller)
         {
             return;
@@ -303,22 +307,27 @@ public partial class TodoWidgetWindow : WidgetWindowBase
     // The body ScrollViewer marks left-button-down handled (it takes keyboard
     // focus on click, which also painted a focus rectangle inside the cell),
     // so the cell surface handler on the root Border never sees body clicks.
-    // Re-dispatch from the ScrollViewer itself, seeing handled events; clicks
-    // on the row checkbox/delete button stay excluded.
-    // Weak keys: per-item Borders are discarded on every week re-render, so a
-    // strong static set would accumulate the whole visual tree; a failed
-    // lookup simply retries on the next click until the scroller exists.
+    // Re-dispatch from the ScrollViewer itself, seeing handled events. The row
+    // checkbox/delete button need no exclusion here: both are ButtonBase,
+    // whose own mouse-down handling suppresses the re-raised event on
+    // ancestors, so this dispatch never fires for them. The weak table maps
+    // each cell Border to the scroller it was hooked on; if a template pass
+    // ever rebuilt the scroller under a living Border, the hook is refreshed.
     private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<DependencyObject, object?> CellScrollHooked = [];
 
     private void WeekCellSurface_Preview(object sender, MouseButtonEventArgs e)
     {
         if (sender is not System.Windows.Controls.Border border) return;
-        if (CellScrollHooked.TryGetValue(border, out _)) return;
         if (FindVisualChild<System.Windows.Controls.ScrollViewer>(border) is not { } scroller)
         {
             return;
         }
-        CellScrollHooked.Add(border, null);
+        if (CellScrollHooked.TryGetValue(border, out var hooked) && ReferenceEquals(hooked, scroller))
+        {
+            return;
+        }
+        CellScrollHooked.Remove(border);
+        CellScrollHooked.Add(border, scroller);
         scroller.AddHandler(MouseLeftButtonDownEvent,
             new MouseButtonEventHandler((_, e2) => WeekCellSurface_Click(border, e2)), handledEventsToo: true);
     }
