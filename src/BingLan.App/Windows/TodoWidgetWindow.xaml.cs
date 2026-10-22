@@ -843,11 +843,18 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         if (_peekDragPhase == PeekDragPhase.HoverArmed)
         {
             CancelPeekDrag();
-            _peekDwellTimer?.Stop();
         }
         else if (_peekDragPhase == PeekDragPhase.Dragging)
         {
             e.Handled = true;
+        }
+        else
+        {
+            // Idle with a pending dwell: scrolling moved the rows under a
+            // stationary cursor, so the running countdown no longer applies
+            // to the row now under it — kill it; the next mouse move re-seeds
+            // a fresh dwell for that row.
+            _peekDwellTimer?.Stop();
         }
     }
 
