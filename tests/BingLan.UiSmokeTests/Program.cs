@@ -2220,8 +2220,10 @@ internal static class Program
     private static void TestTodoRowsStayAccessible()
     {
         var state = TodoService.CreateDefaultWidget();
-        state.Items[0].Text = "第一条";
-        state.Items[1].Text = "第二条";
+        TodoService.Add(state, "第一条");
+        TodoService.Add(state, "第二条");
+        // 空白行模拟手动点 + 产生的输入位：统计不应把它算进完成度。
+        TodoService.Add(state, "");
         var window = new TodoWidgetWindow(state);
         ShowAndPump(window);
         try

@@ -101,9 +101,7 @@ void Run(string name, Action test)
 static void TestTodo()
 {
     var defaultWidget = TodoService.CreateDefaultWidget();
-    Assert(defaultWidget.Items.Count == 3, "新建待办应包含三条空白项");
-    Assert(defaultWidget.Items.All(item => item.Text == "" && !item.IsCompleted),
-        "新建待办的三条默认项应为空白且未完成");
+    Assert(defaultWidget.Items.Count == 0, "新建待办卡片应为空白（不自带占位行）");
 
     var widget = new TodoWidgetState();
     var first = TodoService.Add(widget, "第一项");
@@ -522,7 +520,8 @@ static void TestPersistence()
         todo.Appearance.TitleFontFamily = "Segoe UI Variable Display";
         todo.Appearance.TitleFontBold = false;
         todo.Appearance.TitleFontItalic = true;
-        todo.Items[0].IsCompleted = true;
+        var persisted = TodoService.Add(todo, "持久化任务");
+        persisted.IsCompleted = true;
         var box = state.FileBoxes.Single();
         box.CornerRadius = 32;
         box.Appearance.BackgroundColor = "#D4E5F6";
@@ -558,8 +557,8 @@ static void TestPersistence()
             !loaded.FileBoxes.Single().Appearance.TitleFontItalic,
             "文件盒材质外观未恢复");
         Assert(loaded.SchemaVersion == AppState.CurrentSchemaVersion, "状态版本未更新");
-        Assert(restored.Items.Count == 3 && restored.Items[0].IsCompleted,
-            "三条默认待办或完成状态未恢复");
+        Assert(restored.Items.Count == 1 && restored.Items[0].IsCompleted
+            && restored.Items[0].Text == "持久化任务", "待办条目与完成状态未恢复");
         Assert(File.Exists(store.StatePath), "状态文件不存在");
         Assert(File.Exists(store.CreateBackup(loaded)), "备份未创建");
     }

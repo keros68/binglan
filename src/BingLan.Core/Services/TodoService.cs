@@ -4,15 +4,11 @@ namespace BingLan.Core.Services;
 
 public static class TodoService
 {
-    public static TodoWidgetState CreateDefaultWidget()
-    {
-        var widget = new TodoWidgetState();
-        for (var index = 0; index < 3; index++)
-        {
-            Add(widget);
-        }
-        return widget;
-    }
+    /// <summary>
+    /// A new card starts empty: the user adds entries themselves (the + button, a
+    /// cell click, or the day editor) instead of receiving placeholder blanks.
+    /// </summary>
+    public static TodoWidgetState CreateDefaultWidget() => new();
 
     public static TodoItemState Add(TodoWidgetState widget, string text = "")
     {
