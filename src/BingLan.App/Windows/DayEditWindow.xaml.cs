@@ -19,8 +19,13 @@ public partial class DayEditWindow : Window
         InitializeComponent();
         _date = date;
         DateTitle.Text = date.ToString("yyyy年M月d日");
-        Editor.Text = string.Join(Environment.NewLine,
-            initialLines.Select((line, index) => $"{index + 1}. {line}"));
+        // The first entry is numbered "1." from the moment the editor opens — the
+        // first thing to do always gets the first number.
+        Editor.Text = initialLines.Count == 0
+            ? "1. "
+            : string.Join(Environment.NewLine,
+                initialLines.Select((line, index) => $"{index + 1}. {line}"));
+        Editor.CaretIndex = Editor.Text.Length;
         Loaded += (_, _) => Editor.Focus();
     }
 
@@ -32,16 +37,8 @@ public partial class DayEditWindow : Window
         }
         e.Handled = true;
 
-        // A new line automatically carries the next sequential number, so every
-        // numbered line is one of the day's entries.
-        var next = 1;
-        for (var line = 0; line < Editor.LineCount; line++)
-        {
-            if (Editor.GetLineText(line).Trim().Length > 0)
-            {
-                next++;
-            }
-        }
+        // Enter always starts the next numbered line: one line, one entry.
+        var next = Editor.Text.Trim().Length == 0 ? 1 : Editor.LineCount + 1;
 
         var caret = Editor.CaretIndex;
         var insert = Environment.NewLine + next + ". ";
