@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Automation.Peers;
@@ -637,13 +637,13 @@ internal static class Program
         {
             window.ApplySelection(true);
             Pump();
-            var buttons = FindVisualChildren<Button>(window).ToList();
+            var buttons = FindVisibleChildren<Button>(window).ToList();
             var expectedOrder = new Control[]
             {
                 buttons.Single(button => Equals(button.ToolTip, "设置")),
                 buttons.Single(button => Equals(button.ToolTip, "新增待办")),
-                FindVisualChildren<CheckBox>(window).Single(),
-                FindVisualChildren<TextBox>(window).Single(textBox => textBox.Name != "TitleEditor"),
+                FindVisibleChildren<CheckBox>(window).Single(),
+                FindVisibleChildren<TextBox>(window).Single(textBox => textBox.Name != "TitleEditor"),
                 buttons.Single(button => Equals(button.ToolTip, "删除待办")),
                 buttons.Single(button => Equals(button.Content, "隐藏已完成"))
             };
@@ -3042,6 +3042,31 @@ internal static class Program
                 yield return result;
             }
             foreach (var descendant in FindVisualChildren<T>(child))
+            {
+                yield return descendant;
+            }
+        }
+    }
+
+    // Same walk, but only over what is actually rendered. XAML-declared
+    // controls stay in the visual tree while Visibility=Collapsed, so plain
+    // tree walks double-count hidden panels (the day peek overlay ships its
+    // own input box and toast). Screen readers skip hidden content; these
+    // queries must too.
+    private static IEnumerable<T> FindVisibleChildren<T>(DependencyObject root) where T : DependencyObject
+    {
+        for (var i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)
+        {
+            var child = VisualTreeHelper.GetChild(root, i);
+            if (child is UIElement { IsVisible: false })
+            {
+                continue;
+            }
+            if (child is T result)
+            {
+                yield return result;
+            }
+            foreach (var descendant in FindVisibleChildren<T>(child))
             {
                 yield return descendant;
             }
