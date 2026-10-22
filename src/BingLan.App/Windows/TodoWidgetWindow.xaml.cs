@@ -15,6 +15,13 @@ public partial class TodoWidgetWindow : WidgetWindowBase
     // 周历窗口周数来自用户设置（1~5，默认 4），随 State 变化即时生效。
     private int WeeklyRowCount => Math.Clamp(State.WeeklyWeekCount, 1, 5);
 
+    // 周数 ≥2 时窗口从上周一始（本周在第二行，历史行为）；1 周窗口必须
+    // 含本周，否则整周看不到今天。
+    private int WeekWindowBackShift => WeeklyRowCount >= 2 ? 1 : 0;
+
+    private DateTime WeekWindowStart => MondayOf(DateTime.Today)
+        .AddDays(7 * (_weekOffset - WeekWindowBackShift));
+
     // Minimum card sizes: the weekly grid needs wider columns and taller rows than
     // the today list, which stays comfortable at the card's original minimums.
     private const double ListMinimumWidth = 226;
@@ -276,6 +283,9 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         }
         State.WeeklyWeekCount = clamped;
         ApplyViewMode();
+        // 修改立即生效：缩小周数后卡片高度也要收回来（保留两行余量给
+        // 跨月断行），放大时 ApplyViewMode 已负责抬到最小高度。
+        Height = Math.Max(WeeklyMinimumHeight, Math.Min(Height, WeeklyMinimumHeight + 120));
         NotifyStateChanged();
     }
 
@@ -1215,7 +1225,7 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         // The window still slides one week per page, but rows are month-aligned:
         // when a month ends mid-week the row ends there and the next month starts
         // on a fresh row at its own weekday column, so months read at a glance.
-        var firstMonday = MondayOf(DateTime.Today).AddDays(7 * (_weekOffset - 1));
+        var firstMonday = WeekWindowStart;
         var lastDay = firstMonday.AddDays(7 * WeeklyRowCount - 1);
         WeekRange.Text = $"{firstMonday:M月d日} – {lastDay:M月d日}";
         WeekTodayButton.Visibility = _weekOffset == 0 ? Visibility.Collapsed : Visibility.Visible;
@@ -1335,7 +1345,7 @@ public partial class TodoWidgetWindow : WidgetWindowBase
     {
         if (State.WeeklyView)
         {
-            var firstMonday = MondayOf(DateTime.Today).AddDays(7 * (_weekOffset - 1));
+            var firstMonday = WeekWindowStart;
             var lastDay = firstMonday.AddDays(7 * WeeklyRowCount - 1);
             var written = _items
                 .Where(x => !string.IsNullOrWhiteSpace(x.Text)

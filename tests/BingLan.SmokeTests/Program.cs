@@ -310,6 +310,7 @@ static void TestTodoDatePersistence()
             """);
         var fromOfficial = store.Load().TodoWidgets.Single();
         Assert(fromOfficial.Items.Single().Date is null, "官方数据读取后不应凭空出现日期");
+        Assert(fromOfficial.WeeklyWeekCount == 4, "官方旧格式文件（缺周数字段）应取默认值 4");
         store.Save(store.Load());
         using var saved = JsonDocument.Parse(File.ReadAllText(store.StatePath));
         Assert(

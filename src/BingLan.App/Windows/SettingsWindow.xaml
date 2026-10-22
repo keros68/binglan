@@ -1016,6 +1016,12 @@
                                         </StackPanel>
                                     </Border>
                                 </StackPanel>
+                                <Border Margin="0,18,0,4" Style="{StaticResource SettingsPanelStyle}">
+                                    <ContentControl x:Name="SelectedWidgetAppearanceHost" Focusable="False"/>
+                                </Border>
+                            </StackPanel>
+                            <!-- 与两个编辑面板平级：待办卡片在内置组件分支显示，必须不受
+                                 SelectedWidgetEditorPanel 折叠影响 -->
                                 <StackPanel x:Name="TodoSettingsPanel" Visibility="Collapsed">
                                     <TextBlock Style="{StaticResource SectionHeaderStyle}" Text="周历"/>
                                     <Border Style="{StaticResource SettingsPanelStyle}">
@@ -1036,10 +1042,7 @@
                                         </local:SettingsRow>
                                     </Border>
                                 </StackPanel>
-                                <Border Margin="0,18,0,4" Style="{StaticResource SettingsPanelStyle}">
-                                    <ContentControl x:Name="SelectedWidgetAppearanceHost" Focusable="False"/>
-                                </Border>
-                            </StackPanel>
+                            
                         </StackPanel>
                     </ScrollViewer>
                 </Grid>

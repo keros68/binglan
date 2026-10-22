@@ -156,6 +156,7 @@ internal static class Program
         Run("组件恢复默认位置", TestResetComponentPlacement, failures);
         Run("清爽桌面开关", TestCleanDesktopToggle, failures);
         Run("设置行分隔线对齐标题", TestSettingsRowDividersAlignWithTitles, failures);
+        Run("待办周历周数设置面板", TestTodoWeekCountSettingPanel, failures);
         Run("整体风格与清爽桌面恢复提示", TestStyleSettingsAndRestoreNotice, failures);
         Run("便签尺寸输入后自动生效", TestAppearancePanelSizeAppliesOnItsOwn, failures);
         Run("首次使用引导逐步应用设置", TestOnboardingWizard, failures);
@@ -2679,6 +2680,68 @@ internal static class Program
         finally
         {
             window.Close();
+        }
+    }
+
+    // 回归：周历周数设置面板只对待办卡片显示（此前挂在 widget 分支、待办卡片
+    // 走内置组件分支导致入口不可见），切换周数要立即写入卡片状态。
+    private static void TestTodoWeekCountSettingPanel()
+    {
+        var todo = new TodoWidgetWindow(new TodoWidgetState());
+        var note = new NoteWidgetWindow(new NoteWidgetState());
+        ShowAndPump(todo);
+        ShowAndPump(note);
+        try
+        {
+            var window = new SettingsWindow(
+                new CityLookupService(),
+                new InformationWidgetState(),
+                DesktopExperienceRules.CreateDefault(),
+                (_, _) => { },
+                _ => { },
+                _ => { },
+                widgetProvider: () => new WidgetWindowBase[] { todo, note });
+            ShowAndPump(window);
+            try
+            {
+                Require<ListBox>(window, "SettingsNavigationList").SelectedIndex = 1;
+                Pump();
+                var list = Require<ListBox>(window, "DesktopComponentList");
+                var panel = Require<StackPanel>(window, "TodoSettingsPanel");
+
+                list.SelectedItem = list.Items.OfType<SettingsWindow.DesktopComponentSettingsEntry>()
+                    .First(entry => entry.Window is TodoWidgetWindow);
+                Pump();
+                Assert(panel.IsVisible, "选中待办卡片应显示周历设置面板");
+
+                var picker = Require<ComboBox>(window, "TodoWeekCountPicker");
+                Assert(picker.SelectedIndex == 3, "周数回填应与卡片状态一致（默认 4 周）");
+                // 1 周窗口断言需要周历已渲染：先切到周历视图。
+                todo.State.WeeklyView = true;
+                picker.SelectedIndex = 0;
+                Pump();
+                Assert(todo.State.WeeklyWeekCount == 1, "切换周数应立即写入卡片状态");
+                var monday = DateTime.Today.AddDays(-(((int)DateTime.Today.DayOfWeek + 6) % 7));
+                var sunday = monday.AddDays(6);
+                Assert(
+                    Require<TextBlock>(todo, "WeekRange").Text ==
+                        $"{monday:M月d日} – {sunday:M月d日}",
+                    "1 周窗口应恰好覆盖本周（含今天）");
+
+                list.SelectedItem = list.Items.OfType<SettingsWindow.DesktopComponentSettingsEntry>()
+                    .First(entry => entry.Window is NoteWidgetWindow);
+                Pump();
+                Assert(!panel.IsVisible, "选中非待办卡片应隐藏周历设置面板");
+            }
+            finally
+            {
+                window.Close();
+            }
+        }
+        finally
+        {
+            Close(todo);
+            Close(note);
         }
     }
 

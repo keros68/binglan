@@ -241,10 +241,19 @@ public partial class SettingsWindow : Window
             SelectedWidgetAppearanceHost.Content = null;
             FileBoxCollectPanel.Visibility = Visibility.Collapsed;
             FileBoxDesktopHintPanel.Visibility = Visibility.Collapsed;
-            TodoSettingsPanel.Visibility = Visibility.Collapsed;
             SelectedWidgetEditorPanel.Visibility = Visibility.Collapsed;
             BuiltInComponentEditorPanel.Visibility = Visibility.Visible;
             LoadSelectedComponentEditor(kind, entry.Window);
+            // 待办卡片自身走内置组件分支（DesktopExperience 有 Todo 组件项），
+            // 周历设置面板必须在这里点亮；其余内置组件保持隐藏。
+            if (kind == DesktopComponentKind.Todo && entry.Window is TodoWidgetWindow todoWindow)
+            {
+                LoadTodoSettings(todoWindow);
+            }
+            else
+            {
+                TodoSettingsPanel.Visibility = Visibility.Collapsed;
+            }
             DisplayContentSettingsCard.Visibility = kind is DesktopComponentKind.TimeDate or
                 DesktopComponentKind.Greeting
                 ? Visibility.Visible
@@ -810,13 +819,15 @@ public partial class SettingsWindow : Window
 
     private void TodoWeekCount_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (_loadingTodoWeekCount || _selectedComponentEntry?.Window is not TodoWidgetWindow todo)
+        if (_loadingTodoWeekCount
+            || TodoWeekCountPicker.SelectedIndex < 0
+            || _selectedComponentEntry?.Window is not TodoWidgetWindow todo)
         {
             return;
         }
 
         todo.SetWeeklyWeekCount(TodoWeekCountPicker.SelectedIndex + 1);
-        ComponentSettingsStatusText.Text = $"已保存“{todo.State.Title}”的周历周数";
+        ComponentSettingsStatusText.Text = $"已应用“{todo.State.Title}”的周历周数";
     }
 
     private void LoadFileBoxViewMode(FileBoxWindow? box)
