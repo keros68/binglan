@@ -1,4 +1,4 @@
-using System.ComponentModel;
+﻿using System.ComponentModel;
 using System.Runtime.CompilerServices;
 
 namespace BingLan.Core.Models;
@@ -102,6 +102,10 @@ public sealed class TodoWidgetState
 
     /// <summary>Whether the card shows the five-week calendar view instead of today's list.</summary>
     public bool WeeklyView { get; set; }
+
+    /// <summary>How many weeks (1-5) the weekly calendar window spans; the
+    /// renderer and the store both clamp, so hand-edited files stay sane.</summary>
+    public int WeeklyWeekCount { get; set; } = 4;
     public bool IsLocked { get; set; }
     public WidgetAppearanceState Appearance { get; set; } = new();
     public double CornerRadius

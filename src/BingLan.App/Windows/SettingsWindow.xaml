@@ -1,4 +1,4 @@
-<Window x:Class="BingLan.App.Windows.SettingsWindow"
+﻿<Window x:Class="BingLan.App.Windows.SettingsWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:BingLan.App.Windows"
@@ -1014,6 +1014,26 @@
                                                     Content="前往开启清爽桌面"
                                                     Click="GoToCleanDesktop_Click"/>
                                         </StackPanel>
+                                    </Border>
+                                </StackPanel>
+                                <StackPanel x:Name="TodoSettingsPanel" Visibility="Collapsed">
+                                    <TextBlock Style="{StaticResource SectionHeaderStyle}" Text="周历"/>
+                                    <Border Style="{StaticResource SettingsPanelStyle}">
+                                        <local:SettingsRow Header="周历显示周数"
+                                                           Description="周历视图一次展示几周（1~5 周，默认 4 周），修改立即生效"
+                                                           Glyph="&#xE787;"
+                                                           GlyphBrush="{DynamicResource SettingsIconPinkBrush}">
+                                            <ComboBox x:Name="TodoWeekCountPicker"
+                                                      Width="160"
+                                                      AutomationProperties.Name="周历显示周数"
+                                                      SelectionChanged="TodoWeekCount_SelectionChanged">
+                                                <ComboBoxItem Content="1 周"/>
+                                                <ComboBoxItem Content="2 周"/>
+                                                <ComboBoxItem Content="3 周"/>
+                                                <ComboBoxItem Content="4 周"/>
+                                                <ComboBoxItem Content="5 周"/>
+                                            </ComboBox>
+                                        </local:SettingsRow>
                                     </Border>
                                 </StackPanel>
                                 <Border Margin="0,18,0,4" Style="{StaticResource SettingsPanelStyle}">

@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -241,6 +241,7 @@ public partial class SettingsWindow : Window
             SelectedWidgetAppearanceHost.Content = null;
             FileBoxCollectPanel.Visibility = Visibility.Collapsed;
             FileBoxDesktopHintPanel.Visibility = Visibility.Collapsed;
+            TodoSettingsPanel.Visibility = Visibility.Collapsed;
             SelectedWidgetEditorPanel.Visibility = Visibility.Collapsed;
             BuiltInComponentEditorPanel.Visibility = Visibility.Visible;
             LoadSelectedComponentEditor(kind, entry.Window);
@@ -280,6 +281,7 @@ public partial class SettingsWindow : Window
         panel.Attach(entry.Window);
         LoadFileBoxViewMode(entry.Window as FileBoxWindow);
         LoadFileBoxCollect(entry.Window as FileBoxWindow);
+        LoadTodoSettings(entry.Window as TodoWidgetWindow);
         SelectedWidgetAppearanceHost.Content = panel;
         SelectedWidgetHeadingText.Text = entry.Name;
         SelectedWidgetLockedCheckBox.IsChecked = entry.Window.IsWidgetLocked;
@@ -783,6 +785,39 @@ public partial class SettingsWindow : Window
     private bool _loadingCollect;
 
     private bool _loadingViewMode;
+
+    private bool _loadingTodoWeekCount;
+
+    private void LoadTodoSettings(TodoWidgetWindow? todo)
+    {
+        TodoSettingsPanel.Visibility = todo is null ? Visibility.Collapsed : Visibility.Visible;
+        if (todo is null)
+        {
+            return;
+        }
+
+        _loadingTodoWeekCount = true;
+        try
+        {
+            var weeks = Math.Clamp(todo.State.WeeklyWeekCount, 1, 5);
+            TodoWeekCountPicker.SelectedIndex = weeks - 1;
+        }
+        finally
+        {
+            _loadingTodoWeekCount = false;
+        }
+    }
+
+    private void TodoWeekCount_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_loadingTodoWeekCount || _selectedComponentEntry?.Window is not TodoWidgetWindow todo)
+        {
+            return;
+        }
+
+        todo.SetWeeklyWeekCount(TodoWeekCountPicker.SelectedIndex + 1);
+        ComponentSettingsStatusText.Text = $"已保存“{todo.State.Title}”的周历周数";
+    }
 
     private void LoadFileBoxViewMode(FileBoxWindow? box)
     {

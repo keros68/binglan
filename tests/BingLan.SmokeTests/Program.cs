@@ -1,4 +1,4 @@
-using BingLan.Core.Models;
+﻿using BingLan.Core.Models;
 using BingLan.Core.Services;
 using BingLan.Core.Taskbar;
 using BingLan.Core.Themes;
@@ -279,6 +279,16 @@ static void TestTodoDatePersistence()
             restoredItem.CreatedDate is not null && restoredItem.CompletedDate is not null,
             "创建与完成时间未持久化");
         Assert(store.Load().SchemaVersion == AppState.CurrentSchemaVersion, "日期字段不应改变 Schema 版本");
+
+        Assert(restored.WeeklyWeekCount == 4, "周数默认值应为 4");
+        widget.WeeklyWeekCount = 2;
+        store.Save(state);
+        Assert(store.Load().TodoWidgets.Single().WeeklyWeekCount == 2, "周数未持久化");
+        var tampered = File.ReadAllText(store.StatePath).Replace("\"WeeklyWeekCount\": 2", "\"WeeklyWeekCount\": 99");
+        File.WriteAllText(store.StatePath, tampered);
+        Assert(store.Load().TodoWidgets.Single().WeeklyWeekCount == 4, "越界周数应被归一化回 4");
+        widget.WeeklyWeekCount = 2;
+        store.Save(state);
 
         // A file written by the official build carries no date fields; it must load,
         // and saving it again must stay on the schema the official build can read.

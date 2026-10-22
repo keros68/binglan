@@ -1,4 +1,4 @@
-using System.Diagnostics.CodeAnalysis;
+﻿using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using BingLan.Core.Dock;
 using BingLan.Core.Models;
@@ -518,6 +518,10 @@ public sealed class LocalStateStore
             todo.Appearance.TextColor = WidgetAppearanceRules.CoerceTextColor(
                 todo.Appearance.TextColor);
             todo.CornerRadius = WidgetAppearanceRules.CoerceCornerRadius(todo.CornerRadius);
+            if (todo.WeeklyWeekCount is < 1 or > 5)
+            {
+                todo.WeeklyWeekCount = 4;
+            }
         }
         foreach (var box in state.FileBoxes)
         {

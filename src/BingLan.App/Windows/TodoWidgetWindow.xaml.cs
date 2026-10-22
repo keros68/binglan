@@ -12,14 +12,16 @@ public partial class TodoWidgetWindow : WidgetWindowBase
 {
     // The weekly view shows four calendar rows, Monday first — 28 days span at most
     // two months, so month breaks never crowd together.
-    private const int WeeklyRowCount = 4;
+    // 周历窗口周数来自用户设置（1~5，默认 4），随 State 变化即时生效。
+    private int WeeklyRowCount => Math.Clamp(State.WeeklyWeekCount, 1, 5);
 
     // Minimum card sizes: the weekly grid needs wider columns and taller rows than
     // the today list, which stays comfortable at the card's original minimums.
     private const double ListMinimumWidth = 226;
     private const double WeeklyMinimumWidth = 520;
     private const double ListMinimumHeight = 166;
-    private const double WeeklyMinimumHeight = 460;
+    // 4 周时与历史值 460 一致；随周数线性伸缩。
+    private double WeeklyMinimumHeight => 220 + 60 * WeeklyRowCount;
 
     // Paging far enough to overflow DateTime.AddDays would throw; a century of weeks
     // is far beyond any real back-tracking session.
@@ -260,6 +262,19 @@ public partial class TodoWidgetWindow : WidgetWindowBase
     private void ToggleViewMode_Click(object sender, RoutedEventArgs e)
     {
         State.WeeklyView = !State.WeeklyView;
+        ApplyViewMode();
+        NotifyStateChanged();
+    }
+
+    /// <summary>设置窗口用：调整周历窗口的周数（1~5），立即重排并通知保存。</summary>
+    public void SetWeeklyWeekCount(int weeks)
+    {
+        var clamped = Math.Clamp(weeks, 1, 5);
+        if (State.WeeklyWeekCount == clamped)
+        {
+            return;
+        }
+        State.WeeklyWeekCount = clamped;
         ApplyViewMode();
         NotifyStateChanged();
     }
