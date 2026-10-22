@@ -30,6 +30,7 @@ public partial class TodoWidgetWindow : WidgetWindowBase
     private string? _textBeforeEdit;
     private int _weekOffset;
     private DayEditWindow? _dayEditor;
+    private WeekCellView? _selectedCellView;
 
     public TodoWidgetWindow(TodoWidgetState state)
     {
@@ -268,17 +269,33 @@ public partial class TodoWidgetWindow : WidgetWindowBase
             if (FindNamedDescendant(surface, "WeekCellEditor") is { } openEditor)
             {
                 CloseCellEditor(openEditor);
-            }            OpenDayEditor(cell);
+            }
+            OpenDayEditor(cell);
             e.Handled = true;
             return;
         }
 
+        SelectCell(cell);
         if (FindNamedDescendant(surface, "WeekCellEditor") is { } editor)
         {
             editor.Visibility = Visibility.Visible;
             editor.Focus();
             e.Handled = true;
         }
+    }
+
+    private void SelectCell(WeekCellView cell)
+    {
+        if (_selectedCellView == cell)
+        {
+            return;
+        }
+        if (_selectedCellView is not null)
+        {
+            _selectedCellView.IsSelected = false;
+        }
+        _selectedCellView = cell;
+        cell.IsSelected = true;
     }
 
     private void OpenDayEditor(WeekCellView cell)
@@ -400,6 +417,7 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         WeekTodayButton.Visibility = _weekOffset == 0 ? Visibility.Collapsed : Visibility.Visible;
 
         _cellsByDate.Clear();
+        _selectedCellView = null;
         var rows = new List<WeekRowView>();
         var current = new List<WeekCellView>(7);
         var currentMonth = -1;

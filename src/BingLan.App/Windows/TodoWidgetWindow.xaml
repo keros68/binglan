@@ -411,6 +411,10 @@
                                                                 <Setter Property="BorderBrush" Value="Transparent"/>
                                                                 <Setter Property="BorderThickness" Value="1"/>
                                                                 <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding IsSelected}" Value="True">
+                                                                        <Setter Property="BorderBrush" Value="#FF7FA8D9"/>
+                                                                        <Setter Property="BorderThickness" Value="1.5"/>
+                                                                    </DataTrigger>
                                                                     <DataTrigger Binding="{Binding IsToday}" Value="True">
                                                                         <Setter Property="BorderBrush" Value="#D9A441"/>
                                                                         <Setter Property="BorderThickness" Value="1.5"/>
@@ -440,16 +444,21 @@
                                                                     </Style>
                                                                 </Border.Style>
                                                             </Border>
-                                                            <StackPanel>
-                                                                <StackPanel.Style>
-                                                                    <Style TargetType="StackPanel">
+                                                            <Grid>
+                                                                <Grid.Style>
+                                                                    <Style TargetType="Grid">
                                                                         <Style.Triggers>
                                                                             <DataTrigger Binding="{Binding IsFiller}" Value="True">
                                                                                 <Setter Property="Visibility" Value="Collapsed"/>
                                                                             </DataTrigger>
                                                                         </Style.Triggers>
                                                                     </Style>
-                                                                </StackPanel.Style>
+                                                                </Grid.Style>
+                                                                <Grid.RowDefinitions>
+                                                                    <RowDefinition Height="Auto"/>
+                                                                    <RowDefinition Height="*"/>
+                                                                    <RowDefinition Height="Auto"/>
+                                                                </Grid.RowDefinitions>
                                                                 <StackPanel Orientation="Horizontal" Height="21">
                                                                     <TextBlock Text="{Binding DayNumber}"
                                                                                FontSize="13.5"
@@ -473,11 +482,19 @@
                                                                                VerticalAlignment="Bottom"
                                                                                Foreground="#FF66788C"/>
                                                                 </StackPanel>
-                                                                <ItemsControl ItemsSource="{Binding Items}"
-                                                                              ItemTemplate="{StaticResource WeekItemRowTemplate}"
-                                                                              Focusable="False"
-                                                                              IsTabStop="False"/>
+                                                                <!-- Per-cell scroll: wheel over the cell rolls the day's
+                                                                     entries without opening the day editor. -->
+                                                                <ScrollViewer Grid.Row="1"
+                                                                              Margin="0,2,0,0"
+                                                                              VerticalScrollBarVisibility="Hidden"
+                                                                              HorizontalScrollBarVisibility="Disabled">
+                                                                    <ItemsControl ItemsSource="{Binding Items}"
+                                                                                  ItemTemplate="{StaticResource WeekItemRowTemplate}"
+                                                                                  Focusable="False"
+                                                                                  IsTabStop="False"/>
+                                                                </ScrollViewer>
                                                                 <TextBox x:Name="WeekCellEditor"
+                                                                         Grid.Row="2"
                                                                          AutomationProperties.Name="新建当日待办"
                                                                          Visibility="Collapsed"
                                                                          FontSize="12"
@@ -491,7 +508,7 @@
                                                                          KeyDown="WeekCellEditor_KeyDown"
                                                                          LostFocus="WeekCellEditor_LostFocus"
                                                                          Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
-                                                            </StackPanel>
+                                                            </Grid>
                                                         </Grid>
                                                     </Border>
                                                 </DataTemplate>
