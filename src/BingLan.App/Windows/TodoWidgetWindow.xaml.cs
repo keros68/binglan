@@ -305,27 +305,22 @@ public partial class TodoWidgetWindow : WidgetWindowBase
     // so the cell surface handler on the root Border never sees body clicks.
     // Re-dispatch from the ScrollViewer itself, seeing handled events; clicks
     // on the row checkbox/delete button stay excluded.
-    private static readonly HashSet<DependencyObject> CellScrollHooked = [];
+    // Weak keys: per-item Borders are discarded on every week re-render, so a
+    // strong static set would accumulate the whole visual tree; a failed
+    // lookup simply retries on the next click until the scroller exists.
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<DependencyObject, object?> CellScrollHooked = [];
 
     private void WeekCellSurface_Preview(object sender, MouseButtonEventArgs e)
     {
         if (sender is not System.Windows.Controls.Border border) return;
-        if (CellScrollHooked.Add(border)
-            && FindVisualChild<System.Windows.Controls.ScrollViewer>(border) is { } scroller)
-        {
-            scroller.AddHandler(MouseLeftButtonDownEvent,
-                new MouseButtonEventHandler(WeekCellScroller_Click), handledEventsToo: true);
-        }
-    }
-
-    private void WeekCellScroller_Click(object sender, MouseButtonEventArgs e)
-    {
-        if (sender is not System.Windows.Controls.ScrollViewer scroller
-            || HitsChildControl(e.OriginalSource as DependencyObject ?? scroller, scroller))
+        if (CellScrollHooked.TryGetValue(border, out _)) return;
+        if (FindVisualChild<System.Windows.Controls.ScrollViewer>(border) is not { } scroller)
         {
             return;
         }
-        WeekCellSurface_Click(sender, e);
+        CellScrollHooked.Add(border, null);
+        scroller.AddHandler(MouseLeftButtonDownEvent,
+            new MouseButtonEventHandler((_, e2) => WeekCellSurface_Click(border, e2)), handledEventsToo: true);
     }
 
     // ------------------------------------------------------------------
