@@ -623,7 +623,8 @@
                             Grid.Row="0" Grid.RowSpan="3"
                             Background="Transparent"
                             Visibility="Collapsed"
-                            MouseLeftButtonDown="WeekPeekOverlay_BackdropClick">
+                            MouseLeftButtonDown="WeekPeekOverlay_BackdropClick"
+                            MouseLeave="WeekPeekOverlay_MouseLeave">
                         <Border x:Name="WeekPeekPanel"
                                 Width="320"
                                 CornerRadius="8"

@@ -37,7 +37,9 @@ public partial class TodoWidgetWindow : WidgetWindowBase
     private TodoItemState? _lastMovedItem;
     private DateTime _lastMovedFrom;
     private DispatcherTimer? _moveToastTimer;
-    private DispatcherTimer? _peekLongPressTimer;
+    private DispatcherTimer? _peekDwellTimer;
+    private System.Windows.Point _peekDwellAnchor;
+    private System.Windows.Point _peekArmPoint;
     private WeekCellView? _peekDragCell;
     private TodoItemState? _peekDragItem;
     private System.Windows.Controls.ContentPresenter? _peekDragContainer;
@@ -52,7 +54,7 @@ public partial class TodoWidgetWindow : WidgetWindowBase
     private enum PeekDragPhase
     {
         Idle,
-        Pressed,
+        HoverArmed,
         Dragging
     }
 
@@ -299,11 +301,14 @@ public partial class TodoWidgetWindow : WidgetWindowBase
     }
 
     // ------------------------------------------------------------------
-    // Long-press drag reordering inside the day peek popup.
-    // State machine: Idle → Pressed(mouse down on a row) → Dragging(300 ms
-    // held, within the drift threshold, button still down; follows the
-    // cursor, other rows shift live).
-    // Row identity is resolved through the item container generator: a press
+    // Dwell-lift drag reordering inside the day peek popup.
+    // State machine: Idle → HoverArmed(cursor dwells over a row for 500 ms
+    // with no button down; row lifts) → Dragging(left button pressed on the
+    // armed row; follows the cursor, other rows shift live) → settle on
+    // release. Moving the cursor past the drag threshold, leaving the
+    // overlay, pressing a checkbox/× or a different row, and Esc all drop
+    // the lift; nothing is reordered unless a drag actually moved the row.
+    // Row identity is resolved through the item container generator: a hit
     // can land on a TextBoxView/TextBlock whose DataContext is the same todo
     // item, so no hit element may be assumed to be the row visual. Lift
     // visuals (background/border) live on the template-root Border; z-order
@@ -313,64 +318,57 @@ public partial class TodoWidgetWindow : WidgetWindowBase
     // ------------------------------------------------------------------
     protected override void OnPreviewMouseLeftButtonDown(System.Windows.Input.MouseButtonEventArgs e)
     {
-        if (WeekPeekOverlay.Visibility != Visibility.Visible || _peekDragPhase != PeekDragPhase.Idle)
+        if (WeekPeekOverlay.Visibility != Visibility.Visible || _peekDragPhase != PeekDragPhase.HoverArmed)
         {
+            // Idle presses no longer arm anything — only a dwell does.
             return;
         }
-        if (_peekCell is null)
+        if (_peekCell is null || _editingItem is not null)
         {
+            CancelPeekDrag();
             return;
         }
-        // While a row's inline editor is open, presses position the caret or
-        // select text — long-press must not hijack them.
-        if (_editingItem is not null)
+        // Checkbox / × handle their own clicks: drop the lift, let them work.
+        if (_peekDragContainer is not null
+            && HitsChildControl((System.Windows.DependencyObject)e.OriginalSource, _peekDragContainer))
         {
+            CancelPeekDrag();
             return;
         }
-        // A press can land on a TextBoxView/TextBlock inside the row, whose DataContext
-        // is also the todo item — and the row Border is not an ancestor of the hit
-        // element at a fixed depth. Resolve the row through the item container
-        // generator instead of assuming any hit element is the row visual.
+        // If the press is no longer over the armed row (the list scrolled or
+        // re-laid out under a stationary cursor), drop the lift; a fresh dwell
+        // can re-arm on the row now under the cursor.
         if (FindPeekRowContainer((System.Windows.DependencyObject)e.OriginalSource) is not { } container
-            || container.DataContext is not TodoItemState item
-            || !_peekCell.Items.Contains(item))
+            || !ReferenceEquals(container, _peekDragContainer))
         {
+            CancelPeekDrag();
             return;
         }
-        // Checkbox / × handle their own clicks; text double-click opens the editor.
-        if (HitsChildControl((System.Windows.DependencyObject)e.OriginalSource, container))
+        // Begin the drag. Capture before the row's TextBox sees the press (it
+        // would steal the capture for text selection) and mark the press
+        // handled so no child starts a selection or takes focus.
+        if (!_peekDragContainer!.CaptureMouse())
         {
+            CancelPeekDrag();
             return;
         }
-
-        _peekDragCell = _peekCell;
-        _peekDragItem = item;
-        _peekDragContainer = container;
-        _peekDragRow = PeekRowVisual(container);
+        _peekDragContainer.LostMouseCapture -= PeekDragContainer_LostMouseCapture;
+        _peekDragContainer.LostMouseCapture += PeekDragContainer_LostMouseCapture;
         _peekPressPoint = e.GetPosition(WeekPeekList);
-        _peekDragPhase = PeekDragPhase.Pressed;
-        _peekLongPressTimer ??= new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(300) };
-        _peekLongPressTimer.Tick -= PeekLongPress_Tick;
-        _peekLongPressTimer.Tick += PeekLongPress_Tick;
-        _peekLongPressTimer.Stop();
-        _peekLongPressTimer.Start();
+        _peekDragPhase = PeekDragPhase.Dragging;
+        e.Handled = true;
     }
 
     protected override void OnPreviewMouseMove(System.Windows.Input.MouseEventArgs e)
     {
-        if (_peekDragPhase == PeekDragPhase.Pressed)
+        if (_peekDragPhase == PeekDragPhase.HoverArmed)
         {
             var pos = e.GetPosition(WeekPeekList);
-            if (Math.Abs(pos.X - _peekPressPoint.X) > SystemParameters.MinimumHorizontalDragDistance
-                || Math.Abs(pos.Y - _peekPressPoint.Y) > SystemParameters.MinimumVerticalDragDistance)
+            if (Math.Abs(pos.X - _peekArmPoint.X) > SystemParameters.MinimumHorizontalDragDistance
+                || Math.Abs(pos.Y - _peekArmPoint.Y) > SystemParameters.MinimumVerticalDragDistance)
             {
-                // Moved away early: this was a stray press, not a long-press intent.
-                _peekLongPressTimer?.Stop();
-                _peekDragPhase = PeekDragPhase.Idle;
-                _peekDragCell = null;
-                _peekDragItem = null;
-                _peekDragContainer = null;
-                _peekDragRow = null;
+                // The cursor moved on — the lift was a dwell artifact, drop it.
+                CancelPeekDrag();
             }
         }
         else if (_peekDragPhase == PeekDragPhase.Dragging)
@@ -378,45 +376,61 @@ public partial class TodoWidgetWindow : WidgetWindowBase
             DoPeekDragMove(e.GetPosition(WeekPeekList));
             e.Handled = true;
         }
+        else
+        {
+            UpdatePeekDwell(e);
+        }
     }
 
     protected override void OnPreviewMouseLeftButtonUp(System.Windows.Input.MouseButtonEventArgs e)
     {
-        if (_peekDragPhase == PeekDragPhase.Pressed)
-        {
-            _peekLongPressTimer?.Stop();
-            _peekDragPhase = PeekDragPhase.Idle;
-            _peekDragCell = null;
-            _peekDragItem = null;
-            _peekDragContainer = null;
-            _peekDragRow = null;
-        }
-        else if (_peekDragPhase == PeekDragPhase.Dragging)
+        if (_peekDragPhase == PeekDragPhase.Dragging)
         {
             SettlePeekDrag();
         }
     }
 
-    protected override void OnPreviewKeyDown(System.Windows.Input.KeyEventArgs e)
+    // The row lifts when the cursor dwells over it with no button down: every
+    // move beyond the drag threshold restarts the countdown, and the tick
+    // re-validates what is actually under the cursor before arming.
+    private void UpdatePeekDwell(System.Windows.Input.MouseEventArgs e)
     {
-        if (e.Key != Key.Escape)
+        if (WeekPeekOverlay.Visibility != Visibility.Visible
+            || _peekCell is null
+            || _editingItem is not null
+            || Mouse.LeftButton == MouseButtonState.Pressed)
+        {
+            _peekDwellTimer?.Stop();
+            return;
+        }
+        if (FindPeekRowContainer((System.Windows.DependencyObject)e.OriginalSource) is null)
+        {
+            _peekDwellTimer?.Stop();
+            return;
+        }
+        var pos = e.GetPosition(WeekPeekList);
+        if (_peekDwellTimer is { IsEnabled: true }
+            && Math.Abs(pos.X - _peekDwellAnchor.X) <= SystemParameters.MinimumHorizontalDragDistance
+            && Math.Abs(pos.Y - _peekDwellAnchor.Y) <= SystemParameters.MinimumVerticalDragDistance)
         {
             return;
         }
-        if (_peekDragPhase == PeekDragPhase.Dragging)
+        _peekDwellAnchor = pos;
+        _peekDwellTimer ??= new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
+        _peekDwellTimer.Tick -= PeekDwellTimer_Tick;
+        _peekDwellTimer.Tick += PeekDwellTimer_Tick;
+        _peekDwellTimer.Stop();
+        _peekDwellTimer.Start();
+    }
+
+    protected override void OnPreviewKeyDown(System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key == Key.Escape
+            && _peekDragPhase is PeekDragPhase.HoverArmed or PeekDragPhase.Dragging)
         {
+            // Esc drops the lift or cancels the drag, whichever is active.
+            _peekDwellTimer?.Stop();
             CancelPeekDrag();
-            e.Handled = true;
-        }
-        else if (_peekDragPhase == PeekDragPhase.Pressed)
-        {
-            // Esc during the hold: kill the pending arm too, not just the drag.
-            _peekLongPressTimer?.Stop();
-            _peekDragPhase = PeekDragPhase.Idle;
-            _peekDragCell = null;
-            _peekDragItem = null;
-            _peekDragContainer = null;
-            _peekDragRow = null;
             e.Handled = true;
         }
     }
@@ -467,55 +481,43 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         return false;
     }
 
-    private void PeekLongPress_Tick(object? sender, EventArgs e)
+    private void PeekDwellTimer_Tick(object? sender, EventArgs e)
     {
-        _peekLongPressTimer?.Stop();
-        if (_peekDragPhase != PeekDragPhase.Pressed
-            || Mouse.LeftButton != MouseButtonState.Pressed
-            || _peekDragCell is null)
+        _peekDwellTimer?.Stop();
+        if (_peekDragPhase != PeekDragPhase.Idle
+            || WeekPeekOverlay.Visibility != Visibility.Visible
+            || _peekCell is null
+            || _editingItem is not null
+            || Mouse.LeftButton == MouseButtonState.Pressed)
         {
-            _peekDragPhase = PeekDragPhase.Idle;
-            _peekDragCell = null;
-            _peekDragItem = null;
-            _peekDragContainer = null;
-            _peekDragRow = null;
             return;
         }
-        var pos = Mouse.GetPosition(WeekPeekList);
-        if (Math.Abs(pos.X - _peekPressPoint.X) > SystemParameters.MinimumHorizontalDragDistance
-            || Math.Abs(pos.Y - _peekPressPoint.Y) > SystemParameters.MinimumVerticalDragDistance)
+        // Re-validate at fire time: the cursor may have left the window or the
+        // row may have moved under it since the countdown started.
+        var hovered = Mouse.DirectlyOver as System.Windows.DependencyObject;
+        if (hovered is null
+            || FindPeekRowContainer(hovered) is not { } container
+            || container.DataContext is not TodoItemState item
+            || !_peekCell.Items.Contains(item))
         {
-            _peekDragPhase = PeekDragPhase.Idle;
-            _peekDragCell = null;
-            _peekDragItem = null;
-            _peekDragContainer = null;
-            _peekDragRow = null;
             return;
         }
+        _peekDragCell = _peekCell;
+        _peekDragItem = item;
+        _peekDragContainer = container;
+        _peekDragRow = PeekRowVisual(container);
+        _peekArmPoint = Mouse.GetPosition(WeekPeekList);
+        _peekPressPoint = _peekArmPoint;
         ArmPeekDrag();
     }
 
     private void ArmPeekDrag()
     {
-        _peekLongPressTimer?.Stop();
-        _peekDragPhase = PeekDragPhase.Dragging;
-        if (!_peekDragContainer!.CaptureMouse())
+        if (_peekDragContainer is null)
         {
-            // Without capture there is no lost-capture safety net and the drag
-            // would freeze outside the window; abort cleanly while nothing is
-            // armed yet.
-            _peekDragPhase = PeekDragPhase.Idle;
-            _peekDragCell = null;
-            _peekDragItem = null;
-            _peekDragContainer = null;
-            _peekDragRow = null;
             return;
         }
-        // Focus loss (Alt+Tab, a system menu, another capture) silently drops
-        // the capture; without this the phase would stay Dragging forever and
-        // every later press would be ignored. Settle what was shown so far.
-        _peekDragContainer.LostMouseCapture -= PeekDragContainer_LostMouseCapture;
-        _peekDragContainer.LostMouseCapture += PeekDragContainer_LostMouseCapture;
+        _peekDragPhase = PeekDragPhase.HoverArmed;
         // Target matching must read untransformed slot geometry: the dragged
         // row follows the cursor 1:1, so any hit test over live (transformed)
         // positions would keep hitting the dragged row's own band. Snapshot
@@ -690,7 +692,7 @@ public partial class TodoWidgetWindow : WidgetWindowBase
     private void CancelPeekDrag()
     {
         // Idle before releasing so the LostMouseCapture handler stays quiet.
-        _peekLongPressTimer?.Stop();
+        _peekDwellTimer?.Stop();
         _peekDragPhase = PeekDragPhase.Idle;
         ResetPeekDragVisual();
         if (_peekDragContainer is not null)
@@ -762,9 +764,26 @@ public partial class TodoWidgetWindow : WidgetWindowBase
 
     private void CloseDayPeek()
     {
+        _peekDwellTimer?.Stop();
+        if (_peekDragPhase != PeekDragPhase.Idle)
+        {
+            CancelPeekDrag();
+        }
         WeekPeekOverlay.Visibility = Visibility.Collapsed;
         WeekPeekList.ItemsSource = null;
         _peekCell = null;
+    }
+
+    private void WeekPeekOverlay_MouseLeave(object sender, System.Windows.Input.MouseEventArgs e)
+    {
+        // With mouse capture active (Dragging) WPF suppresses leave events for
+        // other elements, so this only fires while merely hovering — drop the
+        // dwell lift when the cursor exits the popup.
+        if (_peekDragPhase == PeekDragPhase.HoverArmed)
+        {
+            CancelPeekDrag();
+        }
+        _peekDwellTimer?.Stop();
     }
 
     private void WeekPeekPrevDay_Click(object sender, RoutedEventArgs e) => NavigatePeekDay(-1);
@@ -917,6 +936,11 @@ public partial class TodoWidgetWindow : WidgetWindowBase
 
     private void PeekRow_ContextMenuOpening(object sender, ContextMenuEventArgs e)
     {
+        // A right-click menu is a different intent: drop the dwell lift.
+        if (_peekDragPhase == PeekDragPhase.HoverArmed)
+        {
+            CancelPeekDrag();
+        }
         if ((sender as FrameworkElement)?.DataContext is not TodoItemState item)
         {
             return;
