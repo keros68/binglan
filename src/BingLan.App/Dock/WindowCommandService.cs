@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Text;
 using BingLan.App.Interop;
 using BingLan.Core.Dock;
 using BingLan.Core.Models;
@@ -38,6 +39,34 @@ internal static class WindowCommandService
 
     internal static WindowCommandResult Focus(TrackedWindow window) =>
         Focus(window, DockNativeMethods.IsIconic(window.Handle), window.Title);
+
+    /// <summary>
+    /// Click path for a pinned app: an app closed to the tray still runs without
+    /// visible windows, and revealing its hidden window beats starting a second
+    /// instance that would land on a login screen again.
+    /// </summary>
+    internal static async Task<WindowCommandResult> LaunchAsync(DockPinnedApp app)
+    {
+        if (TrayAppRules.ShouldRevealInsteadOfLaunch(app))
+        {
+            var hidden = await Task.Run(() => FindHiddenWindow(app));
+            if (hidden is not null)
+            {
+                var name = string.IsNullOrWhiteSpace(hidden.Title) ? app.DisplayName : hidden.Title.Trim();
+                var window = new TrackedWindow(
+                    hidden.Handle,
+                    0,
+                    name,
+                    null,
+                    app.ExecutablePath,
+                    false,
+                    hidden.IsMinimized);
+                return Focus(window, restore: true, name);
+            }
+        }
+
+        return Launch(app);
+    }
 
     internal static WindowCommandResult Launch(DockPinnedApp app)
     {
@@ -145,6 +174,92 @@ internal static class WindowCommandService
         catch (Exception exception) when (exception is Win32Exception or InvalidOperationException)
         {
             return new WindowCommandResult(false, $"无法启动 {displayName}：{exception.Message}");
+        }
+    }
+
+    private static TrayWindowSnapshot? FindHiddenWindow(DockPinnedApp app)
+    {
+        var candidates = new List<TrayWindowSnapshot>();
+        var processMatches = new Dictionary<uint, bool>();
+        DockNativeMethods.EnumWindows((window, _) =>
+        {
+            DockNativeMethods.GetWindowThreadProcessId(window, out var processId);
+            if (processId == 0)
+            {
+                return true;
+            }
+
+            if (!processMatches.TryGetValue(processId, out var matches))
+            {
+                matches = TrayAppRules.MatchesProcess(app, TryGetProcessExecutablePath(processId));
+                processMatches.Add(processId, matches);
+            }
+            if (matches)
+            {
+                candidates.Add(DescribeWindow(window));
+            }
+
+            return true;
+        }, 0);
+        return TrayAppRules.PickRevealTarget(candidates);
+    }
+
+    private static TrayWindowSnapshot DescribeWindow(nint window)
+    {
+        var extendedStyle = NativeMethods.GetExStyleOf(window);
+        long area = 0;
+        if (DockNativeMethods.GetWindowRect(window, out var rectangle)
+            && rectangle.Right > rectangle.Left
+            && rectangle.Bottom > rectangle.Top)
+        {
+            area = (long)(rectangle.Right - rectangle.Left) * (rectangle.Bottom - rectangle.Top);
+        }
+
+        return new TrayWindowSnapshot(
+            window,
+            GetWindowTitle(window),
+            (extendedStyle & NativeMethods.WsExAppWindow) != 0,
+            (extendedStyle & NativeMethods.WsExToolWindow) != 0,
+            DockNativeMethods.IsWindowVisible(window),
+            DockNativeMethods.IsIconic(window),
+            area);
+    }
+
+    private static string GetWindowTitle(nint window)
+    {
+        var length = DockNativeMethods.GetWindowTextLengthW(window);
+        if (length <= 0)
+        {
+            return string.Empty;
+        }
+
+        var title = new StringBuilder(length + 1);
+        DockNativeMethods.GetWindowTextW(window, title, title.Capacity);
+        return title.ToString().Trim();
+    }
+
+    private static string? TryGetProcessExecutablePath(uint processId)
+    {
+        var process = DockNativeMethods.OpenProcess(
+            DockNativeMethods.ProcessQueryLimitedInformation,
+            false,
+            processId);
+        if (process == 0)
+        {
+            return null;
+        }
+
+        try
+        {
+            var buffer = new StringBuilder(32768);
+            var size = (uint)buffer.Capacity;
+            return DockNativeMethods.QueryFullProcessImageNameW(process, 0, buffer, ref size)
+                ? buffer.ToString()
+                : null;
+        }
+        finally
+        {
+            DockNativeMethods.CloseHandle(process);
         }
     }
 }

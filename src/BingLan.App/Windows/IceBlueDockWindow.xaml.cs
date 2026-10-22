@@ -593,7 +593,7 @@ public partial class IceBlueDockWindow : Window
             _ => "已固定，未运行"
         });
 
-        button.Click += (_, _) =>
+        button.Click += async (_, _) =>
         {
             if ((Keyboard.Modifiers & ModifierKeys.Shift) != 0)
             {
@@ -601,7 +601,7 @@ public partial class IceBlueDockWindow : Window
             }
             else
             {
-                Invoke(item);
+                await InvokeAsync(item);
             }
         };
         button.MouseUp += (_, eventArgs) =>
@@ -639,11 +639,11 @@ public partial class IceBlueDockWindow : Window
         return brush;
     }
 
-    private void Invoke(DockItem item)
+    private async Task InvokeAsync(DockItem item)
     {
         var result = item.Group is not null
             ? WindowCommandService.Toggle(item.Group)
-            : WindowCommandService.Launch(item.Pinned!);
+            : await WindowCommandService.LaunchAsync(item.Pinned!);
         Report(result);
     }
 

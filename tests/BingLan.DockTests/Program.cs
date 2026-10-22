@@ -14,6 +14,7 @@ Run("同应用多窗口稳定分组", TestStableGrouping);
 Run("空标题窗口显示名回退", TestUntitledWindowDisplayName);
 Run("运行应用按首次出现顺序保持稳定", TestFirstSeenOrder);
 Run("Dock 点击动作决策", TestWindowActionPolicy);
+Run("托盘应用点击恢复而非重新启动", TestTrayAppRevealRules);
 Run("Dock 内容尺寸边界", TestContentLengthBounds);
 Run("Dock 图标大小决定按钮与高度并被钳制", TestDockIconSize);
 Run("Dock 距底部高度默认等于原固定间距并被钳制", TestDockBottomGap);
@@ -529,6 +530,45 @@ static void TestWindowActionPolicy()
         DockClickAction.RestoreAndActivate,
         WindowActionPolicy.Decide(groupContainsForeground: false, targetIsMinimized: true),
         "点击最小化应用应恢复并激活");
+}
+
+static void TestTrayAppRevealRules()
+{
+    var pin = new DockPinnedApp { DisplayName = "微信", ExecutablePath = @"C:\Apps\Weixin.exe" };
+    Assert(TrayAppRules.ShouldRevealInsteadOfLaunch(pin), "固定了程序路径的应用点击时应先尝试恢复托盘窗口");
+    var packaged = new DockPinnedApp { DisplayName = "商店应用", AppUserModelId = "Store!App" };
+    Assert(!TrayAppRules.ShouldRevealInsteadOfLaunch(packaged), "只有应用 ID 的固定项没有进程路径可比对，应直接启动");
+
+    Assert(TrayAppRules.MatchesProcess(pin, @"C:\Apps\Weixin.exe"), "相同程序路径应匹配运行中的进程");
+    Assert(TrayAppRules.MatchesProcess(pin, @"c:\apps\weixin.exe"), "路径比对应忽略大小写");
+    Assert(!TrayAppRules.MatchesProcess(pin, @"D:\Apps\Weixin.exe"), "不同目录下的同名程序不应匹配");
+    Assert(!TrayAppRules.MatchesProcess(pin, null), "进程路径缺失时不应匹配");
+
+    var main = new TrayWindowSnapshot(
+        101, "微信", IsAppWindow: false, IsToolWindow: false, IsVisible: false, IsMinimized: false, Area: 1200 * 800);
+    AssertEqual(main, TrayAppRules.PickRevealTarget([main]), "收进托盘的隐藏主窗口应被选中恢复");
+    Assert(TrayAppRules.PickRevealTarget([]) is null, "没有候选窗口时不应尝试恢复");
+    Assert(
+        TrayAppRules.PickRevealTarget([main with { IsVisible = true }]) is null,
+        "窗口仍可见时 Dock 走切换路径，不需要恢复");
+    Assert(
+        TrayAppRules.PickRevealTarget([main with { IsToolWindow = true }]) is null,
+        "工具窗口不是应用主窗口，不应被恢复");
+    Assert(
+        TrayAppRules.PickRevealTarget([main with { Title = "" }]) is null,
+        "无标题又非任务栏窗口的隐藏窗口不应被恢复");
+
+    var untitledBarWindow = main with { Handle = 102, Title = "", IsAppWindow = true, Area = 300 * 200 };
+    var smallTitled = main with { Handle = 103, Title = "设置", Area = 400 * 300 };
+    AssertEqual(
+        untitledBarWindow,
+        TrayAppRules.PickRevealTarget([smallTitled, untitledBarWindow]),
+        "带任务栏样式标志的窗口应优先作为主窗口");
+    var large = main with { Handle = 104, Title = "文档 - 记事本", Area = 1600 * 900 };
+    AssertEqual(
+        large,
+        TrayAppRules.PickRevealTarget([main, large]),
+        "同优先级下应选面积更大的主窗口");
 }
 
 static void TestUntitledWindowDisplayName()

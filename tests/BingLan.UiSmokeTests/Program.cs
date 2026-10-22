@@ -1,5 +1,7 @@
+using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Windows;
 using System.Windows.Automation.Peers;
 using System.Windows.Controls;
@@ -60,6 +62,7 @@ internal static class Program
 
     private const int SwHide = 0;
     private const int SwMinimize = 6;
+    private const int WmClose = 0x0010;
 
     [DllImport("user32.dll")]
     private static extern bool ShowWindow(nint window, int command);
@@ -122,6 +125,7 @@ internal static class Program
         Run("卡片显示后与切换窗口后位于普通窗口下方", TestCardsStayBehindWindows, failures);
         Run("开始菜单应用列表可直接固定到 Dock", TestStartMenuApps, failures);
         Run("固定项保留快捷方式的启动参数与工作目录", TestPinKeepsShortcutArguments, failures);
+        Run("固定项点击恢复收进托盘的窗口而不是重新启动", TestPinRevealsWindowClosedToTray, failures);
         Run("应用列表打开时其他窗口仍可用且按钮可见", TestAppPickerKeepsAppUsable, failures);
         Run("内置开源字体从程序中加载并带对应字重", TestBundledFonts, failures);
         Run("自动隐藏任务栏边缘不被组件占用", TestTaskbarRevealEdgeGuard, failures);
@@ -919,6 +923,95 @@ internal static class Program
             {
             }
         }
+    }
+
+    // Regression for issue #12 (WeChat closed to tray): a pinned app whose process
+    // still runs with its window hidden must be revealed by a dock click instead of
+    // being relaunched into another login screen. Explorer stands in for the tray
+    // app — its folder window is hidden, and launching the pinned explorer.exe must
+    // show that window, not start anything new.
+    private static void TestPinRevealsWindowClosedToTray()
+    {
+        var folder = Path.Combine(Path.GetTempPath(), "BingLanTrayReveal", Path.GetRandomFileName());
+        Directory.CreateDirectory(folder);
+        nint handle = 0;
+        try
+        {
+            Process.Start(new ProcessStartInfo("explorer.exe")
+            {
+                UseShellExecute = true,
+                Arguments = folder
+            })?.Dispose();
+            PumpUntil(
+                () => (handle = FindExplorerFolderWindow(folder)) != 0,
+                "资源管理器文件夹窗口没有出现");
+            Assert(ShowWindow(handle, SwHide), "无法隐藏资源管理器窗口");
+            PumpUntil(() => !IsWindowVisible(handle), "资源管理器窗口没有被隐藏");
+
+            var pin = new DockPinnedApp
+            {
+                DisplayName = "资源管理器",
+                ExecutablePath = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.Windows),
+                    "explorer.exe")
+            };
+            var reveal = WindowCommandService.LaunchAsync(pin);
+            PumpUntil(() => reveal.IsCompleted, "点击固定项的恢复路径没有完成");
+            Assert(
+                reveal.Result.Message.Contains("切换"),
+                $"应恢复收进托盘的窗口而不是重新启动，实际结果：{reveal.Result.Message}");
+            PumpUntil(() => IsWindowVisible(handle), "被收进托盘的隐藏窗口没有被恢复显示");
+        }
+        finally
+        {
+            if (handle != 0)
+            {
+                SendMessage(handle, WmClose, 0, 0);
+            }
+
+            try
+            {
+                Directory.Delete(folder, recursive: true);
+            }
+            catch (IOException)
+            {
+            }
+            catch (UnauthorizedAccessException)
+            {
+            }
+        }
+    }
+
+    private static nint FindExplorerFolderWindow(string folder)
+    {
+        nint found = 0;
+        var windowName = Path.GetFileName(folder.TrimEnd(Path.DirectorySeparatorChar));
+        var className = new StringBuilder(256);
+        var title = new StringBuilder(512);
+        DockNativeMethods.EnumWindows((window, _) =>
+        {
+            className.Clear();
+            if (DockNativeMethods.GetClassNameW(window, className, className.Capacity) == 0
+                || className.ToString() != "CabinetWClass")
+            {
+                return true;
+            }
+
+            title.Clear();
+            if (DockNativeMethods.GetWindowTextLengthW(window) > 0)
+            {
+                DockNativeMethods.GetWindowTextW(window, title, title.Capacity);
+            }
+
+            if (title.ToString().Contains(windowName, StringComparison.OrdinalIgnoreCase))
+            {
+                found = window;
+                return false;
+            }
+
+            return true;
+        }, 0);
+        return found;
     }
 
     private static bool WaitForFileContent(string path, out string content)
