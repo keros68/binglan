@@ -38,6 +38,22 @@ public partial class TodoWidgetWindow : WidgetWindowBase
     private TodoItemState? _lastMovedItem;
     private DateTime _lastMovedFrom;
     private DispatcherTimer? _moveToastTimer;
+    private DispatcherTimer? _peekLongPressTimer;
+    private WeekCellView? _peekDragCell;
+    private TodoItemState? _peekDragItem;
+    private System.Windows.Controls.Border? _peekDragRow;
+    private System.Windows.Point _peekPressPoint;
+    private double _peekRowLayoutTop;
+    private int _peekFromIndex;
+    private int _peekTargetIndex;
+    private PeekDragPhase _peekDragPhase = PeekDragPhase.Idle;
+
+    private enum PeekDragPhase
+    {
+        Idle,
+        Pressed,
+        Dragging
+    }
 
     public TodoWidgetWindow(TodoWidgetState state)
     {
@@ -373,6 +389,255 @@ public partial class TodoWidgetWindow : WidgetWindowBase
             }
         }
         return -1;
+    }
+
+    // ------------------------------------------------------------------
+    // Long-press drag reordering inside the day peek popup.
+    // State machine: Idle → Pressed(mouse down on a row) → Armed(300 ms held,
+    // ≤4 px drift, button still down) → Dragging(follow cursor, live shift).
+    // The collection is only moved once, on release. All cancel paths funnel
+    // through CancelPeekDrag().
+    // ------------------------------------------------------------------
+    private void TodoWindow_PeekPreviewMouseLeftButtonDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        if (WeekPeekOverlay.Visibility != Visibility.Visible || _peekDragPhase != PeekDragPhase.Idle)
+        {
+            return;
+        }
+        if (FindPeekRow((System.Windows.DependencyObject)e.OriginalSource) is not { } row || row.DataContext is not TodoItemState item)
+        {
+            return;
+        }
+        // Checkbox / × handle their own clicks; text double-click opens the editor.
+        if (HitsChildControl((System.Windows.DependencyObject)e.OriginalSource, row))
+        {
+            return;
+        }
+
+        _peekDragCell = _peekCell;
+        _peekDragItem = item;
+        _peekDragRow = (System.Windows.Controls.Border)row;
+        _peekPressPoint = e.GetPosition(WeekPeekList);
+        _peekRowLayoutTop = row.TranslatePoint(new System.Windows.Point(0, 0), WeekPeekList).Y;
+        _peekDragPhase = PeekDragPhase.Pressed;
+        _peekLongPressTimer ??= new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(300) };
+        _peekLongPressTimer.Tick -= PeekLongPress_Tick;
+        _peekLongPressTimer.Tick += PeekLongPress_Tick;
+        _peekLongPressTimer.Stop();
+        _peekLongPressTimer.Start();
+    }
+
+    private void TodoWindow_PeekPreviewMouseMove(object sender, System.Windows.Input.MouseEventArgs e)
+    {
+        if (_peekDragPhase == PeekDragPhase.Pressed)
+        {
+            var pos = e.GetPosition(WeekPeekList);
+            if (Math.Abs(pos.X - _peekPressPoint.X) > SystemParameters.MinimumHorizontalDragDistance
+                || Math.Abs(pos.Y - _peekPressPoint.Y) > SystemParameters.MinimumVerticalDragDistance)
+            {
+                // Moved away early: this was a stray press, not a long-press intent.
+                _peekLongPressTimer?.Stop();
+                _peekDragPhase = PeekDragPhase.Idle;
+            }
+        }
+        else if (_peekDragPhase == PeekDragPhase.Dragging)
+        {
+            DoPeekDragMove(e.GetPosition(WeekPeekList));
+            e.Handled = true;
+        }
+    }
+
+    private void TodoWindow_PeekPreviewMouseUp(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        if (_peekDragPhase == PeekDragPhase.Pressed)
+        {
+            _peekLongPressTimer?.Stop();
+            _peekDragPhase = PeekDragPhase.Idle;
+            _peekDragCell = null;
+            _peekDragItem = null;
+            _peekDragRow = null;
+        }
+        else if (_peekDragPhase == PeekDragPhase.Dragging)
+        {
+            SettlePeekDrag();
+        }
+    }
+
+    private void TodoWindow_PeekPreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (_peekDragPhase == PeekDragPhase.Dragging && e.Key == Key.Escape)
+        {
+            CancelPeekDrag();
+            e.Handled = true;
+        }
+    }
+
+    private FrameworkElement? FindPeekRow(DependencyObject source)
+    {
+        var current = source;
+        while (current is not null)
+        {
+            if (current is FrameworkElement { DataContext: TodoItemState item } row
+                && _peekCell is not null
+                && _peekCell.Items.Contains(item))
+            {
+                return row;
+            }
+            current = System.Windows.Media.VisualTreeHelper.GetParent(current);
+        }
+        return null;
+    }
+
+    private static bool HitsChildControl(DependencyObject source, DependencyObject row)
+    {
+        var current = source;
+        while (current is not null && !ReferenceEquals(current, row))
+        {
+            if (current is System.Windows.Controls.CheckBox or System.Windows.Controls.Primitives.ButtonBase)
+            {
+                return true;
+            }
+            current = System.Windows.Media.VisualTreeHelper.GetParent(current);
+        }
+        return false;
+    }
+
+    private void PeekLongPress_Tick(object? sender, EventArgs e)
+    {
+        _peekLongPressTimer?.Stop();
+        if (_peekDragPhase != PeekDragPhase.Pressed
+            || Mouse.LeftButton != MouseButtonState.Pressed
+            || _peekDragCell is null)
+        {
+            _peekDragPhase = PeekDragPhase.Idle;
+            return;
+        }
+        var pos = Mouse.GetPosition(WeekPeekList);
+        if (Math.Abs(pos.X - _peekPressPoint.X) > 4 || Math.Abs(pos.Y - _peekPressPoint.Y) > 4)
+        {
+            _peekDragPhase = PeekDragPhase.Idle;
+            return;
+        }
+        ArmPeekDrag();
+    }
+
+    private void ArmPeekDrag()
+    {
+        _peekDragPhase = PeekDragPhase.Dragging;
+        _peekDragRow!.CaptureMouse();
+        System.Windows.Controls.Panel.SetZIndex(_peekDragRow, 100);
+        _peekDragRow.Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromArgb(0xFF, 0xFF, 0xFF, 0xFF));
+        _peekDragRow.BorderBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromArgb(0xFF, 0x7F, 0xA8, 0xD9));
+        _peekDragRow.BorderThickness = new System.Windows.Thickness(1.5);
+        _peekDragRow.Cursor = System.Windows.Input.Cursors.SizeAll;
+        _peekFromIndex = _peekDragCell!.Items.IndexOf(_peekDragItem);
+        _peekTargetIndex = _peekFromIndex;
+        ApplyPeekShifts();
+    }
+
+    private void DoPeekDragMove(System.Windows.Point posInList)
+    {
+        if (_peekDragRow?.RenderTransform is System.Windows.Media.TranslateTransform translate)
+        {
+            translate.Y = posInList.Y - _peekPressPoint.Y;
+        }
+        var target = PeekIndexAt(posInList.Y);
+        if (target >= 0 && target != _peekTargetIndex)
+        {
+            _peekTargetIndex = target;
+            ApplyPeekShifts();
+        }
+    }
+
+    private void ApplyPeekShifts()
+    {
+        if (_peekDragRow is null)
+        {
+            return;
+        }
+        var draggedTop = _peekRowLayoutTop;
+        var draggedHeight = _peekDragRow.ActualHeight + 4;
+        for (var index = 0; index < WeekPeekList.Items.Count; index++)
+        {
+            if (WeekPeekList.ItemContainerGenerator.ContainerFromIndex(index) is not FrameworkElement container
+                || ReferenceEquals(container, _peekDragRow))
+            {
+                continue;
+            }
+            var top = container.TranslatePoint(new System.Windows.Point(0, 0), WeekPeekList).Y;
+            double shift;
+            if (_peekFromIndex < _peekTargetIndex)
+            {
+                shift = top > draggedTop && top <= draggedTop + draggedHeight ? -draggedHeight : 0;
+            }
+            else
+            {
+                shift = top < draggedTop && top >= draggedTop - draggedHeight ? draggedHeight : 0;
+            }
+            if (container.RenderTransform is System.Windows.Media.TranslateTransform existing)
+            {
+                existing.Y = shift;
+            }
+            else
+            {
+                container.RenderTransform = new System.Windows.Media.TranslateTransform { Y = shift };
+            }
+        }
+    }
+
+    private void SettlePeekDrag()
+    {
+        var finalIndex = _peekTargetIndex;
+        ResetPeekDragVisual();
+        _peekDragRow?.ReleaseMouseCapture();
+        if (_peekDragCell is not null
+            && _peekDragItem is not null
+            && finalIndex != _peekFromIndex
+            && _peekDragCell.Items.IndexOf(_peekDragItem) is var current
+            && current >= 0
+            && current != finalIndex)
+        {
+            _peekDragCell.Items.Move(current, finalIndex);
+            for (var i = 0; i < _peekDragCell.Items.Count; i++)
+            {
+                _peekDragCell.Items[i].Order = i;
+            }
+            TodoService.Normalize(State);
+            CaptureState();
+            NotifyStateChanged();
+        }
+        _peekDragPhase = PeekDragPhase.Idle;
+        _peekDragCell = null;
+        _peekDragItem = null;
+        _peekDragRow = null;
+    }
+
+    private void CancelPeekDrag()
+    {
+        ResetPeekDragVisual();
+        _peekDragRow?.ReleaseMouseCapture();
+        _peekDragPhase = PeekDragPhase.Idle;
+        _peekDragCell = null;
+        _peekDragItem = null;
+        _peekDragRow = null;
+    }
+
+    private void ResetPeekDragVisual()
+    {
+        for (var index = 0; index < WeekPeekList.Items.Count; index++)
+        {
+            if (WeekPeekList.ItemContainerGenerator.ContainerFromIndex(index) is FrameworkElement container)
+            {
+                container.RenderTransform = System.Windows.Media.Transform.Identity;
+            }
+        }
+        if (_peekDragRow is not null)
+        {
+            _peekDragRow.Background = System.Windows.Media.Brushes.Transparent;
+            _peekDragRow.BorderBrush = System.Windows.Media.Brushes.Transparent;
+            _peekDragRow.BorderThickness = new System.Windows.Thickness(0);
+            _peekDragRow.Cursor = null;
+        }
     }
 
     private void WeekOverflow_Click(object sender, MouseButtonEventArgs e)

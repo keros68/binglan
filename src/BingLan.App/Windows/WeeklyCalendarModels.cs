@@ -21,7 +21,6 @@ public sealed class WeekCellView : INotifyPropertyChanged
     private const int PreviewCapacity = 2;
 
     private bool _isSelected;
-    private bool _hasOverflow;
 
     public DateTime Date { get; init; }
     public string DayNumber { get; init; } = "";

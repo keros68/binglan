@@ -647,6 +647,10 @@
                             Grid.Row="0" Grid.RowSpan="3"
                             Background="Transparent"
                             Visibility="Collapsed"
+                            PreviewMouseLeftButtonDown="TodoWindow_PeekPreviewMouseLeftButtonDown"
+                            PreviewMouseMove="TodoWindow_PeekPreviewMouseMove"
+                            PreviewMouseLeftButtonUp="TodoWindow_PeekPreviewMouseUp"
+                            PreviewKeyDown="TodoWindow_PeekPreviewKeyDown"
                             MouseLeftButtonDown="WeekPeekOverlay_BackdropClick">
                         <Border x:Name="WeekPeekPanel"
                                 Width="320"
