@@ -1,4 +1,4 @@
-using System.Collections.ObjectModel;
+﻿using System.Collections.ObjectModel;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -572,23 +572,28 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         }
     }
 
-    // Nearest-slot-center match against the pristine snapshot: the swap fires
-    // when the dragged row's visual center passes a neighbour's center. The
-    // decision is monotonic in the follow offset (no transform feedback) and
-    // supports jumping over several rows in one move.
+    // Nearest-slot-center match against the pristine snapshot, with the
+    // dragged row's own slot as the baseline candidate: the swap fires only
+    // when the dragged row's visual center crosses the midpoint towards a
+    // neighbour. Staying at the origin therefore never reorders (zero
+    // side-effect on release), the decision is monotonic in the follow
+    // offset (no transform feedback), and jumping over several rows in one
+    // move lands on the nearest crossed slot.
     private int PeekTargetIndexForDragOffset()
     {
         if (_peekSlotTops is null || _peekSlotHeights is null
+            || _peekFromIndex < 0
+            || _peekFromIndex >= _peekSlotTops.Length
             || _peekDragContainer?.RenderTransform is not System.Windows.Media.TranslateTransform translate)
         {
             return -1;
         }
         var draggedCenter = _peekSlotTops[_peekFromIndex] + translate.Y + (_peekSlotHeights[_peekFromIndex] / 2);
         var best = _peekFromIndex;
-        var bestDistance = double.MaxValue;
+        var bestDistance = Math.Abs(draggedCenter - (_peekSlotTops[_peekFromIndex] + (_peekSlotHeights[_peekFromIndex] / 2)));
         for (var index = 0; index < _peekSlotTops.Length; index++)
         {
-            if (index == _peekFromIndex)
+            if (index == _peekFromIndex || _peekSlotHeights[index] <= 0)
             {
                 continue;
             }
@@ -678,6 +683,8 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         _peekDragItem = null;
         _peekDragContainer = null;
         _peekDragRow = null;
+        _peekSlotTops = null;
+        _peekSlotHeights = null;
     }
 
     private void CancelPeekDrag()
@@ -695,6 +702,8 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         _peekDragItem = null;
         _peekDragContainer = null;
         _peekDragRow = null;
+        _peekSlotTops = null;
+        _peekSlotHeights = null;
     }
 
     private void ResetPeekDragVisual()
