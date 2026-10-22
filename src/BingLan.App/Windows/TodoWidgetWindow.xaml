@@ -488,26 +488,36 @@
                                                                               Margin="0,2,0,0"
                                                                               VerticalScrollBarVisibility="Hidden"
                                                                               HorizontalScrollBarVisibility="Disabled">
-                                                                    <ItemsControl ItemsSource="{Binding Items}"
+                                                                    <ItemsControl ItemsSource="{Binding PreviewItems}"
                                                                                   ItemTemplate="{StaticResource WeekItemRowTemplate}"
                                                                                   Focusable="False"
                                                                                   IsTabStop="False"/>
                                                                 </ScrollViewer>
-                                                                <TextBox x:Name="WeekCellEditor"
-                                                                         Grid.Row="2"
-                                                                         AutomationProperties.Name="新建当日待办"
-                                                                         Visibility="Collapsed"
-                                                                         FontSize="12"
-                                                                         MinHeight="17"
-                                                                         Padding="1,0"
-                                                                         BorderThickness="0"
-                                                                         CaretBrush="#FF3E77B5"
-                                                                         Background="Transparent"
-                                                                         TextWrapping="NoWrap"
-                                                                         AcceptsReturn="False"
-                                                                         KeyDown="WeekCellEditor_KeyDown"
-                                                                         LostFocus="WeekCellEditor_LostFocus"
-                                                                         Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
+                                                                <!-- Overflow chip: the single entry point to the day peek popup. -->
+                                                                <Border Grid.Row="2"
+                                                                        Margin="0,4,0,0"
+                                                                        Padding="7,3"
+                                                                        CornerRadius="9"
+                                                                        Background="#66FFFFFF"
+                                                                        BorderBrush="#66FFFFFF"
+                                                                        BorderThickness="1"
+                                                                        Cursor="Hand"
+                                                                        Tag="Interactive"
+                                                                        MouseLeftButtonDown="WeekOverflow_Click">
+                                                                    <Border.Style>
+                                                                        <Style TargetType="Border">
+                                                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                                                            <Style.Triggers>
+                                                                                <DataTrigger Binding="{Binding HasOverflow}" Value="True">
+                                                                                    <Setter Property="Visibility" Value="Visible"/>
+                                                                                </DataTrigger>
+                                                                            </Style.Triggers>
+                                                                        </Style>
+                                                                    </Border.Style>
+                                                                    <TextBlock FontSize="10.5" Foreground="#FF4E6072">
+                                                                        <Run Text="还有 "/><Run Text="{Binding OverflowCount, Mode=OneWay}"/><Run Text=" 条 ▾"/>
+                                                                    </TextBlock>
+                                                                </Border>
                                                             </Grid>
                                                         </Grid>
                                                     </Border>
@@ -519,6 +529,94 @@
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
                     </Grid>
+
+                    <!-- Day peek popup: the full day list, opened from a cell's overflow chip. -->
+                    <Canvas x:Name="WeekPeekOverlay"
+                            Grid.Row="0" Grid.RowSpan="3"
+                            Background="Transparent"
+                            Visibility="Collapsed"
+                            MouseLeftButtonDown="WeekPeekOverlay_BackdropClick">
+                        <Border x:Name="WeekPeekPanel"
+                                Width="320"
+                                CornerRadius="8"
+                                Background="#FFF4F6FB"
+                                BorderBrush="#FFC9D2E6"
+                                BorderThickness="1"
+                                MouseLeftButtonDown="WeekPeekPanel_Click">
+                            <Border.Effect>
+                                <DropShadowEffect BlurRadius="18" ShadowDepth="4" Opacity="0.25" Color="#FF3A4560"/>
+                            </Border.Effect>
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="*"/>
+                                    <RowDefinition Height="Auto"/>
+                                </Grid.RowDefinitions>
+                                <Border Padding="12,8"
+                                        CornerRadius="8,8,0,0"
+                                        Background="#FFB8C4EA">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock x:Name="WeekPeekTitle"
+                                                   VerticalAlignment="Center"
+                                                   FontSize="13"
+                                                   FontWeight="SemiBold"
+                                                   Foreground="#FF243146"/>
+                                        <Button Grid.Column="1"
+                                                AutomationProperties.Name="关闭当日浮层"
+                                                Width="24"
+                                                Height="24"
+                                                Padding="0"
+                                                VerticalAlignment="Center"
+                                                Background="Transparent"
+                                                BorderThickness="0"
+                                                FontSize="12"
+                                                Content="✕"
+                                                Foreground="#FF243146"
+                                                Click="WeekPeekClose_Click"/>
+                                    </Grid>
+                                </Border>
+                                <ScrollViewer Grid.Row="1"
+                                              MaxHeight="264"
+                                              Margin="8,6,8,0"
+                                              VerticalScrollBarVisibility="Auto">
+                                    <ItemsControl x:Name="WeekPeekList"
+                                                  Margin="0,0,2,0"
+                                                  ItemTemplate="{StaticResource WeekItemRowTemplate}"
+                                                  Focusable="False"
+                                                  IsTabStop="False"/>
+                                </ScrollViewer>
+                                <Border Grid.Row="2"
+                                        Margin="8,6,8,8"
+                                        Padding="6,4"
+                                        CornerRadius="6"
+                                        Background="#FFFFFFFF"
+                                        BorderBrush="#FFD8DEEC"
+                                        BorderThickness="1">
+                                    <TextBox x:Name="WeekPeekInput"
+                                             AutomationProperties.Name="添加当日待办"
+                                             FontSize="12"
+                                             MinHeight="18"
+                                             Padding="2,0"
+                                             BorderThickness="0"
+                                             Background="Transparent"
+                                             CaretBrush="#FF3E77B5"
+                                             TextWrapping="NoWrap"
+                                             AcceptsReturn="False"
+                                             KeyDown="WeekPeekInput_KeyDown">
+                                        <TextBox.Style>
+                                            <Style TargetType="TextBox">
+                                                <Setter Property="Foreground" Value="#FF22303E"/>
+                                            </Style>
+                                        </TextBox.Style>
+                                    </TextBox>
+                                </Border>
+                            </Grid>
+                        </Border>
+                    </Canvas>
                 </Grid>
 
             <Grid Grid.Row="2" Margin="17,0,17,7">

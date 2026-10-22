@@ -31,6 +31,7 @@ public partial class TodoWidgetWindow : WidgetWindowBase
     private int _weekOffset;
     private DayEditWindow? _dayEditor;
     private WeekCellView? _selectedCellView;
+    private WeekCellView? _peekCell;
 
     public TodoWidgetWindow(TodoWidgetState state)
     {
@@ -265,24 +266,92 @@ public partial class TodoWidgetWindow : WidgetWindowBase
 
         if (e.ClickCount >= 2)
         {
-            // A double-click opens the day editor; any inline editor gives way to it.
-            if (FindNamedDescendant(surface, "WeekCellEditor") is { } openEditor)
-            {
-                CloseCellEditor(openEditor);
-            }
             OpenDayEditor(cell);
             e.Handled = true;
             return;
         }
 
         SelectCell(cell);
-        if (FindNamedDescendant(surface, "WeekCellEditor") is { } editor)
+        e.Handled = true;
+    }
+
+    private void WeekOverflow_Click(object sender, MouseButtonEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is WeekCellView cell && !cell.IsFiller)
         {
-            editor.Visibility = Visibility.Visible;
-            editor.Focus();
+            OpenDayPeek(cell, sender as FrameworkElement);
             e.Handled = true;
         }
     }
+
+    private void OpenDayPeek(WeekCellView cell, FrameworkElement? cellElement)
+    {
+        _peekCell = cell;
+        WeekPeekTitle.Text = cell.Date.ToString("M月d日") + " · " +
+            WeekdayName(cell.Date);
+        WeekPeekList.ItemsSource = cell.Items;
+        WeekPeekInput.Clear();
+        WeekPeekOverlay.Visibility = Visibility.Visible;
+
+        // Anchor the panel next to the source cell, flipping inward at the edges.
+        if (cellElement is not null)
+        {
+            var rect = cellElement.TransformToAncestor(WeekHost)
+                .TransformBounds(new Rect(0, 0, cellElement.ActualWidth, cellElement.ActualHeight));
+            var left = rect.Right + 6;
+            if (left + WeekPeekPanel.Width > WeekHost.ActualWidth)
+            {
+                left = rect.Left - WeekPeekPanel.Width - 6;
+            }
+            left = Math.Max(0, Math.Min(left, Math.Max(0, WeekHost.ActualWidth - WeekPeekPanel.Width)));
+            Canvas.SetLeft(WeekPeekPanel, left);
+            Canvas.SetTop(WeekPeekPanel, Math.Max(0, rect.Top));
+        }
+    }
+
+    private void CloseDayPeek()
+    {
+        WeekPeekOverlay.Visibility = Visibility.Collapsed;
+        WeekPeekList.ItemsSource = null;
+        _peekCell = null;
+    }
+
+    private void WeekPeekOverlay_BackdropClick(object sender, MouseButtonEventArgs e) => CloseDayPeek();
+
+    private void WeekPeekPanel_Click(object sender, MouseButtonEventArgs e) => e.Handled = true;
+
+    private void WeekPeekClose_Click(object sender, RoutedEventArgs e) => CloseDayPeek();
+
+    private void WeekPeekInput_KeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key is Key.Enter && _peekCell is not null)
+        {
+            var text = WeekPeekInput.Text.Trim();
+            if (text.Length > 0)
+            {
+                AddWeeklyItem(_peekCell, text);
+            }
+            WeekPeekInput.Clear();
+            e.Handled = true;
+        }
+        else if (e.Key == Key.Escape)
+        {
+            CloseDayPeek();
+            e.Handled = true;
+        }
+    }
+
+    private static string WeekdayName(DateTime date) =>
+        date.DayOfWeek switch
+        {
+            DayOfWeek.Monday => "周一",
+            DayOfWeek.Tuesday => "周二",
+            DayOfWeek.Wednesday => "周三",
+            DayOfWeek.Thursday => "周四",
+            DayOfWeek.Friday => "周五",
+            DayOfWeek.Saturday => "周六",
+            _ => "周日"
+        };
 
     private void SelectCell(WeekCellView cell)
     {
@@ -329,39 +398,6 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         NotifyStateChanged();
     }
 
-    private void WeekCellEditor_KeyDown(object sender, System.Windows.Input.KeyEventArgs e)
-    {
-        if (sender is not System.Windows.Controls.TextBox editor)
-        {
-            return;
-        }
-        if (e.Key is Key.Enter or Key.Escape)
-        {
-            var text = editor.Text.Trim();
-            if (e.Key == Key.Enter && editor.DataContext is WeekCellView cell && text.Length > 0)
-            {
-                AddWeeklyItem(cell, text);
-            }
-            editor.Clear();
-            CloseCellEditor(editor);
-            e.Handled = true;
-        }
-    }
-
-    private void WeekCellEditor_LostFocus(object sender, RoutedEventArgs e)
-    {
-        if (sender is not System.Windows.Controls.TextBox editor)
-        {
-            return;
-        }
-        var text = editor.Text.Trim();
-        if (editor.DataContext is WeekCellView cell && text.Length > 0)
-        {
-            AddWeeklyItem(cell, text);
-        }
-        CloseCellEditor(editor);
-    }
-
     private void AddWeeklyItem(WeekCellView cell, string text)
     {
         CaptureState();
@@ -370,15 +406,6 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         cell.Items.Add(item);
         RefreshSummary();
         NotifyStateChanged();
-    }
-
-    private static void CloseCellEditor(System.Windows.FrameworkElement editor)
-    {
-        if (editor is System.Windows.Controls.TextBox box)
-        {
-            box.Text = "";
-        }
-        editor.Visibility = Visibility.Collapsed;
     }
 
     private void ApplyViewMode()

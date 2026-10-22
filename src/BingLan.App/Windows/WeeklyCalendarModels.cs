@@ -17,7 +17,11 @@ public sealed class WeekCellView : INotifyPropertyChanged
     /// <summary>A shared blank placeholder that keeps the column grid aligned across month breaks.</summary>
     public static readonly WeekCellView Filler = new() { IsFiller = true };
 
+    /// <summary>How many entries the compact cell shows before the overflow chip.</summary>
+    private const int PreviewCapacity = 2;
+
     private bool _isSelected;
+    private bool _hasOverflow;
 
     public DateTime Date { get; init; }
     public string DayNumber { get; init; } = "";
@@ -43,9 +47,33 @@ public sealed class WeekCellView : INotifyPropertyChanged
         }
     }
 
+    /// <summary>All entries of the day (full list — the day editor and the peek popup bind this).</summary>
     public ObservableCollection<TodoItemState> Items { get; } = [];
 
+    /// <summary>The first few entries shown inside the compact cell.</summary>
+    public ObservableCollection<TodoItemState> PreviewItems { get; } = [];
+
+    /// <summary>Entries beyond the compact preview; shown on the overflow chip.</summary>
+    public bool HasOverflow => Items.Count > PreviewCapacity;
+
+    /// <summary>How many entries are hidden behind the overflow chip.</summary>
+    public int OverflowCount => Math.Max(0, Items.Count - PreviewCapacity);
+
     public event PropertyChangedEventHandler? PropertyChanged;
+
+    public WeekCellView()
+    {
+        Items.CollectionChanged += (_, _) =>
+        {
+            PreviewItems.Clear();
+            foreach (var entry in Items.Take(PreviewCapacity))
+            {
+                PreviewItems.Add(entry);
+            }
+            OnPropertyChanged(nameof(HasOverflow));
+            OnPropertyChanged(nameof(OverflowCount));
+        };
+    }
 
     private void OnPropertyChanged([CallerMemberName] string? propertyName = null) =>
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
