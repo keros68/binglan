@@ -307,12 +307,13 @@ public partial class TodoWidgetWindow : WidgetWindowBase
     // The body ScrollViewer marks left-button-down handled (it takes keyboard
     // focus on click, which also painted a focus rectangle inside the cell),
     // so the cell surface handler on the root Border never sees body clicks.
-    // Re-dispatch from the ScrollViewer itself, seeing handled events. The row
-    // checkbox/delete button need no exclusion here: both are ButtonBase,
-    // whose own mouse-down handling suppresses the re-raised event on
-    // ancestors, so this dispatch never fires for them. The weak table maps
-    // each cell Border to the scroller it was hooked on; if a template pass
-    // ever rebuilt the scroller under a living Border, the hook is refreshed.
+    // Re-dispatch from the ScrollViewer itself, seeing handled events. Row
+    // checkbox/delete clicks are excluded defensively: whether they reach
+    // this handler depends on WPF's re-raise guard for already-handled
+    // MouseLeftButtonDown, and the exclusion keeps cell selection correct
+    // under either reading of that mechanism. The weak table maps each cell
+    // Border to the scroller it was hooked on; if a template pass ever
+    // rebuilt the scroller under a living Border, the hook is refreshed.
     private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<DependencyObject, object?> CellScrollHooked = [];
 
     private void WeekCellSurface_Preview(object sender, MouseButtonEventArgs e)
@@ -329,7 +330,33 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         CellScrollHooked.Remove(border);
         CellScrollHooked.Add(border, scroller);
         scroller.AddHandler(MouseLeftButtonDownEvent,
-            new MouseButtonEventHandler((_, e2) => WeekCellSurface_Click(border, e2)), handledEventsToo: true);
+            new MouseButtonEventHandler((_, e2) =>
+            {
+                if (e2.OriginalSource is DependencyObject source
+                    && HitsInteractiveChild(source, scroller))
+                {
+                    return;
+                }
+                WeekCellSurface_Click(border, e2);
+            }), handledEventsToo: true);
+    }
+
+    // Same test as HitsChildControl, safe for ContentElement hits (Run/
+    // Hyperlink are not Visuals, so VisualTreeHelper would throw on them).
+    private static bool HitsInteractiveChild(DependencyObject source, DependencyObject container)
+    {
+        var current = source;
+        while (current is not null && !ReferenceEquals(current, container))
+        {
+            if (current is System.Windows.Controls.CheckBox or System.Windows.Controls.Primitives.ButtonBase)
+            {
+                return true;
+            }
+            current = current is System.Windows.Media.Visual
+                ? System.Windows.Media.VisualTreeHelper.GetParent(current)
+                : System.Windows.LogicalTreeHelper.GetParent(current);
+        }
+        return false;
     }
 
     // ------------------------------------------------------------------
