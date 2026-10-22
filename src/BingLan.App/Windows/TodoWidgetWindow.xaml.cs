@@ -425,11 +425,15 @@ public partial class TodoWidgetWindow : WidgetWindowBase
 
     protected override void OnPreviewKeyDown(System.Windows.Input.KeyEventArgs e)
     {
-        if (e.Key == Key.Escape
-            && _peekDragPhase is PeekDragPhase.HoverArmed or PeekDragPhase.Dragging)
+        if (e.Key != Key.Escape)
         {
-            // Esc drops the lift or cancels the drag, whichever is active.
-            _peekDwellTimer?.Stop();
+            return;
+        }
+        // Esc always kills a pending dwell countdown, and cancels a lift or a
+        // drag when one is active.
+        _peekDwellTimer?.Stop();
+        if (_peekDragPhase is PeekDragPhase.HoverArmed or PeekDragPhase.Dragging)
+        {
             CancelPeekDrag();
             e.Handled = true;
         }
@@ -779,6 +783,18 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         // With mouse capture active (Dragging) WPF suppresses leave events for
         // other elements, so this only fires while merely hovering — drop the
         // dwell lift when the cursor exits the popup.
+        if (_peekDragPhase == PeekDragPhase.HoverArmed)
+        {
+            CancelPeekDrag();
+        }
+        _peekDwellTimer?.Stop();
+    }
+
+    private void WeekPeekOverlay_PreviewMouseWheel(object sender, System.Windows.Input.MouseWheelEventArgs e)
+    {
+        // Scrolling moves the rows under a stationary cursor: the dwell anchor
+        // and the lift's slot snapshot both go stale. Drop the lift and let
+        // the scroll proceed (not handled here).
         if (_peekDragPhase == PeekDragPhase.HoverArmed)
         {
             CancelPeekDrag();

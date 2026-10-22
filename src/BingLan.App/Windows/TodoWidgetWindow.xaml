@@ -624,7 +624,8 @@
                             Background="Transparent"
                             Visibility="Collapsed"
                             MouseLeftButtonDown="WeekPeekOverlay_BackdropClick"
-                            MouseLeave="WeekPeekOverlay_MouseLeave">
+                            MouseLeave="WeekPeekOverlay_MouseLeave"
+                            PreviewMouseWheel="WeekPeekOverlay_PreviewMouseWheel">
                         <Border x:Name="WeekPeekPanel"
                                 Width="320"
                                 CornerRadius="8"
