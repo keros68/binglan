@@ -3,10 +3,9 @@ using BingLan.Core.Models;
 
 namespace BingLan.App.Windows;
 
-/// <summary>One week row of the weekly view: its ISO week number and seven day cells.</summary>
+/// <summary>One week row of the weekly view: seven day cells, Monday first.</summary>
 public sealed class WeekRowView
 {
-    public int WeekNumber { get; init; }
     public IReadOnlyList<WeekCellView> Days { get; init; } = [];
 }
 

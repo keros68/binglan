@@ -348,75 +348,65 @@
 
                     <Grid Grid.Row="1" Margin="2,3,2,0">
                         <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="24"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="*"/>
                         </Grid.ColumnDefinitions>
-                        <Grid Grid.Column="1">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="*"/>
-                            </Grid.ColumnDefinitions>
-                            <TextBlock Text="周一" FontSize="10" TextAlignment="Center" Opacity="0.75"
-                                       Foreground="{Binding WidgetSecondaryTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
-                            <TextBlock Grid.Column="1" Text="周二" FontSize="10" TextAlignment="Center" Opacity="0.75"
-                                       Foreground="{Binding WidgetSecondaryTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
-                            <TextBlock Grid.Column="2" Text="周三" FontSize="10" TextAlignment="Center" Opacity="0.75"
-                                       Foreground="{Binding WidgetSecondaryTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
-                            <TextBlock Grid.Column="3" Text="周四" FontSize="10" TextAlignment="Center" Opacity="0.75"
-                                       Foreground="{Binding WidgetSecondaryTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
-                            <TextBlock Grid.Column="4" Text="周五" FontSize="10" TextAlignment="Center" Opacity="0.75"
-                                       Foreground="{Binding WidgetSecondaryTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
-                            <TextBlock Grid.Column="5" Text="周六" FontSize="10" TextAlignment="Center" Opacity="0.75"
-                                       Foreground="{Binding WidgetSecondaryTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
-                            <TextBlock Grid.Column="6" Text="周日" FontSize="10" TextAlignment="Center" Opacity="0.75"
-                                       Foreground="{Binding WidgetSecondaryTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
-                        </Grid>
+                        <TextBlock Text="周一" FontSize="10" TextAlignment="Center" Opacity="0.75"
+                                   Foreground="{Binding WidgetSecondaryTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
+                        <TextBlock Grid.Column="1" Text="周二" FontSize="10" TextAlignment="Center" Opacity="0.75"
+                                   Foreground="{Binding WidgetSecondaryTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
+                        <TextBlock Grid.Column="2" Text="周三" FontSize="10" TextAlignment="Center" Opacity="0.75"
+                                   Foreground="{Binding WidgetSecondaryTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
+                        <TextBlock Grid.Column="3" Text="周四" FontSize="10" TextAlignment="Center" Opacity="0.75"
+                                   Foreground="{Binding WidgetSecondaryTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
+                        <TextBlock Grid.Column="4" Text="周五" FontSize="10" TextAlignment="Center" Opacity="0.75"
+                                   Foreground="{Binding WidgetSecondaryTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
+                        <TextBlock Grid.Column="5" Text="周六" FontSize="10" TextAlignment="Center" Opacity="0.75"
+                                   Foreground="{Binding WidgetSecondaryTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
+                        <TextBlock Grid.Column="6" Text="周日" FontSize="10" TextAlignment="Center" Opacity="0.75"
+                                   Foreground="{Binding WidgetSecondaryTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
                     </Grid>
 
-                    <ScrollViewer Grid.Row="2"
+                    <!-- Five equal rows fill the card height, like a real month grid;
+                         overflow inside a cell is clipped rather than scrolled. -->
+                    <ItemsControl x:Name="WeekRows"
+                                  Grid.Row="2"
                                   Margin="0,2,0,2"
-                                  VerticalScrollBarVisibility="Auto"
-                                  HorizontalScrollBarVisibility="Disabled">
-                        <ItemsControl x:Name="WeekRows" Focusable="False" IsTabStop="False">
-                            <ItemsControl.ItemTemplate>
-                                <DataTemplate>
-                                    <Grid>
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="24"/>
-                                            <ColumnDefinition Width="*"/>
-                                        </Grid.ColumnDefinitions>
-                                        <TextBlock Text="{Binding WeekNumber}"
-                                                   FontSize="9.5"
-                                                   Opacity="0.6"
-                                                   HorizontalAlignment="Center"
-                                                   VerticalAlignment="Top"
-                                                   Margin="0,3,0,0"
-                                                   Foreground="{Binding WidgetSecondaryTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
-                                        <ItemsControl Grid.Column="1" ItemsSource="{Binding Days}" Focusable="False" IsTabStop="False">
-                                            <ItemsControl.ItemsPanel>
-                                                <ItemsPanelTemplate>
-                                                    <UniformGrid Rows="1"/>
-                                                </ItemsPanelTemplate>
-                                            </ItemsControl.ItemsPanel>
+                                  ClipToBounds="True"
+                                  Focusable="False"
+                                  IsTabStop="False">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <UniformGrid Rows="5"/>
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid ClipToBounds="True">
+                                    <ItemsControl ItemsSource="{Binding Days}" Focusable="False" IsTabStop="False">
+                                        <ItemsControl.ItemsPanel>
+                                            <ItemsPanelTemplate>
+                                                <UniformGrid Rows="1"/>
+                                            </ItemsPanelTemplate>
+                                        </ItemsControl.ItemsPanel>
                                             <ItemsControl.ItemTemplate>
                                                 <DataTemplate>
                                                     <Border Margin="1,1,1,2"
                                                             Padding="3,2"
-                                                            CornerRadius="4">
+                                                            CornerRadius="4"
+                                                            Background="Transparent"
+                                                            Tag="Interactive"
+                                                            MouseLeftButtonUp="WeekCellSurface_Click">
                                                         <Border.Style>
                                                             <Style TargetType="Border">
-                                                                <Setter Property="Background" Value="Transparent"/>
                                                                 <Setter Property="BorderBrush" Value="Transparent"/>
                                                                 <Setter Property="BorderThickness" Value="1"/>
                                                                 <Style.Triggers>
-                                                                    <DataTrigger Binding="{Binding IsWeekend}" Value="True">
-                                                                        <Setter Property="Background" Value="{DynamicResource WidgetSubtleControlBrush}"/>
-                                                                    </DataTrigger>
                                                                     <DataTrigger Binding="{Binding IsToday}" Value="True">
                                                                         <Setter Property="BorderBrush" Value="#D9A441"/>
                                                                         <Setter Property="BorderThickness" Value="1.5"/>
@@ -424,39 +414,54 @@
                                                                 </Style.Triggers>
                                                             </Style>
                                                         </Border.Style>
-                                                        <StackPanel Background="Transparent"
-                                                                    Tag="Interactive"
-                                                                    MouseLeftButtonUp="WeekCellSurface_Click">
-                                                            <StackPanel Orientation="Horizontal">
-                                                                <TextBlock Text="{Binding DayNumber}"
-                                                                           FontSize="10.5"
-                                                                           FontWeight="SemiBold"
-                                                                           Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
-                                                                <TextBlock Text="{Binding LunarText}"
-                                                                           FontSize="8.5"
-                                                                           Margin="3,0,0,0"
-                                                                           VerticalAlignment="Bottom"
-                                                                           Opacity="0.7"
-                                                                           Foreground="{Binding WidgetSecondaryTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
+                                                        <Grid>
+                                                            <!-- Fill layer: every day reads as one card; weekdays carry
+                                                                 the schedule so they stay at full strength, weekends fade. -->
+                                                            <Border CornerRadius="3" IsHitTestVisible="False">
+                                                                <Border.Style>
+                                                                    <Style TargetType="Border">
+                                                                        <Setter Property="Background" Value="{DynamicResource WidgetSubtleControlBrush}"/>
+                                                                        <Setter Property="Opacity" Value="1"/>
+                                                                        <Style.Triggers>
+                                                                            <DataTrigger Binding="{Binding IsWeekend}" Value="True">
+                                                                                <Setter Property="Opacity" Value="0.45"/>
+                                                                            </DataTrigger>
+                                                                        </Style.Triggers>
+                                                                    </Style>
+                                                                </Border.Style>
+                                                            </Border>
+                                                            <StackPanel>
+                                                                <StackPanel Orientation="Horizontal">
+                                                                    <TextBlock Text="{Binding DayNumber}"
+                                                                               FontSize="10.5"
+                                                                               FontWeight="SemiBold"
+                                                                               Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
+                                                                    <TextBlock Text="{Binding LunarText}"
+                                                                               FontSize="8.5"
+                                                                               Margin="3,0,0,0"
+                                                                               VerticalAlignment="Bottom"
+                                                                               Opacity="0.7"
+                                                                               Foreground="{Binding WidgetSecondaryTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
+                                                                </StackPanel>
+                                                                <ItemsControl ItemsSource="{Binding Items}"
+                                                                              ItemTemplate="{StaticResource WeekItemRowTemplate}"
+                                                                              Focusable="False"
+                                                                              IsTabStop="False"/>
+                                                                <TextBox x:Name="WeekCellEditor"
+                                                                         AutomationProperties.Name="新建当日待办"
+                                                                         Visibility="Collapsed"
+                                                                         FontSize="11"
+                                                                         MinHeight="17"
+                                                                         Padding="1,0"
+                                                                         BorderThickness="0"
+                                                                         Background="Transparent"
+                                                                         TextWrapping="NoWrap"
+                                                                         AcceptsReturn="False"
+                                                                         KeyDown="WeekCellEditor_KeyDown"
+                                                                         LostFocus="WeekCellEditor_LostFocus"
+                                                                         Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
                                                             </StackPanel>
-                                                            <ItemsControl ItemsSource="{Binding Items}"
-                                                                          ItemTemplate="{StaticResource WeekItemRowTemplate}"
-                                                                          Focusable="False"
-                                                                          IsTabStop="False"/>
-                                                            <TextBox x:Name="WeekCellEditor"
-                                                                     AutomationProperties.Name="新建当日待办"
-                                                                     Visibility="Collapsed"
-                                                                     FontSize="11"
-                                                                     MinHeight="17"
-                                                                     Padding="1,0"
-                                                                     BorderThickness="0"
-                                                                     Background="Transparent"
-                                                                     TextWrapping="NoWrap"
-                                                                     AcceptsReturn="False"
-                                                                     KeyDown="WeekCellEditor_KeyDown"
-                                                                     LostFocus="WeekCellEditor_LostFocus"
-                                                                     Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
-                                                        </StackPanel>
+                                                        </Grid>
                                                     </Border>
                                                 </DataTemplate>
                                             </ItemsControl.ItemTemplate>
@@ -465,9 +470,8 @@
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
-                    </ScrollViewer>
+                    </Grid>
                 </Grid>
-            </Grid>
 
             <Grid Grid.Row="2" Margin="17,0,17,7">
                 <TextBlock x:Name="SummaryText"

@@ -1,5 +1,4 @@
 using System.Collections.ObjectModel;
-using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -14,9 +13,12 @@ public partial class TodoWidgetWindow : WidgetWindowBase
     // The weekly view shows this many calendar rows, Monday first.
     private const int WeeklyRowCount = 5;
 
-    // Minimum card widths: the weekly grid needs wider columns than the today list.
+    // Minimum card sizes: the weekly grid needs wider columns and taller rows than
+    // the today list, which stays comfortable at the card's original minimums.
     private const double ListMinimumWidth = 226;
     private const double WeeklyMinimumWidth = 520;
+    private const double ListMinimumHeight = 166;
+    private const double WeeklyMinimumHeight = 460;
 
     // Paging far enough to overflow DateTime.AddDays would throw; a century of weeks
     // is far beyond any real back-tracking session.
@@ -317,14 +319,17 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         WeekHost.Visibility = State.WeeklyView ? Visibility.Visible : Visibility.Collapsed;
         ViewModeButton.Content = State.WeeklyView ? "列表" : "周历";
         ClearCompletedButton.Visibility = State.WeeklyView ? Visibility.Collapsed : Visibility.Visible;
-        // Seven day cells only stay readable when each column has room for text;
-        // the today list stays comfortable at the card's original minimum width.
+        // Seven day cells only stay readable when each column has room for text and
+        // the five rows have real height; the today list stays comfortable at the
+        // card's original minimum size.
         MinWidth = State.WeeklyView ? WeeklyMinimumWidth : ListMinimumWidth;
+        MinHeight = State.WeeklyView ? WeeklyMinimumHeight : ListMinimumHeight;
         if (State.WeeklyView)
         {
-            // MinWidth alone only clamps later layout passes; widen an already
-            // narrower card right away so the grid is readable from the first frame.
+            // Min sizes alone only clamp later layout passes; widen and raise an
+            // already smaller card right away so the grid is usable from frame one.
             Width = Math.Max(Width, WeeklyMinimumWidth);
+            Height = Math.Max(Height, WeeklyMinimumHeight);
             RenderWeekView();
         }
         else
@@ -364,7 +369,7 @@ public partial class TodoWidgetWindow : WidgetWindowBase
                 _cellsByDate[date] = cell;
                 days.Add(cell);
             }
-            rows.Add(new WeekRowView { WeekNumber = GetIsoWeekNumber(monday), Days = days });
+            rows.Add(new WeekRowView { Days = days });
         }
         WeekRows.ItemsSource = rows;
         RefreshSummary();
@@ -442,10 +447,6 @@ public partial class TodoWidgetWindow : WidgetWindowBase
 
     private static DateTime MondayOf(DateTime date) =>
         date.AddDays(-(((int)date.DayOfWeek + 6) % 7));
-
-    private static int GetIsoWeekNumber(DateTime date) =>
-        CultureInfo.InvariantCulture.Calendar.GetWeekOfYear(
-            date, CalendarWeekRule.FirstFourDayWeek, DayOfWeek.Monday);
 
     private static T? FindDirectVisualChild<T>(DependencyObject parent) where T : DependencyObject
     {
