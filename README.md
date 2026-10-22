@@ -37,9 +37,7 @@ Windows 11 开启系统透明效果时，Dock 和隐藏把手使用实时毛玻�
 
 ## 快速开始
 
-稳定版：[v0.2.33](https://github.com/keros68/binglan/releases/tag/v0.2.33) · [安装版](https://github.com/keros68/binglan/releases/download/v0.2.33/BingLan-Setup-0.2.33.exe) · [免安装版](https://github.com/keros68/binglan/releases/download/v0.2.33/BingLan-0.2.33-portable.zip)。修复关闭全部桌面信息组件、只开顶端信息条时，顶栏时钟、天气和性能不再刷新的问题：共享采样服务改由应用启动时统一拉起，顶栏启用期间保持运行，删除全部信息卡片或重启后同样正常更新。另附[兼容性验收工具](https://github.com/keros68/binglan/releases/download/v0.2.33/BingLan-0.2.33-tray-preview.zip)，使用步骤见[托盘验收说明](docs/TRAY-PREVIEW.md)。
-
-预发布版：[v0.2.34](https://github.com/keros68/binglan/releases/tag/v0.2.34) · [安装版](https://github.com/keros68/binglan/releases/download/v0.2.34/BingLan-Setup-0.2.34.exe) · [免安装版](https://github.com/keros68/binglan/releases/download/v0.2.34/BingLan-0.2.34-portable.zip)。修复微信等关闭窗口后驻留后台的应用，点击 Dock 图标会重新拉起登录界面的问题：现在会先唤回仍在运行的隐藏窗口而不是启动第二个实例，中键、Shift+点击或右键“启动新实例”仍可强制新开。另附[兼容性验收工具](https://github.com/keros68/binglan/releases/download/v0.2.34/BingLan-0.2.34-tray-preview.zip)，使用步骤见[托盘验收说明](docs/TRAY-PREVIEW.md)。
+稳定版：[v0.2.34](https://github.com/keros68/binglan/releases/tag/v0.2.34) · [安装版](https://github.com/keros68/binglan/releases/download/v0.2.34/BingLan-Setup-0.2.34.exe) · [免安装版](https://github.com/keros68/binglan/releases/download/v0.2.34/BingLan-0.2.34-portable.zip)。修复微信等关闭窗口后驻留后台的应用，点击 Dock 图标会重新拉起登录界面的问题：现在会先唤回仍在运行的隐藏窗口而不是启动第二个实例，中键、Shift+点击或右键“启动新实例”仍可强制新开。另附[兼容性验收工具](https://github.com/keros68/binglan/releases/download/v0.2.34/BingLan-0.2.34-tray-preview.zip)，使用步骤见[托盘验收说明](docs/TRAY-PREVIEW.md)。
 
 1. 打开 [Releases](https://github.com/keros68/binglan/releases/latest)，下载 `BingLan-Setup-*.exe`（安装版）或 `BingLan-*-portable.zip`（免安装版）。
 2. 安装版运行安装包，按当前用户安装，不需要管理员权限；免安装版解压到任意文件夹后运行其中的 `BingLan.exe`。两者均自带 .NET 运行时，尚未加入代码签名，首次运行需按 Windows 提示手动放行。
