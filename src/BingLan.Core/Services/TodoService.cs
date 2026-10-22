@@ -145,6 +145,19 @@ public static class TodoService
         return item?.Date is { } date && MoveWithinScope(widget, itemId, offset, x => x.Date == date);
     }
 
+    /// <summary>Moves one entry to a different calendar day, keeping text and completion state.</summary>
+    public static bool MoveToDate(TodoWidgetState widget, Guid itemId, DateTime targetDate)
+    {
+        var item = widget.Items.FirstOrDefault(x => x.Id == itemId);
+        if (item is null || item.Date == targetDate)
+        {
+            return false;
+        }
+        item.Date = targetDate;
+        Normalize(widget);
+        return true;
+    }
+
     /// <summary>The entries placed on one calendar day, in their manual order.</summary>
     public static List<TodoItemState> ItemsForDate(TodoWidgetState widget, DateTime date) =>
         widget.Items.Where(x => x.Date == date).OrderBy(x => x.Order).ToList();

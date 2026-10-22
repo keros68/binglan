@@ -15,8 +15,108 @@
                         FontFamily="{StaticResource UiFont}"
                         Foreground="{DynamicResource PrimaryTextBrush}">
     <local:WidgetWindowBase.Resources>
-        <!-- Compact entry row for the weekly cells: display-only (edit via the day
-             editor), two clipped lines with the full text on hover. -->
+        <!-- Full entry row for the day peek popup: drag the ≡ handle to reorder,
+             double-click the text to edit in place, right-click for move-to-day. -->
+        <DataTemplate x:Key="DayPeekItemTemplate">
+            <Border x:Name="PeekRowBorder"
+                    Tag="Interactive"
+                    Margin="0,1"
+                    Padding="4,3"
+                    CornerRadius="4"
+                    Background="Transparent"
+                    ContextMenuOpening="PeekRow_ContextMenuOpening">
+                <Border.ContextMenu>
+                    <ContextMenu DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}">
+                        <MenuItem Header="上移" Click="MoveUp_Click"/>
+                        <MenuItem Header="下移" Click="MoveDown_Click"/>
+                        <Separator/>
+                        <MenuItem Header="删除" Click="DeleteTodo_Click"/>
+                    </ContextMenu>
+                </Border.ContextMenu>
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <Border x:Name="PeekDragHandle"
+                            Width="14"
+                            Margin="-2,0,2,0"
+                            VerticalAlignment="Stretch"
+                            Background="Transparent"
+                            Cursor="SizeAll"
+                            Visibility="Collapsed"
+                            MouseLeftButtonDown="PeekHandle_MouseLeftButtonDown"
+                            MouseMove="PeekHandle_MouseMove"
+                            MouseLeftButtonUp="PeekHandle_MouseUp">
+                        <TextBlock Text="≡" FontSize="10" Foreground="#FF8A98A8" TextAlignment="Center" Margin="0,-3,0,0"/>
+                    </Border>
+                    <CheckBox Grid.Column="1"
+                              Width="12"
+                              Height="12"
+                              VerticalAlignment="Top"
+                              Margin="0,2,5,0"
+                              AutomationProperties.Name="切换待办完成状态"
+                              IsChecked="{Binding IsCompleted, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                              Checked="Completion_Changed"
+                              Unchecked="Completion_Changed"/>
+                    <TextBox x:Name="PeekText"
+                             Grid.Column="2"
+                             AutomationProperties.Name="待办内容"
+                             FontSize="12"
+                             TextWrapping="Wrap"
+                             Background="Transparent"
+                             BorderThickness="0"
+                             Padding="1,0"
+                             IsReadOnly="True"
+                             Focusable="False"
+                             Cursor="Arrow"
+                             CaretBrush="#FF3E77B5"
+                             Text="{Binding Text, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                             PreviewMouseLeftButtonDown="PeekText_PreviewMouseDown"
+                             PreviewKeyDown="PeekText_PreviewKeyDown"
+                             LostFocus="PeekText_LostFocus">
+                        <TextBox.Style>
+                            <Style TargetType="TextBox">
+                                <Setter Property="Foreground" Value="#FF22303E"/>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsCompleted}" Value="True">
+                                        <Setter Property="Foreground" Value="#FF8A98A8"/>
+                                        <Setter Property="TextDecorations" Value="Strikethrough"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBox.Style>
+                    </TextBox>
+                    <Button Grid.Column="3"
+                            AutomationProperties.Name="删除待办"
+                            Width="18"
+                            Height="18"
+                            Margin="2,-2,-4,-2"
+                            Padding="0"
+                            VerticalAlignment="Top"
+                            Foreground="#FF8A98A8"
+                            Background="Transparent"
+                            BorderThickness="0"
+                            FontSize="12"
+                            Content="×"
+                            ToolTip="删除待办"
+                            Click="DeleteTodo_Click">
+                        <Button.Style>
+                            <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                <Setter Property="Opacity" Value="0"/>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsMouseOver, RelativeSource={RelativeSource AncestorType={x:Type Border}}}" Value="True">
+                                        <Setter Property="Opacity" Value="1"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Button.Style>
+                    </Button>
+                </Grid>
+            </Border>
+        </DataTemplate>
         <DataTemplate x:Key="WeekItemRowTemplate">
             <Border Tag="Interactive"
                     Margin="0,0,0,4"
@@ -25,7 +125,8 @@
                     MinHeight="17"
                     Background="#94FFFFFF"
                     BorderBrush="#66FFFFFF"
-                    BorderThickness="1">
+                    BorderThickness="1"
+                    ContextMenuOpening="PeekRow_ContextMenuOpening">
                 <Border.ContextMenu>
                     <ContextMenu DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}">
                         <MenuItem Header="上移" Click="MoveUp_Click"/>
@@ -557,14 +658,40 @@
                                         Background="#FFB8C4EA">
                                     <Grid>
                                         <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
                                             <ColumnDefinition Width="*"/>
                                             <ColumnDefinition Width="Auto"/>
                                         </Grid.ColumnDefinitions>
-                                        <TextBlock x:Name="WeekPeekTitle"
-                                                   VerticalAlignment="Center"
-                                                   FontSize="13"
-                                                   FontWeight="SemiBold"
-                                                   Foreground="#FF243146"/>
+                                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                            <Button x:Name="WeekPeekPrevDay"
+                                                    AutomationProperties.Name="前一天"
+                                                    Width="22"
+                                                    Height="22"
+                                                    Padding="0"
+                                                    Background="Transparent"
+                                                    BorderThickness="0"
+                                                    FontSize="11"
+                                                    Content="◀"
+                                                    Foreground="#FF243146"
+                                                    Click="WeekPeekPrevDay_Click"/>
+                                            <TextBlock x:Name="WeekPeekTitle"
+                                                       Margin="6,0"
+                                                       VerticalAlignment="Center"
+                                                       FontSize="13"
+                                                       FontWeight="SemiBold"
+                                                       Foreground="#FF243146"/>
+                                            <Button x:Name="WeekPeekNextDay"
+                                                    AutomationProperties.Name="后一天"
+                                                    Width="22"
+                                                    Height="22"
+                                                    Padding="0"
+                                                    Background="Transparent"
+                                                    BorderThickness="0"
+                                                    FontSize="11"
+                                                    Content="▶"
+                                                    Foreground="#FF243146"
+                                                    Click="WeekPeekNextDay_Click"/>
+                                        </StackPanel>
                                         <Button Grid.Column="1"
                                                 AutomationProperties.Name="关闭当日浮层"
                                                 Width="24"
@@ -579,13 +706,41 @@
                                                 Click="WeekPeekClose_Click"/>
                                     </Grid>
                                 </Border>
+                                <Border Grid.Row="1"
+                                        Margin="10,4,10,0"
+                                        Padding="8,4"
+                                        CornerRadius="6"
+                                        Background="#FFDCE4F7"
+                                        Visibility="Collapsed">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock x:Name="ToastText"
+                                                   VerticalAlignment="Center"
+                                                   FontSize="11.5"
+                                                   Foreground="#FF243146"
+                                                   TextWrapping="Wrap"/>
+                                        <Button Grid.Column="1"
+                                                AutomationProperties.Name="撤销移动"
+                                                Margin="8,0,0,0"
+                                                Padding="6,2"
+                                                Content="撤销"
+                                                FontSize="11"
+                                                Background="Transparent"
+                                                BorderThickness="0"
+                                                Foreground="#FF243146"
+                                                Click="ToastUndo_Click"/>
+                                    </Grid>
+                                </Border>
                                 <ScrollViewer Grid.Row="1"
                                               MaxHeight="264"
                                               Margin="8,6,8,0"
                                               VerticalScrollBarVisibility="Auto">
                                     <ItemsControl x:Name="WeekPeekList"
                                                   Margin="0,0,2,0"
-                                                  ItemTemplate="{StaticResource WeekItemRowTemplate}"
+                                                  ItemTemplate="{StaticResource DayPeekItemTemplate}"
                                                   Focusable="False"
                                                   IsTabStop="False"/>
                                 </ScrollViewer>
@@ -616,7 +771,41 @@
                                 </Border>
                             </Grid>
                         </Border>
-                    </Canvas>
+                                        <!-- Move toast: transient feedback with undo. -->
+                    <Border x:Name="MoveToast"
+                            Grid.Row="0" Grid.RowSpan="3"
+                            Margin="0,40,0,0"
+                            Padding="10,6"
+                            CornerRadius="6"
+                            Background="#FFDCE4F7"
+                            BorderBrush="#FFB8C4EA"
+                            BorderThickness="1"
+                            VerticalAlignment="Top"
+                            HorizontalAlignment="Center"
+                            Visibility="Collapsed">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock x:Name="MoveToastText"
+                                       VerticalAlignment="Center"
+                                       FontSize="11.5"
+                                       Foreground="#FF243146"
+                                       TextWrapping="Wrap"/>
+                            <Button Grid.Column="1"
+                                    AutomationProperties.Name="撤销移动"
+                                    Margin="10,0,0,0"
+                                    Padding="6,2"
+                                    Content="撤销"
+                                    FontSize="11"
+                                    Background="Transparent"
+                                    BorderThickness="0"
+                                    Foreground="#FF243146"
+                                    Click="ToastUndo_Click"/>
+                        </Grid>
+                    </Border>
+                </Canvas>
                 </Grid>
 
             <Grid Grid.Row="2" Margin="17,0,17,7">

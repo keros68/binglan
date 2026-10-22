@@ -32,6 +32,12 @@ public partial class TodoWidgetWindow : WidgetWindowBase
     private DayEditWindow? _dayEditor;
     private WeekCellView? _selectedCellView;
     private WeekCellView? _peekCell;
+    private TodoItemState? _editingItem;
+    private string? _editingOriginalText;
+    private System.Windows.Point _dragStart;
+    private TodoItemState? _lastMovedItem;
+    private DateTime _lastMovedFrom;
+    private DispatcherTimer? _moveToastTimer;
 
     public TodoWidgetWindow(TodoWidgetState state)
     {
@@ -275,6 +281,100 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         e.Handled = true;
     }
 
+    // Peek drag state: arm on handle press, start past the system drag threshold,
+    // live-move within the peek list, commit the final order on mouse-up.
+    private bool _peekDragArmed;
+    private bool _peekDragging;
+    private TodoItemState? _dragItem;
+
+    private void PeekHandle_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (_peekCell is null
+            || sender is not FrameworkElement { DataContext: TodoItemState item } handle)
+        {
+            return;
+        }
+        _dragItem = item;
+        _dragStart = e.GetPosition(WeekPeekList);
+        _peekDragArmed = true;
+        _peekDragging = false;
+        handle.CaptureMouse();
+        e.Handled = true;
+    }
+
+    private void PeekHandle_MouseMove(object sender, System.Windows.Input.MouseEventArgs e)
+    {
+        if (!_peekDragArmed || _dragItem is null || _peekCell is null)
+        {
+            return;
+        }
+        var pos = e.GetPosition(WeekPeekList);
+        if (!_peekDragging)
+        {
+            if (Math.Abs(pos.X - _dragStart.X) < SystemParameters.MinimumHorizontalDragDistance
+                && Math.Abs(pos.Y - _dragStart.Y) < SystemParameters.MinimumVerticalDragDistance)
+            {
+                return;
+            }
+            _peekDragging = true;
+            if (WeekPeekList.ItemContainerGenerator.ContainerFromItem(_dragItem) is FrameworkElement dragRow)
+            {
+                dragRow.Opacity = 0.35;
+            }
+        }
+
+        var target = PeekIndexAt(pos.Y);
+        var current = _peekCell.Items.IndexOf(_dragItem);
+        if (target >= 0 && target != current)
+        {
+            _peekCell.Items.Move(current, target);
+        }
+        e.Handled = true;
+    }
+
+    private void PeekHandle_MouseUp(object sender, MouseButtonEventArgs e)
+    {
+        if (!_peekDragArmed)
+        {
+            return;
+        }
+        _peekDragArmed = false;
+        if (_peekDragging && _peekCell is not null && _dragItem is not null)
+        {
+            if (WeekPeekList.ItemContainerGenerator.ContainerFromItem(_dragItem) is FrameworkElement dragRow)
+            {
+                dragRow.Opacity = 1.0;
+            }
+            // The row positions are the truth now: write them back as per-day order.
+            for (var i = 0; i < _peekCell.Items.Count; i++)
+            {
+                _peekCell.Items[i].Order = i;
+            }
+            TodoService.Normalize(State);
+            CaptureState();
+            NotifyStateChanged();
+        }
+        _peekDragging = false;
+        _dragItem = null;
+        e.Handled = true;
+    }
+
+    private int PeekIndexAt(double y)
+    {
+        for (var i = 0; i < WeekPeekList.Items.Count; i++)
+        {
+            if (WeekPeekList.ItemContainerGenerator.ContainerFromIndex(i) is FrameworkElement container)
+            {
+                var topLeft = container.TranslatePoint(new System.Windows.Point(0, 0), WeekPeekList);
+                if (y >= topLeft.Y && y < topLeft.Y + container.ActualHeight)
+                {
+                    return i;
+                }
+            }
+        }
+        return -1;
+    }
+
     private void WeekOverflow_Click(object sender, MouseButtonEventArgs e)
     {
         if ((sender as FrameworkElement)?.DataContext is WeekCellView cell && !cell.IsFiller)
@@ -291,6 +391,7 @@ public partial class TodoWidgetWindow : WidgetWindowBase
             WeekdayName(cell.Date);
         WeekPeekList.ItemsSource = cell.Items;
         WeekPeekInput.Clear();
+        MoveToast.Visibility = Visibility.Collapsed;
         WeekPeekOverlay.Visibility = Visibility.Visible;
 
         // Anchor the panel next to the source cell, flipping inward at the edges.
@@ -314,6 +415,25 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         WeekPeekOverlay.Visibility = Visibility.Collapsed;
         WeekPeekList.ItemsSource = null;
         _peekCell = null;
+    }
+
+    private void WeekPeekPrevDay_Click(object sender, RoutedEventArgs e) => NavigatePeekDay(-1);
+
+    private void WeekPeekNextDay_Click(object sender, RoutedEventArgs e) => NavigatePeekDay(1);
+
+    private void NavigatePeekDay(int offset)
+    {
+        if (_peekCell is null)
+        {
+            return;
+        }
+        var target = _peekCell.Date.AddDays(offset);
+        if (_cellsByDate.TryGetValue(target, out var adjacent))
+        {
+            _selectedCellView = adjacent;
+            adjacent.IsSelected = true;
+            OpenDayPeek(adjacent, null);
+        }
     }
 
     private void WeekPeekOverlay_BackdropClick(object sender, MouseButtonEventArgs e) => CloseDayPeek();
@@ -341,6 +461,98 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         }
     }
 
+    private void MoveItemToDate(TodoItemState item, DateTime target)
+    {
+        if (item.Date is not { } from || !TodoService.MoveToDate(State, item.Id, target))
+        {
+            return;
+        }
+        if (_cellsByDate.TryGetValue(from, out var oldCell))
+        {
+            oldCell.Items.Remove(item);
+            ResortCell(oldCell);
+        }
+        if (_cellsByDate.TryGetValue(target, out var newCell))
+        {
+            newCell.Items.Add(item);
+            ResortCell(newCell);
+        }
+        RefreshSummary();
+        NotifyStateChanged();
+        ShowMoveToast($"已移到 {target:M月d日}（{WeekdayName(target)}）", item, from);
+    }
+
+    private void ShowMoveToast(string message, TodoItemState item, DateTime from)
+    {
+        _lastMovedItem = item;
+        _lastMovedFrom = from;
+        MoveToastText.Text = message;
+        MoveToast.Visibility = Visibility.Visible;
+        _moveToastTimer ??= new DispatcherTimer { Interval = TimeSpan.FromSeconds(3.5) };
+        _moveToastTimer.Tick -= HideMoveToast;
+        _moveToastTimer.Tick += HideMoveToast;
+        _moveToastTimer.Stop();
+        _moveToastTimer.Start();
+    }
+
+    private void HideMoveToast(object? sender, EventArgs e)
+    {
+        _moveToastTimer?.Stop();
+        MoveToast.Visibility = Visibility.Collapsed;
+    }
+
+    private void ToastUndo_Click(object sender, RoutedEventArgs e)
+    {
+        if (_lastMovedItem is { } item)
+        {
+            HideMoveToast(this, EventArgs.Empty);
+            MoveItemToDate(item, _lastMovedFrom);
+        }
+    }
+
+        private void PeekText_PreviewMouseDown(object sender, MouseButtonEventArgs e)
+    {
+        // Double-click on a peek row's text unlocks in-place editing for that entry.
+        if (e.ClickCount == 2
+            && sender is System.Windows.Controls.TextBox { IsReadOnly: true, DataContext: TodoItemState item } editor)
+        {
+            _editingItem = item;
+            _editingOriginalText = item.Text;
+            editor.IsReadOnly = false;
+            editor.Focusable = true;
+            editor.Cursor = System.Windows.Input.Cursors.IBeam;
+            editor.Focus();
+            editor.SelectAll();
+            e.Handled = true;
+        }
+    }
+
+    private void PeekText_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key is Key.Enter or Key.Escape)
+        {
+            e.Handled = true;
+            EndPeekTextEdit(sender);
+        }
+    }
+
+    private void PeekText_LostFocus(object sender, RoutedEventArgs e)
+    {
+        // Live binding has kept the text current; ending the edit state is enough.
+        EndPeekTextEdit(sender);
+    }
+
+    private void EndPeekTextEdit(object? sender)
+    {
+        if (sender is System.Windows.Controls.TextBox editor)
+        {
+            editor.IsReadOnly = true;
+            editor.Focusable = false;
+            editor.Cursor = System.Windows.Input.Cursors.Arrow;
+        }
+        _editingItem = null;
+    }
+
     private static string WeekdayName(DateTime date) =>
         date.DayOfWeek switch
         {
@@ -352,6 +564,45 @@ public partial class TodoWidgetWindow : WidgetWindowBase
             DayOfWeek.Saturday => "周六",
             _ => "周日"
         };
+
+    private void PeekRow_ContextMenuOpening(object sender, ContextMenuEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not TodoItemState item)
+        {
+            return;
+        }
+        var row = (FrameworkElement)sender;
+        row.ContextMenu ??= new System.Windows.Controls.ContextMenu();
+        var menu = row.ContextMenu;
+
+        // Rebuild the move-to block each time: the target dates depend on the entry.
+        while (menu.Items.Count > 0 && menu.Items[0] is System.Windows.Controls.MenuItem { Header: string h } && h.StartsWith("移到"))
+        {
+            menu.Items.RemoveAt(0);
+        }
+        if (menu.Items.Count > 0 && menu.Items[0] is System.Windows.Controls.Separator)
+        {
+            menu.Items.RemoveAt(0);
+        }
+
+        if (item.Date is { } ownDate)
+        {
+            var moveTo = new System.Windows.Controls.MenuItem { Header = "移到 ▸" };
+            foreach (var (offset, label) in new[] { (1, "明天"), (2, "后天"), (3, "大后天") })
+            {
+                var target = ownDate.AddDays(offset);
+                var entry = new System.Windows.Controls.MenuItem
+                {
+                    Header = $"{label}（{target:M月d日} {WeekdayName(target)}）"
+                };
+                var captured = item;
+                entry.Click += (_, _) => MoveItemToDate(captured, target);
+                moveTo.Items.Add(entry);
+            }
+            menu.Items.Insert(0, new System.Windows.Controls.Separator());
+            menu.Items.Insert(0, moveTo);
+        }
+    }
 
     private void SelectCell(WeekCellView cell)
     {

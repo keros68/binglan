@@ -12,6 +12,7 @@ var failures = new List<string>();
 Run("待办编辑、勾选、排序", TestTodo);
 Run("待办日期字段、完成时间与周历规则", TestTodoDates);
 Run("按日同步待办行", TestSyncDayItems);
+Run("跨日移动待办", TestMoveToDate);
 Run("待办日期持久化与官方版本兼容", TestTodoDatePersistence);
 Run("周历农历标注", TestLunarDayText);
 Run("顶栏只统计今日待办", TestTopBarTodayCount);
@@ -225,6 +226,31 @@ static void TestSyncDayItems()
     var numbered = TodoService.ItemsForDate(widget, monday).ToList();
     Assert(numbered.Count == 2 && numbered[0].Text == "3D建模实训" && numbered[1].Text == "42",
         "数字开头的正文不应被误剥序号");
+}
+
+static void TestMoveToDate()
+{
+    var widget = new TodoWidgetState();
+    var monday = DateTime.Today.AddDays(-(((int)DateTime.Today.DayOfWeek + 6) % 7));
+    var a = TodoService.Add(widget, "没做完的", monday);
+    a.IsCompleted = false;
+    TodoService.Add(widget, "别的一天", monday.AddDays(1));
+
+    Assert(TodoService.MoveToDate(widget, a.Id, monday.AddDays(3)), "应能移动到大后天");
+    Assert(a.Date == monday.AddDays(3) && a.Text == "没做完的" && !a.IsCompleted,
+        "跨日移动应只改日期，文字与完成状态不变");
+    Assert(!TodoService.ItemsForDate(widget, monday).Any(), "源日期不应残留条目");
+    Assert(TodoService.ItemsForDate(widget, monday.AddDays(3)).Single().Id == a.Id, "目标日期应有该条目");
+
+    var b = TodoService.Add(widget, "已完成项", monday);
+    b.IsCompleted = true;
+    TodoService.StampCompletion(b);
+    Assert(TodoService.MoveToDate(widget, b.Id, monday.AddDays(3)), "应能移动已完成项");
+    var moved = TodoService.ItemsForDate(widget, monday.AddDays(3)).Single(x => x.Text == "已完成项");
+    Assert(moved.IsCompleted && moved.CompletedDate is not null, "跨日移动应保留完成状态与时间");
+
+    Assert(!TodoService.MoveToDate(widget, b.Id, monday.AddDays(3)), "移到同一日期应返回 false 且无操作");
+    Assert(!TodoService.MoveToDate(widget, Guid.NewGuid(), monday), "移动不存在的条目应返回 false");
 }
 
 static void TestTodoDatePersistence()
