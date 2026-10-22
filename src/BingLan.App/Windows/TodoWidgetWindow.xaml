@@ -46,10 +46,21 @@
                             VerticalAlignment="Stretch"
                             Background="Transparent"
                             Cursor="SizeAll"
-                            Visibility="Collapsed"
                             MouseLeftButtonDown="PeekHandle_MouseLeftButtonDown"
                             MouseMove="PeekHandle_MouseMove"
                             MouseLeftButtonUp="PeekHandle_MouseUp">
+                        <Border.Style>
+                            <Style TargetType="Border">
+                                <Setter Property="Visibility" Value="Collapsed"/>
+                                <Style.Triggers>
+                                    <!-- Row hover reveals the handle; the row Border fill is
+                                         transparent so IsMouseOver covers the whole row. -->
+                                    <DataTrigger Binding="{Binding IsMouseOver, ElementName=PeekRowBorder}" Value="True">
+                                        <Setter Property="Visibility" Value="Visible"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Border.Style>
                         <TextBlock Text="≡" FontSize="10" Foreground="#FF8A98A8" TextAlignment="Center" Margin="0,-3,0,0"/>
                     </Border>
                     <CheckBox Grid.Column="1"
