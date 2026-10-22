@@ -318,6 +318,9 @@ public partial class TodoWidgetWindow : WidgetWindowBase
     // ------------------------------------------------------------------
     protected override void OnPreviewMouseLeftButtonDown(System.Windows.Input.MouseButtonEventArgs e)
     {
+        // Any press is a new intent: a pending dwell countdown must not fire
+        // behind it (clicks on nav buttons, ✕, the input box, …).
+        _peekDwellTimer?.Stop();
         if (WeekPeekOverlay.Visibility != Visibility.Visible || _peekDragPhase != PeekDragPhase.HoverArmed)
         {
             // Idle presses no longer arm anything — only a dwell does.
@@ -340,6 +343,14 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         // can re-arm on the row now under the cursor.
         if (FindPeekRowContainer((System.Windows.DependencyObject)e.OriginalSource) is not { } container
             || !ReferenceEquals(container, _peekDragContainer))
+        {
+            CancelPeekDrag();
+            return;
+        }
+        // The armed item may have left the collection between the dwell tick
+        // and this press (toast undo, external refresh): re-validate identity
+        // before dragging.
+        if (_peekDragItem is not TodoItemState armedItem || !_peekCell.Items.Contains(armedItem))
         {
             CancelPeekDrag();
             return;
@@ -367,8 +378,11 @@ public partial class TodoWidgetWindow : WidgetWindowBase
             if (Math.Abs(pos.X - _peekArmPoint.X) > SystemParameters.MinimumHorizontalDragDistance
                 || Math.Abs(pos.Y - _peekArmPoint.Y) > SystemParameters.MinimumVerticalDragDistance)
             {
-                // The cursor moved on — the lift was a dwell artifact, drop it.
+                // The cursor moved on — the lift was a dwell artifact, drop it;
+                // the same event seeds a fresh dwell so stopping right after
+                // the move still re-arms per the dwell semantics.
                 CancelPeekDrag();
+                UpdatePeekDwell(e);
             }
         }
         else if (_peekDragPhase == PeekDragPhase.Dragging)
@@ -437,6 +451,29 @@ public partial class TodoWidgetWindow : WidgetWindowBase
             CancelPeekDrag();
             e.Handled = true;
         }
+    }
+
+    protected override void OnDeactivated(EventArgs e)
+    {
+        // Losing activation kills the pending dwell; an active lift would
+        // otherwise persist invisibly. A drag in progress is left to the
+        // LostMouseCapture settle path.
+        _peekDwellTimer?.Stop();
+        if (_peekDragPhase == PeekDragPhase.HoverArmed)
+        {
+            CancelPeekDrag();
+        }
+        base.OnDeactivated(e);
+    }
+
+    protected override void OnClosed(EventArgs e)
+    {
+        _peekDwellTimer?.Stop();
+        if (_peekDragPhase != PeekDragPhase.Idle)
+        {
+            CancelPeekDrag();
+        }
+        base.OnClosed(e);
     }
 
     private System.Windows.Controls.ContentPresenter? FindPeekRowContainer(DependencyObject source)
@@ -742,6 +779,13 @@ public partial class TodoWidgetWindow : WidgetWindowBase
 
     private void OpenDayPeek(WeekCellView cell, FrameworkElement? cellElement)
     {
+        // Re-opening (day navigation included) regenerates the row containers:
+        // any armed lift or pending dwell is stale by definition.
+        _peekDwellTimer?.Stop();
+        if (_peekDragPhase != PeekDragPhase.Idle)
+        {
+            CancelPeekDrag();
+        }
         _peekCell = cell;
         WeekPeekTitle.Text = cell.Date.ToString("M月d日") + " · " +
             WeekdayName(cell.Date);
@@ -952,7 +996,9 @@ public partial class TodoWidgetWindow : WidgetWindowBase
 
     private void PeekRow_ContextMenuOpening(object sender, ContextMenuEventArgs e)
     {
-        // A right-click menu is a different intent: drop the dwell lift.
+        // A right-click menu is a different intent: kill any pending dwell
+        // countdown and drop an active lift.
+        _peekDwellTimer?.Stop();
         if (_peekDragPhase == PeekDragPhase.HoverArmed)
         {
             CancelPeekDrag();
