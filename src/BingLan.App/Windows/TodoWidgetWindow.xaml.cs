@@ -46,6 +46,8 @@ public partial class TodoWidgetWindow : WidgetWindowBase
     private int _peekFromIndex;
     private int _peekTargetIndex;
     private PeekDragPhase _peekDragPhase = PeekDragPhase.Idle;
+    private double[]? _peekSlotTops;
+    private double[]? _peekSlotHeights;
 
     private enum PeekDragPhase
     {
@@ -296,22 +298,6 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         e.Handled = true;
     }
 
-    private int PeekIndexAt(double y)
-    {
-        for (var i = 0; i < WeekPeekList.Items.Count; i++)
-        {
-            if (WeekPeekList.ItemContainerGenerator.ContainerFromIndex(i) is FrameworkElement container)
-            {
-                var topLeft = container.TranslatePoint(new System.Windows.Point(0, 0), WeekPeekList);
-                if (y >= topLeft.Y && y < topLeft.Y + container.ActualHeight)
-                {
-                    return i;
-                }
-            }
-        }
-        return -1;
-    }
-
     // ------------------------------------------------------------------
     // Long-press drag reordering inside the day peek popup.
     // State machine: Idle → Pressed(mouse down on a row) → Dragging(300 ms
@@ -511,13 +497,40 @@ public partial class TodoWidgetWindow : WidgetWindowBase
 
     private void ArmPeekDrag()
     {
+        _peekLongPressTimer?.Stop();
         _peekDragPhase = PeekDragPhase.Dragging;
-        _peekDragContainer!.CaptureMouse();
+        if (!_peekDragContainer!.CaptureMouse())
+        {
+            // Without capture there is no lost-capture safety net and the drag
+            // would freeze outside the window; abort cleanly while nothing is
+            // armed yet.
+            _peekDragPhase = PeekDragPhase.Idle;
+            _peekDragCell = null;
+            _peekDragItem = null;
+            _peekDragContainer = null;
+            _peekDragRow = null;
+            return;
+        }
         // Focus loss (Alt+Tab, a system menu, another capture) silently drops
         // the capture; without this the phase would stay Dragging forever and
         // every later press would be ignored. Settle what was shown so far.
         _peekDragContainer.LostMouseCapture -= PeekDragContainer_LostMouseCapture;
         _peekDragContainer.LostMouseCapture += PeekDragContainer_LostMouseCapture;
+        // Target matching must read untransformed slot geometry: the dragged
+        // row follows the cursor 1:1, so any hit test over live (transformed)
+        // positions would keep hitting the dragged row's own band. Snapshot
+        // the pristine layout before the first shift is applied.
+        var count = WeekPeekList.Items.Count;
+        _peekSlotTops = new double[count];
+        _peekSlotHeights = new double[count];
+        for (var index = 0; index < count; index++)
+        {
+            if (WeekPeekList.ItemContainerGenerator.ContainerFromIndex(index) is FrameworkElement container)
+            {
+                _peekSlotTops[index] = container.TranslatePoint(new System.Windows.Point(0, 0), WeekPeekList).Y;
+                _peekSlotHeights[index] = container.ActualHeight;
+            }
+        }
         // Z-order and drag transforms live on the generated container (a direct
         // child of the list panel); the lift visuals live on the template Border.
         System.Windows.Controls.Panel.SetZIndex(_peekDragContainer, 100);
@@ -551,12 +564,42 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         {
             translate.Y = posInList.Y - _peekPressPoint.Y;
         }
-        var target = PeekIndexAt(posInList.Y);
+        var target = PeekTargetIndexForDragOffset();
         if (target >= 0 && target != _peekTargetIndex)
         {
             _peekTargetIndex = target;
             ApplyPeekShifts();
         }
+    }
+
+    // Nearest-slot-center match against the pristine snapshot: the swap fires
+    // when the dragged row's visual center passes a neighbour's center. The
+    // decision is monotonic in the follow offset (no transform feedback) and
+    // supports jumping over several rows in one move.
+    private int PeekTargetIndexForDragOffset()
+    {
+        if (_peekSlotTops is null || _peekSlotHeights is null
+            || _peekDragContainer?.RenderTransform is not System.Windows.Media.TranslateTransform translate)
+        {
+            return -1;
+        }
+        var draggedCenter = _peekSlotTops[_peekFromIndex] + translate.Y + (_peekSlotHeights[_peekFromIndex] / 2);
+        var best = _peekFromIndex;
+        var bestDistance = double.MaxValue;
+        for (var index = 0; index < _peekSlotTops.Length; index++)
+        {
+            if (index == _peekFromIndex)
+            {
+                continue;
+            }
+            var distance = Math.Abs(draggedCenter - (_peekSlotTops[index] + (_peekSlotHeights[index] / 2)));
+            if (distance < bestDistance)
+            {
+                bestDistance = distance;
+                best = index;
+            }
+        }
+        return best;
     }
 
     private void ApplyPeekShifts()
@@ -579,7 +622,9 @@ public partial class TodoWidgetWindow : WidgetWindowBase
             double shift;
             if (index == _peekFromIndex)
             {
-                shift = 0;
+                // The dragged row's transform carries the cursor-follow offset —
+                // never touch it here.
+                continue;
             }
             else if (_peekFromIndex < _peekTargetIndex)
             {
@@ -607,7 +652,11 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         _peekDragPhase = PeekDragPhase.Idle;
         var finalIndex = Math.Clamp(_peekTargetIndex, 0, Math.Max(0, (_peekDragCell?.Items.Count ?? 1) - 1));
         ResetPeekDragVisual();
-        _peekDragContainer?.ReleaseMouseCapture();
+        if (_peekDragContainer is not null)
+        {
+            _peekDragContainer.LostMouseCapture -= PeekDragContainer_LostMouseCapture;
+            _peekDragContainer.ReleaseMouseCapture();
+        }
         if (_peekDragCell is not null
             && _peekDragItem is not null
             && finalIndex != _peekFromIndex
@@ -634,9 +683,14 @@ public partial class TodoWidgetWindow : WidgetWindowBase
     private void CancelPeekDrag()
     {
         // Idle before releasing so the LostMouseCapture handler stays quiet.
+        _peekLongPressTimer?.Stop();
         _peekDragPhase = PeekDragPhase.Idle;
         ResetPeekDragVisual();
-        _peekDragContainer?.ReleaseMouseCapture();
+        if (_peekDragContainer is not null)
+        {
+            _peekDragContainer.LostMouseCapture -= PeekDragContainer_LostMouseCapture;
+            _peekDragContainer.ReleaseMouseCapture();
+        }
         _peekDragCell = null;
         _peekDragItem = null;
         _peekDragContainer = null;
