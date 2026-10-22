@@ -300,6 +300,34 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         e.Handled = true;
     }
 
+    // The body ScrollViewer marks left-button-down handled (it takes keyboard
+    // focus on click, which also painted a focus rectangle inside the cell),
+    // so the cell surface handler on the root Border never sees body clicks.
+    // Re-dispatch from the ScrollViewer itself, seeing handled events; clicks
+    // on the row checkbox/delete button stay excluded.
+    private static readonly HashSet<DependencyObject> CellScrollHooked = [];
+
+    private void WeekCellSurface_Preview(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.Border border) return;
+        if (CellScrollHooked.Add(border)
+            && FindVisualChild<System.Windows.Controls.ScrollViewer>(border) is { } scroller)
+        {
+            scroller.AddHandler(MouseLeftButtonDownEvent,
+                new MouseButtonEventHandler(WeekCellScroller_Click), handledEventsToo: true);
+        }
+    }
+
+    private void WeekCellScroller_Click(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.ScrollViewer scroller
+            || HitsChildControl(e.OriginalSource as DependencyObject ?? scroller, scroller))
+        {
+            return;
+        }
+        WeekCellSurface_Click(sender, e);
+    }
+
     // ------------------------------------------------------------------
     // Dwell-lift drag reordering inside the day peek popup.
     // State machine: Idle → HoverArmed(cursor dwells over a row for 500 ms

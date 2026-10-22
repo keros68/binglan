@@ -493,7 +493,8 @@
                                                             CornerRadius="4"
                                                             Background="Transparent"
                                                             Tag="Interactive"
-                                                            MouseLeftButtonDown="WeekCellSurface_Click">
+                                                            MouseLeftButtonDown="WeekCellSurface_Click"
+                                                            PreviewMouseLeftButtonDown="WeekCellSurface_Preview">
                                                         <Border.Style>
                                                             <Style TargetType="Border">
                                                                 <Setter Property="BorderBrush" Value="Transparent"/>
@@ -547,7 +548,8 @@
                                                                     <RowDefinition Height="*"/>
                                                                     <RowDefinition Height="Auto"/>
                                                                 </Grid.RowDefinitions>
-                                                                <StackPanel Orientation="Horizontal" Height="21">
+                                                                <StackPanel Orientation="Horizontal" Height="21"
+                                            Background="Transparent">
                                                                     <TextBlock Text="{Binding DayNumber}"
                                                                                FontSize="13.5"
                                                                                FontWeight="Medium"
@@ -572,7 +574,11 @@
                                                                 </StackPanel>
                                                                 <!-- Per-cell scroll: wheel over the cell rolls the day's
                                                                      entries without opening the day editor. -->
+                                                                <!-- Focusable=False：ScrollViewer 默认把鼠标按下标记为已处理以抢焦点，
+                                                                     这会吞掉格身全部点击（并画出虚线焦点框）；点击分派改由
+                                                                     WeekCellSurface_Preview 在其上以 handledEventsToo 挂载。 -->
                                                                 <ScrollViewer Grid.Row="1"
+                                                                              Focusable="False"
                                                                               Margin="0,2,0,0"
                                                                               VerticalScrollBarVisibility="Hidden"
                                                                               HorizontalScrollBarVisibility="Disabled">
