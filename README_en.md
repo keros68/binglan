@@ -19,7 +19,7 @@ BingLan Desktop (冰蓝桌面) is a Windows 11 desktop companion built with .NET
 ## Features
 
 - **Desktop info**: time and date, greeting, weather, and CPU / RAM / network are separate cards, each with its own font, size, colour, and position. A thin line that fades at both ends can be shown under the time.
-- **To-dos and notes**: a to-do card starts with three empty items; ticking, adding, and deleting are separate actions. Notes hold plain multi-line text.
+- **To-dos and notes**: switch between today's list and a 1–5-week calendar with lunar dates; open a day's details, edit multiple lines in a dialog, reorder tasks by dragging, and move tasks between days with undo. New cards start empty. Edits are saved when the dialog or app closes. Plain notes support multiline text and typography.
 - **File groups**: map desktop files, folders, and apps into boxes, sort them by type automatically (which also clears entries whose original file was deleted), fold a box down to its title bar, and show items as large icons or a compact list. Turn on "file-box automation" on the Layout settings page (off by default) and new files landing on the desktop join their existing box on their own, while entries whose original file was deleted disappear from the box. Entries on unplugged drives or offline shares stay, marked as invalid, and can be relinked. Boxes record paths only; original files stay where they are.
 - **Multiple monitors**: cards remember a position for each monitor setup. Unplug a laptop's external monitor and plug it back in, and the cards return to where they were on two screens.
 - **Quick launch**: a row of line icons for This PC, Desktop, Documents, Downloads, Pictures, and the Recycle Bin by default. Icons, names, and targets are customizable; a target can be a folder, program, or file.
@@ -39,7 +39,7 @@ The interface is in Simplified Chinese.
 
 ## Get started
 
-Stable version: [v0.2.36](https://github.com/keros68/binglan/releases/tag/v0.2.36) · [Installer](https://github.com/keros68/binglan/releases/download/v0.2.36/BingLan-Setup-0.2.36.exe) · [Portable](https://github.com/keros68/binglan/releases/download/v0.2.36/BingLan-0.2.36-portable.zip). Clicking a docked WeChat that was closed to the tray now brings back its signed-in main window instead of the login confirmation panel: the dock uses WeChat's own show/hide hotkey (Ctrl+Alt+W by default). If that hotkey was changed or turned off, the dock launches WeChat as before. A standalone [compatibility tool](https://github.com/keros68/binglan/releases/download/v0.2.36/BingLan-0.2.36-tray-preview.zip) is also available; see the [guide (Chinese)](docs/TRAY-PREVIEW.md).
+Stable version: [v0.2.37](https://github.com/keros68/binglan/releases/tag/v0.2.37) · [Installer](https://github.com/keros68/binglan/releases/download/v0.2.37/BingLan-Setup-0.2.37.exe) · [Portable](https://github.com/keros68/binglan/releases/download/v0.2.37/BingLan-0.2.37-portable.zip). A standalone [compatibility tool](https://github.com/keros68/binglan/releases/download/v0.2.37/BingLan-0.2.37-tray-preview.zip) is also available; see the [guide (Chinese)](docs/TRAY-PREVIEW.md).
 
 1. Open [Releases](https://github.com/keros68/binglan/releases/latest) and download `BingLan-Setup-*.exe` (installer) or `BingLan-*-portable.zip` (portable).
 2. Installer: run it — it installs for the current user and needs no administrator rights. Portable: unzip anywhere and run `BingLan.exe` inside. Both include the .NET runtime and are not code-signed yet, so Windows asks for confirmation on first run.
@@ -62,7 +62,7 @@ Requires the .NET 10 SDK and PowerShell 7. Building the installer also needs Inn
 ```powershell
 dotnet build .\BingLan.slnx -c Release
 dotnet run --project .\tests\BingLan.SmokeTests\BingLan.SmokeTests.csproj -c Release
-pwsh -NoProfile -File .\installer\build.ps1 -Version 0.2.36
+pwsh -NoProfile -File .\installer\build.ps1 -Version 0.2.37
 ```
 
 Full test commands, the technical design, and the current implementation are in the [development notes (Chinese)](docs/DEVELOPMENT.md); installer details are in [docs/INSTALLER.md](docs/INSTALLER.md).
