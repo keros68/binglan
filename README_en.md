@@ -39,7 +39,9 @@ The interface is in Simplified Chinese.
 
 ## Get started
 
-Stable version: [v0.2.34](https://github.com/keros68/binglan/releases/tag/v0.2.34) · [Installer](https://github.com/keros68/binglan/releases/download/v0.2.34/BingLan-Setup-0.2.34.exe) · [Portable](https://github.com/keros68/binglan/releases/download/v0.2.34/BingLan-0.2.34-portable.zip). Fixed clicking a docked app that keeps running after its window is closed (WeChat): the dock now reveals the still-running hidden window instead of launching a second instance that lands on a login screen; middle-click, Shift+click or the context menu's "launch new instance" still start a new process. A standalone [compatibility tool](https://github.com/keros68/binglan/releases/download/v0.2.34/BingLan-0.2.34-tray-preview.zip) is also available; see the [guide (Chinese)](docs/TRAY-PREVIEW.md).
+Stable version: [v0.2.34](https://github.com/keros68/binglan/releases/tag/v0.2.34) · [Installer](https://github.com/keros68/binglan/releases/download/v0.2.34/BingLan-Setup-0.2.34.exe) · [Portable](https://github.com/keros68/binglan/releases/download/v0.2.34/BingLan-0.2.34-portable.zip). Fixed clicking a docked app that keeps running after its window is closed (WeChat): the dock now tries to reveal the still-running hidden window. A standalone [compatibility tool](https://github.com/keros68/binglan/releases/download/v0.2.34/BingLan-0.2.34-tray-preview.zip) is also available; see the [guide (Chinese)](docs/TRAY-PREVIEW.md).
+
+Pre-release: [v0.2.35](https://github.com/keros68/binglan/releases/tag/v0.2.35) · [Installer](https://github.com/keros68/binglan/releases/download/v0.2.35/BingLan-Setup-0.2.35.exe) · [Portable](https://github.com/keros68/binglan/releases/download/v0.2.35/BingLan-0.2.35-portable.zip). Fixes 0.2.34 showing a blank "WxTrayIconMessageWindow" when clicking a docked WeChat that was closed to the tray: an app's hidden windows must not be force-shown from outside (on WeChat 4.x this only yields a blank or input-dead window), so the dock launches the app again and lets its own single-instance logic raise the window. A standalone [compatibility tool](https://github.com/keros68/binglan/releases/download/v0.2.35/BingLan-0.2.35-tray-preview.zip) is also available; see the [guide (Chinese)](docs/TRAY-PREVIEW.md).
 
 1. Open [Releases](https://github.com/keros68/binglan/releases/latest) and download `BingLan-Setup-*.exe` (installer) or `BingLan-*-portable.zip` (portable).
 2. Installer: run it — it installs for the current user and needs no administrator rights. Portable: unzip anywhere and run `BingLan.exe` inside. Both include the .NET runtime and are not code-signed yet, so Windows asks for confirmation on first run.
@@ -62,7 +64,7 @@ Requires the .NET 10 SDK and PowerShell 7. Building the installer also needs Inn
 ```powershell
 dotnet build .\BingLan.slnx -c Release
 dotnet run --project .\tests\BingLan.SmokeTests\BingLan.SmokeTests.csproj -c Release
-pwsh -NoProfile -File .\installer\build.ps1 -Version 0.2.34
+pwsh -NoProfile -File .\installer\build.ps1 -Version 0.2.35
 ```
 
 Full test commands, the technical design, and the current implementation are in the [development notes (Chinese)](docs/DEVELOPMENT.md); installer details are in [docs/INSTALLER.md](docs/INSTALLER.md).
