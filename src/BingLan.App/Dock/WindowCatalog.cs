@@ -64,7 +64,7 @@ internal sealed class WindowCatalog
         return rootOwner != 0 ? rootOwner : window;
     }
 
-    private static bool ShouldInclude(nint window, nint shell)
+    internal static bool ShouldInclude(nint window, nint shell)
     {
         if (window == 0
             || window == shell
@@ -175,6 +175,27 @@ internal sealed class WindowCatalog
             {
                 Marshal.ReleaseComObject(store);
             }
+        }
+    }
+
+    internal static string? ExecutablePathOf(uint processId)
+    {
+        var process = DockNativeMethods.OpenProcess(
+            DockNativeMethods.ProcessQueryLimitedInformation,
+            false,
+            processId);
+        if (process == 0)
+        {
+            return null;
+        }
+
+        try
+        {
+            return TryGetExecutablePath(process);
+        }
+        finally
+        {
+            DockNativeMethods.CloseHandle(process);
         }
     }
 

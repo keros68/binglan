@@ -201,10 +201,13 @@ internal static class ShellSurfaceNativeMethods
         || IsStartMenuSurface(className, processName)
         || (processName is "ShellHost" or "ShellExperienceHost" && className == "ControlCenterWindow");
 
-    internal static bool SendChord(ushort modifier, ushort key)
+    internal static bool SendChord(ushort modifier, ushort key) => SendChord([modifier], key);
+
+    internal static bool SendChord(ushort[] modifiers, ushort key)
     {
         // Do not release a modifier the user is holding, or turn a modified click
-        // into another shortcut. All entry points use documented Windows shortcuts.
+        // into another shortcut. Entry points send documented Windows shortcuts or an
+        // app's own registered hotkey.
         if (HasHeldModifier())
         {
             return false;
@@ -214,11 +217,16 @@ internal static class ShellSurfaceNativeMethods
             Type = InputKeyboard,
             Data = new InputData { Keyboard = new KeyboardInput { VirtualKey = key, Flags = up ? KeyUp : 0 } }
         };
-        var inputs = new[] { Key(modifier), Key(key), Key(key, true), Key(modifier, true) };
+        var releases = new[] { Key(key, true) }
+            .Concat(modifiers.Reverse().Select(modifier => Key(modifier, true)))
+            .ToArray();
+        var inputs = modifiers.Select(modifier => Key(modifier))
+            .Append(Key(key))
+            .Concat(releases)
+            .ToArray();
         var sent = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<Input>());
         if (sent > 0 && sent < inputs.Length)
         {
-            var releases = new[] { Key(key, true), Key(modifier, true) };
             _ = SendInput((uint)releases.Length, releases, Marshal.SizeOf<Input>());
         }
         if (sent != inputs.Length) Debug.WriteLine($"SendInput 未完整发送：{sent}/{inputs.Length} error={Marshal.GetLastWin32Error()}");

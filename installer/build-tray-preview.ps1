@@ -1,4 +1,4 @@
-param([ValidatePattern('^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$')][string]$Version = "0.2.35")
+param([ValidatePattern('^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$')][string]$Version = "0.2.36")
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 $stage = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot "obj\tray-preview"))
