@@ -37,9 +37,7 @@ Windows 11 开启系统透明效果时，Dock 和隐藏把手使用实时毛玻�
 
 ## 快速开始
 
-稳定版：[v0.2.34](https://github.com/keros68/binglan/releases/tag/v0.2.34) · [安装版](https://github.com/keros68/binglan/releases/download/v0.2.34/BingLan-Setup-0.2.34.exe) · [免安装版](https://github.com/keros68/binglan/releases/download/v0.2.34/BingLan-0.2.34-portable.zip)。修复微信等关闭窗口后驻留后台的应用，点击 Dock 图标会重新拉起登录界面的问题：点击固定图标会尝试唤回仍在运行的隐藏窗口。另附[兼容性验收工具](https://github.com/keros68/binglan/releases/download/v0.2.34/BingLan-0.2.34-tray-preview.zip)，使用步骤见[托盘验收说明](docs/TRAY-PREVIEW.md)。
-
-预发布版：[v0.2.35](https://github.com/keros68/binglan/releases/tag/v0.2.35) · [安装版](https://github.com/keros68/binglan/releases/download/v0.2.35/BingLan-Setup-0.2.35.exe) · [免安装版](https://github.com/keros68/binglan/releases/download/v0.2.35/BingLan-0.2.35-portable.zip)。修复 0.2.34 中微信收进托盘后点击 Dock 弹出 WxTrayIconMessageWindow 空白窗口的问题：应用关闭到托盘后其隐藏窗口不能从外部强制显示（微信 4.x 实测强拉只会得到空白或无响应窗口），点击 Dock 恢复为直接启动、由应用自身的单实例机制唤回主窗口。另附[兼容性验收工具](https://github.com/keros68/binglan/releases/download/v0.2.35/BingLan-0.2.35-tray-preview.zip)，使用步骤见[托盘验收说明](docs/TRAY-PREVIEW.md)。
+稳定版：[v0.2.35](https://github.com/keros68/binglan/releases/tag/v0.2.35) · [安装版](https://github.com/keros68/binglan/releases/download/v0.2.35/BingLan-Setup-0.2.35.exe) · [免安装版](https://github.com/keros68/binglan/releases/download/v0.2.35/BingLan-0.2.35-portable.zip)。修复 0.2.34 中微信收进托盘后点击 Dock 弹出 WxTrayIconMessageWindow 空白窗口的问题：应用关闭到托盘后其隐藏窗口不能从外部强制显示（微信 4.x 实测强拉只会得到空白或无响应窗口），点击 Dock 恢复为直接启动、由应用自身的单实例机制唤回主窗口。另附[兼容性验收工具](https://github.com/keros68/binglan/releases/download/v0.2.35/BingLan-0.2.35-tray-preview.zip)，使用步骤见[托盘验收说明](docs/TRAY-PREVIEW.md)。
 
 1. 打开 [Releases](https://github.com/keros68/binglan/releases/latest)，下载 `BingLan-Setup-*.exe`（安装版）或 `BingLan-*-portable.zip`（免安装版）。
 2. 安装版运行安装包，按当前用户安装，不需要管理员权限；免安装版解压到任意文件夹后运行其中的 `BingLan.exe`。两者均自带 .NET 运行时，尚未加入代码签名，首次运行需按 Windows 提示手动放行。
