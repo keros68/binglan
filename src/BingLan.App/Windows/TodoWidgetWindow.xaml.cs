@@ -1,4 +1,4 @@
-﻿using System.Collections.ObjectModel;
+using System.Collections.ObjectModel;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -10,8 +10,6 @@ namespace BingLan.App.Windows;
 
 public partial class TodoWidgetWindow : WidgetWindowBase
 {
-    // The weekly view shows four calendar rows, Monday first — 28 days span at most
-    // two months, so month breaks never crowd together.
     // 周历窗口周数来自用户设置（1~5，默认 4），随 State 变化即时生效。
     private int WeeklyRowCount => Math.Clamp(State.WeeklyWeekCount, 1, 5);
 
@@ -43,8 +41,10 @@ public partial class TodoWidgetWindow : WidgetWindowBase
     private WeekCellView? _peekCell;
     private TodoItemState? _editingItem;
     private string? _editingOriginalText;
+    private System.Windows.Controls.TextBox? _editingTextBox;
     private TodoItemState? _lastMovedItem;
     private DateTime _lastMovedFrom;
+    private int _lastMovedOrder;
     private DispatcherTimer? _moveToastTimer;
     private DispatcherTimer? _peekDwellTimer;
     private System.Windows.Point _peekDwellAnchor;
@@ -106,15 +106,29 @@ public partial class TodoWidgetWindow : WidgetWindowBase
 
     private void Add_Click(object sender, RoutedEventArgs e)
     {
-        CaptureState();
-        var item = State.WeeklyView
-            ? TodoService.Add(State, "", DateTime.Today)
-            : TodoService.Add(State);
-        _items.Add(item);
-        if (State.WeeklyView && _cellsByDate.TryGetValue(DateTime.Today, out var cell))
+        if (State.WeeklyView)
         {
-            cell.Items.Add(item);
+            var targetCell = _selectedCellView is { IsFiller: false } selected
+                ? selected
+                : null;
+            if (targetCell is null && !_cellsByDate.TryGetValue(DateTime.Today, out targetCell))
+            {
+                _weekOffset = 0;
+                RenderWeekView();
+                _cellsByDate.TryGetValue(DateTime.Today, out targetCell);
+            }
+            if (targetCell is not null)
+            {
+                SelectCell(targetCell);
+                OpenDayPeek(targetCell, FindCellElement(targetCell));
+                Dispatcher.BeginInvoke(() => WeekPeekInput.Focus(), DispatcherPriority.Input);
+            }
+            return;
         }
+
+        CaptureState();
+        var item = TodoService.Add(State);
+        _items.Add(item);
         RefreshSummary();
         NotifyStateChanged();
 
@@ -138,6 +152,10 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         if (sender is FrameworkElement { DataContext: TodoItemState item })
         {
             TodoService.StampCompletion(item);
+            if (item.Date is { } itemDate && _cellsByDate.TryGetValue(itemDate, out var itemCell))
+            {
+                itemCell.RefreshPreview();
+            }
         }
         ApplyCompletedVisibility();
         RefreshSummary();
@@ -221,13 +239,10 @@ public partial class TodoWidgetWindow : WidgetWindowBase
             return;
         }
 
+        ReloadItems();
         if (movedDate is { } cellDate && _cellsByDate.TryGetValue(cellDate, out var movedCell))
         {
             ResortCell(movedCell);
-        }
-        else
-        {
-            ReloadItems();
         }
         NotifyStateChanged();
     }
@@ -237,6 +252,17 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         if ((sender as FrameworkElement)?.DataContext is not TodoItemState item)
         {
             return;
+        }
+        if (ReferenceEquals(_editingItem, item))
+        {
+            _editingItem = null;
+            _editingOriginalText = null;
+            _editingTextBox = null;
+        }
+        if (ReferenceEquals(_lastMovedItem, item))
+        {
+            _lastMovedItem = null;
+            HideMoveToast(this, EventArgs.Empty);
         }
         _items.Remove(item);
         if (item.Date is { } date && _cellsByDate.TryGetValue(date, out var cell))
@@ -283,9 +309,12 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         }
         State.WeeklyWeekCount = clamped;
         ApplyViewMode();
-        // 修改立即生效：缩小周数后卡片高度也要收回来（保留两行余量给
-        // 跨月断行），放大时 ApplyViewMode 已负责抬到最小高度。
-        Height = Math.Max(WeeklyMinimumHeight, Math.Min(Height, WeeklyMinimumHeight + 120));
+        if (State.WeeklyView)
+        {
+            // 修改立即生效：缩小周数后卡片高度也要收回来（保留两行余量给
+            // 跨月断行），放大时 ApplyViewMode 已负责抬到最小高度。
+            Height = Math.Max(WeeklyMinimumHeight, Math.Min(Height, WeeklyMinimumHeight + 120));
+        }
         NotifyStateChanged();
     }
 
@@ -366,8 +395,8 @@ public partial class TodoWidgetWindow : WidgetWindowBase
             }), handledEventsToo: true);
     }
 
-    // Same test as HitsChildControl, safe for ContentElement hits (Run/
-    // Hyperlink are not Visuals, so VisualTreeHelper would throw on them).
+    // Safe for ContentElement hits (Run/Hyperlink are not Visuals, so
+    // VisualTreeHelper would throw on them).
     private static bool HitsInteractiveChild(DependencyObject source, DependencyObject container)
     {
         var current = source;
@@ -417,7 +446,7 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         }
         // Checkbox / × handle their own clicks: drop the lift, let them work.
         if (_peekDragContainer is not null
-            && HitsChildControl((System.Windows.DependencyObject)e.OriginalSource, _peekDragContainer))
+            && HitsInteractiveChild((System.Windows.DependencyObject)e.OriginalSource, _peekDragContainer))
         {
             CancelPeekDrag();
             return;
@@ -534,6 +563,12 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         {
             CancelPeekDrag();
             e.Handled = true;
+            return;
+        }
+        if (_editingItem is null && WeekPeekOverlay.Visibility == Visibility.Visible)
+        {
+            CloseDayPeek();
+            e.Handled = true;
         }
     }
 
@@ -590,20 +625,6 @@ public partial class TodoWidgetWindow : WidgetWindowBase
             }
         }
         return null;
-    }
-
-    private static bool HitsChildControl(DependencyObject source, DependencyObject row)
-    {
-        var current = source;
-        while (current is not null && !ReferenceEquals(current, row))
-        {
-            if (current is System.Windows.Controls.CheckBox or System.Windows.Controls.Primitives.ButtonBase)
-            {
-                return true;
-            }
-            current = System.Windows.Media.VisualTreeHelper.GetParent(current);
-        }
-        return false;
     }
 
     private void PeekDwellTimer_Tick(object? sender, EventArgs e)
@@ -747,7 +768,8 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         var rowHeight = _peekDragContainer.ActualHeight + 4;
         for (var index = 0; index < WeekPeekList.Items.Count; index++)
         {
-            if (WeekPeekList.ItemContainerGenerator.ContainerFromIndex(index) is not FrameworkElement container)
+            if (WeekPeekList.ItemContainerGenerator.ContainerFromIndex(index) is not FrameworkElement container
+                || container.ActualHeight <= 0)
             {
                 continue;
             }
@@ -797,21 +819,21 @@ public partial class TodoWidgetWindow : WidgetWindowBase
             && current != finalIndex)
         {
             _peekDragCell.Items.Move(current, finalIndex);
-            for (var i = 0; i < _peekDragCell.Items.Count; i++)
+            var nonCellItems = State.Items
+                .Where(x => x.Date != _peekDragCell.Date)
+                .OrderBy(x => x.Order)
+                .ToList();
+            nonCellItems.AddRange(_peekDragCell.Items);
+            for (var i = 0; i < nonCellItems.Count; i++)
             {
-                _peekDragCell.Items[i].Order = i;
+                nonCellItems[i].Order = i;
             }
-            TodoService.Normalize(State);
+            State.Items = nonCellItems;
+            ReloadItems();
             CaptureState();
             NotifyStateChanged();
         }
-        _peekDragPhase = PeekDragPhase.Idle;
-        _peekDragCell = null;
-        _peekDragItem = null;
-        _peekDragContainer = null;
-        _peekDragRow = null;
-        _peekSlotTops = null;
-        _peekSlotHeights = null;
+        ClearPeekDragFields();
     }
 
     private void CancelPeekDrag()
@@ -825,6 +847,12 @@ public partial class TodoWidgetWindow : WidgetWindowBase
             _peekDragContainer.LostMouseCapture -= PeekDragContainer_LostMouseCapture;
             _peekDragContainer.ReleaseMouseCapture();
         }
+        ClearPeekDragFields();
+    }
+
+    private void ClearPeekDragFields()
+    {
+        _peekDragPhase = PeekDragPhase.Idle;
         _peekDragCell = null;
         _peekDragItem = null;
         _peekDragContainer = null;
@@ -864,11 +892,15 @@ public partial class TodoWidgetWindow : WidgetWindowBase
     private void OpenDayPeek(WeekCellView cell, FrameworkElement? cellElement)
     {
         // Re-opening (day navigation included) regenerates the row containers:
-        // any armed lift or pending dwell is stale by definition.
+        // any armed lift, pending dwell, or inline edit is stale by definition.
         _peekDwellTimer?.Stop();
         if (_peekDragPhase != PeekDragPhase.Idle)
         {
             CancelPeekDrag();
+        }
+        if (_editingItem is not null)
+        {
+            EndPeekTextEdit(_editingTextBox, revert: false);
         }
         _peekCell = cell;
         WeekPeekTitle.Text = cell.Date.ToString("M月d日") + " · " +
@@ -876,21 +908,30 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         WeekPeekList.ItemsSource = cell.Items;
         WeekPeekInput.Clear();
         MoveToast.Visibility = Visibility.Collapsed;
+        if (WeekHost.ActualHeight > 0)
+        {
+            WeekPeekListScroller.MaxHeight = Math.Clamp(WeekHost.ActualHeight - 96, 72, 264);
+        }
         WeekPeekOverlay.Visibility = Visibility.Visible;
 
-        // Anchor the panel next to the source cell, flipping inward at the edges.
-        if (cellElement is not null)
+        // Anchor the panel next to the source cell, flipping inward and clamping at the edges.
+        cellElement ??= FindCellElement(cell);
+        if (cellElement is not null && WeekHost.ActualWidth > 0 && WeekHost.ActualHeight > 0)
         {
+            WeekPeekPanel.UpdateLayout();
+            var panelWidth = WeekPeekPanel.ActualWidth > 0 ? WeekPeekPanel.ActualWidth : WeekPeekPanel.Width;
+            var panelHeight = WeekPeekPanel.ActualHeight > 0 ? WeekPeekPanel.ActualHeight : 140;
             var rect = cellElement.TransformToAncestor(WeekHost)
                 .TransformBounds(new Rect(0, 0, cellElement.ActualWidth, cellElement.ActualHeight));
             var left = rect.Right + 6;
-            if (left + WeekPeekPanel.Width > WeekHost.ActualWidth)
+            if (left + panelWidth > WeekHost.ActualWidth)
             {
-                left = rect.Left - WeekPeekPanel.Width - 6;
+                left = rect.Left - panelWidth - 6;
             }
-            left = Math.Max(0, Math.Min(left, Math.Max(0, WeekHost.ActualWidth - WeekPeekPanel.Width)));
+            left = Math.Clamp(left, 0, Math.Max(0, WeekHost.ActualWidth - panelWidth));
+            var top = Math.Clamp(rect.Top, 0, Math.Max(0, WeekHost.ActualHeight - panelHeight));
             Canvas.SetLeft(WeekPeekPanel, left);
-            Canvas.SetTop(WeekPeekPanel, Math.Max(0, rect.Top));
+            Canvas.SetTop(WeekPeekPanel, top);
         }
     }
 
@@ -900,6 +941,10 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         if (_peekDragPhase != PeekDragPhase.Idle)
         {
             CancelPeekDrag();
+        }
+        if (_editingItem is not null)
+        {
+            EndPeekTextEdit(_editingTextBox, revert: false);
         }
         WeekPeekOverlay.Visibility = Visibility.Collapsed;
         WeekPeekList.ItemsSource = null;
@@ -955,9 +1000,8 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         var target = _peekCell.Date.AddDays(offset);
         if (_cellsByDate.TryGetValue(target, out var adjacent))
         {
-            _selectedCellView = adjacent;
-            adjacent.IsSelected = true;
-            OpenDayPeek(adjacent, null);
+            SelectCell(adjacent);
+            OpenDayPeek(adjacent, FindCellElement(adjacent));
         }
     }
 
@@ -986,9 +1030,18 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         }
     }
 
-    private void MoveItemToDate(TodoItemState item, DateTime target)
+    private void MoveItemToDate(TodoItemState item, DateTime target, bool isUndo = false, int? restoreOrder = null)
     {
-        if (item.Date is not { } from || !TodoService.MoveToDate(State, item.Id, target))
+        if (item.Date is not { } from)
+        {
+            return;
+        }
+        var previousDayIndex = Math.Max(0, State.Items
+            .Where(x => x.Date == from)
+            .OrderBy(x => x.Order)
+            .ToList()
+            .IndexOf(item));
+        if (!TodoService.MoveToDate(State, item.Id, target, isUndo ? restoreOrder : null))
         {
             return;
         }
@@ -1002,15 +1055,20 @@ public partial class TodoWidgetWindow : WidgetWindowBase
             newCell.Items.Add(item);
             ResortCell(newCell);
         }
-        RefreshSummary();
+        ReloadItems();
+        CaptureState();
         NotifyStateChanged();
-        ShowMoveToast($"已移到 {target:M月d日}（{WeekdayName(target)}）", item, from);
+        if (!isUndo)
+        {
+            ShowMoveToast($"已移到 {target:M月d日}（{WeekdayName(target)}）", item, from, previousDayIndex);
+        }
     }
 
-    private void ShowMoveToast(string message, TodoItemState item, DateTime from)
+    private void ShowMoveToast(string message, TodoItemState item, DateTime from, int previousOrder)
     {
         _lastMovedItem = item;
         _lastMovedFrom = from;
+        _lastMovedOrder = previousOrder;
         MoveToastText.Text = message;
         MoveToast.Visibility = Visibility.Visible;
         _moveToastTimer ??= new DispatcherTimer { Interval = TimeSpan.FromSeconds(3.5) };
@@ -1030,19 +1088,27 @@ public partial class TodoWidgetWindow : WidgetWindowBase
     {
         if (_lastMovedItem is { } item)
         {
+            var from = _lastMovedFrom;
+            var order = _lastMovedOrder;
+            _lastMovedItem = null;
             HideMoveToast(this, EventArgs.Empty);
-            MoveItemToDate(item, _lastMovedFrom);
+            MoveItemToDate(item, from, isUndo: true, restoreOrder: order);
         }
     }
 
-        private void PeekText_PreviewMouseDown(object sender, MouseButtonEventArgs e)
+    private void PeekText_PreviewMouseDown(object sender, MouseButtonEventArgs e)
     {
         // Double-click on a peek row's text unlocks in-place editing for that entry.
         if (e.ClickCount == 2
             && sender is System.Windows.Controls.TextBox { IsReadOnly: true, DataContext: TodoItemState item } editor)
         {
+            if (_editingItem is not null && !ReferenceEquals(_editingItem, item))
+            {
+                EndPeekTextEdit(_editingTextBox, revert: false);
+            }
             _editingItem = item;
             _editingOriginalText = item.Text;
+            _editingTextBox = editor;
             editor.IsReadOnly = false;
             editor.Focusable = true;
             editor.Cursor = System.Windows.Input.Cursors.IBeam;
@@ -1054,28 +1120,70 @@ public partial class TodoWidgetWindow : WidgetWindowBase
 
     private void PeekText_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
     {
-        if (e.Key is Key.Enter or Key.Escape)
+        if (e.Key == Key.Escape)
         {
             e.Handled = true;
-            EndPeekTextEdit(sender);
+            EndPeekTextEdit(sender, revert: true);
+            Keyboard.ClearFocus();
+        }
+        else if (e.Key == Key.Enter)
+        {
+            e.Handled = true;
+            EndPeekTextEdit(sender, revert: false);
+            Keyboard.ClearFocus();
         }
     }
 
     private void PeekText_LostFocus(object sender, RoutedEventArgs e)
     {
-        // Live binding has kept the text current; ending the edit state is enough.
-        EndPeekTextEdit(sender);
+        if (_editingTextBox is not null && !ReferenceEquals(sender, _editingTextBox))
+        {
+            return;
+        }
+        EndPeekTextEdit(sender, revert: false);
     }
 
-    private void EndPeekTextEdit(object? sender)
+    private void EndPeekTextEdit(object? sender, bool revert = false)
     {
-        if (sender is System.Windows.Controls.TextBox editor)
+        if (sender is System.Windows.Controls.TextBox senderBox
+            && _editingTextBox is not null
+            && !ReferenceEquals(senderBox, _editingTextBox))
         {
-            editor.IsReadOnly = true;
-            editor.Focusable = false;
-            editor.Cursor = System.Windows.Input.Cursors.Arrow;
+            senderBox.IsReadOnly = true;
+            senderBox.Focusable = false;
+            senderBox.Cursor = System.Windows.Input.Cursors.Arrow;
+            return;
         }
+
+        var targetEditor = sender as System.Windows.Controls.TextBox ?? _editingTextBox;
+        var item = _editingItem;
+        var originalText = _editingOriginalText;
         _editingItem = null;
+        _editingOriginalText = null;
+        _editingTextBox = null;
+
+        if (revert && item is not null && originalText is not null)
+        {
+            item.Text = originalText;
+            if (targetEditor is not null)
+            {
+                targetEditor.Text = originalText;
+            }
+        }
+
+        if (targetEditor is not null)
+        {
+            targetEditor.IsReadOnly = true;
+            targetEditor.Focusable = false;
+            targetEditor.Cursor = System.Windows.Input.Cursors.Arrow;
+        }
+
+        if (!revert && item is not null && item.Text != originalText)
+        {
+            RefreshSummary();
+            CaptureState();
+            NotifyStateChanged();
+        }
     }
 
     private static string WeekdayName(DateTime date) =>
@@ -1181,10 +1289,6 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         NotifyStateChanged();
     }
 
-    // ------------------------------------------------------------------
-    // Long-press drag reordering inside the day peek popup.
-    // State machine: Idle → Pressed(mouse down on a row) → Armed(300 ms held,
-
     private void AddWeeklyItem(WeekCellView cell, string text)
     {
         CaptureState();
@@ -1216,6 +1320,7 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         }
         else
         {
+            CloseDayPeek();
             RefreshSummary();
         }
     }
@@ -1229,6 +1334,9 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         var lastDay = firstMonday.AddDays(7 * WeeklyRowCount - 1);
         WeekRange.Text = $"{firstMonday:M月d日} – {lastDay:M月d日}";
         WeekTodayButton.Visibility = _weekOffset == 0 ? Visibility.Collapsed : Visibility.Visible;
+
+        var previousSelectedDate = _selectedCellView?.Date;
+        var previousPeekDate = _peekCell?.Date;
 
         _cellsByDate.Clear();
         _selectedCellView = null;
@@ -1263,7 +1371,8 @@ public partial class TodoWidgetWindow : WidgetWindowBase
                 DayNumber = date.Day.ToString(),
                 LunarText = LunarDayText.For(date),
                 IsToday = date == DateTime.Today,
-                IsWeekend = date.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday
+                IsWeekend = date.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday,
+                HideCompleted = State.HideCompleted
             };
             foreach (var entry in State.Items.Where(x => x.Date == date).OrderBy(x => x.Order))
             {
@@ -1286,6 +1395,35 @@ public partial class TodoWidgetWindow : WidgetWindowBase
 
         WeekRows.DataContext = rows;
         WeekRows.ItemsSource = rows;
+
+        if (previousSelectedDate is { } selDate && _cellsByDate.TryGetValue(selDate, out var restoredSelected))
+        {
+            SelectCell(restoredSelected);
+        }
+        if (WeekPeekOverlay.Visibility == Visibility.Visible)
+        {
+            if (previousPeekDate is { } peekDate && _cellsByDate.TryGetValue(peekDate, out var restoredPeek))
+            {
+                if (_editingItem is not null)
+                {
+                    EndPeekTextEdit(_editingTextBox, revert: false);
+                }
+                _peekCell = restoredPeek;
+                WeekPeekList.ItemsSource = restoredPeek.Items;
+                Dispatcher.BeginInvoke(() =>
+                {
+                    if (_peekCell == restoredPeek && WeekPeekOverlay.Visibility == Visibility.Visible)
+                    {
+                        OpenDayPeek(restoredPeek, FindCellElement(restoredPeek));
+                    }
+                }, DispatcherPriority.Loaded);
+            }
+            else
+            {
+                CloseDayPeek();
+            }
+        }
+
         RefreshSummary();
     }
 
@@ -1343,6 +1481,8 @@ public partial class TodoWidgetWindow : WidgetWindowBase
     // Blank rows are places to type, not tasks, so they are left out of the count.
     private void RefreshSummary()
     {
+        CompletedVisibilityButton.Content = State.HideCompleted ? "显示已完成" : "隐藏已完成";
+
         if (State.WeeklyView)
         {
             var firstMonday = WeekWindowStart;
@@ -1353,7 +1493,6 @@ public partial class TodoWidgetWindow : WidgetWindowBase
                 .ToList();
             var completed = written.Count(x => x.IsCompleted);
             SummaryText.Text = written.Count == 0 ? "这段时间还没有记录" : $"{completed}/{written.Count} 已完成";
-            CompletedVisibilityButton.Content = State.HideCompleted ? "显示已完成" : "隐藏已完成";
             return;
         }
 
@@ -1364,27 +1503,29 @@ public partial class TodoWidgetWindow : WidgetWindowBase
             .ToList();
         var done = listed.Count(x => x.IsCompleted);
         SummaryText.Text = listed.Count == 0 ? "写下第一条待办" : $"{done}/{listed.Count} 已完成";
-        ClearCompletedButton.IsEnabled = _items.Any(x => x.IsCompleted);
-        CompletedVisibilityButton.Content = State.HideCompleted ? "显示已完成" : "隐藏已完成";
+        ClearCompletedButton.IsEnabled = _items.Any(x => x.IsCompleted && TodoService.BelongsToTodayList(x, today));
     }
 
     private static DateTime MondayOf(DateTime date) =>
         date.AddDays(-(((int)date.DayOfWeek + 6) % 7));
 
-    // The cell's inline editor sits deep in the template (Border > Grid > StackPanel),
-    // so it is found by its registered name rather than by tree depth.
-    private static FrameworkElement? FindNamedDescendant(DependencyObject parent, string name)
+    private FrameworkElement? FindCellElement(WeekCellView cell) =>
+        FindVisualDescendantWhere<System.Windows.Controls.Border>(
+            WeekRows, border => ReferenceEquals(border.DataContext, cell));
+
+    private static T? FindVisualDescendantWhere<T>(DependencyObject parent, Func<T, bool> predicate) where T : DependencyObject
     {
-        for (var i = 0; i < System.Windows.Media.VisualTreeHelper.GetChildrenCount(parent); i++)
+        var count = System.Windows.Media.VisualTreeHelper.GetChildrenCount(parent);
+        for (var i = 0; i < count; i++)
         {
             var child = System.Windows.Media.VisualTreeHelper.GetChild(parent, i);
-            if (child is FrameworkElement element && element.Name == name)
+            if (child is T match && predicate(match))
             {
-                return element;
+                return match;
             }
-            if (FindNamedDescendant(child, name) is { } found)
+            if (FindVisualDescendantWhere(child, predicate) is { } descendant)
             {
-                return found;
+                return descendant;
             }
         }
         return null;

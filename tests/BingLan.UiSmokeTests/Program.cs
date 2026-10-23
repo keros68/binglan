@@ -1,4 +1,4 @@
-﻿using System.IO;
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Automation.Peers;
@@ -2687,7 +2687,11 @@ internal static class Program
     // 走内置组件分支导致入口不可见），切换周数要立即写入卡片状态。
     private static void TestTodoWeekCountSettingPanel()
     {
-        var todo = new TodoWidgetWindow(new TodoWidgetState());
+        var initialState = new TodoWidgetState();
+        var yesterdayItem = TodoService.Add(initialState, "昨日已完成", DateTime.Today.AddDays(-1));
+        yesterdayItem.IsCompleted = true;
+        TodoService.StampCompletion(yesterdayItem);
+        var todo = new TodoWidgetWindow(initialState);
         var note = new NoteWidgetWindow(new NoteWidgetState());
         ShowAndPump(todo);
         ShowAndPump(note);
@@ -2716,8 +2720,22 @@ internal static class Program
 
                 var picker = Require<ComboBox>(window, "TodoWeekCountPicker");
                 Assert(picker.SelectedIndex == 3, "周数回填应与卡片状态一致（默认 4 周）");
-                // 1 周窗口断言需要周历已渲染：先切到周历视图。
-                todo.State.WeeklyView = true;
+
+                // 列表模式下修改周历周数不应把列表小卡片撑高到周历尺寸。
+                var listHeightBefore = todo.ActualHeight;
+                picker.SelectedIndex = 4;
+                Pump();
+                Assert(todo.State.WeeklyWeekCount == 5, "列表模式下切换周数应立即写入卡片状态");
+                Assert(Near(todo.ActualHeight, listHeightBefore), "列表模式下切换周历周数不应改变当前列表卡片高度");
+
+                // 其他日期有已完成项但今日无已完成项时，列表视图“清理已完成”应保持禁用。
+                var toggleViewBtn = Require<Button>(todo, "ViewModeButton");
+                Assert(!Require<Button>(todo, "ClearCompletedButton").IsEnabled,
+                    "仅其他日期存在已完成项时，今日列表的清理已完成按钮应保持禁用");
+
+                // 切到周历视图検証 1 周窗口、+ 按钮打开 DayPeek、行内编辑与跨日撤销。
+                toggleViewBtn.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+                Pump();
                 picker.SelectedIndex = 0;
                 Pump();
                 Assert(todo.State.WeeklyWeekCount == 1, "切换周数应立即写入卡片状态");
@@ -2727,6 +2745,146 @@ internal static class Program
                     Require<TextBlock>(todo, "WeekRange").Text ==
                         $"{monday:M月d日} – {sunday:M月d日}",
                     "1 周窗口应恰好覆盖本周（含今天）");
+
+                // 周历模式下点击 + 应打开今天（或当前选中格）的 DayPeek 并聚焦输入框，不产生空白孤儿项。
+                var countBeforePlus = todo.State.Items.Count;
+                var addBtn = FindVisualChildren<Button>(todo).Single(x => Equals(x.Content, "+"));
+                addBtn.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+                Pump();
+                var peekOverlay = Require<Canvas>(todo, "WeekPeekOverlay");
+                var peekInput = Require<TextBox>(todo, "WeekPeekInput");
+                Assert(peekOverlay.Visibility == Visibility.Visible, "周历模式下点击 + 应打开 DayPeek 浮层");
+                Assert(todo.State.Items.Count == countBeforePlus, "周历模式下点击 + 不应直接插入空白待办");
+
+                var peekInputSource = PresentationSource.FromVisual(peekInput)!;
+                peekInput.Text = "周历首条任务";
+                peekInput.RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, peekInputSource, 0, Key.Enter)
+                {
+                    RoutedEvent = Keyboard.KeyDownEvent
+                });
+                Pump();
+                peekInput.Text = "周历第二条任务";
+                peekInput.RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, peekInputSource, 0, Key.Enter)
+                {
+                    RoutedEvent = Keyboard.KeyDownEvent
+                });
+                Pump();
+                var todayItems = TodoService.ItemsForDate(todo.State, DateTime.Today).ToList();
+                Assert(todayItems.Count == 2 && todayItems[0].Text == "周历首条任务" && todayItems[1].Text == "周历第二条任务",
+                    "DayPeek 输入框回车应向当前日期添加待办");
+
+                // DayPeek 行内编辑：双击解锁，Esc 还原原文，Enter 提交修改并写回状态。
+                var peekList = Require<ItemsControl>(todo, "WeekPeekList");
+                var firstRowEditor = FindVisualChildren<TextBox>(peekList).First();
+                static MouseButtonEventArgs DoubleClick()
+                {
+                    var evt = new MouseButtonEventArgs(Mouse.PrimaryDevice, Environment.TickCount, MouseButton.Left)
+                    {
+                        RoutedEvent = UIElement.PreviewMouseLeftButtonDownEvent
+                    };
+                    typeof(MouseButtonEventArgs)
+                        .GetProperty("ClickCount", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic)!
+                        .SetValue(evt, 2);
+                    return evt;
+                }
+                firstRowEditor.RaiseEvent(DoubleClick());
+                Pump();
+                Assert(!firstRowEditor.IsReadOnly, "双击 DayPeek 文本应解锁行内编辑");
+                firstRowEditor.Text = "放弃的修改";
+                PressKey(firstRowEditor, Key.Escape);
+                Pump();
+                Assert(firstRowEditor.IsReadOnly && todayItems[0].Text == "周历首条任务",
+                    "DayPeek 行内编辑按 Esc 应还原原文本并退出编辑");
+
+                firstRowEditor.RaiseEvent(DoubleClick());
+                Pump();
+                firstRowEditor.Text = "已确认的周历任务";
+                PressKey(firstRowEditor, Key.Enter);
+                Pump();
+                Assert(firstRowEditor.IsReadOnly && todo.State.Items.Single(x => x.Id == todayItems[0].Id).Text == "已确认的周历任务",
+                    "DayPeek 行内编辑按 Enter 应提交修改并同步到 State");
+
+                // 跨行切换编辑：第一行编辑中直接双击第二行，第一行修改应自动提交且第二行保持编辑态（Esc 可还原第二行）。
+                var rowEditors = FindVisualChildren<TextBox>(peekList).ToList();
+                rowEditors[0].RaiseEvent(DoubleClick());
+                Pump();
+                rowEditors[0].Text = "切行自动保存任务";
+                rowEditors[1].RaiseEvent(DoubleClick());
+                Pump();
+                Assert(rowEditors[0].IsReadOnly && !rowEditors[1].IsReadOnly && todayItems[0].Text == "切行自动保存任务",
+                    "从第一行直接双击第二行时，第一行应提交并切入第二行编辑态");
+                rowEditors[1].Text = "第二行临时改动";
+                PressKey(rowEditors[1], Key.Escape);
+                Pump();
+                Assert(rowEditors[1].IsReadOnly && todayItems[1].Text == "周历第二条任务",
+                    "切入第二行后按 Esc 应正确还原第二行原文");
+
+                // 跨日移动与单步撤销（含多日穿插全局 Order）：插入第三条后移动今日第 1 条与第 2 条验证日内下标精确还原。
+                peekInput.Text = "周历第三条任务";
+                peekInput.RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, peekInputSource, 0, Key.Enter)
+                {
+                    RoutedEvent = Keyboard.KeyDownEvent
+                });
+                Pump();
+                todayItems = TodoService.ItemsForDate(todo.State, DateTime.Today).ToList();
+                var moveTargetDate = DateTime.Today == sunday ? DateTime.Today.AddDays(-1) : DateTime.Today.AddDays(1);
+                var moveMethod = typeof(TodoWidgetWindow).GetMethod(
+                    "MoveItemToDate",
+                    System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+                moveMethod.Invoke(todo, new object?[] { todayItems[1], moveTargetDate, false, null });
+                Pump();
+                var moveToast = Require<Border>(todo, "MoveToast");
+                Assert(moveToast.Visibility == Visibility.Visible && todayItems[1].Date == moveTargetDate,
+                    "跨日移动后应显示撤销 Toast 并更新日期");
+                var undoBtn = FindVisualChildren<Button>(moveToast).Single(x => Equals(x.Content, "撤销"));
+                undoBtn.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+                Pump();
+                var restoredTodayItems = TodoService.ItemsForDate(todo.State, DateTime.Today).ToList();
+                Assert(
+                    moveToast.Visibility == Visibility.Collapsed
+                        && todo.State.Items.Any(x => x.Id == yesterdayItem.Id)
+                        && restoredTodayItems.Count == 3
+                        && restoredTodayItems[0].Id == todayItems[0].Id
+                        && restoredTodayItems[1].Id == todayItems[1].Id
+                        && restoredTodayItems[2].Id == todayItems[2].Id
+                        && todo.State.Items.OrderBy(x => x.Order).Select(x => x.Order)
+                            .SequenceEqual(Enumerable.Range(0, todo.State.Items.Count)),
+                    "点击撤销应保留其他日期条目、恢复原日期与原日内第 2 行的位置顺序、保持全局 Order 连续唯一，且不再重复弹出 Toast");
+
+                // 浮层保持打开时切换周数（4 周 → 1 周）：浮层应保持打开且坐标与高度被钳制在 WeekHost 内。
+                picker.SelectedIndex = 3;
+                Pump();
+                picker.SelectedIndex = 0;
+                Pump();
+                var weekHost = Require<Grid>(todo, "WeekHost");
+                var peekPanel = Require<Border>(todo, "WeekPeekPanel");
+                Assert(
+                    peekOverlay.Visibility == Visibility.Visible
+                        && Canvas.GetTop(peekPanel) + peekPanel.ActualHeight <= weekHost.ActualHeight + 1.0,
+                    "DayPeek 保持打开期间缩小周数后，浮层应重新锚定且不超出周历宿主底部边界");
+
+                // 周历菜单调序（MoveDown_Click）→ 切回列表视图：今日列表容器顺序应立即按新顺序更新。
+                var firstTodayBeforeMove = TodoService.ItemsForDate(todo.State, DateTime.Today)[0];
+                var secondTodayBeforeMove = TodoService.ItemsForDate(todo.State, DateTime.Today)[1];
+                var moveDownItem = new MenuItem { DataContext = firstTodayBeforeMove };
+                typeof(TodoWidgetWindow)
+                    .GetMethod("MoveDown_Click", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+                    .Invoke(todo, [moveDownItem, new RoutedEventArgs()]);
+                Pump();
+                var viewModeBtn = Require<Button>(todo, "ViewModeButton");
+                viewModeBtn.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+                Pump();
+                var todoListControl = Require<ItemsControl>(todo, "TodoList");
+                var visibleTodayIds = todoListControl.Items.OfType<TodoItemState>()
+                    .Where(x => TodoService.BelongsToTodayList(x, DateTime.Today))
+                    .Select(x => x.Id)
+                    .ToList();
+                Assert(
+                    !todo.State.WeeklyView
+                        && visibleTodayIds.Count >= 2
+                        && visibleTodayIds[0] == secondTodayBeforeMove.Id
+                        && visibleTodayIds[1] == firstTodayBeforeMove.Id,
+                    "周历菜单下移今日条目后切回列表视图，列表绑定集合应立即显示更新后的顺序");
 
                 list.SelectedItem = list.Items.OfType<SettingsWindow.DesktopComponentSettingsEntry>()
                     .First(entry => entry.Window is NoteWidgetWindow);

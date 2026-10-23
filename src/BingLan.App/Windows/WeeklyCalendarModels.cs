@@ -21,6 +21,7 @@ public sealed class WeekCellView : INotifyPropertyChanged
     private const int PreviewCapacity = 2;
 
     private bool _isSelected;
+    private bool _hideCompleted;
 
     public DateTime Date { get; init; }
     public string DayNumber { get; init; } = "";
@@ -30,6 +31,21 @@ public sealed class WeekCellView : INotifyPropertyChanged
 
     /// <summary>True for the blank padding cells around a month fragment.</summary>
     public bool IsFiller { get; init; }
+
+    /// <summary>Whether completed entries are hidden from the cell preview and overflow count.</summary>
+    public bool HideCompleted
+    {
+        get => _hideCompleted;
+        set
+        {
+            if (_hideCompleted == value)
+            {
+                return;
+            }
+            _hideCompleted = value;
+            RefreshPreview();
+        }
+    }
 
     /// <summary>Whether the cell is the one the user clicked last, drawn with a blue edge.</summary>
     public bool IsSelected
@@ -49,29 +65,38 @@ public sealed class WeekCellView : INotifyPropertyChanged
     /// <summary>All entries of the day (full list — the day editor and the peek popup bind this).</summary>
     public ObservableCollection<TodoItemState> Items { get; } = [];
 
-    /// <summary>The first few entries shown inside the compact cell.</summary>
+    /// <summary>The first few visible entries shown inside the compact cell.</summary>
     public ObservableCollection<TodoItemState> PreviewItems { get; } = [];
 
     /// <summary>Entries beyond the compact preview; shown on the overflow chip.</summary>
-    public bool HasOverflow => Items.Count > PreviewCapacity;
+    public bool HasOverflow => VisibleItemCount > PreviewCapacity;
 
-    /// <summary>How many entries are hidden behind the overflow chip.</summary>
-    public int OverflowCount => Math.Max(0, Items.Count - PreviewCapacity);
+    /// <summary>How many visible entries are hidden behind the overflow chip.</summary>
+    public int OverflowCount => Math.Max(0, VisibleItemCount - PreviewCapacity);
+
+    private int VisibleItemCount => _hideCompleted
+        ? Items.Count(x => !x.IsCompleted)
+        : Items.Count;
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
     public WeekCellView()
     {
-        Items.CollectionChanged += (_, _) =>
+        Items.CollectionChanged += (_, _) => RefreshPreview();
+    }
+
+    public void RefreshPreview()
+    {
+        var visible = _hideCompleted
+            ? Items.Where(x => !x.IsCompleted)
+            : Items;
+        PreviewItems.Clear();
+        foreach (var entry in visible.Take(PreviewCapacity))
         {
-            PreviewItems.Clear();
-            foreach (var entry in Items.Take(PreviewCapacity))
-            {
-                PreviewItems.Add(entry);
-            }
-            OnPropertyChanged(nameof(HasOverflow));
-            OnPropertyChanged(nameof(OverflowCount));
-        };
+            PreviewItems.Add(entry);
+        }
+        OnPropertyChanged(nameof(HasOverflow));
+        OnPropertyChanged(nameof(OverflowCount));
     }
 
     private void OnPropertyChanged([CallerMemberName] string? propertyName = null) =>

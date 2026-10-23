@@ -145,8 +145,14 @@ public static class TodoService
         return item?.Date is { } date && MoveWithinScope(widget, itemId, offset, x => x.Date == date);
     }
 
-    /// <summary>Moves one entry to a different calendar day, keeping text and completion state.</summary>
-    public static bool MoveToDate(TodoWidgetState widget, Guid itemId, DateTime targetDate)
+    /// <summary>
+    /// Moves one entry to a different calendar day, keeping text and completion state.
+    /// When <paramref name="withinDayIndex"/> is provided, inserts the entry at that
+    /// 0-based position within <paramref name="targetDate"/>'s entries and normalizes
+    /// global <see cref="TodoItemState.Order"/> without collisions.
+    /// </summary>
+    public static bool MoveToDate(
+        TodoWidgetState widget, Guid itemId, DateTime targetDate, int? withinDayIndex = null)
     {
         var item = widget.Items.FirstOrDefault(x => x.Id == itemId);
         if (item is null || item.Date == targetDate)
@@ -154,7 +160,29 @@ public static class TodoService
             return false;
         }
         item.Date = targetDate;
-        Normalize(widget);
+        if (withinDayIndex is { } targetDayIndex)
+        {
+            var targetGroup = widget.Items
+                .Where(x => x.Date == targetDate && x.Id != item.Id)
+                .OrderBy(x => x.Order)
+                .ToList();
+            var insertIndex = Math.Clamp(targetDayIndex, 0, targetGroup.Count);
+            targetGroup.Insert(insertIndex, item);
+            var nonTarget = widget.Items
+                .Where(x => x.Date != targetDate)
+                .OrderBy(x => x.Order)
+                .ToList();
+            nonTarget.AddRange(targetGroup);
+            for (var i = 0; i < nonTarget.Count; i++)
+            {
+                nonTarget[i].Order = i;
+            }
+            widget.Items = nonTarget;
+        }
+        else
+        {
+            Normalize(widget);
+        }
         return true;
     }
 
@@ -164,9 +192,11 @@ public static class TodoService
 
     /// <summary>
     /// Replaces one calendar day's entries with the given editor lines, in order:
-    /// surviving entries keep their completion state while only the text updates,
-    /// missing lines become new entries, surplus entries are removed, and blank
-    /// lines are skipped. A leading "1. "/"1、" numbering prefix is display sugar
+    /// unchanged lines match by text first (establishing order anchors), remaining lines
+    /// reuse unclaimed existing entries within the same anchor span in order (in-place
+    /// edits keep their Id and completion state, whereas lines inserted outside an
+    /// unclaimed span become new incomplete entries), surplus entries are removed, and
+    /// blank lines are skipped. A leading "1. "/"1、" numbering prefix is display sugar
     /// and is stripped, while content like "3D建模" survives untouched.
     /// Returns how many entries the day holds afterwards.
     /// </summary>
@@ -178,23 +208,98 @@ public static class TodoService
             .ToList();
 
         var dayItems = ItemsForDate(widget, date);
-        var total = Math.Max(texts.Count, dayItems.Count);
-        for (var index = 0; index < total; index++)
+        var resolved = new TodoItemState?[texts.Count];
+        var claimed = new bool[dayItems.Count];
+        var matchedOldIndex = new int[texts.Count];
+        Array.Fill(matchedOldIndex, -1);
+
+        for (var i = 0; i < texts.Count; i++)
         {
-            if (index < texts.Count && index < dayItems.Count)
+            for (var j = 0; j < dayItems.Count; j++)
             {
-                dayItems[index].Text = texts[index];
+                if (!claimed[j] && dayItems[j].Text == texts[i])
+                {
+                    resolved[i] = dayItems[j];
+                    claimed[j] = true;
+                    matchedOldIndex[i] = j;
+                    break;
+                }
             }
-            else if (index < texts.Count)
+        }
+
+        // For each unmatched line, only reuse an unclaimed entry that sits within the
+        // same anchor span (prevJ, nextJ) bounded by the nearest preceding and succeeding
+        // exact-text matches. That preserves Id and completion timestamps for in-place
+        // text edits (whether completed or not), while preventing a deleted entry before
+        // an anchor from transferring its completion state to a newly added line after
+        // the anchor (or vice versa).
+        for (var i = 0; i < texts.Count; i++)
+        {
+            if (resolved[i] is not null)
             {
-                Add(widget, texts[index], date);
+                continue;
+            }
+
+            var prevJ = -1;
+            for (var p = i - 1; p >= 0; p--)
+            {
+                if (matchedOldIndex[p] >= 0)
+                {
+                    prevJ = matchedOldIndex[p];
+                    break;
+                }
+            }
+
+            var nextJ = dayItems.Count;
+            for (var s = i + 1; s < texts.Count; s++)
+            {
+                if (matchedOldIndex[s] >= 0)
+                {
+                    nextJ = matchedOldIndex[s];
+                    break;
+                }
+            }
+
+            var reuseIndex = -1;
+            for (var j = prevJ + 1; j < nextJ; j++)
+            {
+                if (!claimed[j])
+                {
+                    reuseIndex = j;
+                    break;
+                }
+            }
+
+            if (reuseIndex >= 0)
+            {
+                var reused = dayItems[reuseIndex];
+                claimed[reuseIndex] = true;
+                reused.Text = texts[i];
+                resolved[i] = reused;
             }
             else
             {
-                Remove(widget, dayItems[index].Id);
+                resolved[i] = new TodoItemState
+                {
+                    Text = texts[i],
+                    Date = date,
+                    CreatedDate = DateTimeOffset.Now
+                };
             }
         }
-        return ItemsForDate(widget, date).Count;
+
+        var daySet = dayItems.ToHashSet();
+        var others = widget.Items
+            .OrderBy(x => x.Order)
+            .Where(x => !daySet.Contains(x))
+            .ToList();
+        others.AddRange(resolved!);
+        for (var i = 0; i < others.Count; i++)
+        {
+            others[i].Order = i;
+        }
+        widget.Items = others;
+        return resolved.Length;
     }
 
     private static string StripNumberPrefix(string line)

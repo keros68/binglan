@@ -1,4 +1,4 @@
-﻿using BingLan.Core.Models;
+using BingLan.Core.Models;
 using BingLan.Core.Services;
 using BingLan.Core.Taskbar;
 using BingLan.Core.Themes;
@@ -226,6 +226,62 @@ static void TestSyncDayItems()
     var numbered = TodoService.ItemsForDate(widget, monday).ToList();
     Assert(numbered.Count == 2 && numbered[0].Text == "3D建模实训" && numbered[1].Text == "42",
         "数字开头的正文不应被误剥序号");
+
+    // 文本优先对齐：在首行已完成条目后、删除首行或首行前插入新行时，原条目的 Id 与完成状态跟随文本保留。
+    TodoService.SyncDayItems(widget, monday, new[] { "任务A", "任务B" });
+    var beforeEdit = TodoService.ItemsForDate(widget, monday).ToList();
+    TodoService.SetCompleted(widget, beforeEdit[0].Id, true);
+    var taskBId = beforeEdit[1].Id;
+    TodoService.SyncDayItems(widget, monday, new[] { "任务B" });
+    var afterDeleteFirst = TodoService.ItemsForDate(widget, monday).Single();
+    Assert(
+        afterDeleteFirst.Id == taskBId && !afterDeleteFirst.IsCompleted && afterDeleteFirst.CompletedDate is null,
+        "删除已完成首行后，保留的第二行不应继承首行的完成状态");
+
+    TodoService.SetCompleted(widget, afterDeleteFirst.Id, true);
+    var completedStamp = afterDeleteFirst.CompletedDate;
+    TodoService.SyncDayItems(widget, monday, new[] { "前置新任务", "任务B" });
+    var afterInsertTop = TodoService.ItemsForDate(widget, monday).ToList();
+    Assert(
+        afterInsertTop.Count == 2
+            && afterInsertTop[0].Text == "前置新任务" && !afterInsertTop[0].IsCompleted
+            && afterInsertTop[1].Id == taskBId && afterInsertTop[1].IsCompleted && afterInsertTop[1].CompletedDate == completedStamp,
+        "在首行前插入新任务后，原已完成条目应保持自身 Id 与完成时间戳");
+
+    // 原位修改已完成首行文字并保留第二行时，首行位于同一锚点区间，应保留原 Id、完成状态与完成时间戳。
+    TodoService.SyncDayItems(widget, monday, new[] { "任务A", "任务B" });
+    var pairBefore = TodoService.ItemsForDate(widget, monday).ToList();
+    TodoService.SetCompleted(widget, pairBefore[0].Id, true);
+    TodoService.SetCompleted(widget, pairBefore[1].Id, false);
+    var completedAId = pairBefore[0].Id;
+    var completedAStamp = pairBefore[0].CompletedDate;
+    var uncompletedBId = pairBefore[1].Id;
+    TodoService.SyncDayItems(widget, monday, new[] { "任务A（已改名）", "任务B" });
+    var pairInPlaceEdit = TodoService.ItemsForDate(widget, monday).ToList();
+    Assert(
+        pairInPlaceEdit.Count == 2
+            && pairInPlaceEdit[0].Text == "任务A（已改名）"
+            && pairInPlaceEdit[0].Id == completedAId
+            && pairInPlaceEdit[0].IsCompleted
+            && pairInPlaceEdit[0].CompletedDate == completedAStamp
+            && pairInPlaceEdit[1].Text == "任务B"
+            && pairInPlaceEdit[1].Id == uncompletedBId
+            && !pairInPlaceEdit[1].IsCompleted,
+        "原位修改已完成条目的文字时，应保留其原 Id、完成状态与完成时间戳");
+
+    // 删掉已完成首行（使任务B上移到首行）并在末尾追加新任务时，末尾新任务不应跨锚点复用已删首行的完成状态与 Id。
+    TodoService.SyncDayItems(widget, monday, new[] { "任务B", "末尾新增任务C" });
+    var pairAfterDeleteAndAppend = TodoService.ItemsForDate(widget, monday).ToList();
+    Assert(
+        pairAfterDeleteAndAppend.Count == 2
+            && pairAfterDeleteAndAppend[0].Text == "任务B"
+            && pairAfterDeleteAndAppend[0].Id == uncompletedBId
+            && !pairAfterDeleteAndAppend[0].IsCompleted
+            && pairAfterDeleteAndAppend[1].Text == "末尾新增任务C"
+            && pairAfterDeleteAndAppend[1].Id != completedAId
+            && !pairAfterDeleteAndAppend[1].IsCompleted
+            && pairAfterDeleteAndAppend[1].CompletedDate is null,
+        "删掉已完成首行并在保留行之后追加新任务时，新任务不应跨锚点复用已删完成项的完成状态");
 }
 
 static void TestMoveToDate()
@@ -251,6 +307,18 @@ static void TestMoveToDate()
 
     Assert(!TodoService.MoveToDate(widget, b.Id, monday.AddDays(3)), "移到同一日期应返回 false 且无操作");
     Assert(!TodoService.MoveToDate(widget, Guid.NewGuid(), monday), "移动不存在的条目应返回 false");
+
+    // withinDayIndex 参数应将条目精确插回目标日期的 0-based 日内位置，并保证多日穿插下全局 Order 唯一且连续。
+    var m1 = TodoService.Add(widget, "周一首项", monday);
+    var m2 = TodoService.Add(widget, "周一次项", monday);
+    Assert(TodoService.MoveToDate(widget, b.Id, monday, withinDayIndex: 1), "应能带 withinDayIndex 移回周一中间位置");
+    var mondayOrdered = TodoService.ItemsForDate(widget, monday).Select(x => x.Id).ToList();
+    Assert(
+        mondayOrdered.SequenceEqual(new[] { m1.Id, b.Id, m2.Id }),
+        "带 withinDayIndex 的跨日移动应精确插入指定日内下标");
+    Assert(
+        widget.Items.Select(x => x.Order).OrderBy(x => x).SequenceEqual(Enumerable.Range(0, widget.Items.Count)),
+        "带 withinDayIndex 的跨日移动后全局 Order 应唯一且连续");
 }
 
 static void TestTodoDatePersistence()
