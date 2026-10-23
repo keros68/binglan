@@ -294,7 +294,9 @@
                 <ScrollViewer x:Name="ListHost"
                               Margin="10,9,6,4"
                               VerticalScrollBarVisibility="Auto"
-                              HorizontalScrollBarVisibility="Disabled">
+                              HorizontalScrollBarVisibility="Disabled"
+                              MouseLeave="WeekPeekOverlay_MouseLeave"
+                              PreviewMouseWheel="WeekPeekOverlay_PreviewMouseWheel">
                     <ItemsControl x:Name="TodoList"
                                   Focusable="False"
                                   IsTabStop="False">

@@ -59,6 +59,11 @@ public partial class TodoWidgetWindow : WidgetWindowBase
     private PeekDragPhase _peekDragPhase = PeekDragPhase.Idle;
     private double[]? _peekSlotTops;
     private double[]? _peekSlotHeights;
+    private readonly HashSet<Guid> _completedItemIds = [];
+    private System.Windows.Controls.ItemsControl? _peekDragList;
+    private System.Windows.DependencyObject? _peekDwellSource;
+    private System.Windows.Point _peekContainerClickPoint;
+    private bool _peekEverDragged;
 
     private enum PeekDragPhase
     {
@@ -71,6 +76,7 @@ public partial class TodoWidgetWindow : WidgetWindowBase
     {
         State = state;
         _items = new ObservableCollection<TodoItemState>(state.Items.OrderBy(x => x.Order));
+        SyncCompletedSnapshot();
         InitializeComponent();
         DataContext = state;
         ApplyAppearance(state.Appearance);
@@ -152,7 +158,44 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         if (sender is FrameworkElement { DataContext: TodoItemState item })
         {
             TodoService.StampCompletion(item);
-            if (item.Date is { } itemDate && _cellsByDate.TryGetValue(itemDate, out var itemCell))
+            var wasCompleted = _completedItemIds.Contains(item.Id);
+            if (wasCompleted != item.IsCompleted)
+            {
+                if (item.IsCompleted)
+                {
+                    _completedItemIds.Add(item.Id);
+                }
+                else
+                {
+                    _completedItemIds.Remove(item.Id);
+                }
+
+                _peekDwellTimer?.Stop();
+                _peekDwellSource = null;
+                if (_peekDragPhase != PeekDragPhase.Idle)
+                {
+                    CancelPeekDrag();
+                }
+
+                CaptureState();
+                if (TodoService.SinkCompleted(State, item.Id, DateTime.Today))
+                {
+                    SyncObservableOrder(_items, State.Items.OrderBy(x => x.Order).ToList());
+                    // WeekCellView.Items only holds dated entries (x.Date == cell.Date, per
+                    // RenderWeekView / TodoService.ItemsForDate); undated entries (Date == null)
+                    // live only in _items, while sink within BelongsToTodayList may still reorder
+                    // Today's dated entries relative to each other.
+                    var movedDate = item.Date ?? DateTime.Today;
+                    if (_cellsByDate.TryGetValue(movedDate, out var movedCell))
+                    {
+                        SyncObservableOrder(
+                            movedCell.Items,
+                            State.Items.Where(x => x.Date == movedDate).OrderBy(x => x.Order).ToList());
+                    }
+                }
+            }
+            var itemDate = item.Date ?? DateTime.Today;
+            if (_cellsByDate.TryGetValue(itemDate, out var itemCell))
             {
                 itemCell.RefreshPreview();
             }
@@ -204,6 +247,13 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         }
 
         _items.Clear();
+        _peekDwellTimer?.Stop();
+        _peekDwellSource = null;
+        if (_peekDragPhase != PeekDragPhase.Idle)
+        {
+            CancelPeekDrag();
+        }
+        SyncCompletedSnapshot();
         foreach (var item in State.Items)
         {
             _items.Add(item);
@@ -269,6 +319,13 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         {
             cell.Items.Remove(item);
         }
+        _peekDwellTimer?.Stop();
+        _peekDwellSource = null;
+        if (_peekDragPhase != PeekDragPhase.Idle)
+        {
+            CancelPeekDrag();
+        }
+        _completedItemIds.Remove(item.Id);
         TodoService.Remove(State, item.Id);
         CaptureState();
         RefreshSummary();
@@ -429,24 +486,62 @@ public partial class TodoWidgetWindow : WidgetWindowBase
     // The collection is only moved once, on release. All cancel paths funnel
     // through CancelPeekDrag().
     // ------------------------------------------------------------------
+    private System.Windows.Controls.ItemsControl? ActiveDragList
+    {
+        get
+        {
+            if (State.WeeklyView)
+            {
+                return WeekPeekOverlay.Visibility == Visibility.Visible
+                    && _peekCell is not null
+                    && _editingItem is null
+                    ? WeekPeekList
+                    : null;
+            }
+
+            return ListHost.Visibility == Visibility.Visible && !IsTitleEditing
+                ? TodoList
+                : null;
+        }
+    }
+
+    protected override void OnPreviewMouseRightButtonDown(System.Windows.Input.MouseButtonEventArgs e)
+    {
+        _peekDwellTimer?.Stop();
+        _peekDwellSource = null;
+        if (_peekDragPhase == PeekDragPhase.HoverArmed)
+        {
+            CancelPeekDrag();
+        }
+        base.OnPreviewMouseRightButtonDown(e);
+    }
+
     protected override void OnPreviewMouseLeftButtonDown(System.Windows.Input.MouseButtonEventArgs e)
     {
         // Any press is a new intent: a pending dwell countdown must not fire
         // behind it (clicks on nav buttons, ✕, the input box, …).
         _peekDwellTimer?.Stop();
-        if (WeekPeekOverlay.Visibility != Visibility.Visible || _peekDragPhase != PeekDragPhase.HoverArmed)
+        _peekDwellSource = null;
+        if (_peekDragPhase != PeekDragPhase.HoverArmed)
         {
             // Idle presses no longer arm anything — only a dwell does.
             return;
         }
-        if (_peekCell is null || _editingItem is not null)
+        var dragList = _peekDragList;
+        if (dragList is null || !ReferenceEquals(dragList, ActiveDragList))
+        {
+            CancelPeekDrag();
+            return;
+        }
+        if (ReferenceEquals(dragList, WeekPeekList) && (_peekCell is null || _editingItem is not null))
         {
             CancelPeekDrag();
             return;
         }
         // Checkbox / × handle their own clicks: drop the lift, let them work.
         if (_peekDragContainer is not null
-            && HitsInteractiveChild((System.Windows.DependencyObject)e.OriginalSource, _peekDragContainer))
+            && e.OriginalSource is System.Windows.DependencyObject originalSource
+            && HitsInteractiveChild(originalSource, _peekDragContainer))
         {
             CancelPeekDrag();
             return;
@@ -454,7 +549,8 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         // If the press is no longer over the armed row (the list scrolled or
         // re-laid out under a stationary cursor), drop the lift; a fresh dwell
         // can re-arm on the row now under the cursor.
-        if (FindPeekRowContainer((System.Windows.DependencyObject)e.OriginalSource) is not { } container
+        if (e.OriginalSource is not System.Windows.DependencyObject pressSource
+            || FindRowContainer(pressSource, dragList) is not { } container
             || !ReferenceEquals(container, _peekDragContainer))
         {
             CancelPeekDrag();
@@ -463,7 +559,11 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         // The armed item may have left the collection between the dwell tick
         // and this press (toast undo, external refresh): re-validate identity
         // before dragging.
-        if (_peekDragItem is not TodoItemState armedItem || !_peekCell.Items.Contains(armedItem))
+        var validItem = _peekDragItem is TodoItemState armedItem
+            && (ReferenceEquals(dragList, WeekPeekList)
+                ? _peekCell is not null && _peekCell.Items.Contains(armedItem)
+                : _items.Contains(armedItem) && TodoService.BelongsToTodayList(armedItem, DateTime.Today));
+        if (!validItem)
         {
             CancelPeekDrag();
             return;
@@ -478,7 +578,9 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         }
         _peekDragContainer.LostMouseCapture -= PeekDragContainer_LostMouseCapture;
         _peekDragContainer.LostMouseCapture += PeekDragContainer_LostMouseCapture;
-        _peekPressPoint = e.GetPosition(WeekPeekList);
+        _peekPressPoint = e.GetPosition(dragList);
+        _peekContainerClickPoint = e.GetPosition(_peekDragContainer);
+        _peekEverDragged = false;
         _peekDragPhase = PeekDragPhase.Dragging;
         e.Handled = true;
     }
@@ -487,7 +589,12 @@ public partial class TodoWidgetWindow : WidgetWindowBase
     {
         if (_peekDragPhase == PeekDragPhase.HoverArmed)
         {
-            var pos = e.GetPosition(WeekPeekList);
+            if (_peekDragList is null || !ReferenceEquals(_peekDragList, ActiveDragList))
+            {
+                CancelPeekDrag();
+                return;
+            }
+            var pos = e.GetPosition(_peekDragList);
             if (Math.Abs(pos.X - _peekArmPoint.X) > SystemParameters.MinimumHorizontalDragDistance
                 || Math.Abs(pos.Y - _peekArmPoint.Y) > SystemParameters.MinimumVerticalDragDistance)
             {
@@ -500,7 +607,12 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         }
         else if (_peekDragPhase == PeekDragPhase.Dragging)
         {
-            DoPeekDragMove(e.GetPosition(WeekPeekList));
+            if (_peekDragList is null)
+            {
+                CancelPeekDrag();
+                return;
+            }
+            DoPeekDragMove(e.GetPosition(_peekDragList));
             e.Handled = true;
         }
         else
@@ -522,20 +634,24 @@ public partial class TodoWidgetWindow : WidgetWindowBase
     // re-validates what is actually under the cursor before arming.
     private void UpdatePeekDwell(System.Windows.Input.MouseEventArgs e)
     {
-        if (WeekPeekOverlay.Visibility != Visibility.Visible
-            || _peekCell is null
-            || _editingItem is not null
+        if (ActiveDragList is not { } dragList
             || Mouse.LeftButton == MouseButtonState.Pressed)
         {
             _peekDwellTimer?.Stop();
+        _peekDwellSource = null;
             return;
         }
-        if (FindPeekRowContainer((System.Windows.DependencyObject)e.OriginalSource) is null)
+        if (e.OriginalSource is not System.Windows.DependencyObject source
+            || FindRowContainer(source, dragList) is not { } container
+            || container.Visibility != Visibility.Visible
+            || HitsInteractiveChild(source, container))
         {
             _peekDwellTimer?.Stop();
+        _peekDwellSource = null;
             return;
         }
-        var pos = e.GetPosition(WeekPeekList);
+        _peekDwellSource = source;
+        var pos = e.GetPosition(dragList);
         if (_peekDwellTimer is { IsEnabled: true }
             && Math.Abs(pos.X - _peekDwellAnchor.X) <= SystemParameters.MinimumHorizontalDragDistance
             && Math.Abs(pos.Y - _peekDwellAnchor.Y) <= SystemParameters.MinimumVerticalDragDistance)
@@ -552,13 +668,19 @@ public partial class TodoWidgetWindow : WidgetWindowBase
 
     protected override void OnPreviewKeyDown(System.Windows.Input.KeyEventArgs e)
     {
+        // Any keystroke kills a pending dwell countdown; if a row is hover-armed
+        // while the user starts typing, drop the lift without swallowing the key.
+        _peekDwellTimer?.Stop();
+        _peekDwellSource = null;
         if (e.Key != Key.Escape)
         {
+            if (_peekDragPhase == PeekDragPhase.HoverArmed)
+            {
+                CancelPeekDrag();
+            }
             return;
         }
-        // Esc always kills a pending dwell countdown, and cancels a lift or a
-        // drag when one is active.
-        _peekDwellTimer?.Stop();
+        // Esc cancels an active lift or drag first; otherwise closes DayPeek.
         if (_peekDragPhase is PeekDragPhase.HoverArmed or PeekDragPhase.Dragging)
         {
             CancelPeekDrag();
@@ -578,6 +700,7 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         // otherwise persist invisibly. A drag in progress is left to the
         // LostMouseCapture settle path.
         _peekDwellTimer?.Stop();
+        _peekDwellSource = null;
         if (_peekDragPhase == PeekDragPhase.HoverArmed)
         {
             CancelPeekDrag();
@@ -588,6 +711,7 @@ public partial class TodoWidgetWindow : WidgetWindowBase
     protected override void OnClosed(EventArgs e)
     {
         _peekDwellTimer?.Stop();
+        _peekDwellSource = null;
         if (_peekDragPhase != PeekDragPhase.Idle)
         {
             CancelPeekDrag();
@@ -595,21 +719,28 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         base.OnClosed(e);
     }
 
-    private System.Windows.Controls.ContentPresenter? FindPeekRowContainer(DependencyObject source)
+    private System.Windows.Controls.ContentPresenter? FindPeekRowContainer(DependencyObject source) =>
+        FindRowContainer(source, WeekPeekList);
+
+    private static System.Windows.Controls.ContentPresenter? FindRowContainer(
+        DependencyObject? source,
+        System.Windows.Controls.ItemsControl list)
     {
         var current = source;
         while (current is not null)
         {
             if (current is System.Windows.Controls.ContentPresenter element
-                && WeekPeekList.ItemContainerGenerator.IndexFromContainer(element) >= 0)
+                && list.ItemContainerGenerator.IndexFromContainer(element) >= 0)
             {
                 return element;
             }
-            if (ReferenceEquals(current, WeekPeekList))
+            if (ReferenceEquals(current, list))
             {
                 return null;
             }
-            current = System.Windows.Media.VisualTreeHelper.GetParent(current);
+            current = current is System.Windows.Media.Visual or System.Windows.Media.Media3D.Visual3D
+                ? System.Windows.Media.VisualTreeHelper.GetParent(current)
+                : System.Windows.LogicalTreeHelper.GetParent(current);
         }
         return null;
     }
@@ -631,35 +762,51 @@ public partial class TodoWidgetWindow : WidgetWindowBase
     {
         _peekDwellTimer?.Stop();
         if (_peekDragPhase != PeekDragPhase.Idle
-            || WeekPeekOverlay.Visibility != Visibility.Visible
-            || _peekCell is null
-            || _editingItem is not null
+            || ActiveDragList is not { } dragList
             || Mouse.LeftButton == MouseButtonState.Pressed)
         {
             return;
         }
         // Re-validate at fire time: the cursor may have left the window or the
         // row may have moved under it since the countdown started.
-        var hovered = Mouse.DirectlyOver as System.Windows.DependencyObject;
+        var hovered = _peekDwellSource ?? (Mouse.DirectlyOver as System.Windows.DependencyObject)
+            ?? _peekDwellSource;
         if (hovered is null
-            || FindPeekRowContainer(hovered) is not { } container
-            || container.DataContext is not TodoItemState item
-            || !_peekCell.Items.Contains(item))
+            || FindRowContainer(hovered, dragList) is not { } container
+            || container.Visibility != Visibility.Visible
+            || HitsInteractiveChild(hovered, container)
+            || container.DataContext is not TodoItemState item)
         {
             return;
         }
-        _peekDragCell = _peekCell;
+        if (ReferenceEquals(dragList, WeekPeekList))
+        {
+            if (_peekCell is null || !_peekCell.Items.Contains(item))
+            {
+                return;
+            }
+            _peekDragCell = _peekCell;
+        }
+        else
+        {
+            if (!_items.Contains(item) || !TodoService.BelongsToTodayList(item, DateTime.Today))
+            {
+                return;
+            }
+            _peekDragCell = null;
+        }
+        _peekDragList = dragList;
         _peekDragItem = item;
         _peekDragContainer = container;
         _peekDragRow = PeekRowVisual(container);
-        _peekArmPoint = Mouse.GetPosition(WeekPeekList);
+        _peekArmPoint = _peekDwellAnchor;
         _peekPressPoint = _peekArmPoint;
         ArmPeekDrag();
     }
 
     private void ArmPeekDrag()
     {
-        if (_peekDragContainer is null)
+        if (_peekDragContainer is null || _peekDragList is null || _peekDragItem is null)
         {
             return;
         }
@@ -668,32 +815,43 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         // row follows the cursor 1:1, so any hit test over live (transformed)
         // positions would keep hitting the dragged row's own band. Snapshot
         // the pristine layout before the first shift is applied.
-        var count = WeekPeekList.Items.Count;
+        var count = _peekDragList.Items.Count;
         _peekSlotTops = new double[count];
         _peekSlotHeights = new double[count];
         for (var index = 0; index < count; index++)
         {
-            if (WeekPeekList.ItemContainerGenerator.ContainerFromIndex(index) is FrameworkElement container)
+            if (_peekDragList.ItemContainerGenerator.ContainerFromIndex(index) is FrameworkElement container
+                && container.Visibility == Visibility.Visible)
             {
-                _peekSlotTops[index] = container.TranslatePoint(new System.Windows.Point(0, 0), WeekPeekList).Y;
+                _peekSlotTops[index] = container.TranslatePoint(new System.Windows.Point(0, 0), _peekDragList).Y;
                 _peekSlotHeights[index] = container.ActualHeight;
             }
         }
         // Z-order and drag transforms live on the generated container (a direct
         // child of the list panel); the lift visuals live on the template Border.
         System.Windows.Controls.Panel.SetZIndex(_peekDragContainer, 100);
-        if (_peekDragContainer.RenderTransform is not System.Windows.Media.TranslateTransform)
-        {
-            _peekDragContainer.RenderTransform = new System.Windows.Media.TranslateTransform();
-        }
+        _peekDragContainer.RenderTransform = new System.Windows.Media.TranslateTransform(
+            0, ReferenceEquals(_peekDragList, TodoList) ? -1.5 : 0);
         if (_peekDragRow is not null)
         {
-            _peekDragRow.Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromArgb(0xFF, 0xFF, 0xFF, 0xFF));
-            _peekDragRow.BorderBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromArgb(0xFF, 0x7F, 0xA8, 0xD9));
+            if (ReferenceEquals(_peekDragList, WeekPeekList))
+            {
+                _peekDragRow.Background = new System.Windows.Media.SolidColorBrush(
+                    System.Windows.Media.Color.FromArgb(0xFF, 0xFF, 0xFF, 0xFF));
+            }
+            else
+            {
+                _peekDragRow.Padding = new System.Windows.Thickness(6.5);
+            }
+            _peekDragRow.BorderBrush = new System.Windows.Media.SolidColorBrush(
+                System.Windows.Media.Color.FromArgb(0xFF, 0x7F, 0xA8, 0xD9));
             _peekDragRow.BorderThickness = new System.Windows.Thickness(1.5);
             _peekDragRow.Cursor = System.Windows.Input.Cursors.SizeAll;
+            _peekDragRow.ForceCursor = true;
         }
-        _peekFromIndex = _peekDragCell!.Items.IndexOf(_peekDragItem!);
+        _peekFromIndex = _peekDragCell is not null
+            ? _peekDragCell.Items.IndexOf(_peekDragItem)
+            : _items.IndexOf(_peekDragItem);
         _peekTargetIndex = _peekFromIndex;
         ApplyPeekShifts();
     }
@@ -708,9 +866,14 @@ public partial class TodoWidgetWindow : WidgetWindowBase
 
     private void DoPeekDragMove(System.Windows.Point posInList)
     {
+        var deltaY = posInList.Y - _peekPressPoint.Y;
+        if (Math.Abs(deltaY) > SystemParameters.MinimumVerticalDragDistance)
+        {
+            _peekEverDragged = true;
+        }
         if (_peekDragContainer?.RenderTransform is System.Windows.Media.TranslateTransform translate)
         {
-            translate.Y = posInList.Y - _peekPressPoint.Y;
+            translate.Y = deltaY;
         }
         var target = PeekTargetIndexForDragOffset();
         if (target >= 0 && target != _peekTargetIndex)
@@ -757,7 +920,7 @@ public partial class TodoWidgetWindow : WidgetWindowBase
 
     private void ApplyPeekShifts()
     {
-        if (_peekDragContainer is null)
+        if (_peekDragContainer is null || _peekDragList is null)
         {
             return;
         }
@@ -765,10 +928,22 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         // rows between the origin and the current target move over by one row
         // height. Never read container positions here — TranslatePoint would
         // include the transforms applied by the previous call and oscillate.
-        var rowHeight = _peekDragContainer.ActualHeight + 4;
-        for (var index = 0; index < WeekPeekList.Items.Count; index++)
+        // Note: In TodoList, the ContentPresenter container wraps the child Border's
+        // Margin="2,2,6,3", so _peekSlotHeights[_peekFromIndex] / ActualHeight already
+        // includes the 5px vertical row spacing.
+        var baseHeight = _peekSlotHeights is not null
+            && _peekFromIndex >= 0
+            && _peekFromIndex < _peekSlotHeights.Length
+            && _peekSlotHeights[_peekFromIndex] > 0
+            ? _peekSlotHeights[_peekFromIndex]
+            : _peekDragContainer.ActualHeight;
+        var rowHeight = ReferenceEquals(_peekDragList, WeekPeekList)
+            ? _peekDragContainer.ActualHeight + 4
+            : baseHeight;
+        for (var index = 0; index < _peekDragList.Items.Count; index++)
         {
-            if (WeekPeekList.ItemContainerGenerator.ContainerFromIndex(index) is not FrameworkElement container
+            if (_peekDragList.ItemContainerGenerator.ContainerFromIndex(index) is not FrameworkElement container
+                || container.Visibility != Visibility.Visible
                 || container.ActualHeight <= 0)
             {
                 continue;
@@ -804,42 +979,93 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         // Idle before releasing: releasing raises LostMouseCapture, whose
         // handler must not re-enter settle.
         _peekDragPhase = PeekDragPhase.Idle;
-        var finalIndex = Math.Clamp(_peekTargetIndex, 0, Math.Max(0, (_peekDragCell?.Items.Count ?? 1) - 1));
+        var dragList = _peekDragList;
+        var dragCell = _peekDragCell;
+        var dragItem = _peekDragItem;
+        var dragContainer = _peekDragContainer;
+        var fromIndex = _peekFromIndex;
+        var targetIndex = _peekTargetIndex;
+        var everDragged = _peekEverDragged;
+        var clickPointInContainer = _peekContainerClickPoint;
+
         ResetPeekDragVisual();
-        if (_peekDragContainer is not null)
+        if (dragContainer is not null)
         {
-            _peekDragContainer.LostMouseCapture -= PeekDragContainer_LostMouseCapture;
-            _peekDragContainer.ReleaseMouseCapture();
-        }
-        if (_peekDragCell is not null
-            && _peekDragItem is not null
-            && finalIndex != _peekFromIndex
-            && _peekDragCell.Items.IndexOf(_peekDragItem) is var current
-            && current >= 0
-            && current != finalIndex)
-        {
-            _peekDragCell.Items.Move(current, finalIndex);
-            var nonCellItems = State.Items
-                .Where(x => x.Date != _peekDragCell.Date)
-                .OrderBy(x => x.Order)
-                .ToList();
-            nonCellItems.AddRange(_peekDragCell.Items);
-            for (var i = 0; i < nonCellItems.Count; i++)
-            {
-                nonCellItems[i].Order = i;
-            }
-            State.Items = nonCellItems;
-            ReloadItems();
-            CaptureState();
-            NotifyStateChanged();
+            dragContainer.LostMouseCapture -= PeekDragContainer_LostMouseCapture;
+            dragContainer.ReleaseMouseCapture();
         }
         ClearPeekDragFields();
+
+        if (dragList is null || dragItem is null)
+        {
+            return;
+        }
+
+        if (ReferenceEquals(dragList, WeekPeekList) && dragCell is not null)
+        {
+            var finalIndex = Math.Clamp(targetIndex, 0, Math.Max(0, dragCell.Items.Count - 1));
+            var current = dragCell.Items.IndexOf(dragItem);
+            if (finalIndex != fromIndex && current >= 0 && current != finalIndex)
+            {
+                dragCell.Items.Move(current, finalIndex);
+                var nonCellItems = State.Items
+                    .Where(x => x.Date != dragCell.Date)
+                    .OrderBy(x => x.Order)
+                    .ToList();
+                nonCellItems.AddRange(dragCell.Items);
+                for (var i = 0; i < nonCellItems.Count; i++)
+                {
+                    nonCellItems[i].Order = i;
+                }
+                State.Items = nonCellItems;
+                ReloadItems();
+                CaptureState();
+                NotifyStateChanged();
+            }
+            return;
+        }
+
+        if (ReferenceEquals(dragList, TodoList))
+        {
+            var finalIndex = Math.Clamp(targetIndex, 0, Math.Max(0, _items.Count - 1));
+            var current = _items.IndexOf(dragItem);
+            if (finalIndex != fromIndex && current >= 0 && current != finalIndex)
+            {
+                CaptureState();
+                _items.Move(current, finalIndex);
+                for (var i = 0; i < _items.Count; i++)
+                {
+                    _items[i].Order = i;
+                }
+                State.Items = _items.ToList();
+                if (dragItem.Date is { } itemDate && _cellsByDate.TryGetValue(itemDate, out var cell))
+                {
+                    ResortCell(cell);
+                }
+                CaptureState();
+                NotifyStateChanged();
+            }
+            else if (!everDragged && dragContainer is not null)
+            {
+                if (FindVisualChild<System.Windows.Controls.TextBox>(dragContainer) is { } editor)
+                {
+                    editor.Focus();
+                    var pointInEditor = dragContainer.TranslatePoint(clickPointInContainer, editor);
+                    var caretIndex = editor.GetCharacterIndexFromPoint(pointInEditor, snapToText: true);
+                    if (caretIndex >= 0)
+                    {
+                        editor.CaretIndex = caretIndex;
+                    }
+                }
+            }
+        }
     }
 
     private void CancelPeekDrag()
     {
         // Idle before releasing so the LostMouseCapture handler stays quiet.
         _peekDwellTimer?.Stop();
+        _peekDwellSource = null;
         _peekDragPhase = PeekDragPhase.Idle;
         ResetPeekDragVisual();
         if (_peekDragContainer is not null)
@@ -853,30 +1079,51 @@ public partial class TodoWidgetWindow : WidgetWindowBase
     private void ClearPeekDragFields()
     {
         _peekDragPhase = PeekDragPhase.Idle;
+        _peekDragList = null;
         _peekDragCell = null;
         _peekDragItem = null;
         _peekDragContainer = null;
         _peekDragRow = null;
         _peekSlotTops = null;
         _peekSlotHeights = null;
+        _peekEverDragged = false;
     }
 
     private void ResetPeekDragVisual()
     {
-        for (var index = 0; index < WeekPeekList.Items.Count; index++)
+        foreach (var list in new[] { WeekPeekList, TodoList })
         {
-            if (WeekPeekList.ItemContainerGenerator.ContainerFromIndex(index) is FrameworkElement container)
+            if (list is null)
             {
-                container.RenderTransform = System.Windows.Media.Transform.Identity;
-                System.Windows.Controls.Panel.SetZIndex(container, 0);
+                continue;
+            }
+            for (var index = 0; index < list.Items.Count; index++)
+            {
+                if (list.ItemContainerGenerator.ContainerFromIndex(index) is FrameworkElement container)
+                {
+                    container.RenderTransform = System.Windows.Media.Transform.Identity;
+                    System.Windows.Controls.Panel.SetZIndex(container, 0);
+                }
             }
         }
         if (_peekDragRow is not null)
         {
-            _peekDragRow.Background = System.Windows.Media.Brushes.Transparent;
-            _peekDragRow.BorderBrush = System.Windows.Media.Brushes.Transparent;
-            _peekDragRow.BorderThickness = new System.Windows.Thickness(0);
-            _peekDragRow.Cursor = null;
+            if (ReferenceEquals(_peekDragList, WeekPeekList))
+            {
+                _peekDragRow.Background = System.Windows.Media.Brushes.Transparent;
+                _peekDragRow.BorderBrush = System.Windows.Media.Brushes.Transparent;
+                _peekDragRow.BorderThickness = new System.Windows.Thickness(0);
+                _peekDragRow.Cursor = null;
+            }
+            else
+            {
+                _peekDragRow.ClearValue(System.Windows.Controls.Border.BackgroundProperty);
+                _peekDragRow.ClearValue(System.Windows.Controls.Border.BorderBrushProperty);
+                _peekDragRow.ClearValue(System.Windows.Controls.Border.BorderThicknessProperty);
+                _peekDragRow.ClearValue(System.Windows.Controls.Border.PaddingProperty);
+                _peekDragRow.ClearValue(FrameworkElement.CursorProperty);
+            }
+            _peekDragRow.ClearValue(FrameworkElement.ForceCursorProperty);
         }
     }
 
@@ -894,6 +1141,7 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         // Re-opening (day navigation included) regenerates the row containers:
         // any armed lift, pending dwell, or inline edit is stale by definition.
         _peekDwellTimer?.Stop();
+        _peekDwellSource = null;
         if (_peekDragPhase != PeekDragPhase.Idle)
         {
             CancelPeekDrag();
@@ -938,6 +1186,7 @@ public partial class TodoWidgetWindow : WidgetWindowBase
     private void CloseDayPeek()
     {
         _peekDwellTimer?.Stop();
+        _peekDwellSource = null;
         if (_peekDragPhase != PeekDragPhase.Idle)
         {
             CancelPeekDrag();
@@ -961,6 +1210,7 @@ public partial class TodoWidgetWindow : WidgetWindowBase
             CancelPeekDrag();
         }
         _peekDwellTimer?.Stop();
+        _peekDwellSource = null;
     }
 
     private void WeekPeekOverlay_PreviewMouseWheel(object sender, System.Windows.Input.MouseWheelEventArgs e)
@@ -984,6 +1234,7 @@ public partial class TodoWidgetWindow : WidgetWindowBase
             // to the row now under it — kill it; the next mouse move re-seeds
             // a fresh dwell for that row.
             _peekDwellTimer?.Stop();
+        _peekDwellSource = null;
         }
     }
 
@@ -1203,6 +1454,7 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         // A right-click menu is a different intent: kill any pending dwell
         // countdown and drop an active lift.
         _peekDwellTimer?.Stop();
+        _peekDwellSource = null;
         if (_peekDragPhase == PeekDragPhase.HoverArmed)
         {
             CancelPeekDrag();
@@ -1301,6 +1553,12 @@ public partial class TodoWidgetWindow : WidgetWindowBase
 
     private void ApplyViewMode()
     {
+        _peekDwellTimer?.Stop();
+        _peekDwellSource = null;
+        if (_peekDragPhase != PeekDragPhase.Idle)
+        {
+            CancelPeekDrag();
+        }
         ListHost.Visibility = State.WeeklyView ? Visibility.Collapsed : Visibility.Visible;
         WeekHost.Visibility = State.WeeklyView ? Visibility.Visible : Visibility.Collapsed;
         ViewModeButton.Content = State.WeeklyView ? "列表" : "周历";
@@ -1450,9 +1708,36 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         RefreshSummary();
     }
 
+    private void SyncCompletedSnapshot()
+    {
+        _completedItemIds.Clear();
+        foreach (var entry in State.Items)
+        {
+            if (entry.IsCompleted)
+            {
+                _completedItemIds.Add(entry.Id);
+            }
+        }
+    }
+
+    private static void SyncObservableOrder(
+        ObservableCollection<TodoItemState> collection,
+        IReadOnlyList<TodoItemState> desiredOrder)
+    {
+        for (var targetIndex = 0; targetIndex < desiredOrder.Count; targetIndex++)
+        {
+            var currentIndex = collection.IndexOf(desiredOrder[targetIndex]);
+            if (currentIndex >= 0 && currentIndex != targetIndex)
+            {
+                collection.Move(currentIndex, targetIndex);
+            }
+        }
+    }
+
     private void ReloadItems()
     {
         _items.Clear();
+        SyncCompletedSnapshot();
         foreach (var item in State.Items.OrderBy(x => x.Order))
         {
             _items.Add(item);

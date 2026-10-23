@@ -99,6 +99,106 @@ public static class TodoService
         }
     }
 
+    /// <summary>
+    /// Reorders entries within <paramref name="scope"/> after <paramref name="toggledItemId"/>
+    /// changes completion state so incomplete entries stay above completed entries:
+    /// a newly completed entry sinks to the bottom of the scope (tail of completed entries),
+    /// while a newly uncompleted entry rises back to the tail of incomplete entries.
+    /// Entries outside <paramref name="scope"/> keep their relative positions.
+    /// </summary>
+    public static bool SinkCompletedWithinScope(
+        TodoWidgetState widget, Guid toggledItemId, Func<TodoItemState, bool> scope)
+    {
+        var ordered = widget.Items.OrderBy(x => x.Order).ToList();
+        var scopedIndices = new List<int>();
+        var scopedItems = new List<TodoItemState>();
+        for (var i = 0; i < ordered.Count; i++)
+        {
+            if (scope(ordered[i]))
+            {
+                scopedIndices.Add(i);
+                scopedItems.Add(ordered[i]);
+            }
+        }
+
+        var toggled = scopedItems.FirstOrDefault(x => x.Id == toggledItemId);
+        if (toggled is null || scopedItems.Count <= 1)
+        {
+            return false;
+        }
+
+        var incomplete = scopedItems
+            .Where(x => !x.IsCompleted && x.Id != toggledItemId)
+            .ToList();
+        var completed = scopedItems
+            .Where(x => x.IsCompleted && x.Id != toggledItemId)
+            .ToList();
+
+        if (toggled.IsCompleted)
+        {
+            completed.Add(toggled);
+        }
+        else
+        {
+            incomplete.Add(toggled);
+        }
+
+        var reorderedScope = new List<TodoItemState>(scopedItems.Count);
+        reorderedScope.AddRange(incomplete);
+        reorderedScope.AddRange(completed);
+
+        var changed = false;
+        for (var i = 0; i < scopedItems.Count; i++)
+        {
+            if (!ReferenceEquals(scopedItems[i], reorderedScope[i]))
+            {
+                changed = true;
+                break;
+            }
+        }
+
+        if (!changed)
+        {
+            return false;
+        }
+
+        for (var i = 0; i < scopedIndices.Count; i++)
+        {
+            ordered[scopedIndices[i]] = reorderedScope[i];
+        }
+
+        for (var i = 0; i < ordered.Count; i++)
+        {
+            ordered[i].Order = i;
+        }
+
+        widget.Items = ordered;
+        return true;
+    }
+
+    /// <summary>
+    /// Automatically sinks a completed entry to the bottom (or raises an uncompleted entry
+    /// back above completed entries) within its active scope: today's list scope for undated
+    /// or today-dated entries, or the entry's calendar day for other dates.
+    /// </summary>
+    public static bool SinkCompleted(TodoWidgetState widget, Guid toggledItemId, DateTime today)
+    {
+        var item = widget.Items.FirstOrDefault(x => x.Id == toggledItemId);
+        if (item is null)
+        {
+            return false;
+        }
+
+        if (BelongsToTodayList(item, today))
+        {
+            return SinkCompletedWithinScope(
+                widget, toggledItemId, x => BelongsToTodayList(x, today));
+        }
+
+        return item.Date is { } date &&
+               SinkCompletedWithinScope(widget, toggledItemId, x => x.Date == date);
+    }
+
     public static bool Move(TodoWidgetState widget, Guid itemId, int offset)
     {
         var ordered = widget.Items.OrderBy(x => x.Order).ToList();

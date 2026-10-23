@@ -2863,6 +2863,20 @@ internal static class Program
                         && Canvas.GetTop(peekPanel) + peekPanel.ActualHeight <= weekHost.ActualHeight + 1.0,
                     "DayPeek 保持打开期间缩小周数后，浮层应重新锚定且不超出周历宿主底部边界");
 
+                // 周历 DayPeek 完成自动下滑：勾选浮层首条待办后应沉底到当日列表末尾，取消勾选后恢复到未完成待办末尾。
+                var peekListControl = Require<ItemsControl>(todo, "WeekPeekList");
+                var firstPeekItem = TodoService.ItemsForDate(todo.State, DateTime.Today)[0];
+                var firstPeekCheck = FindVisualChildren<CheckBox>(peekListControl)
+                    .First(cb => cb.DataContext is TodoItemState item && item.Id == firstPeekItem.Id);
+                firstPeekCheck.IsChecked = true;
+                Pump();
+                var peekIdsAfterSink = peekListControl.Items.OfType<TodoItemState>().Select(x => x.Id).ToList();
+                Assert(
+                    peekIdsAfterSink[^1] == firstPeekItem.Id,
+                    "周历 DayPeek 勾选完成待办后，该待办应自动下滑到当日列表末尾");
+                firstPeekCheck.IsChecked = false;
+                Pump();
+
                 // 周历菜单调序（MoveDown_Click）→ 切回列表视图：今日列表容器顺序应立即按新顺序更新。
                 var firstTodayBeforeMove = TodoService.ItemsForDate(todo.State, DateTime.Today)[0];
                 var secondTodayBeforeMove = TodoService.ItemsForDate(todo.State, DateTime.Today)[1];
@@ -2885,6 +2899,103 @@ internal static class Program
                         && visibleTodayIds[0] == secondTodayBeforeMove.Id
                         && visibleTodayIds[1] == firstTodayBeforeMove.Id,
                     "周历菜单下移今日条目后切回列表视图，列表绑定集合应立即显示更新后的顺序");
+
+                // 列表视图完成自动下滑：勾选首条可见今日待办后，该条应自动沉底到未完成条目之后。
+                var firstTodayCheck = FindVisualChildren<CheckBox>(todoListControl)
+                    .First(cb => cb.DataContext is TodoItemState item && item.Id == secondTodayBeforeMove.Id);
+                firstTodayCheck.IsChecked = true;
+                Pump();
+                var todayIdsAfterSink = todoListControl.Items.OfType<TodoItemState>()
+                    .Where(x => TodoService.BelongsToTodayList(x, DateTime.Today))
+                    .Select(x => x.Id)
+                    .ToList();
+                Assert(
+                    todayIdsAfterSink[^1] == secondTodayBeforeMove.Id,
+                    "列表视图勾选完成待办后，该待办应自动下滑到今日列表末尾");
+                firstTodayCheck.IsChecked = false;
+                Pump();
+
+                // 列表视图 500ms 停顿上浮与上下拖拽移动：首条可见今日待办上浮后向下拖动越过邻行，松开后顺序交换且主题底色绑定保持完整。
+                var currentTodayItems = todoListControl.Items.OfType<TodoItemState>()
+                    .Where(x => TodoService.BelongsToTodayList(x, DateTime.Today))
+                    .ToList();
+                var dragFirstItem = currentTodayItems[0];
+                var dragSecondItem = currentTodayItems[1];
+                var firstContainer = (ContentPresenter)todoListControl.ItemContainerGenerator.ContainerFromItem(dragFirstItem);
+                var secondContainer = (ContentPresenter)todoListControl.ItemContainerGenerator.ContainerFromItem(dragSecondItem);
+                var firstCenterInList = firstContainer.TranslatePoint(new Point(10, firstContainer.ActualHeight / 2), todoListControl);
+                var secondCenterInList = secondContainer.TranslatePoint(new Point(10, secondContainer.ActualHeight / 2), todoListControl);
+                typeof(TodoWidgetWindow)
+                    .GetField("_peekDwellAnchor", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+                    .SetValue(todo, firstCenterInList);
+                typeof(TodoWidgetWindow)
+                    .GetField("_peekDwellSource", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+                    .SetValue(todo, firstContainer);
+                typeof(TodoWidgetWindow)
+                    .GetMethod("PeekDwellTimer_Tick", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+                    .Invoke(todo, [null, EventArgs.Empty]);
+                Pump();
+                Assert(
+                    Panel.GetZIndex(firstContainer) == 100
+                        && firstContainer.RenderTransform is TranslateTransform { Y: < 0 },
+                    "列表视图停顿满 500ms 后待办行应进入上浮态（ZIndex=100 且向上微抬）");
+                typeof(TodoWidgetWindow)
+                    .GetMethod("DoPeekDragMove", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+                    .Invoke(todo, [secondCenterInList]);
+                typeof(TodoWidgetWindow)
+                    .GetMethod("SettlePeekDrag", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+                    .Invoke(todo, []);
+                Pump();
+                var todayIdsAfterDrag = todoListControl.Items.OfType<TodoItemState>()
+                    .Where(x => TodoService.BelongsToTodayList(x, DateTime.Today))
+                    .Select(x => x.Id)
+                    .ToList();
+                Assert(
+                    todayIdsAfterDrag[0] == dragSecondItem.Id && todayIdsAfterDrag[1] == dragFirstItem.Id,
+                    "列表视图拖拽落位后应交换待办顺序并写回状态");
+
+                // 列表视图上浮后取消（CancelPeekDrag）与上浮后不拖动直接松开（进入文本编辑聚焦）：
+                var postDragFirstContainer = (ContentPresenter)todoListControl.ItemContainerGenerator.ContainerFromItem(dragSecondItem);
+                var postDragCenter = postDragFirstContainer.TranslatePoint(new Point(10, postDragFirstContainer.ActualHeight / 2), todoListControl);
+                typeof(TodoWidgetWindow)
+                    .GetField("_peekDwellAnchor", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+                    .SetValue(todo, postDragCenter);
+                typeof(TodoWidgetWindow)
+                    .GetField("_peekDwellSource", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+                    .SetValue(todo, postDragFirstContainer);
+                typeof(TodoWidgetWindow)
+                    .GetMethod("PeekDwellTimer_Tick", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+                    .Invoke(todo, [null, EventArgs.Empty]);
+                Pump();
+                typeof(TodoWidgetWindow)
+                    .GetMethod("CancelPeekDrag", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+                    .Invoke(todo, []);
+                Pump();
+                Assert(
+                    Panel.GetZIndex(postDragFirstContainer) == 0
+                        && postDragFirstContainer.RenderTransform == Transform.Identity,
+                    "取消列表上浮后容器应恢复 ZIndex=0 与 Identity 变换");
+
+                typeof(TodoWidgetWindow)
+                    .GetField("_peekDwellAnchor", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+                    .SetValue(todo, postDragCenter);
+                typeof(TodoWidgetWindow)
+                    .GetField("_peekDwellSource", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+                    .SetValue(todo, postDragFirstContainer);
+                typeof(TodoWidgetWindow)
+                    .GetMethod("PeekDwellTimer_Tick", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+                    .Invoke(todo, [null, EventArgs.Empty]);
+                typeof(TodoWidgetWindow)
+                    .GetField("_peekContainerClickPoint", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+                    .SetValue(todo, new Point(40, postDragFirstContainer.ActualHeight / 2));
+                typeof(TodoWidgetWindow)
+                    .GetMethod("SettlePeekDrag", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+                    .Invoke(todo, []);
+                Pump();
+                var rowEditor = FindVisualChildren<TextBox>(postDragFirstContainer).First();
+                Assert(
+                    rowEditor.IsFocused || ReferenceEquals(FocusManager.GetFocusedElement(todo), rowEditor),
+                    "列表视图上浮后未拖动直接松开，应将焦点交还给该行文本输入框");
 
                 list.SelectedItem = list.Items.OfType<SettingsWindow.DesktopComponentSettingsEntry>()
                     .First(entry => entry.Window is NoteWidgetWindow);
