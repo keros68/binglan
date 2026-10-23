@@ -396,6 +396,7 @@
 
                 <!-- Weekly view: month-aligned calendar grid, Monday first, paged one week at a time. -->
                 <Grid x:Name="WeekHost"
+                      SizeChanged="DayPeek_SizeChanged"
                       Margin="10,4,6,0"
                       Visibility="Collapsed"
                       UseLayoutRounding="True"
@@ -637,7 +638,6 @@
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
-                    </Grid>
 
                     <!-- Day peek popup: the full day list, opened from a cell's overflow chip. -->
                     <Canvas x:Name="WeekPeekOverlay"
@@ -648,6 +648,7 @@
                             MouseLeave="WeekPeekOverlay_MouseLeave"
                             PreviewMouseWheel="WeekPeekOverlay_PreviewMouseWheel">
                         <Border x:Name="WeekPeekPanel"
+                                SizeChanged="DayPeek_SizeChanged"
                                 Width="320"
                                 CornerRadius="8"
                                 Background="#FFF4F6FB"
@@ -788,6 +789,7 @@
                         </Grid>
                     </Border>
                 </Canvas>
+                    </Grid>
                 </Grid>
 
             <Grid Grid.Row="2" Margin="17,0,17,7">

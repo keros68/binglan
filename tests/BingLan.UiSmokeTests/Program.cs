@@ -70,6 +70,9 @@ internal static class Program
     [DllImport("user32.dll")]
     private static extern bool IsWindowVisible(nint window);
 
+    [DllImport("user32.dll")]
+    private static extern bool IsWindowEnabled(nint window);
+
     private const uint GwHwndNext = 2;
 
     [DllImport("user32.dll")]
@@ -157,6 +160,9 @@ internal static class Program
         Run("清爽桌面开关", TestCleanDesktopToggle, failures);
         Run("设置行分隔线对齐标题", TestSettingsRowDividersAlignWithTitles, failures);
         Run("待办周历周数设置面板", TestTodoWeekCountSettingPanel, failures);
+        Run("待办日期编辑在保存与父窗口关闭时提交", TestTodoDayEditorPersistence, failures);
+        Run("待办日期编辑对话框独占并保留条目", TestTodoDayEditorExclusive, failures);
+        Run("待办详情浮层随内容与尺寸保持可见", TestTodoPeekBounds, failures);
         Run("整体风格与清爽桌面恢复提示", TestStyleSettingsAndRestoreNotice, failures);
         Run("便签尺寸输入后自动生效", TestAppearancePanelSizeAppliesOnItsOwn, failures);
         Run("首次使用引导逐步应用设置", TestOnboardingWizard, failures);
@@ -3011,6 +3017,166 @@ internal static class Program
         {
             Close(todo);
             Close(note);
+        }
+    }
+
+    private static WeekCellView TodoDayCell(TodoWidgetWindow todo, DateTime? date = null) =>
+        Require<ItemsControl>(todo, "WeekRows").Items.OfType<WeekRowView>()
+            .SelectMany(row => row.Days)
+            .Single(cell => !cell.IsFiller && cell.Date == (date ?? DateTime.Today));
+
+    private static void WithDayEditor(TodoWidgetWindow todo, Action<DayEditWindow> action)
+    {
+        Exception? failure = null;
+        var completed = false;
+        var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(100) };
+        timer.Tick += (_, _) =>
+        {
+            timer.Stop();
+            try
+            {
+                action(todo.OwnedWindows.OfType<DayEditWindow>().Single());
+            }
+            catch (Exception exception)
+            {
+                failure = exception;
+            }
+            finally
+            {
+                todo.OwnedWindows.OfType<DayEditWindow>().FirstOrDefault()?.Close();
+                completed = true;
+            }
+        };
+        timer.Start();
+        typeof(TodoWidgetWindow).GetMethod("OpenDayEditor",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .Invoke(todo, [TodoDayCell(todo)]);
+        PumpUntil(() => completed, "日期编辑对话框未完成交互");
+        if (failure is not null)
+        {
+            throw failure;
+        }
+    }
+
+    private static void TestTodoDayEditorPersistence()
+    {
+        foreach (var captureBeforeClose in new[] { false, true })
+        {
+            var state = new TodoWidgetState { WeeklyView = true };
+            var item = TodoService.Add(state, "原任务", DateTime.Today);
+            var todo = new TodoWidgetWindow(state);
+            ShowAndPump(todo);
+            try
+            {
+                WithDayEditor(todo, editor =>
+                {
+                    Require<TextBox>(editor, "Editor").Text = "1. 保存的任务";
+                    if (captureBeforeClose)
+                    {
+                        todo.CaptureState();
+                        Assert(state.Items.Single().Text == "保存的任务",
+                            "状态保存前应提交仍打开的日期编辑窗内容");
+                        // Further edits after an intermediate save must also commit on close.
+                        Require<TextBox>(editor, "Editor").Text = "1. 关闭时的任务";
+                    }
+                    todo.CanClose = true;
+                    todo.Close();
+                });
+                Assert(state.Items.Single().Id == item.Id
+                    && state.Items.Single().Text == (captureBeforeClose ? "关闭时的任务" : "保存的任务"),
+                    "父卡片关闭应提交日期编辑窗内容并保留条目标识");
+            }
+            finally
+            {
+                if (todo.IsVisible) Close(todo);
+            }
+        }
+    }
+
+    private static void TestTodoDayEditorExclusive()
+    {
+        var state = new TodoWidgetState { WeeklyView = true };
+        var original = TodoService.Add(state, "原任务", DateTime.Today);
+        var todo = new TodoWidgetWindow(state);
+        ShowAndPump(todo);
+        try
+        {
+            var handle = new WindowInteropHelper(todo).Handle;
+            WithDayEditor(todo, editor =>
+            {
+                Assert(!IsWindowEnabled(handle), "日期编辑期间应禁用父卡片，防止并行新增被旧文本覆盖");
+                Require<TextBox>(editor, "Editor").Text = "1. 修改的任务";
+            });
+            Assert(IsWindowEnabled(handle), "关闭日期编辑对话框后应恢复父卡片交互");
+            Assert(state.Items.Single().Id == original.Id && state.Items.Single().Text == "修改的任务",
+                "对话框应提交文本并保留原条目");
+            var add = FindVisualChildren<Button>(todo).Single(button => Equals(button.Content, "+"));
+            add.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            Pump();
+            var input = Require<TextBox>(todo, "WeekPeekInput");
+            input.Text = "随后新增的任务";
+            input.RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(input)!, 0, Key.Enter)
+            {
+                RoutedEvent = Keyboard.KeyDownEvent
+            });
+            Pump();
+            Assert(state.Items.Count == 2 && state.Items.Any(item => item.Text == "随后新增的任务"),
+                "关闭编辑对话框后应可新增待办且保留已有内容");
+        }
+        finally
+        {
+            Close(todo);
+        }
+    }
+
+    private static void TestTodoPeekBounds()
+    {
+        var todo = new TodoWidgetWindow(new TodoWidgetState { WeeklyView = true });
+        ShowAndPump(todo);
+        try
+        {
+            var cells = Require<ItemsControl>(todo, "WeekRows").Items.OfType<WeekRowView>()
+                .SelectMany(row => row.Days).Where(cell => !cell.IsFiller).ToList();
+            typeof(TodoWidgetWindow).GetMethod("OpenDayPeek",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+                .Invoke(todo, [cells.MaxBy(cell => cell.Date)!, null]);
+            Pump();
+            var input = Require<TextBox>(todo, "WeekPeekInput");
+            for (var i = 0; i < 10; i++)
+            {
+                input.Text = $"任务 {i + 1}";
+                input.RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(input)!, 0, Key.Enter)
+                {
+                    RoutedEvent = Keyboard.KeyDownEvent
+                });
+                Pump();
+            }
+            AssertPeekInsideHost();
+            todo.Width += 80;
+            todo.Height += 60;
+            Pump();
+            todo.Width = todo.MinWidth;
+            todo.Height = todo.MinHeight;
+            Pump();
+            AssertPeekInsideHost();
+
+            void AssertPeekInsideHost()
+            {
+                var host = Require<Grid>(todo, "WeekHost");
+                var panel = Require<Border>(todo, "WeekPeekPanel");
+                var top = Canvas.GetTop(panel);
+                var left = Canvas.GetLeft(panel);
+                Assert(top >= 0 && top + panel.ActualHeight <= host.ActualHeight + 1
+                    && left >= 0 && left + panel.ActualWidth <= host.ActualWidth + 1,
+                    "新增条目或调整卡片尺寸后，详情浮层应完整保留在周历内");
+                var inputBounds = input.TransformToAncestor(host)
+                    .TransformBounds(new Rect(0, 0, input.ActualWidth, input.ActualHeight));
+                Assert(inputBounds.Bottom <= host.ActualHeight + 1, "详情浮层的新增输入框应保持可见");
+            }
+        }
+        finally
+        {
+            Close(todo);
         }
     }
 

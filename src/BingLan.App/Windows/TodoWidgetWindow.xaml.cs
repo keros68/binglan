@@ -108,6 +108,7 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         CopyPlacementTo(State.Placement);
         State.CornerRadius = WidgetCornerRadius;
         State.Items = _items.OrderBy(x => x.Order).ToList();
+        _dayEditor?.CommitPendingChanges();
     }
 
     private void Add_Click(object sender, RoutedEventArgs e)
@@ -708,6 +709,15 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         base.OnDeactivated(e);
     }
 
+    protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
+    {
+        base.OnClosing(e);
+        if (!e.Cancel)
+        {
+            _dayEditor?.Close();
+        }
+    }
+
     protected override void OnClosed(EventArgs e)
     {
         _peekDwellTimer?.Stop();
@@ -1156,17 +1166,25 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         WeekPeekList.ItemsSource = cell.Items;
         WeekPeekInput.Clear();
         MoveToast.Visibility = Visibility.Collapsed;
-        if (WeekHost.ActualHeight > 0)
-        {
-            WeekPeekListScroller.MaxHeight = Math.Clamp(WeekHost.ActualHeight - 96, 72, 264);
-        }
         WeekPeekOverlay.Visibility = Visibility.Visible;
+        WeekPeekPanel.UpdateLayout();
+        UpdateDayPeekBounds(cellElement);
+    }
 
-        // Anchor the panel next to the source cell, flipping inward and clamping at the edges.
-        cellElement ??= FindCellElement(cell);
-        if (cellElement is not null && WeekHost.ActualWidth > 0 && WeekHost.ActualHeight > 0)
+    private void DayPeek_SizeChanged(object sender, SizeChangedEventArgs e) => UpdateDayPeekBounds();
+
+    private void UpdateDayPeekBounds(FrameworkElement? cellElement = null)
+    {
+        if (_peekCell is null || WeekPeekOverlay.Visibility != Visibility.Visible
+            || WeekHost.ActualWidth <= 0 || WeekHost.ActualHeight <= 0)
         {
-            WeekPeekPanel.UpdateLayout();
+            return;
+        }
+        // Bound the whole panel so its header and input retain space while the list scrolls.
+        WeekPeekPanel.MaxHeight = WeekHost.ActualHeight;
+        cellElement ??= FindCellElement(_peekCell);
+        if (cellElement is not null && WeekHost.IsAncestorOf(cellElement))
+        {
             var panelWidth = WeekPeekPanel.ActualWidth > 0 ? WeekPeekPanel.ActualWidth : WeekPeekPanel.Width;
             var panelHeight = WeekPeekPanel.ActualHeight > 0 ? WeekPeekPanel.ActualHeight : 140;
             var rect = cellElement.TransformToAncestor(WeekHost)
@@ -1524,8 +1542,7 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         _dayEditor = new DayEditWindow(cell.Date, lines) { Owner = this };
         _dayEditor.Committed += (date, committedLines) => CommitDayEditor(date, committedLines);
         _dayEditor.Closed += (_, _) => _dayEditor = null;
-        _dayEditor.Show();
-        _dayEditor.Activate();
+        _dayEditor.ShowDialog();
     }
 
     private void CommitDayEditor(DateTime date, IReadOnlyList<string> lines)

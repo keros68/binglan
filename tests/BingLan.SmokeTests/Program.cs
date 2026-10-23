@@ -13,7 +13,7 @@ Run("待办编辑、勾选、排序", TestTodo);
 Run("待办日期字段、完成时间与周历规则", TestTodoDates);
 Run("按日同步待办行", TestSyncDayItems);
 Run("跨日移动待办", TestMoveToDate);
-Run("待办日期持久化与官方版本兼容", TestTodoDatePersistence);
+Run("待办日期持久化与旧状态迁移", TestTodoDatePersistence);
 Run("周历农历标注", TestLunarDayText);
 Run("顶栏只统计今日待办", TestTopBarTodayCount);
 Run("文件映射去重与移除", TestMappings);
@@ -378,7 +378,7 @@ static void TestTodoDatePersistence()
         Assert(
             restoredItem.CreatedDate is not null && restoredItem.CompletedDate is not null,
             "创建与完成时间未持久化");
-        Assert(store.Load().SchemaVersion == AppState.CurrentSchemaVersion, "日期字段不应改变 Schema 版本");
+        Assert(store.Load().SchemaVersion > 33, "带日期的状态必须使用高于 v33 的版本，阻止旧版静默覆盖日期");
 
         Assert(restored.WeeklyWeekCount == 4, "周数默认值应为 4");
         widget.WeeklyWeekCount = 2;
@@ -390,8 +390,7 @@ static void TestTodoDatePersistence()
         widget.WeeklyWeekCount = 2;
         store.Save(state);
 
-        // A file written by the official build carries no date fields; it must load,
-        // and saving it again must stay on the schema the official build can read.
+        // Undated v33 entries retain their identity and completion state on upgrade.
         File.WriteAllText(
             store.StatePath,
             """
@@ -410,16 +409,45 @@ static void TestTodoDatePersistence()
             """);
         var fromOfficial = store.Load().TodoWidgets.Single();
         Assert(fromOfficial.Items.Single().Date is null, "官方数据读取后不应凭空出现日期");
+        Assert(fromOfficial.Items.Single().Id == Guid.Parse("11111111-2222-3333-4444-555555555555")
+            && fromOfficial.Items.Single().IsCompleted, "迁移应保留旧条目的标识与完成状态");
         Assert(fromOfficial.WeeklyWeekCount == 4, "官方旧格式文件（缺周数字段）应取默认值 4");
         store.Save(store.Load());
         using var saved = JsonDocument.Parse(File.ReadAllText(store.StatePath));
         Assert(
             saved.RootElement.GetProperty("SchemaVersion").GetInt32() == AppState.CurrentSchemaVersion,
-            "保存后 Schema 版本应保持官方可读的当前版本");
+            "旧状态保存后应使用当前版本");
         Assert(
-            !saved.RootElement.GetProperty("TodoWidgets")[0].TryGetProperty("Date", out var dateProperty)
+            !saved.RootElement.GetProperty("TodoWidgets")[0].GetProperty("Items")[0].TryGetProperty("Date", out var dateProperty)
                 || dateProperty.ValueKind == JsonValueKind.Null,
             "官方数据保存后不应写入有值的日期字段");
+        using var backup = JsonDocument.Parse(File.ReadAllText(store.StatePath + ".bak"));
+        Assert(backup.RootElement.GetProperty("SchemaVersion").GetInt32() > 33
+            && backup.RootElement.GetProperty("TodoWidgets")[0].GetProperty("Items")[0]
+                .GetProperty("Text").GetString() == "官方待办",
+            "上一份有效状态应保留内容并升级备份格式，阻止旧版回退读取 v33 备份");
+
+        // Existing weekly-view v33 files must also preserve their calendar data.
+        store.Save(state);
+        var weeklyV33 = File.ReadAllText(store.StatePath).Replace(
+            $"\"SchemaVersion\": {AppState.CurrentSchemaVersion}", "\"SchemaVersion\": 33");
+        File.WriteAllText(store.StatePath, weeklyV33);
+        var migrated = store.Load();
+        var migratedItem = migrated.TodoWidgets.Single().Items.Single(x => x.Id == dated.Id);
+        Assert(migrated.SchemaVersion == AppState.CurrentSchemaVersion
+            && migrated.TodoWidgets.Single().WeeklyView
+            && migrated.TodoWidgets.Single().WeeklyWeekCount == 2
+            && migratedItem.Date == dated.Date
+            && migratedItem.CreatedDate == dated.CreatedDate
+            && migratedItem.CompletedDate == dated.CompletedDate,
+            "迁移周历 v33 文件应保留日期、时间戳和视图设置");
+        File.WriteAllText(store.StatePath + ".bak", weeklyV33);
+        File.WriteAllText(store.StatePath, "");
+        store.Save(store.Load());
+        using var recoveredBackup = JsonDocument.Parse(File.ReadAllText(store.StatePath + ".bak"));
+        Assert(recoveredBackup.RootElement.GetProperty("SchemaVersion").GetInt32() == AppState.CurrentSchemaVersion
+            && store.Load().TodoWidgets.Single().Items.Single(x => x.Id == dated.Id).Date == dated.Date,
+            "从 v33 备份恢复后，主文件和有效备份均应升级且保留日期");
     }
     finally
     {
@@ -759,12 +787,16 @@ static void TestCornerRadiusMigration()
             "旧分层窗口几何未移除 12 DIP 阴影留白");
 
         store.Save(migrated);
-        var backupPath = store.StatePath + ".bak";
+        var backupPath = store.ListBackups().Single(path =>
+            Path.GetFileName(path).StartsWith("widgets-before-migration-", StringComparison.Ordinal));
         Assert(File.Exists(backupPath), "迁移保存前未保留 v1 备份");
         using var backup = JsonDocument.Parse(File.ReadAllText(backupPath));
         Assert(
             backup.RootElement.GetProperty("SchemaVersion").GetInt32() == 1,
             "迁移备份不再是原始 v1 状态");
+        using var currentBackup = JsonDocument.Parse(File.ReadAllText(store.StatePath + ".bak"));
+        Assert(currentBackup.RootElement.GetProperty("SchemaVersion").GetInt32() == AppState.CurrentSchemaVersion,
+            "上一份有效状态备份应使用当前格式");
 
         File.WriteAllText(
             store.StatePath,

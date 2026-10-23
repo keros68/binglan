@@ -36,7 +36,7 @@ public sealed class LocalStateStore
             return CreateDefault();
         }
 
-        if (TryLoad(StatePath, out var state) || TryLoad(StatePath + ".bak", out state))
+        if (TryLoad(StatePath, out var state, out _) || TryLoad(StatePath + ".bak", out state, out _))
         {
             return state;
         }
@@ -48,20 +48,22 @@ public sealed class LocalStateStore
         return CreateDefault();
     }
 
-    private static bool TryLoad(string path, [NotNullWhen(true)] out AppState? state)
+    private static bool TryLoad(string path, [NotNullWhen(true)] out AppState? state, out int storedVersion)
     {
         state = null;
+        storedVersion = 0;
         if (!File.Exists(path))
         {
             return false;
         }
         try
         {
-            state = DeserializeAndMigrate(File.ReadAllText(path));
+            state = DeserializeAndMigrate(File.ReadAllText(path), out storedVersion);
             return true;
         }
         catch (Exception exception) when (exception is JsonException or InvalidDataException)
         {
+            state = null;
             return false;
         }
     }
@@ -74,11 +76,23 @@ public sealed class LocalStateStore
         var json = JsonSerializer.Serialize(state, JsonOptions);
         File.WriteAllText(temporaryPath, json);
 
-        // Only a readable state becomes the backup, so a damaged main file can never
-        // replace the last good copy it was just recovered from.
-        if (IsReadableState(StatePath))
+        // Preserve the previous valid contents in the current format. Keeping both
+        // copies versioned prevents older builds from falling back to an old-schema backup.
+        var previousPath = StatePath;
+        if (!TryLoad(previousPath, out var previous, out var previousVersion))
         {
-            File.Copy(StatePath, StatePath + ".bak", true);
+            previousPath += ".bak";
+            TryLoad(previousPath, out previous, out previousVersion);
+        }
+        if (previous is not null)
+        {
+            if (previousVersion < AppState.CurrentSchemaVersion)
+            {
+                CopyStateToBackup("widgets-before-migration", previousPath);
+            }
+            var temporaryBackupPath = StatePath + ".bak.tmp";
+            File.WriteAllText(temporaryBackupPath, JsonSerializer.Serialize(previous, JsonOptions));
+            File.Move(temporaryBackupPath, StatePath + ".bak", true);
         }
         File.Move(temporaryPath, StatePath, true);
     }
@@ -109,7 +123,7 @@ public sealed class LocalStateStore
     {
         try
         {
-            var state = DeserializeAndMigrate(File.ReadAllText(backupPath));
+            var state = DeserializeAndMigrate(File.ReadAllText(backupPath), out _);
             var informationCards = DesktopExperienceRules.ComponentOrder
                 .Where(kind => kind is DesktopComponentKind.TimeDate or DesktopComponentKind.Greeting
                     or DesktopComponentKind.Weather or DesktopComponentKind.Performance)
@@ -133,7 +147,7 @@ public sealed class LocalStateStore
     /// </summary>
     public void ScheduleRestore(string backupPath)
     {
-        DeserializeAndMigrate(File.ReadAllText(backupPath));
+        DeserializeAndMigrate(File.ReadAllText(backupPath), out _);
         Directory.CreateDirectory(DataDirectory);
         File.Copy(backupPath, PendingRestorePath, true);
     }
@@ -147,7 +161,7 @@ public sealed class LocalStateStore
 
         try
         {
-            if (!TryLoad(PendingRestorePath, out _))
+            if (!TryLoad(PendingRestorePath, out _, out _))
             {
                 File.Delete(PendingRestorePath);
                 return;
@@ -164,7 +178,7 @@ public sealed class LocalStateStore
         }
     }
 
-    private string CopyStateToBackup(string prefix)
+    private string CopyStateToBackup(string prefix, string? sourcePath = null)
     {
         Directory.CreateDirectory(BackupDirectory);
         var stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
@@ -173,7 +187,7 @@ public sealed class LocalStateStore
         {
             path = Path.Combine(BackupDirectory, $"{prefix}-{stamp}-{suffix}.json");
         }
-        File.Copy(StatePath, path);
+        File.Copy(sourcePath ?? StatePath, path);
         return path;
     }
 
@@ -187,25 +201,13 @@ public sealed class LocalStateStore
         };
     }
 
-    private static AppState DeserializeAndMigrate(string json)
+    private static AppState DeserializeAndMigrate(string json, out int storedVersion)
     {
         var state = JsonSerializer.Deserialize<AppState>(json, JsonOptions)
             ?? throw new JsonException("状态文件没有内容");
+        storedVersion = state.SchemaVersion;
         MigrateAndNormalize(state);
         return state;
-    }
-
-    private static bool IsReadableState(string path)
-    {
-        try
-        {
-            return File.Exists(path)
-                && JsonSerializer.Deserialize<AppState>(File.ReadAllText(path), JsonOptions) is not null;
-        }
-        catch (JsonException)
-        {
-            return false;
-        }
     }
 
     private static void MigrateAndNormalize(AppState state)
@@ -499,6 +501,11 @@ public sealed class LocalStateStore
             state.TopBar.Modules ??= new TopBarModuleSwitches();
             state.TopBar.Modules.TrayOverflow = true;
             state.SchemaVersion = 33;
+        }
+        if (state.SchemaVersion < 34)
+        {
+            // Missing calendar fields use model defaults; existing dates and timestamps stay intact.
+            state.SchemaVersion = 34;
         }
         state.Updates ??= new UpdateState();
         state.QuickPlaces = QuickPlaceRules.Normalize(state.QuickPlaces);

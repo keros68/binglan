@@ -13,6 +13,7 @@ public partial class DayEditWindow : Window
     public event Action<DateTime, IReadOnlyList<string>>? Committed;
 
     private readonly DateTime _date;
+    private string _lastCommittedText;
 
     public DayEditWindow(DateTime date, IReadOnlyList<string> initialLines)
     {
@@ -25,6 +26,7 @@ public partial class DayEditWindow : Window
             ? "1. "
             : string.Join(Environment.NewLine,
                 initialLines.Select((line, index) => $"{index + 1}. {line}"));
+        _lastCommittedText = Editor.Text;
         Editor.CaretIndex = Editor.Text.Length;
         Loaded += (_, _) => Editor.Focus();
     }
@@ -48,14 +50,21 @@ public partial class DayEditWindow : Window
 
     private void Commit_Click(object sender, RoutedEventArgs e) => Close();
 
-    protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
+    public void CommitPendingChanges()
     {
-        base.OnClosing(e);
-        if (e.Cancel)
+        if (Editor.Text == _lastCommittedText)
         {
             return;
         }
+        // A commit can cause the host to capture its state again.
+        _lastCommittedText = Editor.Text;
         Committed?.Invoke(_date, ReadLines());
+    }
+
+    protected override void OnClosed(EventArgs e)
+    {
+        CommitPendingChanges();
+        base.OnClosed(e);
     }
 
     private IReadOnlyList<string> ReadLines()
