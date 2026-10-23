@@ -60,6 +60,7 @@ public partial class IceBlueDockWindow : Window
     private bool _refreshRunning;
     private bool _refreshQueued;
     private bool _menuOpen;
+    private bool _revealPending;
     private bool _suppressedBySystemMenu;
     private bool _hiddenBySmartHide;
     private bool _refreshPending;
@@ -639,12 +640,30 @@ public partial class IceBlueDockWindow : Window
         return brush;
     }
 
-    private void Invoke(DockItem item)
+    private async void Invoke(DockItem item)
     {
-        var result = item.Group is not null
-            ? WindowCommandService.Toggle(item.Group)
-            : WindowCommandService.Launch(item.Pinned!);
-        Report(result);
+        if (item.Group is not null)
+        {
+            Report(WindowCommandService.Toggle(item.Group));
+            return;
+        }
+
+        // A second click while a tray app is being raised would send its toggle
+        // hotkey again and hide the window that is just coming back.
+        if (_revealPending)
+        {
+            return;
+        }
+
+        _revealPending = true;
+        try
+        {
+            Report(await WindowCommandService.RevealOrLaunchAsync(item.Pinned!));
+        }
+        finally
+        {
+            _revealPending = false;
+        }
     }
 
     private void LaunchNewInstance(DockItem item, string name)

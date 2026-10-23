@@ -14,6 +14,7 @@ Run("同应用多窗口稳定分组", TestStableGrouping);
 Run("空标题窗口显示名回退", TestUntitledWindowDisplayName);
 Run("运行应用按首次出现顺序保持稳定", TestFirstSeenOrder);
 Run("Dock 点击动作决策", TestWindowActionPolicy);
+Run("托盘驻留应用的唤回快捷键", TestTrayAppRevealRules);
 Run("Dock 内容尺寸边界", TestContentLengthBounds);
 Run("Dock 图标大小决定按钮与高度并被钳制", TestDockIconSize);
 Run("Dock 距底部高度默认等于原固定间距并被钳制", TestDockBottomGap);
@@ -529,6 +530,18 @@ static void TestWindowActionPolicy()
         DockClickAction.RestoreAndActivate,
         WindowActionPolicy.Decide(groupContainsForeground: false, targetIsMinimized: true),
         "点击最小化应用应恢复并激活");
+}
+
+static void TestTrayAppRevealRules()
+{
+    var weixin = TrayAppRevealRules.HotkeyFor(@"D:\App\Weixin\Weixin.exe");
+    Assert(weixin is not null, "微信 4.x 应有唤回快捷键");
+    AssertEqual(0x0003u, weixin!.Modifiers, "微信唤回快捷键应为 Ctrl+Alt");
+    AssertEqual((int)'W', weixin.VirtualKey, "微信唤回快捷键主键应为 W");
+    AssertEqual(weixin, TrayAppRevealRules.HotkeyFor(@"C:\Program Files\Tencent\WeChat\WECHAT.EXE"), "微信 3.x 不区分大小写也应匹配");
+    AssertEqual<TrayRevealHotkey?>(null, TrayAppRevealRules.HotkeyFor(@"C:\Program Files\Tencent\QQNT\QQ.exe"), "其他托盘应用不发送快捷键");
+    AssertEqual<TrayRevealHotkey?>(null, TrayAppRevealRules.HotkeyFor(@"D:\Tools\Weixin.exe.lnk"), "只按可执行文件名匹配");
+    AssertEqual<TrayRevealHotkey?>(null, TrayAppRevealRules.HotkeyFor(null), "无路径的固定项（打包应用）不发送快捷键");
 }
 
 static void TestUntitledWindowDisplayName()
