@@ -1369,6 +1369,42 @@ public partial class SettingsWindow : Window
         }
     }
 
+    private void DeleteBackup_Click(object sender, RoutedEventArgs e)
+    {
+        if (BackupList.SelectedItem is not BackupEntry entry)
+        {
+            BackupStatusText.Text = "请先选择一个备份";
+            return;
+        }
+
+        var answer = System.Windows.MessageBox.Show(
+            this,
+            $"将删除 {entry.Label} 的备份文件，删除后无法恢复。继续吗？",
+            "删除备份",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning);
+        if (answer != MessageBoxResult.Yes)
+        {
+            return;
+        }
+
+        try
+        {
+            if (!_maintenance.DeleteBackup(entry.Path))
+            {
+                BackupStatusText.Text = "无法删除这个备份";
+                RefreshBackupList();
+                return;
+            }
+            RefreshBackupList();
+            BackupStatusText.Text = "已删除备份";
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            BackupStatusText.Text = $"删除未完成：{exception.Message}";
+        }
+    }
+
     private void ResetComponentPlacement_Click(object sender, RoutedEventArgs e)
     {
         if (_selectedComponentEntry is not { } entry)

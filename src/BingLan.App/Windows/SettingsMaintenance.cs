@@ -29,6 +29,7 @@ public sealed class SettingsMaintenance
     public Action OpenDataDirectory { get; init; } = () => { };
     public Func<string> CreateBackup { get; init; } = () => string.Empty;
     public Func<IReadOnlyList<string>> ListBackups { get; init; } = () => [];
+    public Func<string, bool> DeleteBackup { get; init; } = _ => false;
     public Action<string> RestoreBackup { get; init; } = _ => { };
     public Func<WidgetWindowBase?, BingLan.Core.Models.DesktopComponentKind?, bool> ResetWidgetPlacement { get; init; } =
         (_, _) => false;

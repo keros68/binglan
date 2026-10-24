@@ -49,6 +49,33 @@ internal static class BackupSummaryTests
             "应跳过已用的编号");
     }
 
+    internal static void TestBackupCanBeDeleted()
+    {
+        var temp = Path.Combine(Path.GetTempPath(), $"BingLan-backup-delete-{Guid.NewGuid():N}");
+        try
+        {
+            var store = new LocalStateStore(temp);
+            var backup = store.CreateBackup(store.Load());
+            Check(store.ListBackups().Count == 1, "创建后应列出一个备份");
+
+            Check(store.DeleteBackup(backup), "应能删除备份目录内的备份");
+            Check(store.ListBackups().Count == 0, "删除后列表应为空");
+            Check(!store.DeleteBackup(backup), "删除不存在的备份应返回 false 而不是抛错");
+
+            var outside = Path.Combine(temp, "outside.json");
+            File.WriteAllText(outside, "{}");
+            Check(!store.DeleteBackup(outside), "备份目录外的文件应拒绝删除");
+            Check(File.Exists(outside), "备份目录外的文件不应被删除");
+        }
+        finally
+        {
+            if (Directory.Exists(temp))
+            {
+                Directory.Delete(temp, true);
+            }
+        }
+    }
+
     private static void Check(bool condition, string message)
     {
         if (!condition)

@@ -1078,6 +1078,7 @@ public sealed class WidgetCoordinator : IDisposable
                     return _store.CreateBackup(_state);
                 },
                 ListBackups = _store.ListBackups,
+                DeleteBackup = _store.DeleteBackup,
                 RestoreBackup = RestoreBackupAndRestart,
                 ResetWidgetPlacement = ResetWidgetPlacement,
                 ImportRainmeterLook = ApplyRainmeterLook,

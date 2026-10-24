@@ -70,6 +70,7 @@ Run("主题包整体风格与自定义图标往返", ThemeStyleTests.TestStyleAn
 Run("主题包丢弃不安全图标", ThemeStyleTests.TestUnsafeIconsAreDropped);
 Run("主题包清单校验", ThemeStyleTests.TestManifestIsValidated);
 Run("备份列表摘要", BackupSummaryTests.TestBackupIsDescribed);
+Run("备份可以删除且目录外被拒绝", BackupSummaryTests.TestBackupCanBeDeleted);
 Run("新建卡片标题不重名", BackupSummaryTests.TestNewCardTitlesAreUnique);
 Run("无法读取的状态文件以默认状态启动并留存", StateRecoveryTests.TestUnreadableStateStartsFromDefaults);
 Run("像素尺寸过大的 PNG 被拒绝", StateRecoveryTests.TestHugePngIsRejected);

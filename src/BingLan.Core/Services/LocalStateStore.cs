@@ -116,6 +116,25 @@ public sealed class LocalStateStore
     }
 
     /// <summary>
+    /// Removes one backup file for good. Only .json files inside the backup folder
+    /// qualify; anything else is refused instead of deleted. False when nothing was deleted.
+    /// </summary>
+    public bool DeleteBackup(string backupPath)
+    {
+        var directory = Path.GetFullPath(BackupDirectory);
+        var fullPath = Path.GetFullPath(backupPath);
+        if (!fullPath.StartsWith(directory + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
+            || Path.GetExtension(fullPath) != ".json"
+            || !File.Exists(fullPath))
+        {
+            return false;
+        }
+
+        File.Delete(fullPath);
+        return true;
+    }
+
+    /// <summary>
     /// What a backup holds, for telling backups apart in a list: the layout preset and
     /// how many cards and dock apps it has. Null when the file cannot be read.
     /// </summary>
