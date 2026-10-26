@@ -115,6 +115,26 @@ internal static class Program
             DockGlassPreview.Run(app);
             return 0;
         }
+        if (Environment.GetCommandLineArgs().Contains("--appearance-preview"))
+        {
+            AppearancePreview.Run(app);
+            return Environment.ExitCode;
+        }
+
+        if (Environment.GetCommandLineArgs().Contains("--appearance-tests"))
+        {
+            try
+            {
+                AppearancePreviewTests.Run(ShowAndPump, Pump);
+                Console.WriteLine("外观试选独立回归检查通过。");
+                return 0;
+            }
+            catch (Exception exception)
+            {
+                Console.Error.WriteLine(exception);
+                return 1;
+            }
+        }
 
         Run("待办真实控件编辑与勾选", TestTodoControls, failures);
         Run("逐像素透明 HWND 与单一可调圆角", TestUnifiedCornerAndSettings, failures);
@@ -164,6 +184,7 @@ internal static class Program
         Run("待办日期编辑对话框独占并保留条目", TestTodoDayEditorExclusive, failures);
         Run("待办详情浮层随内容与尺寸保持可见", TestTodoPeekBounds, failures);
         Run("整体风格与清爽桌面恢复提示", TestStyleSettingsAndRestoreNotice, failures);
+        Run("外观草稿取消、对比、限定应用与竖屏预览", () => AppearancePreviewTests.Run(ShowAndPump, Pump), failures);
         Run("便签尺寸输入后自动生效", TestAppearancePanelSizeAppliesOnItsOwn, failures);
         Run("首次使用引导逐步应用设置", TestOnboardingWizard, failures);
         Run("卡片拖动吸附到相邻卡片且不会被系统吸附成半屏", () => SnapMoveTests.Run(ShowAndPump, Pump), failures);

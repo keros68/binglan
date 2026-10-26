@@ -65,6 +65,7 @@ Run("清爽桌面设置迁移", CleanDesktopTests.TestSettingMigration);
 Run("空状态文件从备份恢复且不覆盖备份", CleanDesktopTests.TestEmptyStateFallsBackToBackup);
 Run("整体风格迁移与取值范围", ThemeStyleTests.TestStyleMigrationAndLimits);
 Run("卡片外观配色与居中时钟布局", ThemeStyleTests.TestGlassAndCenterClockPreset);
+Run("四种竖屏预设边界、最小尺寸与横屏坐标", ThemeStyleTests.TestPortraitPresets);
 Run("任务栏只在两角唤出时底边细条的位置", ThemeStyleTests.TestTaskbarCornerStrip);
 Run("主题包整体风格与自定义图标往返", ThemeStyleTests.TestStyleAndIconsRoundTrip);
 Run("主题包丢弃不安全图标", ThemeStyleTests.TestUnsafeIconsAreDropped);

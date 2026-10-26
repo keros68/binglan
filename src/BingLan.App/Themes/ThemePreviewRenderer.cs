@@ -28,7 +28,9 @@ internal static class ThemePreviewRenderer
     private const int Height = 360;
     private const double Dpi = 96d;
 
-    internal static byte[] Render(ThemePackage package)
+    internal static byte[] Render(ThemePackage package) => Render(package, Width, Height);
+
+    private static byte[] Render(ThemePackage package, int width, int height)
     {
         ArgumentNullException.ThrowIfNull(package);
 
@@ -42,17 +44,17 @@ internal static class ThemePreviewRenderer
                     new Point(0, 0),
                     new Point(1, 1)),
                 null,
-                new Rect(0, 0, Width, Height));
+                new Rect(0, 0, width, height));
 
-            DrawComponents(context, package);
+            DrawComponents(context, package, width, height);
 
             if (package.Bindings.DockEnabled)
             {
-                DrawDock(context);
+                DrawDock(context, width, height);
             }
         }
 
-        var bitmap = new RenderTargetBitmap(Width, Height, Dpi, Dpi, PixelFormats.Pbgra32);
+        var bitmap = new RenderTargetBitmap(width, height, Dpi, Dpi, PixelFormats.Pbgra32);
         bitmap.Render(visual);
 
         var encoder = new PngBitmapEncoder();
@@ -68,8 +70,16 @@ internal static class ThemePreviewRenderer
     /// </summary>
     internal static ImageSource RenderPreset(DesktopLayoutPreset preset, DesktopExperienceState current)
     {
+        return RenderPreset(preset, current, SystemParameters.WorkArea);
+    }
+
+    internal static ImageSource RenderPreset(DesktopLayoutPreset preset, DesktopExperienceState current, Rect area)
+    {
         ArgumentNullException.ThrowIfNull(current);
-        var area = SystemParameters.WorkArea;
+        if (area.Width <= 0 || area.Height <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(area));
+        }
         var state = LocalStateStore.CreateDefault();
         state.DesktopExperience = System.Text.Json.JsonSerializer.Deserialize<DesktopExperienceState>(
             System.Text.Json.JsonSerializer.Serialize(current))!;
@@ -89,13 +99,16 @@ internal static class ThemePreviewRenderer
         var image = new BitmapImage();
         image.BeginInit();
         image.CacheOption = BitmapCacheOption.OnLoad;
-        image.StreamSource = new MemoryStream(Render(package));
+        var scale = Math.Min(Width / area.Width, Height / area.Height);
+        image.StreamSource = new MemoryStream(Render(package,
+            Math.Max(1, (int)Math.Round(area.Width * scale)),
+            Math.Max(1, (int)Math.Round(area.Height * scale))));
         image.EndInit();
         image.Freeze();
         return image;
     }
 
-    private static void DrawComponents(DrawingContext context, ThemePackage package)
+    private static void DrawComponents(DrawingContext context, ThemePackage package, int width, int height)
     {
         var tokensByKind = package.Tokens.Components.ToDictionary(component => component.Kind);
         foreach (var placement in package.Layout.Components)
@@ -106,10 +119,10 @@ internal static class ThemePreviewRenderer
             }
 
             var bounds = new Rect(
-                placement.X * Width,
-                placement.Y * Height,
-                Math.Max(4d, placement.Width * Width),
-                Math.Max(4d, placement.Height * Height));
+                placement.X * width,
+                placement.Y * height,
+                Math.Max(4d, placement.Width * width),
+                Math.Max(4d, placement.Height * height));
 
             var fill = ParseColor(tokens.Appearance.BackgroundColor, Colors.White);
             fill.A = (byte)Math.Clamp(tokens.Appearance.BackgroundOpacity * 255d, 0d, 255d);
@@ -127,17 +140,17 @@ internal static class ThemePreviewRenderer
                     new Typeface("Segoe UI"),
                     12d,
                     new SolidColorBrush(ParseColor(tokens.Appearance.TextColor, Colors.White)),
-                    Dpi);
+                    1d);
                 context.DrawText(text, new Point(bounds.Left + 8, bounds.Top + 6));
             }
         }
     }
 
-    private static void DrawDock(DrawingContext context)
+    private static void DrawDock(DrawingContext context, int width, int height)
     {
         const double dockHeight = 20d;
-        var dockWidth = Width * 0.42;
-        var bounds = new Rect((Width - dockWidth) / 2, Height - dockHeight - 10, dockWidth, dockHeight);
+        var dockWidth = width * 0.42;
+        var bounds = new Rect((width - dockWidth) / 2, height - dockHeight - 10, dockWidth, dockHeight);
         context.DrawRoundedRectangle(
             new SolidColorBrush(Color.FromArgb(150, 255, 255, 255)),
             null,

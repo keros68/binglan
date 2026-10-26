@@ -263,6 +263,10 @@
 
                     <TextBlock Style="{StaticResource SectionHeaderStyle}" Text="卡片外观"/>
                     <local:SettingsGroup>
+                    <local:SettingsRow Glyph="&#xE790;" Header="试选外观" Description="先在示例中对比，确认后应用">
+                        <Button x:Name="AppearancePreviewButton" Content="试选外观…"
+                                AutomationProperties.Name="试选外观" Click="AppearancePreview_Click"/>
+                    </local:SettingsRow>
                     <local:SettingsRow Glyph="&#xE790;"
                                        GlyphBrush="{DynamicResource SettingsIconPurpleBrush}"
                                        Header="材质"
@@ -429,7 +433,7 @@
                                              Checked="PresetRadio_Checked">
                                     <StackPanel>
                                         <Border Height="86" CornerRadius="5" ClipToBounds="True">
-                                            <Image x:Name="QuietPresetThumb" Stretch="UniformToFill"/>
+                                            <Image x:Name="QuietPresetThumb" Stretch="Uniform"/>
                                         </Border>
                                         <TextBlock Margin="0,8,0,0" HorizontalAlignment="Center" Text="静谧信息层"/>
                                     </StackPanel>
@@ -443,7 +447,7 @@
                                              Checked="PresetRadio_Checked">
                                     <StackPanel>
                                         <Border Height="86" CornerRadius="5" ClipToBounds="True">
-                                            <Image x:Name="GlacierPresetThumb" Stretch="UniformToFill"/>
+                                            <Image x:Name="GlacierPresetThumb" Stretch="Uniform"/>
                                         </Border>
                                         <TextBlock Margin="0,8,0,0" HorizontalAlignment="Center" Text="冰川工作台"/>
                                     </StackPanel>
@@ -457,7 +461,7 @@
                                              Checked="PresetRadio_Checked">
                                     <StackPanel>
                                         <Border Height="86" CornerRadius="5" ClipToBounds="True">
-                                            <Image x:Name="ApplePresetThumb" Stretch="UniformToFill"/>
+                                            <Image x:Name="ApplePresetThumb" Stretch="Uniform"/>
                                         </Border>
                                         <TextBlock Margin="0,8,0,0" HorizontalAlignment="Center" Text="通透苹果桌面"/>
                                     </StackPanel>
@@ -471,7 +475,7 @@
                                              Checked="PresetRadio_Checked">
                                     <StackPanel>
                                         <Border Height="86" CornerRadius="5" ClipToBounds="True">
-                                            <Image x:Name="CenterClockPresetThumb" Stretch="UniformToFill"/>
+                                            <Image x:Name="CenterClockPresetThumb" Stretch="Uniform"/>
                                         </Border>
                                         <TextBlock Margin="0,8,0,0" HorizontalAlignment="Center" Text="居中时钟"/>
                                     </StackPanel>

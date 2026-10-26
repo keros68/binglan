@@ -28,7 +28,7 @@ BingLan Desktop (冰蓝桌面) is a Windows 11 desktop companion built with .NET
 - **Top bar**: shows time, to-dos, weather, performance, and system status. Battery, network, and volume buttons open Windows Quick Settings when available, otherwise their respective Settings pages. The input-method button opens the system picker when available, otherwise Language settings; it does not switch input modes automatically.
 - **Search**: a centered top-bar field, a movable and resizable separate field, or a top-bar icon. Searches desktop entries, Start-menu apps, and files already indexed by Windows by default. Optional Everything integration falls back to Windows Search when unavailable. If neither index is available, desktop and app search remains usable. BingLan does not change indexing scope, maintain an additional index, or search file contents.
 - **Resource use**: measured on one 1440p Windows 11 PC, BingLan uses about 56–58 MB of memory; Rainmeter, Pogget, Nexus Dock, and TranslucentTB, the tools it replaces, used about 77.5 MB together (Task Manager "Memory" column, single measurement; varies with the machine and number of cards).
-- **Look**: light glass, dark glass, or no backing; custom text and accent colours; bundled open-licence fonts. Fonts and colours can be imported, read-only, from a Rainmeter skin. Themes can be exported and shared without names, cities, to-dos, or file paths.
+- **Look**: light glass, dark glass, or no backing; preview and compare sample styles before applying them. Custom text and accent colours, bundled open-licence fonts, and four layout presets for landscape and portrait work areas. Fonts and colours can be imported, read-only, from a Rainmeter skin. Themes can be exported and shared without names, cities, to-dos, or file paths.
 - **Settings**: six pages (Appearance, Desktop components, Dock, Top bar, Taskbar, General), with each setting in exactly one place. On Windows 11 the window uses the Mica material, falling back to a solid colour when transparency effects are off or high contrast is on.
 
 <p align="center">
@@ -39,7 +39,7 @@ The interface is in Simplified Chinese.
 
 ## Get started
 
-Stable version: [v0.2.38](https://github.com/keros68/binglan/releases/tag/v0.2.38) · [Installer](https://github.com/keros68/binglan/releases/download/v0.2.38/BingLan-Setup-0.2.38.exe) · [Portable](https://github.com/keros68/binglan/releases/download/v0.2.38/BingLan-0.2.38-portable.zip). A standalone [compatibility tool](https://github.com/keros68/binglan/releases/download/v0.2.38/BingLan-0.2.38-tray-preview.zip) is also available; see the [guide (Chinese)](docs/TRAY-PREVIEW.md).
+Stable version: [v0.2.39](https://github.com/keros68/binglan/releases/tag/v0.2.39) · [Installer](https://github.com/keros68/binglan/releases/download/v0.2.39/BingLan-Setup-0.2.39.exe) · [Portable](https://github.com/keros68/binglan/releases/download/v0.2.39/BingLan-0.2.39-portable.zip). A standalone [compatibility tool](https://github.com/keros68/binglan/releases/download/v0.2.39/BingLan-0.2.39-tray-preview.zip) is also available; see the [guide (Chinese)](docs/TRAY-PREVIEW.md).
 
 1. Open [Releases](https://github.com/keros68/binglan/releases/latest) and download `BingLan-Setup-*.exe` (installer) or `BingLan-*-portable.zip` (portable).
 2. Installer: run it — it installs for the current user and needs no administrator rights. Portable: unzip anywhere and run `BingLan.exe` inside. Both include the .NET runtime and are not code-signed yet, so Windows asks for confirmation on first run.
@@ -62,7 +62,7 @@ Requires the .NET 10 SDK and PowerShell 7. Building the installer also needs Inn
 ```powershell
 dotnet build .\BingLan.slnx -c Release
 dotnet run --project .\tests\BingLan.SmokeTests\BingLan.SmokeTests.csproj -c Release
-pwsh -NoProfile -File .\installer\build.ps1 -Version 0.2.38
+pwsh -NoProfile -File .\installer\build.ps1 -Version 0.2.39
 ```
 
 Full test commands, the technical design, and the current implementation are in the [development notes (Chinese)](docs/DEVELOPMENT.md); installer details are in [docs/INSTALLER.md](docs/INSTALLER.md).

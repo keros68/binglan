@@ -143,13 +143,11 @@ internal static class TopBarWindowTests
     private static extern bool SetForegroundWindow(nint window);
 
     /// <summary>
-    /// A search session always holds the foreground (the user clicked the box or
-    /// pressed the hotkey, both count as input), but Windows denies the grant when a
-    /// test runs late in the suite. WPF then routes no mouse input into the session's
-    /// flyout, so the test recreates the production foreground the way the shell
-    /// allows it.
+    /// Interactive windows receive the foreground after a user opens them. Windows
+    /// can deny that grant to an automated test, so tests recreate the foreground
+    /// before sending real keyboard or mouse input.
     /// </summary>
-    private static void ForceForeground(nint window)
+    internal static void ForceForeground(nint window)
     {
         var foregroundThread = GetWindowThreadProcessId(GetForegroundWindow(), out _);
         var currentThread = GetCurrentThreadId();
@@ -812,7 +810,9 @@ internal static class TopBarWindowTests
             Assert(WaitUntil(pump, () => bar.SearchSourcesLoaded), "输入前后台候选应已发布到顶栏");
             box.Text = "wx";
             bar.PumpSearch();
-            Assert(WaitUntil(pump, () => bar.SearchResults.Count > 0), "搜索应有结果");
+            Assert(WaitUntil(pump, () => bar.SearchResults.Count > 0),
+                $"搜索应有结果（已发布 {bar.SearchSourcesLoaded}，候选读取 {environment.CandidateReads}，" +
+                $"会话 {bar.SearchSessionActive}，组合中 {bar.SearchSuspendedForComposition}）");
 
             // 组合态中的键：让渡给输入法（合成事件无法伪造 ImeProcessedKey，恰好只驱动
             // Key 编码这条门控），既不打开结果也不结束会话。

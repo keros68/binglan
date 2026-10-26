@@ -26,7 +26,7 @@
 - **冰蓝 Dock**：固定应用与运行中的应用分区显示，有新消息的应用带提醒标记；左端默认有可关闭的 Windows 开始菜单入口，右键可打开原生系统快捷菜单。关闭到托盘的微信点击 Dock 图标即回到已登录的主窗口（借助微信默认的 Ctrl+Alt+W 快捷键，改过快捷键时改为启动微信）。拖动程序或快捷方式到 Dock 即可固定，颜色、玻璃浓度（5–96%，与卡片玻璃浓度同范围）、图标大小和距屏幕底部的高度可调，窗口最大化时可选择让出底部空间（默认关闭）；Dock 隐藏时在屏幕角落缩成一个可拖动的小把手，悬停即展开完整 Dock（展开与收起带整行向把手收缩、生长的形变动画，动效档位可调），位置跨重启保留；不想出现在 Dock 上的悬浮条、小工具可右键选择“不在 Dock 中显示此应用”。
 - **任务栏**：保持默认、透明、模糊或智能隐藏；自动隐藏时，鼠标移到屏幕底边可唤出原生任务栏，也可限制鼠标仅从底部两角唤出；打开开始菜单等系统面板时，Windows 仍可能显示任务栏。隐藏托盘图标可通过原生任务栏或预发布版的顶栏入口访问。退出或异常结束后恢复原状态。
 - **顶端信息条**：屏幕顶端一条满宽信息条（可开关，高度 24–48 DIP 可调），显示时间、待办概要、天气、性能和电量、音量、网络、输入法（任务栏式中/英圆角徽标加当前输入法名，悬停显示完整名）等只读状态。点击电量、网络或音量会打开 Windows 快速设置；入口不可用时分别打开对应的 Windows 设置。点击输入法会打开 Windows 输入法选择器，入口不可用时打开语言设置；冰蓝桌面不在信息条中调节这些系统设置。点击待办概要直接弹出当天的待办清单、可随手勾掉完成项；点击性能打开任务管理器性能页；点击时钟弹出月历（可在顶栏下方翻看月份），有应用请求注意时显示提醒并可点击切回该应用。搜索入口可选顶栏居中、可拖动调宽的独立搜索框或顶栏图标。独立框可选深色、浅色、跟随卡片或自定义底色，并调整不透明度和圆角。默认搜索桌面、开始菜单应用和 Windows 已索引的文件；可选开启 Everything 扩大文件检索来源，不可用时回退 Windows 索引。系统索引不可用时保留桌面与应用搜索。不修改系统索引范围、不建立额外索引、不搜索文件正文。基础搜索支持拼音首字母（如 wx 搜微信）与整词优先排序，正常搜索无结果时支持有限的打字容错。结果浮层里单击或方向键加回车即可打开（Ctrl+Enter 打开文件位置、Ctrl+Shift+C 复制路径），右键同样可打开文件位置或复制路径；结果列表和菜单使用清晰的浅色或深色底，避免桌面内容干扰阅读；全局热键（默认 Ctrl+Alt+F，可在设置中改）随时聚焦或收起搜索，搜索只在输入期间临时接管键盘、结束即还回前台窗口。可选“始终显示并预留顶部空间”（最大化的窗口从信息条下方开始）或智能隐藏。“苹果式”桌面模式自动开启信息条并收起桌面上的时间、天气、性能卡片，配合居中 Dock 得到接近 macOS 的观感，不读取任何应用的菜单，也不替代系统托盘和通知中心。
-- **外观**：浅色玻璃、深色玻璃、无底板三种材质，文字色与强调色可自定义，内置开源字体；可从 Rainmeter 皮肤只读导入字体和配色。主题可导出分享，导出内容不含称呼、城市、待办和文件路径。
+- **外观**：浅色玻璃、深色玻璃、无底板三种材质，可先在示例中试选、对比，确认后应用；文字色与强调色可自定义，内置开源字体。四套布局预设支持横屏与竖屏；可从 Rainmeter 皮肤只读导入字体和配色。主题可导出分享，导出内容不含称呼、城市、待办和文件路径。
 - **设置中心**：外观、桌面组件、Dock、顶端信息条、任务栏、通用六页，每项设置只出现在一处；Windows 11 上窗口使用 Mica 毛玻璃材质，关闭透明效果或使用高对比度时自动改为纯色。
 
 <p align="center">
@@ -37,7 +37,7 @@ Windows 11 开启系统透明效果时，Dock 和隐藏把手使用实时毛玻�
 
 ## 快速开始
 
-稳定版：[v0.2.38](https://github.com/keros68/binglan/releases/tag/v0.2.38) · [安装版](https://github.com/keros68/binglan/releases/download/v0.2.38/BingLan-Setup-0.2.38.exe) · [免安装版](https://github.com/keros68/binglan/releases/download/v0.2.38/BingLan-0.2.38-portable.zip)。另附[兼容性验收工具](https://github.com/keros68/binglan/releases/download/v0.2.38/BingLan-0.2.38-tray-preview.zip)，使用步骤见[托盘验收说明](docs/TRAY-PREVIEW.md)。
+稳定版：[v0.2.39](https://github.com/keros68/binglan/releases/tag/v0.2.39) · [安装版](https://github.com/keros68/binglan/releases/download/v0.2.39/BingLan-Setup-0.2.39.exe) · [免安装版](https://github.com/keros68/binglan/releases/download/v0.2.39/BingLan-0.2.39-portable.zip)。另附[兼容性验收工具](https://github.com/keros68/binglan/releases/download/v0.2.39/BingLan-0.2.39-tray-preview.zip)，使用步骤见[托盘验收说明](docs/TRAY-PREVIEW.md)。
 
 1. 打开 [Releases](https://github.com/keros68/binglan/releases/latest)，下载 `BingLan-Setup-*.exe`（安装版）或 `BingLan-*-portable.zip`（免安装版）。
 2. 安装版运行安装包，按当前用户安装，不需要管理员权限；免安装版解压到任意文件夹后运行其中的 `BingLan.exe`。两者均自带 .NET 运行时，尚未加入代码签名，首次运行需按 Windows 提示手动放行。
@@ -60,7 +60,7 @@ Windows 11 开启系统透明效果时，Dock 和隐藏把手使用实时毛玻�
 ```powershell
 dotnet build .\BingLan.slnx -c Release
 dotnet run --project .\tests\BingLan.SmokeTests\BingLan.SmokeTests.csproj -c Release
-pwsh -NoProfile -File .\installer\build.ps1 -Version 0.2.38
+pwsh -NoProfile -File .\installer\build.ps1 -Version 0.2.39
 ```
 
 完整测试命令、技术方案和当前实现见[开发说明](docs/DEVELOPMENT.md)，安装包细节见[安装包](docs/INSTALLER.md)。

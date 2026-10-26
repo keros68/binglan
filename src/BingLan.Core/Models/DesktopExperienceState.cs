@@ -221,6 +221,10 @@ public static class DesktopExperienceRules
         double bottom)
     {
         var area = (Left: left, Top: top, Right: right, Bottom: bottom);
+        if (bottom - top > right - left)
+        {
+            return PortraitPlacements(preset, left, top, right - left, bottom - top);
+        }
         if (preset == DesktopLayoutPreset.CenterClock)
         {
             // A large clock centred at the top, the greeting centred near the bottom, and
@@ -275,6 +279,56 @@ public static class DesktopExperienceRules
             [DesktopComponentKind.Performance] = performance,
             [DesktopComponentKind.Todo] = todo
         };
+    }
+
+    private static IReadOnlyDictionary<DesktopComponentKind, WindowPlacement> PortraitPlacements(
+        DesktopLayoutPreset preset, double left, double top, double width, double height)
+    {
+        var margin = Math.Min(32d, Math.Max(0d, width / 12d));
+        var availableWidth = Math.Max(1d, width - margin * 2d);
+        var availableHeight = Math.Max(1d, height - margin * 2d);
+        var kinds = preset == DesktopLayoutPreset.CenterClock
+            ? new[] { DesktopComponentKind.TimeDate, DesktopComponentKind.Performance,
+                DesktopComponentKind.Weather, DesktopComponentKind.Todo, DesktopComponentKind.Greeting }
+            : new[] { DesktopComponentKind.TimeDate, DesktopComponentKind.Weather,
+                DesktopComponentKind.Performance, DesktopComponentKind.Todo, DesktopComponentKind.Greeting };
+        var heights = preset switch
+        {
+            DesktopLayoutPreset.GlacierWorkbench => new[] { 170d, 150d, 136d, 420d, 100d },
+            DesktopLayoutPreset.TransparentApple => new[] { 170d, 150d, 126d, 360d, 96d },
+            DesktopLayoutPreset.CenterClock => new[] { 200d, 126d, 150d, 300d, 84d },
+            _ => new[] { 176d, 150d, 126d, 410d, 96d }
+        };
+        var minimums = kinds.Select(kind => kind == DesktopComponentKind.Todo ? 166d : 72d).ToArray();
+        var gap = Math.Min(24d, Math.Max(0d, (availableHeight - minimums.Sum()) / 4d));
+        var cardBudget = Math.Max(1d, availableHeight - gap * 4d);
+        if (heights.Sum() > cardBudget)
+        {
+            var reduction = Math.Clamp((cardBudget - minimums.Sum()) / (heights.Sum() - minimums.Sum()), 0d, 1d);
+            heights = heights.Select((value, index) => minimums[index] + (value - minimums[index]) * reduction).ToArray();
+        }
+
+        // Below the combined card minimums, visibility takes priority; recovery may
+        // overlap cards. Use a larger work area for a non-overlapping preset.
+        var result = new Dictionary<DesktopComponentKind, WindowPlacement>();
+        var y = top + margin;
+        for (var index = 0; index < kinds.Length; index++)
+        {
+            var kind = kinds[index];
+            var desiredWidth = kind switch
+            {
+                DesktopComponentKind.TimeDate => preset == DesktopLayoutPreset.CenterClock ? 560d : 410d,
+                DesktopComponentKind.Greeting => 640d,
+                DesktopComponentKind.Todo => preset == DesktopLayoutPreset.GlacierWorkbench ? 430d : 380d,
+                _ => 380d
+            };
+            var cardWidth = Math.Min(availableWidth, desiredWidth);
+            var cardHeight = Math.Min(heights[index], availableHeight);
+            result[kind] = Placement(left + (width - cardWidth) / 2d,
+                Math.Min(y, top + height - margin - cardHeight), cardWidth, cardHeight);
+            y += cardHeight + gap;
+        }
+        return result;
     }
 
     private static WindowPlacement Placement(

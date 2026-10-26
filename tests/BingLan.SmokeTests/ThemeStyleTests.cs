@@ -12,6 +12,63 @@ internal static class ThemeStyleTests
     private static readonly Version AppVersion = new(0, 1, 0);
     private static readonly ThemeArea Area = new(0, 0, 1920, 1040);
 
+    internal static void TestPortraitPresets()
+    {
+        foreach (var preset in Enum.GetValues<DesktopLayoutPreset>())
+        foreach (var (width, height) in new[] { (720d, 1280d), (864d, 1536d), (1080d, 1920d) })
+        foreach (var (left, top) in new[] { (0d, 0d), (-1080d, -240d) })
+        {
+            var cards = DesktopExperienceRules.PresetPlacements(preset, left, top, left + width, top + height);
+            Check(cards.Count == 5, "竖屏预设应保留五张卡片");
+            foreach (var (kind, card) in cards)
+            {
+                var minimum = kind == DesktopComponentKind.Todo ? (226d, 166d) : (180d, 72d);
+                Check(card.Width >= minimum.Item1 && card.Height >= minimum.Item2,
+                    $"{preset}/{kind} 应满足最小尺寸");
+                Check(card.Left >= left && card.Top >= top
+                    && card.Left + card.Width <= left + width + 0.001
+                    && card.Top + card.Height <= top + height + 0.001,
+                    $"{preset}/{kind} 应位于传入的竖屏工作区内");
+            }
+            var values = cards.Values.ToArray();
+            for (var i = 0; i < values.Length; i++)
+            for (var j = i + 1; j < values.Length; j++)
+            {
+                var a = values[i];
+                var b = values[j];
+                Check(a.Left + a.Width <= b.Left || b.Left + b.Width <= a.Left
+                    || a.Top + a.Height <= b.Top + 0.001 || b.Top + b.Height <= a.Top + 0.001,
+                    $"{preset} 竖屏卡片不应重叠");
+            }
+        }
+
+        // Representative coordinates lock the existing landscape compositions.
+        var expected = new Dictionary<DesktopLayoutPreset, (double X, double Y, double W, double H)[]>
+        {
+            [DesktopLayoutPreset.QuietInformation] = [(70,70,410,176), (500,908,820,96), (70,260,360,150), (70,424,380,126), (1550,86,330,410)],
+            [DesktopLayoutPreset.GlacierWorkbench] = [(62,70,320,170), (430,902,760,100), (62,250,320,150), (62,410,320,136), (1530,110,350,420)],
+            [DesktopLayoutPreset.TransparentApple] = [(70,60,410,170), (510,910,820,96), (70,248,360,150), (70,414,380,126), (1530,500,350,360)],
+            [DesktopLayoutPreset.CenterClock] = [(680,56,560,200), (640,890,640,84), (1520,172,370,150), (1520,30,370,126), (1520,338,370,300)]
+        };
+        var order = new[] { DesktopComponentKind.TimeDate, DesktopComponentKind.Greeting,
+            DesktopComponentKind.Weather, DesktopComponentKind.Performance, DesktopComponentKind.Todo };
+        foreach (var (preset, coordinates) in expected)
+        {
+            var actual = DesktopExperienceRules.PresetPlacements(preset, 0, 0, 1920, 1040);
+            for (var i = 0; i < order.Length; i++)
+            {
+                var card = actual[order[i]];
+                Check((card.Left, card.Top, card.Width, card.Height) == coordinates[i],
+                    $"{preset}/{order[i]} 横屏坐标应保持不变");
+            }
+        }
+
+        var tiny = DesktopExperienceRules.PresetPlacements(DesktopLayoutPreset.CenterClock, -100, -50, 100, 250);
+        Check(tiny.Values.All(card => card.Width > 0 && card.Height > 0
+            && card.Left >= -100 && card.Top >= -50 && card.Left + card.Width <= 100
+            && card.Top + card.Height <= 250), "极小工作区仍应保留可见卡片");
+    }
+
     internal static void TestGlassAndCenterClockPreset()
     {
         var style = new DesktopStyleState();

@@ -66,6 +66,9 @@ public partial class SettingsWindow : Window
     private bool _loadingTopBarLook;
     private bool _loadingSearchAppearance;
     private bool _topBarApplyQueued;
+    private bool _presetPreviewQueued;
+    private bool _isClosed;
+    private DesktopLayoutPreset _previewPreset;
 
     public SettingsWindow(
         CityLookupService citySearchService,
@@ -185,7 +188,9 @@ public partial class SettingsWindow : Window
         RefreshBackupList();
         ShowPage("Appearance");
         Closing += (_, _) => CommitPendingChanges();
-        Closed += (_, _) => CancelSearch();
+        Closed += (_, _) => { _isClosed = true; CancelSearch(); };
+        SystemParameters.StaticPropertyChanged += SystemParameters_Changed;
+        Closed += (_, _) => SystemParameters.StaticPropertyChanged -= SystemParameters_Changed;
         if (_maintenance.Updater is { } updater)
         {
             updater.Changed += RefreshUpdateView;
@@ -197,6 +202,14 @@ public partial class SettingsWindow : Window
     internal bool IsBackdropActive { get; private set; }
 
     private void ReapplyBackdrop(object? sender, EventArgs e) => IsBackdropActive = SettingsBackdrop.Apply(this);
+
+    private void SystemParameters_Changed(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(SystemParameters.WorkArea))
+        {
+            Dispatcher.InvokeAsync(() => UpdatePresetPreview(GetSelectedPreset()));
+        }
+    }
 
     private void LoadDesktopExperience()
     {
@@ -995,6 +1008,10 @@ public partial class SettingsWindow : Window
             : Visibility.Collapsed;
         TaskbarPage.Visibility = page == "Taskbar" ? Visibility.Visible : Visibility.Collapsed;
         GeneralPage.Visibility = page == "General" ? Visibility.Visible : Visibility.Collapsed;
+        if (page == "Appearance")
+        {
+            UpdatePresetPreview(GetSelectedPreset());
+        }
         if (page == "General")
         {
             RefreshBackupList();
@@ -1134,6 +1151,18 @@ public partial class SettingsWindow : Window
         {
             _loadingStyle = false;
         }
+        UpdatePresetPreview(GetSelectedPreset());
+    }
+
+    private void AppearancePreview_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new AppearancePreviewWindow(_maintenance.Style) { Owner = this };
+        if (dialog.ShowDialog() == true && dialog.AppliedAppearance is { } selection)
+        {
+            selection.ApplyTo(_maintenance.Style);
+            _maintenance.ApplyGlass();
+            LoadStyle();
+        }
     }
 
     private void Glass_Changed(object sender, RoutedEventArgs e)
@@ -1233,6 +1262,7 @@ public partial class SettingsWindow : Window
         _maintenance.Style.GlassDensity = e.NewValue;
         GlassDensityText.Text = $"{_maintenance.Style.GlassDensity * 100:0}%";
         _maintenance.ApplyGlass();
+        UpdatePresetPreview(GetSelectedPreset());
     }
 
     private static void SelectByTag(System.Windows.Controls.ComboBox selector, string tag) =>
@@ -2566,15 +2596,26 @@ public partial class SettingsWindow : Window
         }
     }
 
-    // Previews are drawn from the same placements the preset applies, in the current
-    // card colours, so they show exactly what applying the preset will do.
+    // Previews use the same placements as applying a preset, with current card colours.
     private void UpdatePresetPreview(DesktopLayoutPreset preset)
     {
+        _previewPreset = preset;
+        if (_presetPreviewQueued || _isClosed) return;
+        _presetPreviewQueued = true;
+        Dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(() =>
+        {
+            _presetPreviewQueued = false;
+            if (!_isClosed) RenderPresetPreviews(_previewPreset);
+        }));
+    }
+
+    private void RenderPresetPreviews(DesktopLayoutPreset preset)
+    {
         PresetPreviewImage.Source = ThemePreviewRenderer.RenderPreset(preset, _desktopExperience);
-        QuietPresetThumb.Source ??= ThemePreviewRenderer.RenderPreset(DesktopLayoutPreset.QuietInformation, _desktopExperience);
-        GlacierPresetThumb.Source ??= ThemePreviewRenderer.RenderPreset(DesktopLayoutPreset.GlacierWorkbench, _desktopExperience);
-        ApplePresetThumb.Source ??= ThemePreviewRenderer.RenderPreset(DesktopLayoutPreset.TransparentApple, _desktopExperience);
-        CenterClockPresetThumb.Source ??= ThemePreviewRenderer.RenderPreset(DesktopLayoutPreset.CenterClock, _desktopExperience);
+        QuietPresetThumb.Source = ThemePreviewRenderer.RenderPreset(DesktopLayoutPreset.QuietInformation, _desktopExperience);
+        GlacierPresetThumb.Source = ThemePreviewRenderer.RenderPreset(DesktopLayoutPreset.GlacierWorkbench, _desktopExperience);
+        ApplePresetThumb.Source = ThemePreviewRenderer.RenderPreset(DesktopLayoutPreset.TransparentApple, _desktopExperience);
+        CenterClockPresetThumb.Source = ThemePreviewRenderer.RenderPreset(DesktopLayoutPreset.CenterClock, _desktopExperience);
     }
 
     private void ApplyLayout_Click(object sender, RoutedEventArgs e)
