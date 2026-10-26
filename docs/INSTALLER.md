@@ -3,10 +3,10 @@
 ## 构建
 
 ```powershell
-pwsh -NoProfile -File .\installer\build.ps1 -Version 0.2.39
+pwsh -NoProfile -File .\installer\build.ps1 -Version 0.2.40
 ```
 
-输出 `installer\bin\BingLan-Setup-0.2.39.exe`（约 56.4 MB）和免安装包 `installer\bin\BingLan-0.2.39-portable.zip`。脚本先把应用发布为 win-x64 自包含程序（附带 .NET 运行时，只保留中文和英文资源），再用 Inno Setup 打包为按用户安装的安装程序，并把同一份发布输出压成免安装 zip。构建还需要 .NET 10 SDK、PowerShell 7、Visual Studio 2022 C++ x64 工具链和 Windows SDK；自有任务栏 DLL 随发布输出进入安装包，细节见 [任务栏 XAML 适配](TASKBAR-XAML.md)。需要 Inno Setup 6：`winget install JRSoftware.InnoSetup --scope user`。注意 winget 安装的 Inno Setup 不带简体中文语言文件（非官方翻译），脚本引用的 `Languages\ChineseSimplified.isl` 需从 [istrans 页面](https://jrsoftware.org/files/istrans/) 下载后放入 Inno Setup 安装目录的 `Languages\` 下。
+输出 `installer\bin\BingLan-Setup-0.2.40.exe`（约 56.5 MB）和免安装包 `installer\bin\BingLan-0.2.40-portable.zip`。脚本先把应用发布为 win-x64 自包含程序（附带 .NET 运行时，只保留中文和英文资源），再用 Inno Setup 打包为按用户安装的安装程序，并把同一份发布输出压成免安装 zip。构建还需要 .NET 10 SDK、PowerShell 7、Visual Studio 2022 C++ x64 工具链和 Windows SDK；自有任务栏 DLL 随发布输出进入安装包，细节见 [任务栏 XAML 适配](TASKBAR-XAML.md)。需要 Inno Setup 6：`winget install JRSoftware.InnoSetup --scope user`。注意 winget 安装的 Inno Setup 不带简体中文语言文件（非官方翻译），脚本引用的 `Languages\ChineseSimplified.isl` 需从 [istrans 页面](https://jrsoftware.org/files/istrans/) 下载后放入 Inno Setup 安装目录的 `Languages\` 下。
 
 ## 免安装包
 
@@ -42,7 +42,7 @@ zip 版内容与安装后的程序目录一致（程序文件、`使用说明.md
 | 依赖 | Inno Setup 6.7.3（构建工具，不随应用分发） |
 | 用途 | 生成安装程序：文件安装、快捷方式、启动项、卸载和数据保留询问 |
 | 许可证 | Inno Setup License：允许包括商业用途在内的任何用途；官方请求商业用户购买许可证，但不强制，个人和非商业使用免费 |
-| 打包体积 | 安装程序约 56.4 MB；安装后还包含约 24.23 MiB 的 Windows API 投影，主要体积仍为自包含 .NET 运行时 |
+| 打包体积 | 安装程序约 56.5 MB；安装后还包含约 24.23 MiB 的 Windows API 投影，主要体积仍为自包含 .NET 运行时 |
 | 运行时成本 | 无，Inno Setup 只在构建时使用 |
 | 可替代方案 | MSI（开发机上 Windows Installer 对按用户安装报错 2503，无法使用）；依赖框架的发布（安装包约 1 MB，但需先安装 .NET 10 桌面运行时）；MSIX（需要代码签名证书） |
 
@@ -64,6 +64,8 @@ zip 版内容与安装后的程序目录一致（程序文件、`使用说明.md
 本机覆盖安装退出码为 0，无需重启；安装前后个人配置哈希一致。在正常 Windows 桌面上下文启动后，透明模式的共享状态确认 1 个背景生效、错误码为 0，截图确认任务栏透出背景。最终设置除任务栏模式外与安装前逐项一致。新原生组件的卸载场景尚未执行。真机透明与恢复结果见 [任务栏验证](TASKBAR-QA.md)。
 
 ## 验证状态
+
+v0.2.40 在 Windows 11 Build 26200、125% 缩放下通过核心、便签、信息组件、Dock 与 WPF UI 五套测试；图标回退覆盖 16–256 像素源图标，并核对本机魔兽世界、EPA Unmix 与微信快捷方式的实际图像。外观试选完成浅深背景、无底板、小窗口及内容放大的截图检查；竖屏布局使用 720×1280、864×1536、1080×1920 DIP 工作区验证。免安装包逐文件与发布输出核对 SHA-256。此轮未重做覆盖安装、卸载、真实多显示器和混合 DPI 验证。
 
 2026-09-28 在开发机（Windows 11 Build 26200）验证：
 

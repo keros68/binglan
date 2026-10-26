@@ -161,6 +161,7 @@ internal static class Program
         Run("桌面分组盒显示名称与盒间转移", TestFileBoxRenameAndTransfer, failures);
         Run("桌面分组盒图标与列表视图切换", TestFileBoxViewModeSwitch, failures);
         Run("卡片图标取高分辨率帧而非 32px 拉伸", TestIconProviderReturnsHighResolutionFrames, failures);
+        Run("旧图标不被 Jumbo 透明占位缩成小点", TestSmallShellIconFrames, failures);
         Run("屏幕阅读器名称、Tab 顺序与实际 DPI 边界", TestAccessibilityAndKeyboardNavigation, failures);
         Run("高对比度系统色切换与冰蓝材质恢复", TestHighContrastThemeSwitch, failures);
         Run("单实例门禁占用与释放", TestSingleInstanceGate, failures);
@@ -1633,6 +1634,80 @@ internal static class Program
         Assert(
             Math.Max(shellIcon.PixelWidth, shellIcon.PixelHeight) >= 48,
             $"系统位置图标帧只有 {shellIcon.PixelWidth}×{shellIcon.PixelHeight}，卡片高 DPI 下会被拉糊");
+    }
+
+    private static void TestSmallShellIconFrames()
+    {
+        var temp = Path.Combine(Path.GetTempPath(), $"BingLan-icons-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(temp);
+        try
+        {
+            foreach (var size in new[] { 16, 32, 48, 64, 128, 256 })
+            {
+                var pixels = new byte[size * size * 4];
+                for (var y = size / 8; y < size * 7 / 8; y++)
+                {
+                    for (var x = size / 8; x < size * 7 / 8; x++)
+                    {
+                        var offset = (y * size + x) * 4;
+                        pixels[offset] = 220;
+                        pixels[offset + 1] = 100;
+                        pixels[offset + 3] = 255;
+                    }
+                }
+                var bitmap = BitmapSource.Create(size, size, 96, 96, PixelFormats.Bgra32, null, pixels, size * 4);
+                Assert(!ShellIconProvider.IsJumboPlaceholder(bitmap), "居中图案的原有透明留白不应触发降级");
+                var encoder = new PngBitmapEncoder();
+                encoder.Frames.Add(BitmapFrame.Create(bitmap));
+                using var png = new MemoryStream();
+                encoder.Save(png);
+                var path = Path.Combine(temp, $"single-{size}.ico");
+                using (var writer = new BinaryWriter(File.Create(path)))
+                {
+                    writer.Write((ushort)0);
+                    writer.Write((ushort)1);
+                    writer.Write((ushort)1);
+                    writer.Write((byte)(size == 256 ? 0 : size));
+                    writer.Write((byte)(size == 256 ? 0 : size));
+                    writer.Write((ushort)0);
+                    writer.Write((ushort)1);
+                    writer.Write((ushort)32);
+                    writer.Write((uint)png.Length);
+                    writer.Write((uint)22);
+                    writer.Write(png.ToArray());
+                }
+
+                var source = ShellIconProvider.GetIcon(path) as BitmapSource;
+                Assert(source is not null && source.IsFrozen, $"{size}px 图标未返回可跨线程位图");
+                var rgba = new FormatConvertedBitmap(source!, PixelFormats.Bgra32, null, 0);
+                var stride = rgba.PixelWidth * 4;
+                var output = new byte[stride * rgba.PixelHeight];
+                rgba.CopyPixels(output, stride, 0);
+                var left = rgba.PixelWidth;
+                var top = rgba.PixelHeight;
+                var right = -1;
+                var bottom = -1;
+                for (var y = 0; y < rgba.PixelHeight; y++)
+                {
+                    for (var x = 0; x < rgba.PixelWidth; x++)
+                    {
+                        if (output[y * stride + x * 4 + 3] < 16) continue;
+                        left = Math.Min(left, x);
+                        top = Math.Min(top, y);
+                        right = Math.Max(right, x);
+                        bottom = Math.Max(bottom, y);
+                    }
+                }
+                Assert(right - left + 1 >= rgba.PixelWidth / 2 && bottom - top + 1 >= rgba.PixelHeight / 2,
+                    $"{size}px 图标可见区域 {right - left + 1}×{bottom - top + 1} 被装进 {rgba.PixelWidth}×{rgba.PixelHeight} 画布");
+                // Shell 对新文件可能先返回较小帧；原始高清图是否应保留由上面的位图检查直接验证。
+                Assert(rgba.PixelWidth >= 48, "Shell 回退帧应仍满足卡片图标的基本尺寸");
+            }
+        }
+        finally
+        {
+            Directory.Delete(temp, recursive: true);
+        }
     }
 
     private static void TestFileBoxWindow()

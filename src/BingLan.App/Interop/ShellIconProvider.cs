@@ -97,9 +97,10 @@ internal static class ShellIconProvider
     }
 
     // 卡片网格在高 DPI 下把图标画到 60+ 物理像素，SHGFI_LARGEICON 只有 32px 帧会被拉糊；
-    // 系统图像列表能给出图标自带的最大帧，显示端再由 WPF 高质量缩小。
+    // 优先取真正的高清帧；旧图标在 Jumbo 中可能只填左上角，其余是透明占位。
     private static ImageSource? FromSystemImageList(int iconIndex)
     {
+        BitmapSource? fallback = null;
         foreach (var listSize in new[] { DockNativeMethods.ShilJumbo, DockNativeMethods.ShilExtraLarge })
         {
             if (DockNativeMethods.SHGetImageList(
@@ -119,7 +120,13 @@ internal static class ShellIconProvider
                     DockNativeMethods.IldTransparent);
                 if (iconHandle != 0)
                 {
-                    return ToImageSource(iconHandle);
+                    var source = ToImageSource(iconHandle);
+                    if (listSize == DockNativeMethods.ShilJumbo && IsJumboPlaceholder(source))
+                    {
+                        fallback = source;
+                        continue;
+                    }
+                    return source;
                 }
             }
             finally
@@ -128,10 +135,28 @@ internal static class ShellIconProvider
             }
         }
 
-        return null;
+        return fallback;
     }
 
-    private static ImageSource? ToImageSource(nint iconHandle)
+    internal static bool IsJumboPlaceholder(BitmapSource source)
+    {
+        // 仅识别图案全部局限于左上四分之一区域的 Shell 占位帧；保留居中图案的原有留白。
+        // 扫描限于系统 Jumbo 帧（256×256），不裁剪资源，也不扩大到任意用户图片。
+        var rgba = new FormatConvertedBitmap(source, PixelFormats.Bgra32, null, 0);
+        var stride = rgba.PixelWidth * 4;
+        var pixels = new byte[stride * rgba.PixelHeight];
+        rgba.CopyPixels(pixels, stride, 0);
+        for (var y = 0; y < rgba.PixelHeight; y++)
+        {
+            for (var x = y < rgba.PixelHeight / 2 ? rgba.PixelWidth / 2 : 0; x < rgba.PixelWidth; x++)
+            {
+                if (pixels[y * stride + x * 4 + 3] != 0) return false;
+            }
+        }
+        return true;
+    }
+
+    private static BitmapSource ToImageSource(nint iconHandle)
     {
         try
         {

@@ -165,8 +165,27 @@ internal static class TopBarWindowTests
     {
         if (!condition)
         {
-            throw new InvalidOperationException(message);
+            var foreground = GetForegroundWindow();
+            GetWindowThreadProcessId(foreground, out var processId);
+            throw new InvalidOperationException($"{message}（前台窗口 {foreground:X}，进程 {processId}）");
         }
+    }
+
+    private static void BeginFocusedSearch(TopBarWindow bar, Action pump)
+    {
+        // Renderer tests call the session directly, without the foreground grant
+        // provided by a real user click. Establish that precondition before input.
+        var input = bar.FloatingSearchWindow as Window ?? bar;
+        if (input.IsVisible) ForceForeground(new WindowInteropHelper(input).Handle);
+        pump();
+        bar.BeginSearchSession();
+        input = bar.FloatingSearchWindow as Window ?? bar;
+        var handle = new WindowInteropHelper(input).Handle;
+        ForceForeground(handle);
+        bar.SearchBox?.Focus();
+        Assert(WaitUntil(pump, () => GetForegroundWindow() == handle
+            && bar.SearchSessionActive && bar.SearchBox?.IsKeyboardFocused == true),
+            "测试输入前搜索窗口应在前台并持有键盘焦点");
     }
 
     internal static void Run(Action<Window> show, Action pump)
@@ -621,13 +640,14 @@ internal static class TopBarWindowTests
         var environment = new FakeEnvironment { SearchCandidates = SearchSource() };
         var bar = new TopBarWindow(state, new DesktopStyleState(), environment, sampler);
         show(bar);
+        GetCursorPos(out var originalCursor);
         try
         {
             var box = bar.SearchBox
                 ?? throw new InvalidOperationException("搜索模块应提供输入框");
             Assert(box.Text == string.Empty, "会话开始前输入框为空");
 
-            bar.BeginSearchSession();
+            BeginFocusedSearch(bar, pump);
             Assert(WaitUntil(pump, () => environment.CandidateReads > 0),
                 "会话开始应在后台读取搜索数据源");
 
@@ -676,7 +696,7 @@ internal static class TopBarWindowTests
             // A second session opens its first result with the keyboard: physical Enter
             // reports Key.Return (WPF's Key.Enter is a different value no real key
             // produces), which once slipped past the box's key handling.
-            bar.BeginSearchSession();
+            BeginFocusedSearch(bar, pump);
             pump();
             TypeQueryAndAwaitResults(bar, environment, "wx", pump);
             PressKey(box, System.Windows.Input.Key.Return);
@@ -690,7 +710,7 @@ internal static class TopBarWindowTests
             // Regression checks: non-wrapping arrow keys, stationary mouse hover,
             // incremental stage-2 row append preserving selection, cross-row press/release,
             // and flyout gap right-click not bubbling to TopBarWindow.ContextMenu.
-            bar.BeginSearchSession();
+            BeginFocusedSearch(bar, pump);
             pump();
             // These renderer checks supply rows directly; finish the empty query's
             // pending cleanup before injecting them into the active session.
@@ -705,6 +725,11 @@ internal static class TopBarWindowTests
             Assert(bar.SearchResults.Count == stage1.Count,
                 $"首阶段结果应在延迟回调后保留（输入 '{box.Text}'，结果 {bar.SearchResults.Count}，会话 {bar.SearchSessionActive}）");
             Assert(bar.SearchSelectedIndex == 0, "首阶段渲染默认选中第 0 行");
+            // Keep the physical pointer outside the rows while injecting keyboard
+            // and stationary-hover events, so layout-generated mouse moves cannot select a row.
+            var inputPoint = box.PointToScreen(new Point(box.ActualWidth / 2, box.ActualHeight / 2));
+            MoveMouseTo((int)inputPoint.X, (int)inputPoint.Y);
+            pump();
             PressKey(box, System.Windows.Input.Key.Up);
             pump();
             Assert(bar.SearchSelectedIndex == 0, "在首行按上方向键不应首尾循环到末行");
@@ -717,13 +742,16 @@ internal static class TopBarWindowTests
 
             var rowsBefore = LogicalDescendants(bar.SearchFlyout?.Child).OfType<Border>().Where(r => r.Tag is int).ToList();
             // Stationary mouse enter on row 0 must not steal keyboard selection from row 1.
+            GetCursorPos(out var stationaryCursor);
             rowsBefore[0].RaiseEvent(new System.Windows.Input.MouseEventArgs(
                 System.Windows.Input.Mouse.PrimaryDevice, 0)
             {
                 RoutedEvent = UIElement.MouseEnterEvent
             });
             pump();
-            Assert(bar.SearchSelectedIndex == 1, "鼠标未发生位移时悬停事件不应抢走键盘选中项");
+            GetCursorPos(out var afterHoverCursor);
+            Assert(bar.SearchSelectedIndex == 1,
+                $"鼠标未发生位移时悬停事件不应抢走键盘选中项（鼠标 {stationaryCursor.X},{stationaryCursor.Y} → {afterHoverCursor.X},{afterHoverCursor.Y}）");
 
             // Stage-2 append keeps existing row Border instances and preserves selected index 1.
             var stage2 = SearchSource().Take(3).ToList();
@@ -770,6 +798,7 @@ internal static class TopBarWindowTests
         finally
         {
             bar.Close();
+            SetCursorPos(originalCursor.X, originalCursor.Y);
             pump();
         }
     }
@@ -1283,14 +1312,12 @@ internal static class TopBarWindowTests
             GetCursorPos(out var cursor);
             try
             {
-                bar.BeginSearchSession();
-                var input = bar.FloatingSearchWindow as Window ?? bar;
-                ForceForeground(new WindowInteropHelper(input).Handle);
-                bar.SearchBox!.Focus();
-                Assert(WaitUntil(pump, () => bar.SearchBox.IsKeyboardFocused && environment.CandidateReads > 0), "右键测试先取得搜索焦点");
+                BeginFocusedSearch(bar, pump);
+                var box = bar.SearchBox ?? throw new InvalidOperationException("搜索模块应提供输入框");
+                Assert(WaitUntil(pump, () => box.IsKeyboardFocused && environment.CandidateReads > 0), "右键测试先取得搜索焦点");
                 InputMethod.Current.ImeConversionMode = ImeConversionModeValues.Alphanumeric;
                 Assert(WaitUntil(pump, () => bar.SearchSourcesLoaded), "右键测试输入前后台候选应已发布");
-                bar.SearchBox.Text = "wx";
+                box.Text = "wx";
                 bar.PumpSearch();
                 Assert(WaitUntil(pump, () => bar.SearchResults.Count > 0 && LogicalDescendants(bar.SearchFlyout?.Child)
                     .OfType<Border>().Any(row => row.Tag is int && row.ActualWidth > 20)), "右键测试先等待结果布局");
@@ -1347,10 +1374,10 @@ internal static class TopBarWindowTests
                 while (Environment.TickCount64 < until) { pump(); Thread.Sleep(10); }
                 Assert(menu.IsOpen && LogicalDescendants(bar.SearchFlyout?.Child).Contains(row), "索引更新期间保留右键结果");
                 menu.IsOpen = false;
-                Assert(WaitUntil(pump, () => bar.SearchBox.IsKeyboardFocused), "关闭菜单后恢复输入焦点");
-                Assert(bar.SearchSessionActive && bar.SearchBox.Text == "wx", "关闭菜单保留查询");
+                Assert(WaitUntil(pump, () => box.IsKeyboardFocused), "关闭菜单后恢复输入焦点");
+                Assert(bar.SearchSessionActive && box.Text == "wx", "关闭菜单保留查询");
                 row = LogicalDescendants(bar.SearchFlyout!.Child).OfType<Border>().First(item => item.Tag is int);
-                PressKey(bar.SearchBox, Key.Apps);
+                PressKey(box, Key.Apps);
                 Assert(WaitUntil(pump, () => row.ContextMenu?.IsOpen == true), "键盘菜单键也能操作选中结果");
                 menu = row.ContextMenu!;
                 var location = menu.Items.OfType<MenuItem>().Single(item => Equals(item.Header, "打开文件位置"));
