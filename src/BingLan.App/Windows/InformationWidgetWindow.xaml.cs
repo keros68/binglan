@@ -302,8 +302,16 @@ public partial class InformationWidgetWindow : WidgetWindowBase
             {
                 return;
             }
-            UpdateClock();
-            UpdatePerformance(snapshot);
+            // A single-component card only refreshes what it shows: changing collapsed
+            // text still re-renders the whole cached card in software every second.
+            if (_componentKind is null or DesktopComponentKind.TimeDate or DesktopComponentKind.Greeting)
+            {
+                UpdateClock();
+            }
+            if (_componentKind is null or DesktopComponentKind.Performance)
+            {
+                UpdatePerformance(snapshot);
+            }
             if (_componentKind is null or DesktopComponentKind.Weather)
             {
                 MaybeRefreshWeather(false);

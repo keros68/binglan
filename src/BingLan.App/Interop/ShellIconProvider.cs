@@ -164,12 +164,48 @@ internal static class ShellIconProvider
                 iconHandle,
                 Int32Rect.Empty,
                 BitmapSizeOptions.FromEmptyOptions());
-            source.Freeze();
-            return source;
+            var result = source.PixelWidth == JumboSize && source.PixelHeight == JumboSize
+                ? HalveJumbo(source)
+                : source;
+            result.Freeze();
+            return result;
         }
         finally
         {
             DestroyIcon(iconHandle);
         }
+    }
+
+    private const int JumboSize = 256;
+
+    // Icons are drawn at most ~43 DIP × 1.12 hover zoom (≈ 96 px at 200 % scaling), so
+    // 128 px keeps every displayed size a downscale while holding a quarter of the memory.
+    // A 2×2 average on premultiplied pixels is exact for halving and needs no UI thread.
+    internal static BitmapSource HalveJumbo(BitmapSource source)
+    {
+        var converted = new FormatConvertedBitmap(source, PixelFormats.Pbgra32, null, 0);
+        var stride = JumboSize * 4;
+        var pixels = new byte[stride * JumboSize];
+        converted.CopyPixels(pixels, stride, 0);
+        const int half = JumboSize / 2;
+        var halfStride = half * 4;
+        var output = new byte[halfStride * half];
+        for (var y = 0; y < half; y++)
+        {
+            var top = y * 2 * stride;
+            var bottom = top + stride;
+            for (var x = 0; x < half; x++)
+            {
+                var left = x * 8;
+                var target = y * halfStride + x * 4;
+                for (var channel = 0; channel < 4; channel++)
+                {
+                    var sum = pixels[top + left + channel] + pixels[top + left + 4 + channel]
+                        + pixels[bottom + left + channel] + pixels[bottom + left + 4 + channel];
+                    output[target + channel] = (byte)((sum + 2) / 4);
+                }
+            }
+        }
+        return BitmapSource.Create(half, half, 96, 96, PixelFormats.Pbgra32, null, output, halfStride);
     }
 }

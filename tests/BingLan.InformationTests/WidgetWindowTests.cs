@@ -365,6 +365,36 @@ internal static class WidgetWindowTests
         }
     }
 
+    // 单组件卡片每秒只刷新自己显示的内容：天气卡不再改动折叠着的性能数值。
+    public static void IsolatedCardsOnlyRefreshWhatTheyShow()
+    {
+        var experience = DesktopExperienceRules.CreateDefault();
+        var sampler = new FakeSamplingService();
+        var weatherService = new WeatherService(new StubHttpMessageHandler());
+        var weather = new InformationWidgetWindow(
+            new InformationWidgetState(), sampler, weatherService, experience, DesktopComponentKind.Weather);
+        var performance = new InformationWidgetWindow(
+            new InformationWidgetState(), sampler, weatherService, experience, DesktopComponentKind.Performance);
+        ShowAndPump(weather);
+        ShowAndPump(performance);
+        try
+        {
+            sampler.Emit(new PerformanceSnapshot(12.3, 45.6, 102400d, 204800d, DateTimeOffset.Now));
+            Pump();
+            AssertEqual("12%", Require<TextBlock>(performance, "CpuValueText").Text, "性能卡应刷新 CPU");
+            AssertEqual("0%", Require<TextBlock>(weather, "CpuValueText").Text, "天气卡不应刷新折叠的性能数值");
+        }
+        finally
+        {
+            foreach (var window in new[] { weather, performance })
+            {
+                window.CanClose = true;
+                window.Close();
+            }
+            Pump();
+        }
+    }
+
     public static void ClockDividerAndLockMenu()
     {
         var experience = DesktopExperienceRules.CreateDefault();
@@ -513,4 +543,5 @@ internal static class WidgetWindowTests
             Pump();
         }
     }
+
 }

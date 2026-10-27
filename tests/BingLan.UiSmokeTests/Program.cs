@@ -1765,6 +1765,31 @@ internal static class Program
         Assert(
             Math.Max(shellIcon.PixelWidth, shellIcon.PixelHeight) >= 48,
             $"系统位置图标帧只有 {shellIcon.PixelWidth}×{shellIcon.PixelHeight}，卡片高 DPI 下会被拉糊");
+
+        // 256 px 的 Jumbo 帧减半到 128 px 保存（显示最大约 96 px），内存只占四分之一。
+        Assert(Math.Max(fileIcon.PixelWidth, fileIcon.PixelHeight) <= 128
+                && Math.Max(shellIcon.PixelWidth, shellIcon.PixelHeight) <= 128,
+            $"图标帧应不超过 128 px，实际 {fileIcon.PixelWidth} 与 {shellIcon.PixelWidth}");
+        var pattern = new byte[256 * 256 * 4];
+        for (var y = 0; y < 256; y++)
+        {
+            for (var x = 0; x < 256; x++)
+            {
+                var value = (byte)((x + y) % 2 == 0 ? 200 : 100);
+                var offset = (y * 256 + x) * 4;
+                pattern[offset] = value;
+                pattern[offset + 1] = value;
+                pattern[offset + 2] = value;
+                pattern[offset + 3] = 255;
+            }
+        }
+        var halved = ShellIconProvider.HalveJumbo(
+            BitmapSource.Create(256, 256, 96, 96, PixelFormats.Pbgra32, null, pattern, 256 * 4));
+        var pixel = new byte[4];
+        halved.CopyPixels(new Int32Rect(37, 81, 1, 1), pixel, 4, 0);
+        Assert(halved.PixelWidth == 128 && halved.PixelHeight == 128
+                && pixel[0] == 150 && pixel[1] == 150 && pixel[2] == 150 && pixel[3] == 255,
+            $"减半应为 2×2 平均：{halved.PixelWidth}×{halved.PixelHeight}，像素 {string.Join(",", pixel)}");
     }
 
     private static void TestSmallShellIconFrames()
