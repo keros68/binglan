@@ -11,6 +11,7 @@ internal sealed class WindowEventWatcher : IDisposable
     private readonly DockNativeMethods.WinEventProc _callback;
     private readonly List<nint> _hooks = [];
     private bool _disposed;
+    private bool _refreshQueued;
 
     internal WindowEventWatcher(Dispatcher dispatcher)
     {
@@ -91,16 +92,24 @@ internal sealed class WindowEventWatcher : IDisposable
         }
         var objectEvent = eventType >= DockNativeMethods.EventObjectCreate;
         if (objectEvent
-            && (window == 0 || objectId != DockNativeMethods.ObjidWindow))
+            && (window == 0
+                || objectId != DockNativeMethods.ObjidWindow
+                || NativeMethods.IsChildWindow(window)))
         {
             return;
         }
 
+        if (_refreshQueued)
+        {
+            return;
+        }
+        _refreshQueued = true;
         _dispatcher.BeginInvoke(DispatcherPriority.Background, QueueRefresh);
     }
 
     private void QueueRefresh()
     {
+        _refreshQueued = false;
         if (_disposed)
         {
             return;

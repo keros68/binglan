@@ -43,6 +43,31 @@ internal static class MaximizeStateWatcherTests
             // 顶层窗口的任意状态变化（包括尚未带上最大化样式的最早一拍）都应立即通知。
             watcher.OnWinEvent(0, DockNativeMethods.EventObjectStateChange, hwnd, 0, 0, 0, 0);
             pumpUntil(() => raised == 1, "顶层窗口的状态变化应触发一次通知");
+
+            // 窗口内控件（子窗口）的状态变化不影响最大化判定，应被过滤。
+            using var child = new HwndSource(new HwndSourceParameters("冰蓝测试子控件", 40, 20)
+            {
+                ParentWindow = hwnd,
+                WindowStyle = unchecked((int)(NativeMethods.WsChild | 0x10000000))
+            });
+            watcher.OnWinEvent(0, DockNativeMethods.EventObjectStateChange, child.Handle, 0, 0, 0, 0);
+            pump();
+            if (raised != 1)
+            {
+                throw new InvalidOperationException("子窗口控件的状态变化不应触发通知");
+            }
+
+            // 一次排队前的连续事件只合并为一次通知。
+            for (var i = 0; i < 50; i++)
+            {
+                watcher.OnWinEvent(0, DockNativeMethods.EventObjectStateChange, hwnd, 0, 0, 0, 0);
+            }
+            pumpUntil(() => raised == 2, "连续状态变化应合并为一次通知");
+            pump();
+            if (raised != 2)
+            {
+                throw new InvalidOperationException($"连续状态变化应只通知一次，实际 {raised - 1} 次");
+            }
         }
         finally
         {

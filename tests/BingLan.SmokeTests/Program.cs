@@ -177,16 +177,19 @@ static void TestTodoDates()
         "移动后全局顺序应重新编号");
     Assert(!TodoService.MoveWithinDate(widget, undated.Id, -1), "无日期待办不应参与同日移动");
 
-    var todayEntry = TodoService.Add(widget, "今日格子", DateTime.Today);
-    Assert(TodoService.BelongsToTodayList(undated, DateTime.Today), "无日期待办属于今日列表");
-    Assert(TodoService.BelongsToTodayList(todayEntry, DateTime.Today), "今日格子待办属于今日列表");
-    Assert(!TodoService.BelongsToTodayList(dated, DateTime.Today), "其他日期待办不属于今日列表");
+    // A fixed "today" inside the same week keeps the Tuesday entries on another day
+    // whatever weekday the test runs on.
+    var today = monday.AddDays(3);
+    var todayEntry = TodoService.Add(widget, "今日格子", today);
+    Assert(TodoService.BelongsToTodayList(undated, today), "无日期待办属于今日列表");
+    Assert(TodoService.BelongsToTodayList(todayEntry, today), "今日格子待办属于今日列表");
+    Assert(!TodoService.BelongsToTodayList(dated, today), "其他日期待办不属于今日列表");
 
     // Clearing completed entries only reaches the today scope, never dated history.
     todayEntry.IsCompleted = true;
     undated.IsCompleted = true;
     Assert(
-        TodoService.RemoveCompleted(widget, x => TodoService.BelongsToTodayList(x, DateTime.Today)) >= 2,
+        TodoService.RemoveCompleted(widget, x => TodoService.BelongsToTodayList(x, today)) >= 2,
         "清理今日应删除今日范围内的已完成待办");
     Assert(widget.Items.Any(x => x.Id == dated.Id), "其他日期的已完成历史不应被清理");
     Assert(!widget.Items.Any(x => x.Id == todayEntry.Id), "今日已完成待办应被清理");
@@ -195,29 +198,29 @@ static void TestTodoDates()
     // 完成自动下滑：勾选完成时沉入当前范围末尾（已完成区尾部），取消完成时回到未完成区末尾（含无日期与今日日期混合场景）。
     var sinkWidget = new TodoWidgetState();
     var s1 = TodoService.Add(sinkWidget, "任务1");
-    var s2 = TodoService.Add(sinkWidget, "任务2（今日日期）", DateTime.Today);
+    var s2 = TodoService.Add(sinkWidget, "任务2（今日日期）", today);
     var s3 = TodoService.Add(sinkWidget, "任务3");
     var otherDayItem = TodoService.Add(sinkWidget, "周二保留项", tuesday);
     s1.IsCompleted = true;
-    Assert(TodoService.SinkCompleted(sinkWidget, s1.Id, DateTime.Today), "勾选首条后应自动下滑");
+    Assert(TodoService.SinkCompleted(sinkWidget, s1.Id, today), "勾选首条后应自动下滑");
     var todayOrdered = sinkWidget.Items
-        .Where(x => TodoService.BelongsToTodayList(x, DateTime.Today))
+        .Where(x => TodoService.BelongsToTodayList(x, today))
         .OrderBy(x => x.Order)
         .Select(x => x.Id)
         .ToList();
     Assert(todayOrdered.SequenceEqual([s2.Id, s3.Id, s1.Id]), "首条完成后应排在今日范围最后");
     s2.IsCompleted = true;
-    Assert(TodoService.SinkCompleted(sinkWidget, s2.Id, DateTime.Today), "勾选第二条后应继续下滑至末尾");
+    Assert(TodoService.SinkCompleted(sinkWidget, s2.Id, today), "勾选第二条后应继续下滑至末尾");
     todayOrdered = sinkWidget.Items
-        .Where(x => TodoService.BelongsToTodayList(x, DateTime.Today))
+        .Where(x => TodoService.BelongsToTodayList(x, today))
         .OrderBy(x => x.Order)
         .Select(x => x.Id)
         .ToList();
     Assert(todayOrdered.SequenceEqual([s3.Id, s1.Id, s2.Id]), "新完成的条目应排在已完成区末尾");
     s2.IsCompleted = false;
-    Assert(TodoService.SinkCompleted(sinkWidget, s2.Id, DateTime.Today), "取消勾选末尾已完成项后应回升至未完成区末尾");
+    Assert(TodoService.SinkCompleted(sinkWidget, s2.Id, today), "取消勾选末尾已完成项后应回升至未完成区末尾");
     todayOrdered = sinkWidget.Items
-        .Where(x => TodoService.BelongsToTodayList(x, DateTime.Today))
+        .Where(x => TodoService.BelongsToTodayList(x, today))
         .OrderBy(x => x.Order)
         .Select(x => x.Id)
         .ToList();

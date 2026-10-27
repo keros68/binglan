@@ -23,6 +23,9 @@ internal sealed class DockAppBarController : IDisposable
     private readonly uint _callbackMessage;
     private readonly uint _taskbarCreatedMessage;
     private readonly AppBarReservationState _reservation = new();
+    private readonly AppBarPositionGuard _positionGuard = new();
+    private readonly DispatcherTimer _deferredPosition;
+    private PixelRect _reservedStrip;
     private MonitorSnapshot? _monitor;
     private bool _reserveWorkArea;
     private double _contentLengthDip = DockLayoutMetrics.EmptyLengthDip;
@@ -43,6 +46,19 @@ internal sealed class DockAppBarController : IDisposable
         _callbackMessage = DockNativeMethods.RegisterWindowMessageW(
             $"BingLan.Dock.AppBar.{Environment.ProcessId}");
         _taskbarCreatedMessage = DockNativeMethods.RegisterWindowMessageW("TaskbarCreated");
+        _deferredPosition = new DispatcherTimer(
+            AppBarPositionGuard.DeferredDelay,
+            DispatcherPriority.Background,
+            (_, _) =>
+            {
+                _deferredPosition!.Stop();
+                if (!_disposed)
+                {
+                    Position();
+                }
+            },
+            window.Dispatcher);
+        _deferredPosition.Stop();
         _source.AddHook(WindowProc);
     }
 
@@ -114,6 +130,7 @@ internal sealed class DockAppBarController : IDisposable
             return;
         }
         _recoveryGeneration++;
+        _deferredPosition.Stop();
         Dispatch(_reservation.Release());
         _source.RemoveHook(WindowProc);
         _disposed = true;
@@ -123,6 +140,7 @@ internal sealed class DockAppBarController : IDisposable
     {
         foreach (var message in messages)
         {
+            _positionGuard.Reset();
             var data = CreateData();
             if (message == AppBarMessage.Register)
             {
@@ -169,9 +187,16 @@ internal sealed class DockAppBarController : IDisposable
                 {
                     Top = data.Rectangle.Bottom - Math.Min(stripThickness, _monitor.Bounds.Height)
                 };
-                data.Rectangle = ToNative(adjusted);
-                DockNativeMethods.SHAppBarMessage(DockNativeMethods.AbmSetPos, ref data);
-                strip = ToPixel(data.Rectangle);
+                // Explorer already holds an unchanged strip; setting it again would only
+                // notify the other AppBars and invite them to answer in kind.
+                if (_positionGuard.NeedsSubmit(adjusted))
+                {
+                    data.Rectangle = ToNative(adjusted);
+                    DockNativeMethods.SHAppBarMessage(DockNativeMethods.AbmSetPos, ref data);
+                    _positionGuard.Submitted(adjusted);
+                    _reservedStrip = ToPixel(data.Rectangle);
+                }
+                strip = _reservedStrip;
             }
             else
             {
@@ -221,6 +246,7 @@ internal sealed class DockAppBarController : IDisposable
         if ((uint)message == _taskbarCreatedMessage)
         {
             _reservation.ResetRegistration();
+            _positionGuard.Reset();
             var recoveryGeneration = ++_recoveryGeneration;
             _window.Dispatcher.BeginInvoke(
                 DispatcherPriority.Background,
@@ -233,7 +259,14 @@ internal sealed class DockAppBarController : IDisposable
             switch ((int)wParam)
             {
                 case DockNativeMethods.AbnPosChanged:
-                    Position();
+                    if (_positionGuard.TryHandleNow(Environment.TickCount64))
+                    {
+                        Position();
+                    }
+                    else if (!_deferredPosition.IsEnabled)
+                    {
+                        _deferredPosition.Start();
+                    }
                     break;
             }
             return 0;

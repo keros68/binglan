@@ -19,6 +19,7 @@ internal sealed class MaximizeStateWatcher : IDisposable
     private readonly DockNativeMethods.WinEventProc _callback;
     private readonly List<nint> _hooks = [];
     private bool _disposed;
+    private bool _notifyQueued;
 
     internal MaximizeStateWatcher(Dispatcher dispatcher)
     {
@@ -79,11 +80,23 @@ internal sealed class MaximizeStateWatcher : IDisposable
         if (_disposed
             || window == 0
             || objectId != DockNativeMethods.ObjidWindow
-            || childId != 0)
+            || childId != 0
+            || NativeMethods.IsChildWindow(window)
+            || _notifyQueued)
         {
             return;
         }
 
-        _dispatcher.BeginInvoke(DispatcherPriority.Normal, () => TopLevelStateChanged?.Invoke());
+        // Some apps raise state changes in bursts; the receiver reads the current
+        // state anyway, so one queued notice covers every event before it runs.
+        _notifyQueued = true;
+        _dispatcher.BeginInvoke(DispatcherPriority.Normal, () =>
+        {
+            _notifyQueued = false;
+            if (!_disposed)
+            {
+                TopLevelStateChanged?.Invoke();
+            }
+        });
     }
 }

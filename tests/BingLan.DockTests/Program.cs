@@ -25,6 +25,7 @@ Run("底部与顶部水平居中几何", TestHorizontalCentering);
 Run("左右垂直几何", TestVerticalGeometry);
 Run("固定/运行/活动/分组状态映射", TestDockItemStateMapping);
 Run("AppBar 预留、释放与重建路径", TestAppBarReservation);
+Run("AppBar 位置通知不与其他贴边工具栏互相抢占", TestAppBarPositionGuard);
 Run("最大化让出预留空间的判定规则", TestDockVacateRules);
 Run("固定应用身份键规则", TestDockPinIdentityKey);
 Run("固定应用与运行分组匹配规则", TestDockPinMatches);
@@ -681,6 +682,28 @@ static void TestDockItemStateMapping()
     var unpinnedOnly = DockItemComposer.Compose([], groups);
     AssertEqual(2, unpinnedOnly.Count, "没有固定项时只列出运行分组");
     Assert(!unpinnedOnly[0].IsPinned, "纯运行项不应有固定身份");
+}
+
+static void TestAppBarPositionGuard()
+{
+    var guard = new AppBarPositionGuard();
+    var strip = new PixelRect(0, 1380, 2560, 1440);
+    Assert(guard.NeedsSubmit(strip), "首次定位必须提交位置");
+    guard.Submitted(strip);
+    Assert(!guard.NeedsSubmit(strip), "位置未变时不应再次提交，避免触发其他 AppBar 的通知");
+    Assert(guard.NeedsSubmit(strip with { Top = 1340, Bottom = 1400 }), "位置变化后应重新提交");
+    guard.Reset();
+    Assert(guard.NeedsSubmit(strip), "重新注册后应重新提交位置");
+
+    long now = 10_000;
+    for (var i = 0; i < AppBarPositionGuard.BurstLimit; i++)
+    {
+        Assert(guard.TryHandleNow(now + i * 10), $"突发上限内的第 {i + 1} 次通知应立即处理");
+    }
+    Assert(!guard.TryHandleNow(now + 100), "超过突发上限的通知应延后处理");
+    Assert(!guard.TryHandleNow(now + 500), "持续来回通知期间仍应延后处理");
+    var quiet = now + 500 + (long)AppBarPositionGuard.BurstWindow.TotalMilliseconds + 1;
+    Assert(guard.TryHandleNow(quiet), "通知平息后应恢复立即处理");
 }
 
 static void TestAppBarReservation()

@@ -44,6 +44,7 @@ internal static class NativeMethods
     internal const int HtClient = 1;
 
     internal const int GwlStyle = -16;
+    internal const long WsChild = 0x40000000;
     internal const int GwlExStyle = -20;
 
     internal const long WsThickFrame = 0x00040000L;
@@ -128,6 +129,10 @@ internal static class NativeMethods
     internal static extern bool IsWindowVisible(nint window);
 
     internal static long GetExStyleOf(nint window) => GetWindowLongPtr(window, GwlExStyle);
+
+    // Controls inside a window (toolbar buttons, list items) raise the same object
+    // events as top-level windows. A destroyed window reads as not a child.
+    internal static bool IsChildWindow(nint window) => ((long)GetWindowLongPtr(window, GwlStyle) & WsChild) != 0;
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     internal static extern nint FindWindowW(string className, string? windowName);
