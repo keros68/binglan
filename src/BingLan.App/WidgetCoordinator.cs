@@ -141,6 +141,7 @@ public sealed class WidgetCoordinator : IDisposable
                 message,
                 Forms.ToolTipIcon.Info));
         StartupLog.Open(_store.DataDirectory);
+        UiDiagnostics.Start(Dispatcher.CurrentDispatcher, _store.DataDirectory);
         _cleanDesktop = new CleanDesktopAdapter(CleanDesktopCheckpointPath(_store.DataDirectory));
         _cleanDesktop.TakenOver += () =>
         {

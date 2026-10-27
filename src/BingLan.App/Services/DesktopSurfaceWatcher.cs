@@ -77,6 +77,7 @@ internal sealed class DesktopSurfaceWatcher : IDisposable
         uint eventThread,
         uint eventTime)
     {
+        UiDiagnostics.Hit(UiActivity.DesktopEvent);
         if (idObject != ObjidWindow)
         {
             return;

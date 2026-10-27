@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.IO;
 
 namespace BingLan.App.Services;
@@ -11,7 +10,6 @@ namespace BingLan.App.Services;
 internal static class StartupLog
 {
     private const long MaximumBytes = 64 * 1024;
-    private static readonly object Gate = new();
     private static string? _path;
 
     internal static void Open(string dataDirectory) => _path = Path.Combine(dataDirectory, "startup.log");
@@ -23,21 +21,9 @@ internal static class StartupLog
             return;
         }
 
-        var line = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}  开机后 {Environment.TickCount64 / 1000} 秒  {step}{Environment.NewLine}";
-        lock (Gate)
-        {
-            try
-            {
-                if (File.Exists(path) && new FileInfo(path).Length > MaximumBytes)
-                {
-                    File.Delete(path);
-                }
-                File.AppendAllText(path, line);
-            }
-            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-            {
-                Debug.WriteLine($"启动日志写入失败：{exception.Message}");
-            }
-        }
+        LocalLogFile.Append(
+            path,
+            $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}  开机后 {Environment.TickCount64 / 1000} 秒  {step}",
+            MaximumBytes);
     }
 }

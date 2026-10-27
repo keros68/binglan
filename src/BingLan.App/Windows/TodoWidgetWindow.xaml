@@ -121,8 +121,8 @@
         </DataTemplate>
         <DataTemplate x:Key="WeekItemRowTemplate">
             <Border Tag="Interactive"
-                    Margin="0,0,0,4"
-                    Padding="5,3"
+                    Margin="0,0,0,2"
+                    Padding="4,2"
                     CornerRadius="5"
                     MinHeight="17"
                     Background="{DynamicResource WidgetItemSurfaceBrush}"
@@ -155,7 +155,6 @@
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
                     <CheckBox Width="12"
                               Height="12"
@@ -169,17 +168,21 @@
                                AutomationProperties.Name="{Binding Text}"
                                VerticalAlignment="Top"
                                FontSize="{DynamicResource TodoFont.CellItem}"
-                               TextWrapping="Wrap"
                                LineHeight="{DynamicResource TodoFont.CellLineHeight}"
                                LineStackingStrategy="BlockLineHeight"
-                               Height="{DynamicResource TodoFont.CellTwoLines}"
+                               MaxHeight="{DynamicResource TodoFont.CellTwoLines}"
                                TextTrimming="CharacterEllipsis"
                                Text="{Binding Text, Mode=OneWay}"
                                ToolTip="{Binding Text}">
                         <TextBlock.Style>
                             <Style TargetType="TextBlock">
                                 <Setter Property="Foreground" Value="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
+                                <Setter Property="TextWrapping" Value="Wrap"/>
                                 <Style.Triggers>
+                                    <!-- A cell too short for a two-line entry shows one line per entry. -->
+                                    <DataTrigger Binding="{Binding DataContext.IsCompact, RelativeSource={RelativeSource AncestorType={x:Type ScrollViewer}}}" Value="True">
+                                        <Setter Property="TextWrapping" Value="NoWrap"/>
+                                    </DataTrigger>
                                     <DataTrigger Binding="{Binding IsCompleted}" Value="True">
                                         <Setter Property="Foreground" Value="{Binding WidgetSecondaryTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
                                         <Setter Property="TextDecorations" Value="Strikethrough"/>
@@ -188,31 +191,6 @@
                             </Style>
                         </TextBlock.Style>
                     </TextBlock>
-                    <Button Grid.Column="2"
-                            AutomationProperties.Name="删除待办"
-                            Width="18"
-                            Height="18"
-                            Margin="2,-2,-6,-2"
-                            Padding="0"
-                            VerticalAlignment="Top"
-                            Foreground="{Binding WidgetSecondaryTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
-                            Background="Transparent"
-                            BorderThickness="0"
-                            FontSize="12"
-                            Content="×"
-                            ToolTip="删除待办"
-                            Click="DeleteTodo_Click">
-                        <Button.Style>
-                            <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
-                                <Setter Property="Opacity" Value="0"/>
-                                <Style.Triggers>
-                                    <DataTrigger Binding="{Binding IsMouseOver, RelativeSource={RelativeSource AncestorType={x:Type Border}}}" Value="True">
-                                        <Setter Property="Opacity" Value="1"/>
-                                    </DataTrigger>
-                                </Style.Triggers>
-                            </Style>
-                        </Button.Style>
-                    </Button>
                 </Grid>
             </Border>
         </DataTemplate>
@@ -507,7 +485,7 @@
                                             <ItemsControl.ItemTemplate>
                                                 <DataTemplate>
                                                     <Border Margin="1,1,1,2"
-                                                            Padding="6,5,6,5"
+                                                            Padding="5,3,5,3"
                                                             CornerRadius="4"
                                                             Background="Transparent"
                                                             Tag="Interactive"
@@ -564,32 +542,62 @@
                                                                 <Grid.RowDefinitions>
                                                                     <RowDefinition Height="Auto"/>
                                                                     <RowDefinition Height="*"/>
-                                                                    <RowDefinition Height="Auto"/>
                                                                 </Grid.RowDefinitions>
-                                                                <StackPanel Orientation="Horizontal" Height="21"
-                                            Background="Transparent">
-                                                                    <TextBlock Text="{Binding DayNumber}"
-                                                                               FontSize="{DynamicResource TodoFont.DayNumber}"
-                                                                               FontWeight="Medium"
-                                                                               FontFamily="pack://application:,,,/BingLan;component/Assets/Fonts/#Jost, Microsoft YaHei UI"
-                                                                               VerticalAlignment="Top">
-                                                                        <TextBlock.Style>
-                                                                            <Style TargetType="TextBlock">
-                                                                                <Setter Property="Foreground" Value="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
+                                                                <Grid Background="Transparent">
+                                                                    <Grid.ColumnDefinitions>
+                                                                        <ColumnDefinition Width="*"/>
+                                                                        <ColumnDefinition Width="Auto"/>
+                                                                    </Grid.ColumnDefinitions>
+                                                                    <StackPanel Orientation="Horizontal">
+                                                                        <TextBlock Text="{Binding DayNumber}"
+                                                                                   FontSize="{DynamicResource TodoFont.DayNumber}"
+                                                                                   FontWeight="Medium"
+                                                                                   FontFamily="pack://application:,,,/BingLan;component/Assets/Fonts/#Jost, Microsoft YaHei UI"
+                                                                                   VerticalAlignment="Top">
+                                                                            <TextBlock.Style>
+                                                                                <Style TargetType="TextBlock">
+                                                                                    <Setter Property="Foreground" Value="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
+                                                                                    <Style.Triggers>
+                                                                                        <DataTrigger Binding="{Binding IsWeekend}" Value="True">
+                                                                                            <Setter Property="Foreground" Value="{Binding WidgetSecondaryTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
+                                                                                        </DataTrigger>
+                                                                                    </Style.Triggers>
+                                                                                </Style>
+                                                                            </TextBlock.Style>
+                                                                        </TextBlock>
+                                                                        <TextBlock Text="{Binding LunarText}"
+                                                                                   FontSize="{DynamicResource TodoFont.Lunar}"
+                                                                                   Margin="4,0,0,1.5"
+                                                                                   VerticalAlignment="Bottom"
+                                                                                   Foreground="{Binding WidgetSecondaryTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
+                                                                    </StackPanel>
+                                                                    <!-- Overflow chip: entries that do not fit the cell; opens the day peek popup. -->
+                                                                    <Border Grid.Column="1"
+                                                                            VerticalAlignment="Top"
+                                                                            Padding="5,0"
+                                                                            CornerRadius="7"
+                                                                            Background="{DynamicResource WidgetItemSurfaceBrush}"
+                                                                            BorderBrush="#66FFFFFF"
+                                                                            BorderThickness="1"
+                                                                            Cursor="Hand"
+                                                                            Tag="Interactive"
+                                                                            ToolTip="查看当天全部待办"
+                                                                            MouseLeftButtonDown="WeekOverflow_Click">
+                                                                        <Border.Style>
+                                                                            <Style TargetType="Border">
+                                                                                <Setter Property="Visibility" Value="Collapsed"/>
                                                                                 <Style.Triggers>
-                                                                                    <DataTrigger Binding="{Binding IsWeekend}" Value="True">
-                                                                                        <Setter Property="Foreground" Value="{Binding WidgetSecondaryTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
+                                                                                    <DataTrigger Binding="{Binding HasOverflow}" Value="True">
+                                                                                        <Setter Property="Visibility" Value="Visible"/>
                                                                                     </DataTrigger>
                                                                                 </Style.Triggers>
                                                                             </Style>
-                                                                        </TextBlock.Style>
-                                                                    </TextBlock>
-                                                                    <TextBlock Text="{Binding LunarText}"
-                                                                               FontSize="{DynamicResource TodoFont.Lunar}"
-                                                                               Margin="4,0,0,1.5"
-                                                                               VerticalAlignment="Bottom"
-                                                                               Foreground="{Binding WidgetSecondaryTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
-                                                                </StackPanel>
+                                                                        </Border.Style>
+                                                                        <TextBlock FontSize="{DynamicResource TodoFont.Overflow}" Foreground="{Binding WidgetSecondaryTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}">
+                                                                            <Run Text="+"/><Run Text="{Binding OverflowCount, Mode=OneWay}"/>
+                                                                        </TextBlock>
+                                                                    </Border>
+                                                                </Grid>
                                                                 <!-- Per-cell scroll: wheel over the cell rolls the day's
                                                                      entries without opening the day editor. -->
                                                                 <!-- Focusable=False：ScrollViewer 默认把鼠标按下标记为已处理以抢焦点，
@@ -599,37 +607,13 @@
                                                                               Focusable="False"
                                                                               Margin="0,2,0,0"
                                                                               VerticalScrollBarVisibility="Hidden"
-                                                                              HorizontalScrollBarVisibility="Disabled">
+                                                                              HorizontalScrollBarVisibility="Disabled"
+                                                                              ScrollChanged="WeekCellScroll_Changed">
                                                                     <ItemsControl ItemsSource="{Binding PreviewItems}"
                                                                                   ItemTemplate="{StaticResource WeekItemRowTemplate}"
                                                                                   Focusable="False"
                                                                                   IsTabStop="False"/>
                                                                 </ScrollViewer>
-                                                                <!-- Overflow chip: the single entry point to the day peek popup. -->
-                                                                <Border Grid.Row="2"
-                                                                        Margin="0,4,0,0"
-                                                                        Padding="7,3"
-                                                                        CornerRadius="9"
-                                                                        Background="{DynamicResource WidgetItemSurfaceBrush}"
-                                                                        BorderBrush="#66FFFFFF"
-                                                                        BorderThickness="1"
-                                                                        Cursor="Hand"
-                                                                        Tag="Interactive"
-                                                                        MouseLeftButtonDown="WeekOverflow_Click">
-                                                                    <Border.Style>
-                                                                        <Style TargetType="Border">
-                                                                            <Setter Property="Visibility" Value="Collapsed"/>
-                                                                            <Style.Triggers>
-                                                                                <DataTrigger Binding="{Binding HasOverflow}" Value="True">
-                                                                                    <Setter Property="Visibility" Value="Visible"/>
-                                                                                </DataTrigger>
-                                                                            </Style.Triggers>
-                                                                        </Style>
-                                                                    </Border.Style>
-                                                                    <TextBlock FontSize="{DynamicResource TodoFont.Overflow}" Foreground="{Binding WidgetSecondaryTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}">
-                                                                        <Run Text="还有 "/><Run Text="{Binding OverflowCount, Mode=OneWay}"/><Run Text=" 条 ▾"/>
-                                                                    </TextBlock>
-                                                                </Border>
                                                             </Grid>
                                                         </Grid>
                                                     </Border>

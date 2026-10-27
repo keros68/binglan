@@ -112,6 +112,7 @@ public partial class App : System.Windows.Application
 
     protected override void OnExit(ExitEventArgs e)
     {
+        Services.UiDiagnostics.Stop();
         _coordinator?.Dispose();
         _singleInstanceGate?.Dispose();
         base.OnExit(e);

@@ -3,6 +3,7 @@ using System.Windows;
 using System.Windows.Interop;
 using System.Windows.Threading;
 using BingLan.App.Interop;
+using BingLan.App.Services;
 using BingLan.Core.Dock;
 
 namespace BingLan.App.Dock;
@@ -193,6 +194,7 @@ internal sealed class DockAppBarController : IDisposable
                 {
                     data.Rectangle = ToNative(adjusted);
                     DockNativeMethods.SHAppBarMessage(DockNativeMethods.AbmSetPos, ref data);
+                    UiDiagnostics.Hit(UiActivity.AppBarSetPosition);
                     _positionGuard.Submitted(adjusted);
                     _reservedStrip = ToPixel(data.Rectangle);
                 }
@@ -259,6 +261,7 @@ internal sealed class DockAppBarController : IDisposable
             switch ((int)wParam)
             {
                 case DockNativeMethods.AbnPosChanged:
+                    UiDiagnostics.Hit(UiActivity.AppBarNotice);
                     if (_positionGuard.TryHandleNow(Environment.TickCount64))
                     {
                         Position();

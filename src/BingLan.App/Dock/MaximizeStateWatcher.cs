@@ -1,5 +1,6 @@
 using System.Windows.Threading;
 using BingLan.App.Interop;
+using BingLan.App.Services;
 
 namespace BingLan.App.Dock;
 
@@ -77,6 +78,7 @@ internal sealed class MaximizeStateWatcher : IDisposable
         uint eventThread,
         uint eventTime)
     {
+        UiDiagnostics.Hit(UiActivity.StateEvent);
         if (_disposed
             || window == 0
             || objectId != DockNativeMethods.ObjidWindow

@@ -91,6 +91,7 @@ internal sealed class DockCompositionBackdrop : IDisposable
         {
             var flags = NativeMethods.SwpNoActivate | NativeMethods.SwpShowWindow;
             if (_bounds == bounds) flags |= NativeMethods.SwpNoMove | NativeMethods.SwpNoSize;
+            BingLan.App.Services.UiDiagnostics.Hit(BingLan.App.Services.UiActivity.GlassMove);
             if (!NativeMethods.SetWindowPos(_window, content, bounds.Left, bounds.Top, bounds.Width, bounds.Height, flags))
                 throw new InvalidOperationException("Cannot position Dock background.");
             if (_bounds?.Width != bounds.Width || _bounds?.Height != bounds.Height)

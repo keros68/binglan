@@ -1306,6 +1306,37 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         }
     }
 
+    // The cell lists every entry of the day in a small scroll area; the "+N" chip counts
+    // the entries that are not fully in view, so it matches what the cell really shows
+    // at the card's size and font scale.
+    private void WeekCellScroll_Changed(object sender, ScrollChangedEventArgs e)
+    {
+        if (sender is not ScrollViewer { DataContext: WeekCellView cell, Content: ItemsControl list } viewer)
+        {
+            return;
+        }
+
+        // Row chrome around the text: padding 2+2, border 1+1, bottom margin 2.
+        const double RowChrome = 8;
+        cell.IsCompact = viewer.ViewportHeight < (double)FindResource("TodoFont.CellTwoLines") + RowChrome;
+
+        var hidden = 0;
+        foreach (var item in list.Items)
+        {
+            if (list.ItemContainerGenerator.ContainerFromItem(item) is not FrameworkElement row
+                || row.ActualHeight <= 0)
+            {
+                continue;
+            }
+            var top = row.TranslatePoint(new System.Windows.Point(0, 0), viewer).Y;
+            if (top < -0.5 || top + row.ActualHeight > viewer.ViewportHeight + 0.5)
+            {
+                hidden++;
+            }
+        }
+        cell.SetHiddenCount(hidden);
+    }
+
     private void WeekOverflow_Click(object sender, MouseButtonEventArgs e)
     {
         if ((sender as FrameworkElement)?.DataContext is WeekCellView cell && !cell.IsFiller)

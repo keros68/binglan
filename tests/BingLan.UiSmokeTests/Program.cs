@@ -186,6 +186,7 @@ internal static class Program
         Run("显示桌面时组件提升到任务栏下方、恢复后回落", TestDesktopSurfaceRaiseAndLower, failures);
         Run("显示桌面判定每次事件突发只执行一次，不遗留计时器", TestDesktopSurfaceWatcherChecksOncePerBurst, failures);
         Run("组件恢复默认位置", TestResetComponentPlacement, failures);
+        Run("被占用屏幕边缘推开的卡片不改写保存位置，边缘空出后回到原位", TestReservedEdgeDisplacementReturns, failures);
         Run("清爽桌面开关", TestCleanDesktopToggle, failures);
         Run("设置行分隔线对齐标题", TestSettingsRowDividersAlignWithTitles, failures);
         Run("待办周历周数设置面板", TestTodoWeekCountSettingPanel, failures);
@@ -195,6 +196,7 @@ internal static class Program
         Run("正在编辑的待办可拖选文字，Esc 不被上浮吞掉", TestTodoEditingTextKeepsSelection, failures);
         Run("待办日期编辑对话框独占并保留条目", TestTodoDayEditorExclusive, failures);
         Run("待办详情浮层随内容与尺寸保持可见", TestTodoPeekBounds, failures);
+        Run("周历小格至少完整显示一条待办，\"+N\" 只计放不下的条目", TestTodoCellOverflow, failures);
         Run("整体风格与清爽桌面恢复提示", TestStyleSettingsAndRestoreNotice, failures);
         Run("外观草稿取消、对比、限定应用与竖屏预览", () => AppearancePreviewTests.Run(ShowAndPump, Pump), failures);
         Run("便签尺寸输入后自动生效", TestAppearancePanelSizeAppliesOnItsOwn, failures);
@@ -204,6 +206,7 @@ internal static class Program
         Run("Dock 隐藏把手的窗口样式、拖动与显隐", () => DockHandleTests.Run(ShowAndPump, Pump), failures);
         Run("Dock 形变动画的收敛点、完成与打断", () => DockMorphAnimatorTests.Run(ShowAndPump, Pump, PumpUntil), failures);
         Run("Dock 原生玻璃形变、层级、回退与窗口清理", () => DockGlassSurfaceTests.Run(ShowAndPump, Pump, PumpUntil), failures);
+        Run("界面卡顿写入本地日志：卡住时的任务与恢复时长", () => UiDiagnosticsTests.Run(Pump, PumpUntil), failures);
         Run("Dock 最大化状态钩子的过滤与即时通知", () => MaximizeStateWatcherTests.Run(ShowAndPump, Pump, PumpUntil), failures);
         Run("顶端信息条的窗口样式、模块与点击深链", () => TopBarWindowTests.Run(ShowAndPump, Pump), failures);
         Run("搜索菜单对比度、右键与键盘操作", () => TopBarWindowTests.SearchResultContextMenuStaysOpen(ShowAndPump, Pump), failures);
@@ -2544,6 +2547,65 @@ internal static class Program
         }
     }
 
+    private static void TestTodoCellOverflow()
+    {
+        var state = new TodoWidgetState { WeeklyView = true };
+        TodoService.Add(state, "做软件", DateTime.Today);
+        TodoService.Add(state, "作美化", DateTime.Today);
+        TodoService.Add(state, "第三件事", DateTime.Today);
+        var window = new TodoWidgetWindow(state) { Width = 520, Height = 460 };
+        window.SetContentFontScale(0.7);
+        ShowAndPump(window);
+        try
+        {
+            const System.Reflection.BindingFlags Private =
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+            var cells = (System.Collections.IDictionary)typeof(TodoWidgetWindow).GetField("_cellsByDate", Private)!
+                .GetValue(window)!;
+            var cell = (WeekCellView)cells[DateTime.Today]!;
+            var weekHost = Require<Grid>(window, "WeekHost");
+            Assert(!FindVisualChildren<Button>(weekHost).Any(button =>
+                    System.Windows.Automation.AutomationProperties.GetName(button) == "删除待办"),
+                "周历小格内不放删除按钮，删除走右键菜单或当日浮层");
+
+            int FullyVisible()
+            {
+                var viewer = FindVisualChildren<ScrollViewer>(weekHost).Single(x => ReferenceEquals(x.DataContext, cell));
+                return FindVisualChildren<ContentPresenter>(viewer)
+                    .Where(row => row.DataContext is TodoItemState && row.ActualHeight > 0)
+                    .Count(row =>
+                    {
+                        var top = row.TranslatePoint(new Point(0, 0), viewer).Y;
+                        return top >= -0.5 && top + row.ActualHeight <= viewer.ViewportHeight + 0.5;
+                    });
+            }
+
+            PumpUntil(() => cell.HasOverflow, "小卡片放不下三条待办时应显示 +N");
+            var visible = FullyVisible();
+            var probe = FindVisualChildren<ScrollViewer>(weekHost).Single(x => ReferenceEquals(x.DataContext, cell));
+            var rowHeights = string.Join(",", FindVisualChildren<ContentPresenter>(probe).Where(r => r.DataContext is TodoItemState).Select(r => r.ActualHeight.ToString("0.0")));
+            Assert(visible >= 1, $"小格至少应完整显示一条待办（视口 {probe.ViewportHeight:0.0}，行高 {rowHeights}，格高 {((FrameworkElement)VisualTreeHelper.GetParent(probe)).ActualHeight:0.0}）");
+            Assert(cell.OverflowCount == 3 - visible, $"+N 应等于放不下的条目数：可见 {visible}，+{cell.OverflowCount}");
+
+            window.SetContentFontScale(1.0);
+            Pump();
+            var probe1 = FindVisualChildren<ScrollViewer>(weekHost).Single(x => ReferenceEquals(x.DataContext, cell));
+            var rows1 = string.Join(",", FindVisualChildren<ContentPresenter>(probe1).Where(r => r.DataContext is TodoItemState).Select(r => r.ActualHeight.ToString("0.0")));
+            Assert(FullyVisible() >= 1, $"默认字号下小格也应完整显示至少一条待办（视口 {probe1.ViewportHeight:0.0}，行高 {rows1}，格高 {((FrameworkElement)VisualTreeHelper.GetParent(probe1)).ActualHeight:0.0}，卡片 {window.ActualWidth:0}x{window.ActualHeight:0}）");
+            Assert(cell.OverflowCount == 3 - FullyVisible(), "默认字号下 +N 也应只计放不下的条目");
+
+            window.Width = 1100;
+            window.Height = 1000;
+            PumpUntil(() => !cell.HasOverflow, "卡片放大到能放下全部待办后 +N 应消失");
+            Assert(FullyVisible() == 3, "放大后三条待办都应完整显示");
+        }
+        finally
+        {
+            window.Close();
+            Pump();
+        }
+    }
+
     private static void TestTodoFontFamily()
     {
         var state = new TodoWidgetState { WeeklyView = true };
@@ -3377,6 +3439,63 @@ internal static class Program
         Require<Button>(skipWindow, "SkipButton").RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
         Pump();
         Assert(skipped == 1 && !skipWindow.IsVisible, "跳过引导应标记完成且只标记一次");
+    }
+
+    private static void TestReservedEdgeDisplacementReturns()
+    {
+        var note = new NoteWidgetWindow(new NoteWidgetState());
+        ShowAndPump(note);
+        try
+        {
+            var handle = new WindowInteropHelper(note).Handle;
+            GetWindowRect(handle, out var original);
+            var saved = new WindowPlacement();
+            note.CopyPlacementTo(saved);
+            var changes = 0;
+            note.WidgetChanged += _ => changes++;
+
+            // Another program reserves 100 px under the card: it moves up, but the saved
+            // spot stays where the user put it.
+            note.ApplyReservedEdges(rect => rect with { Top = rect.Top - 100, Bottom = rect.Bottom - 100 });
+            Pump();
+            GetWindowRect(handle, out var pushed);
+            Assert(pushed.Top == original.Top - 100, "被占用边缘覆盖的卡片应让开");
+            Assert(changes == 0, "让开边缘不应当作用户移动而保存");
+            var duringDisplacement = new WindowPlacement { Left = -1, Top = -1 };
+            note.CopyPlacementTo(duringDisplacement);
+            Assert(duringDisplacement.Left == -1 && duringDisplacement.Top == -1, "被推开期间不应写入推开后的位置");
+
+            // A further change while the edge is still reserved is measured from the user's spot.
+            note.ApplyReservedEdges(rect => rect with { Top = rect.Top - 100, Bottom = rect.Bottom - 100 });
+            Pump();
+            GetWindowRect(handle, out var again);
+            Assert(again.Top == original.Top - 100, "工作区再次变化时应按原位计算，不应越推越远");
+
+            // The edge is free again: the card goes back to where the user put it.
+            note.ApplyReservedEdges(rect => rect);
+            Pump();
+            GetWindowRect(handle, out var restored);
+            Assert(restored.Top == original.Top && restored.Left == original.Left, "边缘空出后卡片应回到原位");
+            var afterReturn = new WindowPlacement();
+            note.CopyPlacementTo(afterReturn);
+            Assert(Math.Abs(afterReturn.Top - saved.Top) < 0.5, "回到原位后保存位置应与原位一致");
+
+            // Moving the card while it is pushed aside makes the new spot its own.
+            note.ApplyReservedEdges(rect => rect with { Top = rect.Top - 100, Bottom = rect.Bottom - 100 });
+            Pump();
+            note.Left += 10;
+            Pump();
+            Assert(changes > 0, "被推开期间用户移动应正常保存");
+            note.ApplyReservedEdges(rect => rect);
+            Pump();
+            GetWindowRect(handle, out var userMoved);
+            Assert(userMoved.Top == pushed.Top, "用户移动后应以新位置为准，不再回到旧位置");
+        }
+        finally
+        {
+            note.Close();
+            Pump();
+        }
     }
 
     private static void TestResetComponentPlacement()

@@ -1,5 +1,6 @@
 using System.Windows.Threading;
 using BingLan.App.Interop;
+using BingLan.App.Services;
 
 namespace BingLan.App.Dock;
 
@@ -86,6 +87,7 @@ internal sealed class WindowEventWatcher : IDisposable
         uint eventThread,
         uint eventTime)
     {
+        UiDiagnostics.Hit(UiActivity.WindowEvent);
         if (_disposed)
         {
             return;

@@ -19,7 +19,7 @@
 ## 功能
 
 - **桌面信息**：时间日期、问候语、天气、CPU / RAM / 网络各为独立卡片，可分别调整字体、字号、颜色和位置；时间下方可加两端渐隐的细线。按 Win+D 显示桌面或最小化所有窗口时，卡片保持在桌面上可见。
-- **待办与便签**：待办卡片支持今日列表与多周日历（可在设置中选 1–5 周，默认 4 周，带农历标注）一键切换；今日列表与周历当天格使用同一批任务，新增、编辑、勾选和排序互相映射，已完成项下滑；跨天后昨天的完成与未完成任务留在昨天的周历格，不再占据今日列表；周历格内点击“还有 N 条 ▾”或 `+` 展开当日详情浮层（支持双击行内改字、悬停 0.3 秒抬起拖拽调序、右键移到明后天并可撤销），双击格子可打开多行快速编辑；普通便签支持多行文字和排版。
+- **待办与便签**：待办卡片支持今日列表与多周日历（可在设置中选 1–5 周，默认 4 周，带农历标注）一键切换；今日列表与周历当天格使用同一批任务，新增、编辑、勾选和排序互相映射，已完成项下滑；跨天后昨天的完成与未完成任务留在昨天的周历格，不再占据今日列表；周历格内放不下的待办在日期旁显示“+N”，点击它或 `+` 展开当日详情浮层（支持双击行内改字、悬停 0.3 秒抬起拖拽调序、右键移到明后天并可撤销），双击格子可打开多行快速编辑；普通便签支持多行文字和排版。
 - **分组盒**：把桌面上的文件、文件夹和软件映射进盒子，按类型自动整理，整理时顺带清除原文件已被删除的失效项，可折叠成一条标题栏，内容可按大图标或紧凑列表显示；在设置“布局”页开启“分组盒自动刷新”（默认关闭）后，桌面上的新文件自动收纳进已有的盒子，原文件被删除后对应项自动从盒中清除（U 盘或网络盘未连接时保留并标记“已失效”，可重新定位）。软件和快捷方式的 .lnk、.exe 等后缀在磁贴上自动隐藏（悬停显示完整路径），文档后缀保留。分组盒只记录路径，原文件位置不变。
 - **多显示器**：卡片按显示器组合分别记住位置。笔记本拔掉外接显示器后再接回，卡片会回到双屏时摆放的位置；拔掉后放不下的卡片会自动收拢进剩余屏幕并错开摆放，位置不够时先缩小尺寸再落位，不会留在屏幕外。
 - **快捷入口**：一排线条图标，默认是此电脑、桌面、文档、下载、图片、回收站；图标、名称和打开位置均可自定义，位置可以是文件夹、程序或文件。
@@ -37,7 +37,7 @@ Windows 11 开启系统透明效果时，Dock 和隐藏把手使用实时毛玻�
 
 ## 快速开始
 
-稳定版：[v0.2.42](https://github.com/keros68/binglan/releases/tag/v0.2.42) · [安装版](https://github.com/keros68/binglan/releases/download/v0.2.42/BingLan-Setup-0.2.42.exe) · [免安装版](https://github.com/keros68/binglan/releases/download/v0.2.42/BingLan-0.2.42-portable.zip)。另附[兼容性验收工具](https://github.com/keros68/binglan/releases/download/v0.2.42/BingLan-0.2.42-tray-preview.zip)，使用步骤见[托盘验收说明](docs/TRAY-PREVIEW.md)。
+稳定版：[v0.2.43](https://github.com/keros68/binglan/releases/tag/v0.2.43) · [安装版](https://github.com/keros68/binglan/releases/download/v0.2.43/BingLan-Setup-0.2.43.exe) · [免安装版](https://github.com/keros68/binglan/releases/download/v0.2.43/BingLan-0.2.43-portable.zip)。另附[兼容性验收工具](https://github.com/keros68/binglan/releases/download/v0.2.43/BingLan-0.2.43-tray-preview.zip)，使用步骤见[托盘验收说明](docs/TRAY-PREVIEW.md)。
 
 1. 打开 [Releases](https://github.com/keros68/binglan/releases/latest)，下载 `BingLan-Setup-*.exe`（安装版）或 `BingLan-*-portable.zip`（免安装版）。
 2. 安装版运行安装包，按当前用户安装，不需要管理员权限；免安装版解压到任意文件夹后运行其中的 `BingLan.exe`。两者均自带 .NET 运行时，尚未加入代码签名，首次运行需按 Windows 提示手动放行。
@@ -60,7 +60,7 @@ Windows 11 开启系统透明效果时，Dock 和隐藏把手使用实时毛玻�
 ```powershell
 dotnet build .\BingLan.slnx -c Release
 dotnet run --project .\tests\BingLan.SmokeTests\BingLan.SmokeTests.csproj -c Release
-pwsh -NoProfile -File .\installer\build.ps1 -Version 0.2.42
+pwsh -NoProfile -File .\installer\build.ps1 -Version 0.2.43
 ```
 
 完整测试命令、技术方案和当前实现见[开发说明](docs/DEVELOPMENT.md)，安装包细节见[安装包](docs/INSTALLER.md)。

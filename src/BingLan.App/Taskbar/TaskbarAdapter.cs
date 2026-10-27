@@ -384,6 +384,7 @@ internal sealed class TaskbarAdapter : IDisposable
         uint eventThread,
         uint eventTime)
     {
+        Services.UiDiagnostics.Hit(Services.UiActivity.TaskbarEvent);
         if (objectId != TaskbarNativeMethods.ObjidWindow || !HoldsAccent)
         {
             return;

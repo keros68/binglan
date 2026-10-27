@@ -17,11 +17,10 @@ public sealed class WeekCellView : INotifyPropertyChanged
     /// <summary>A shared blank placeholder that keeps the column grid aligned across month breaks.</summary>
     public static readonly WeekCellView Filler = new() { IsFiller = true };
 
-    /// <summary>How many entries the compact cell shows before the overflow chip.</summary>
-    private const int PreviewCapacity = 2;
-
     private bool _isSelected;
     private bool _hideCompleted;
+    private int _hiddenCount;
+    private bool _isCompact;
 
     public DateTime Date { get; init; }
     public string DayNumber { get; init; } = "";
@@ -65,18 +64,41 @@ public sealed class WeekCellView : INotifyPropertyChanged
     /// <summary>All entries of the day (full list — the day editor and the peek popup bind this).</summary>
     public ObservableCollection<TodoItemState> Items { get; } = [];
 
-    /// <summary>The first few visible entries shown inside the compact cell.</summary>
+    /// <summary>The visible entries of the day, scrolled inside the compact cell.</summary>
     public ObservableCollection<TodoItemState> PreviewItems { get; } = [];
 
-    /// <summary>Entries beyond the compact preview; shown on the overflow chip.</summary>
-    public bool HasOverflow => VisibleItemCount > PreviewCapacity;
+    /// <summary>Whether some entries do not fit the cell; shown as a "+N" chip.</summary>
+    public bool HasOverflow => _hiddenCount > 0;
 
-    /// <summary>How many visible entries are hidden behind the overflow chip.</summary>
-    public int OverflowCount => Math.Max(0, VisibleItemCount - PreviewCapacity);
+    /// <summary>How many entries the cell cannot show in full at its current size.</summary>
+    public int OverflowCount => _hiddenCount;
 
-    private int VisibleItemCount => _hideCompleted
-        ? Items.Count(x => !x.IsCompleted)
-        : Items.Count;
+    /// <summary>Whether the cell is too short for a two-line entry, so entries show one line each.</summary>
+    public bool IsCompact
+    {
+        get => _isCompact;
+        set
+        {
+            if (_isCompact == value)
+            {
+                return;
+            }
+            _isCompact = value;
+            OnPropertyChanged();
+        }
+    }
+
+    /// <summary>Set by the cell's layout: the entries outside its visible area.</summary>
+    public void SetHiddenCount(int count)
+    {
+        if (_hiddenCount == count)
+        {
+            return;
+        }
+        _hiddenCount = count;
+        OnPropertyChanged(nameof(HasOverflow));
+        OnPropertyChanged(nameof(OverflowCount));
+    }
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
@@ -91,12 +113,10 @@ public sealed class WeekCellView : INotifyPropertyChanged
             ? Items.Where(x => !x.IsCompleted)
             : Items;
         PreviewItems.Clear();
-        foreach (var entry in visible.Take(PreviewCapacity))
+        foreach (var entry in visible)
         {
             PreviewItems.Add(entry);
         }
-        OnPropertyChanged(nameof(HasOverflow));
-        OnPropertyChanged(nameof(OverflowCount));
     }
 
     private void OnPropertyChanged([CallerMemberName] string? propertyName = null) =>

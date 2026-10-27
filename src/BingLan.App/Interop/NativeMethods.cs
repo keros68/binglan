@@ -23,7 +23,7 @@ internal static class NativeMethods
     internal static extern ushort RegisterClassEx(ref WindowClass windowClass);
     [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     internal static extern nint CreateWindowEx(uint exStyle, string className, string title, uint style, int x, int y, int width, int height, nint owner, nint menu, nint instance, nint parameter);
-    [DllImport("user32.dll")]
+    [DllImport("user32.dll", EntryPoint = "DefWindowProcW")]
     internal static extern nint DefWindowProc(nint hwnd, uint message, nint wParam, nint lParam);
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]

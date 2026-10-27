@@ -333,6 +333,7 @@ public partial class IceBlueDockWindow : Window
         {
             do
             {
+                UiDiagnostics.Hit(UiActivity.DockRefresh);
                 _refreshQueued = false;
                 var pinned = _state.PinnedApps.ToArray();
                 var hidden = _state.HiddenApps.ToArray();
@@ -1014,6 +1015,7 @@ public partial class IceBlueDockWindow : Window
 
     private void UpdateForForeground()
     {
+        UiDiagnostics.Hit(UiActivity.ForegroundCheck);
         if (_appBar?.Monitor is not { } monitor || _closing)
         {
             return;

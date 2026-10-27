@@ -4,6 +4,7 @@ using System.Windows.Controls;
 using System.Windows.Interop;
 using System.Windows.Media;
 using BingLan.App.Interop;
+using BingLan.App.Services;
 using BingLan.Core.Dock;
 using Microsoft.Win32;
 using Border = System.Windows.Controls.Border;
@@ -104,6 +105,7 @@ internal sealed class DockGlassSurface : IDisposable
     private void Sync(bool reorder = false)
     {
         if (_disposed || _syncing) return;
+        UiDiagnostics.Hit(UiActivity.GlassSync);
         _syncing = true;
         try
         {

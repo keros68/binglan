@@ -12,6 +12,7 @@ var failures = new List<string>();
 Run("待办编辑、勾选、排序", TestTodo);
 Run("空白待办在结束输入后删除", TestRemoveBlank);
 Run("待办日期字段、完成时间与周历规则", TestTodoDates);
+Run("界面卡顿判定：超时开始、应答结束、只报一次", TestUiStallDetector);
 Run("按日同步待办行", TestSyncDayItems);
 Run("跨日移动待办", TestMoveToDate);
 Run("待办日期持久化与官方版本兼容", TestTodoDatePersistence);
@@ -145,6 +146,27 @@ static void TestRemoveBlank()
     removed = TodoService.RemoveBlank(widget);
     Assert(removed.Single().Id == typing.Id && widget.Items.Count == 2, "结束输入后空白条目也应删除");
     Assert(TodoService.RemoveBlank(widget).Count == 0, "没有空白条目时不应删除");
+}
+
+static void TestUiStallDetector()
+{
+    var detector = new UiStallDetector(2000);
+    Assert(detector.CanSend, "初始应可发送探测");
+    detector.Sent(1000);
+    Assert(!detector.CanSend, "探测未应答前不应再发");
+    Assert(detector.Check(2999) is null, "未超过阈值不算卡住");
+    Assert(detector.Answered(2500) is null, "及时应答不应产生记录");
+    Assert(detector.CanSend, "应答后可再次发送");
+
+    detector.Sent(10_000);
+    var started = detector.Check(12_000);
+    Assert(started is { Started: true, ElapsedMilliseconds: 2000 }, "超过阈值应记录卡住开始");
+    Assert(detector.IsStalled, "卡住期间状态应为卡住");
+    Assert(detector.Check(20_000) is null, "同一次卡住只记录一次开始");
+    var ended = detector.Answered(25_000);
+    Assert(ended is { Started: false, ElapsedMilliseconds: 15_000 }, "应答后应记录恢复与总时长");
+    Assert(!detector.IsStalled && detector.CanSend, "恢复后应回到正常状态");
+    Assert(detector.Answered(26_000) is null, "没有待应答探测时不应产生记录");
 }
 
 static void TestTodoDates()

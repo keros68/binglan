@@ -203,6 +203,11 @@ public class WidgetWindowBase : Window
     private string? _titleBeforeEdit;
     private bool _isClosing;
     private bool _isChangingVisibilityByApp;
+    // Where the user put the card before a reserved screen edge (taskbar, dock, another
+    // program's docked toolbar) pushed it aside, in pixels. Saved positions keep this
+    // spot, and the card returns to it once the edge is free again.
+    private BingLan.Core.Dock.PixelRect? _displacedFrom;
+    private bool _isApplyingReservedEdges;
 
     public WidgetWindowBase()
     {
@@ -444,7 +449,7 @@ public class WidgetWindowBase : Window
 
     public void CopyPlacementTo(WindowPlacement placement)
     {
-        if (WindowState != WindowState.Normal)
+        if (WindowState != WindowState.Normal || _displacedFrom is not null)
         {
             return;
         }
@@ -828,6 +833,12 @@ public class WidgetWindowBase : Window
 
     private void PlacementChanged()
     {
+        if (_isApplyingReservedEdges)
+        {
+            return;
+        }
+        // Any other move or resize, by the user or by the app, becomes the card's spot.
+        _displacedFrom = null;
         if (IsLoaded)
         {
             WidgetChanged?.Invoke(this);
@@ -1027,7 +1038,7 @@ public class WidgetWindowBase : Window
 
         if (message == NativeMethods.WmSettingChange && wParam == NativeMethods.SpiSetWorkArea)
         {
-            BingLan.App.Services.WindowScreenRecovery.KeepOutOfReservedEdges(this);
+            ApplyReservedEdges(BingLan.App.Services.WindowScreenRecovery.ReservedEdgeTarget);
         }
 
         if (message is NativeMethods.WmDwmCompositionChanged
@@ -1110,6 +1121,49 @@ public class WidgetWindowBase : Window
         {
             _isChangingVisibilityByApp = false;
         }
+    }
+
+    /// <summary>
+    /// Keeps the card clear of reserved screen edges after the work area changes,
+    /// measured from where the user put it: a card pushed aside goes back once the
+    /// edge is free. <paramref name="targetFor"/> maps that spot to where it may sit now.
+    /// </summary>
+    internal void ApplyReservedEdges(Func<BingLan.Core.Dock.PixelRect, BingLan.Core.Dock.PixelRect?> targetFor)
+    {
+        var handle = new WindowInteropHelper(this).Handle;
+        if (handle == 0 || !IsVisible || WindowState != WindowState.Normal
+            || !DockNativeMethods.GetWindowRect(handle, out var native))
+        {
+            return;
+        }
+
+        var current = new BingLan.Core.Dock.PixelRect(native.Left, native.Top, native.Right, native.Bottom);
+        var wanted = _displacedFrom ?? current;
+        if (targetFor(wanted) is not { } target)
+        {
+            return;
+        }
+
+        if (target != current)
+        {
+            _isApplyingReservedEdges = true;
+            try
+            {
+                NativeMethods.SetWindowPos(
+                    handle,
+                    0,
+                    target.Left,
+                    target.Top,
+                    0,
+                    0,
+                    NativeMethods.SwpNoSize | NativeMethods.SwpNoZOrder | NativeMethods.SwpNoActivate);
+            }
+            finally
+            {
+                _isApplyingReservedEdges = false;
+            }
+        }
+        _displacedFrom = target == wanted ? null : wanted;
     }
 
     private void EnsureTaskbarSafeBounds()

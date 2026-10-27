@@ -242,24 +242,30 @@ internal static class WindowScreenRecovery
         }
 
         var current = new PixelRect(native.Left, native.Top, native.Right, native.Bottom);
-        var centerX = (current.Left + current.Right) / 2;
-        var centerY = (current.Top + current.Bottom) / 2;
-        var monitor = MonitorCatalog.GetAll().FirstOrDefault(candidate =>
-            centerX >= candidate.Bounds.Left && centerX < candidate.Bounds.Right &&
-            centerY >= candidate.Bounds.Top && centerY < candidate.Bounds.Bottom);
-        if (monitor is null || !current.HasArea)
-        {
-            return false;
-        }
-
-        var target = PlacementResolver.KeepOutOfReservedEdges(current, monitor.Bounds, monitor.WorkingArea);
-        return target != current && NativeMethods.SetWindowPos(
+        var target = ReservedEdgeTarget(current);
+        return target is { } moved && moved != current && NativeMethods.SetWindowPos(
             handle,
             0,
-            target.Left,
-            target.Top,
+            moved.Left,
+            moved.Top,
             0,
             0,
             NativeMethods.SwpNoSize | NativeMethods.SwpNoZOrder | NativeMethods.SwpNoActivate);
+    }
+
+    /// <summary>
+    /// Where a window at these bounds belongs once the reserved edges of the monitor
+    /// under its centre are kept clear; null when no monitor is under it.
+    /// </summary>
+    internal static PixelRect? ReservedEdgeTarget(PixelRect bounds)
+    {
+        var centerX = (bounds.Left + bounds.Right) / 2;
+        var centerY = (bounds.Top + bounds.Bottom) / 2;
+        var monitor = MonitorCatalog.GetAll().FirstOrDefault(candidate =>
+            centerX >= candidate.Bounds.Left && centerX < candidate.Bounds.Right &&
+            centerY >= candidate.Bounds.Top && centerY < candidate.Bounds.Bottom);
+        return monitor is null || !bounds.HasArea
+            ? null
+            : PlacementResolver.KeepOutOfReservedEdges(bounds, monitor.Bounds, monitor.WorkingArea);
     }
 }
