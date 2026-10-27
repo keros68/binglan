@@ -23,8 +23,7 @@ public static class TopBarModuleRules
             !item.IsCompleted && !string.IsNullOrWhiteSpace(item.Text)));
 
     /// <summary>
-    /// How many to-do items are still open for today: undated entries plus entries
-    /// placed on today's cell, so tasks scheduled on other days stay out of the badge.
+    /// How many to-do items are still open on today's calendar day.
     /// </summary>
     public static int CountIncompleteTodosToday(IEnumerable<TodoWidgetState> widgets, DateTime? today = null)
     {

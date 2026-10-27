@@ -48,6 +48,8 @@ public partial class TodoWidgetWindow : WidgetWindowBase
     private int _lastMovedOrder;
     private DispatcherTimer? _moveToastTimer;
     private DispatcherTimer? _peekDwellTimer;
+    private DispatcherTimer? _todayRefreshTimer;
+    private DateTime _todayScopeDate = DateTime.Today;
     private System.Windows.Point _peekDwellAnchor;
     private System.Windows.Point _peekArmPoint;
     private WeekCellView? _peekDragCell;
@@ -78,6 +80,8 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         State = state;
         // Nothing is being edited at load, so blank leftovers from earlier sessions go.
         var blanksRemoved = TodoService.RemoveBlank(state).Count > 0;
+        var legacyDatesChanged = TodoService.MigrateUndatedItems(state, DateTime.Today) > 0;
+        var restoredOrderChanged = TodoService.NormalizeTodayCompletionOrder(state, DateTime.Today);
         _items = new ObservableCollection<TodoItemState>(state.Items.OrderBy(x => x.Order));
         SyncCompletedSnapshot();
         InitializeComponent();
@@ -88,7 +92,8 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         ApplyPlacement(state.Placement, state.IsLocked);
         WidgetCornerRadius = state.CornerRadius;
         ApplyViewMode();
-        if (blanksRemoved)
+        ScheduleTodayRefresh();
+        if (blanksRemoved || legacyDatesChanged || restoredOrderChanged)
         {
             Loaded += (_, _) => NotifyStateChanged();
         }
@@ -141,9 +146,10 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         }
 
         CaptureState();
-        var item = TodoService.Add(State);
+        var item = TodoService.Add(State, string.Empty, DateTime.Today);
         _items.Add(item);
         _pendingFocusItem = item;
+        NormalizeTodayList();
         RefreshSummary();
         NotifyStateChanged();
 
@@ -187,24 +193,23 @@ public partial class TodoWidgetWindow : WidgetWindowBase
                 }
 
                 CaptureState();
-                if (TodoService.SinkCompleted(State, item.Id, DateTime.Today))
+                var orderChanged = TodoService.SinkCompleted(State, item.Id, DateTime.Today);
+                orderChanged |= TodoService.NormalizeTodayCompletionOrder(State, DateTime.Today);
+                if (orderChanged)
                 {
                     SyncObservableOrder(_items, State.Items.OrderBy(x => x.Order).ToList());
-                    // WeekCellView.Items only holds dated entries (x.Date == cell.Date, per
-                    // RenderWeekView / TodoService.ItemsForDate); undated entries (Date == null)
-                    // live only in _items, while sink within BelongsToTodayList may still reorder
-                    // Today's dated entries relative to each other.
-                    var movedDate = item.Date ?? DateTime.Today;
-                    if (_cellsByDate.TryGetValue(movedDate, out var movedCell))
+                    // The list and calendar day contain the same item instances.
+                    if (item.Date is { } movedDate
+                        && _cellsByDate.TryGetValue(movedDate, out var movedCell))
                     {
                         SyncObservableOrder(
                             movedCell.Items,
                             State.Items.Where(x => x.Date == movedDate).OrderBy(x => x.Order).ToList());
+                        movedCell.RefreshPreview();
                     }
                 }
             }
-            var itemDate = item.Date ?? DateTime.Today;
-            if (_cellsByDate.TryGetValue(itemDate, out var itemCell))
+            if (item.Date is { } itemDate && _cellsByDate.TryGetValue(itemDate, out var itemCell))
             {
                 itemCell.RefreshPreview();
             }
@@ -824,9 +829,19 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         }
     }
 
+    protected override void OnActivated(EventArgs e)
+    {
+        base.OnActivated(e);
+        if (DateTime.Today != _todayScopeDate)
+        {
+            TodayRefreshTimer_Tick(this, EventArgs.Empty);
+        }
+    }
+
     protected override void OnClosed(EventArgs e)
     {
         _peekDwellTimer?.Stop();
+        _todayRefreshTimer?.Stop();
         _peekDwellSource = null;
         if (_peekDragPhase != PeekDragPhase.Idle)
         {
@@ -1654,6 +1669,10 @@ public partial class TodoWidgetWindow : WidgetWindowBase
     {
         CaptureState();
         TodoService.SyncDayItems(State, date, lines);
+        if (date == DateTime.Today)
+        {
+            TodoService.NormalizeTodayCompletionOrder(State, DateTime.Today);
+        }
         ReloadItems();
         if (_cellsByDate.TryGetValue(date, out var cell))
         {
@@ -1669,6 +1688,10 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         var item = TodoService.Add(State, text, cell.Date);
         _items.Add(item);
         cell.Items.Add(item);
+        if (cell.Date == DateTime.Today)
+        {
+            NormalizeTodayList();
+        }
         RefreshSummary();
         NotifyStateChanged();
     }
@@ -1702,6 +1725,10 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         else
         {
             CloseDayPeek();
+            if (NormalizeTodayList())
+            {
+                NotifyStateChanged();
+            }
             RefreshSummary();
         }
     }
@@ -1843,14 +1870,80 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         }
     }
 
+    private bool NormalizeTodayList()
+    {
+        CaptureState();
+        var orderChanged = TodoService.NormalizeTodayCompletionOrder(State, DateTime.Today);
+        if (orderChanged)
+        {
+            SyncObservableOrder(_items, State.Items.OrderBy(x => x.Order).ToList());
+            if (_cellsByDate.TryGetValue(DateTime.Today, out var todayCell))
+            {
+                SyncObservableOrder(
+                    todayCell.Items,
+                    State.Items.Where(x => x.Date == DateTime.Today).OrderBy(x => x.Order).ToList());
+                todayCell.RefreshPreview();
+            }
+        }
+        ApplyCompletedVisibility();
+        return orderChanged;
+    }
+
+    private void ScheduleTodayRefresh()
+    {
+        _todayRefreshTimer ??= new DispatcherTimer();
+        _todayRefreshTimer.Tick -= TodayRefreshTimer_Tick;
+        _todayRefreshTimer.Tick += TodayRefreshTimer_Tick;
+        _todayRefreshTimer.Interval = DateTime.Today.AddDays(1).AddSeconds(1) - DateTime.Now;
+        _todayRefreshTimer.Start();
+    }
+
+    private void TodayRefreshTimer_Tick(object? sender, EventArgs e)
+    {
+        _todayRefreshTimer?.Stop();
+        var today = DateTime.Today;
+        if (today != _todayScopeDate)
+        {
+            _todayScopeDate = today;
+            SchedulePruneBlankItems();
+            var changed = NormalizeTodayList();
+            if (State.WeeklyView)
+            {
+                RenderWeekView();
+            }
+            ApplyCompletedVisibility();
+            RefreshSummary();
+            if (changed)
+            {
+                NotifyStateChanged();
+            }
+        }
+        ScheduleTodayRefresh();
+    }
+
     private static void SyncObservableOrder(
         ObservableCollection<TodoItemState> collection,
         IReadOnlyList<TodoItemState> desiredOrder)
     {
+        // A task added from the list can enter an already-rendered calendar cell.
+        // Synchronize membership first; Move then preserves the existing row
+        // containers and automation peers for tasks that were already present.
+        var desiredItems = desiredOrder.ToHashSet();
+        for (var index = collection.Count - 1; index >= 0; index--)
+        {
+            if (!desiredItems.Contains(collection[index]))
+            {
+                collection.RemoveAt(index);
+            }
+        }
         for (var targetIndex = 0; targetIndex < desiredOrder.Count; targetIndex++)
         {
             var currentIndex = collection.IndexOf(desiredOrder[targetIndex]);
-            if (currentIndex >= 0 && currentIndex != targetIndex)
+            if (currentIndex < 0)
+            {
+                collection.Insert(targetIndex, desiredOrder[targetIndex]);
+            }
+            else if (currentIndex != targetIndex)
             {
                 collection.Move(currentIndex, targetIndex);
             }

@@ -38,6 +38,12 @@ public sealed class LocalStateStore
 
         if (TryLoad(StatePath, out var state, out _) || TryLoad(StatePath + ".bak", out state, out _))
         {
+            // Persist this one-time migration before the next midnight. Otherwise an
+            // unstamped legacy entry could be assigned to a new "today" on each load.
+            if (MigrateLegacyTodoDates(state, DateTime.Today) > 0)
+            {
+                Save(state);
+            }
             return state;
         }
 
@@ -71,6 +77,7 @@ public sealed class LocalStateStore
     public void Save(AppState state)
     {
         MigrateAndNormalize(state);
+        MigrateLegacyTodoDates(state, DateTime.Today);
         Directory.CreateDirectory(DataDirectory);
         var temporaryPath = StatePath + ".tmp";
         var json = JsonSerializer.Serialize(state, JsonOptions);
@@ -228,6 +235,9 @@ public sealed class LocalStateStore
         MigrateAndNormalize(state);
         return state;
     }
+
+    private static int MigrateLegacyTodoDates(AppState state, DateTime fallbackDate) =>
+        state.TodoWidgets.Sum(todo => TodoService.MigrateUndatedItems(todo, fallbackDate));
 
     private static void MigrateAndNormalize(AppState state)
     {

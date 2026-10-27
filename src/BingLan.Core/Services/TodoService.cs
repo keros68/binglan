@@ -16,6 +16,7 @@ public static class TodoService
         {
             Text = text,
             Order = widget.Items.Count == 0 ? 0 : widget.Items.Max(x => x.Order) + 1,
+            Date = DateTime.Today,
             CreatedDate = DateTimeOffset.Now
         };
         widget.Items.Add(item);
@@ -27,8 +28,30 @@ public static class TodoService
     public static TodoItemState Add(TodoWidgetState widget, string text, DateTime? date)
     {
         var item = Add(widget, text);
-        item.Date = date;
+        item.Date = date ?? DateTime.Today;
         return item;
+    }
+
+    /// <summary>
+    /// Places legacy undated entries on their original creation day. Entries without a
+    /// creation stamp use their completion day, then the supplied migration day as a
+    /// last resort. This preserves their identity, order, text, and completion history
+    /// while making every entry reachable from a calendar day.
+    /// </summary>
+    public static int MigrateUndatedItems(TodoWidgetState widget, DateTime fallbackDate)
+    {
+        var migrated = 0;
+        foreach (var item in widget.Items)
+        {
+            if (item.Date is not null)
+            {
+                continue;
+            }
+
+            item.Date = item.CreatedDate?.Date ?? item.CompletedDate?.Date ?? fallbackDate.Date;
+            migrated++;
+        }
+        return migrated;
     }
 
     public static bool Remove(TodoWidgetState widget, Guid itemId)
@@ -128,6 +151,18 @@ public static class TodoService
     /// </summary>
     public static bool SinkCompletedWithinScope(
         TodoWidgetState widget, Guid toggledItemId, Func<TodoItemState, bool> scope)
+        => OrderCompletedWithinScope(widget, scope, toggledItemId);
+
+    /// <summary>
+    /// Keeps the current today list's incomplete entries ahead of completed ones when
+    /// its membership changes (for example, after midnight or after adding an entry).
+    /// The order within each group and all out-of-scope positions remain unchanged.
+    /// </summary>
+    public static bool NormalizeTodayCompletionOrder(TodoWidgetState widget, DateTime today)
+        => OrderCompletedWithinScope(widget, x => BelongsToTodayList(x, today), null);
+
+    private static bool OrderCompletedWithinScope(
+        TodoWidgetState widget, Func<TodoItemState, bool> scope, Guid? toggledItemId)
     {
         var ordered = widget.Items.OrderBy(x => x.Order).ToList();
         var scopedIndices = new List<int>();
@@ -141,24 +176,26 @@ public static class TodoService
             }
         }
 
-        var toggled = scopedItems.FirstOrDefault(x => x.Id == toggledItemId);
-        if (toggled is null || scopedItems.Count <= 1)
+        var toggled = toggledItemId is { } id
+            ? scopedItems.FirstOrDefault(x => x.Id == id)
+            : null;
+        if ((toggledItemId is not null && toggled is null) || scopedItems.Count <= 1)
         {
             return false;
         }
 
         var incomplete = scopedItems
-            .Where(x => !x.IsCompleted && x.Id != toggledItemId)
+            .Where(x => !x.IsCompleted && !ReferenceEquals(x, toggled))
             .ToList();
         var completed = scopedItems
-            .Where(x => x.IsCompleted && x.Id != toggledItemId)
+            .Where(x => x.IsCompleted && !ReferenceEquals(x, toggled))
             .ToList();
 
-        if (toggled.IsCompleted)
+        if (toggled is { IsCompleted: true })
         {
             completed.Add(toggled);
         }
-        else
+        else if (toggled is not null)
         {
             incomplete.Add(toggled);
         }
@@ -198,8 +235,8 @@ public static class TodoService
 
     /// <summary>
     /// Automatically sinks a completed entry to the bottom (or raises an uncompleted entry
-    /// back above completed entries) within its active scope: today's list scope for undated
-    /// or today-dated entries, or the entry's calendar day for other dates.
+    /// back above completed entries) within its calendar day. Today's list uses the same
+    /// day scope as the weekly calendar.
     /// </summary>
     public static bool SinkCompleted(TodoWidgetState widget, Guid toggledItemId, DateTime today)
     {
@@ -485,11 +522,10 @@ public static class TodoService
     }
 
     /// <summary>
-    /// Which entries the today list shows: undated ones plus entries placed on today,
-    /// so a task written into today's cell appears in both views.
+    /// The today list is a projection of the weekly calendar's current day.
     /// </summary>
     public static bool BelongsToTodayList(TodoItemState item, DateTime today) =>
-        item.Date is null || item.Date.Value == today;
+        item.Date is { } date && date.Date == today.Date;
 
     public static void Normalize(TodoWidgetState widget)
     {

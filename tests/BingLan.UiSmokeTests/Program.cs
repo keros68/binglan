@@ -164,6 +164,7 @@ internal static class Program
         Run("旧图标不被 Jumbo 透明占位缩成小点", TestSmallShellIconFrames, failures);
         Run("屏幕阅读器名称、Tab 顺序与实际 DPI 边界", TestAccessibilityAndKeyboardNavigation, failures);
         Run("高对比度系统色切换与冰蓝材质恢复", TestHighContrastThemeSwitch, failures);
+        Run("今日列表与周历按日期映射", TestTodoTodayCalendarMapping, failures);
         Run("单实例门禁占用与释放", TestSingleInstanceGate, failures);
         Run("托盘双击打开并恢复设置窗口", TestTrayDoubleClick, failures);
         Run("缺失本机标题字体安全回退", TestUnavailableTitleFontFallback, failures);
@@ -550,6 +551,129 @@ internal static class Program
         TestTodoAccessibility();
         TestFileBoxAccessibility();
         TestSettingsAccessibility();
+    }
+
+    private static void TestTodoTodayCalendarMapping()
+    {
+        var state = new TodoWidgetState();
+        var yesterdayOpen = TodoService.Add(state, "昨日未完成任务", DateTime.Today.AddDays(-1));
+        var yesterdayCompleted = TodoService.Add(state, "昨日完成任务", DateTime.Today.AddDays(-1));
+        yesterdayCompleted.IsCompleted = true;
+        TodoService.StampCompletion(yesterdayCompleted);
+        var first = TodoService.Add(state, "今天的第一项", DateTime.Today);
+        var second = TodoService.Add(state, "今天的第二项", DateTime.Today);
+        var tomorrow = TodoService.Add(state, "明天的任务", DateTime.Today.AddDays(1));
+        var window = new TodoWidgetWindow(state);
+        ShowAndPump(window);
+        try
+        {
+            var list = Require<ItemsControl>(window, "TodoList");
+            List<Guid> TodayOrder() => list.Items.OfType<TodoItemState>()
+                .Where(x => TodoService.BelongsToTodayList(x, DateTime.Today)
+                    && list.ItemContainerGenerator.ContainerFromItem(x) is UIElement row
+                    && row.Visibility == Visibility.Visible)
+                .Select(x => x.Id).ToList();
+            Assert(TodayOrder().SequenceEqual([first.Id, second.Id]),
+                "重新打开列表时，昨日完成和未完成任务均不得出现在今日列表");
+            Assert(
+                TodoService.ItemsForDate(state, DateTime.Today.AddDays(-1)).Select(x => x.Id)
+                    .SequenceEqual([yesterdayOpen.Id, yesterdayCompleted.Id]),
+                "昨日任务应保留在昨日周历，供后续重新安排");
+
+            var viewMode = Require<Button>(window, "ViewModeButton");
+            viewMode.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            Pump();
+            var weekHost = Require<Grid>(window, "WeekHost");
+            var weeklyFirstCheck = FindVisualChildren<CheckBox>(weekHost)
+                .First(cb => cb.IsVisible && cb.DataContext is TodoItemState item && item.Id == first.Id);
+            weeklyFirstCheck.IsChecked = true;
+            Pump();
+            Assert(first.IsCompleted && TodoService.ItemsForDate(state, DateTime.Today).Any(x => x.Id == first.Id && x.IsCompleted),
+                "周历勾选应修改今日列表使用的同一任务记录");
+
+            viewMode.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            Pump();
+            Assert(TodayOrder().SequenceEqual([second.Id, first.Id]),
+                "从周历切回今日列表后应反映周历勾选后的完成排序");
+            foreach (var item in new[] { first, second })
+            {
+                var row = list.ItemContainerGenerator.ContainerFromItem(item) as FrameworkElement;
+                Assert(row is not null, "今日列表应生成可见任务行");
+                var renderedText = FindVisualChildren<TextBox>(row).Single().Text;
+                Assert(renderedText == item.Text,
+                    $"今日列表行文本与任务记录不一致：期望 {item.Text}，实际 {renderedText}");
+            }
+
+            var previewPath = Environment.GetEnvironmentVariable("BINGLAN_TODO_ORDER_PREVIEW");
+            if (!string.IsNullOrWhiteSpace(previewPath))
+            {
+                SavePreview(window, previewPath);
+            }
+
+            var firstCheck = FindVisualChildren<CheckBox>(list)
+                .First(cb => cb.DataContext is TodoItemState item && item.Id == second.Id);
+            firstCheck.IsChecked = true;
+            Pump();
+            Assert(TodayOrder().SequenceEqual([first.Id, second.Id]),
+                "列表新勾选的任务应移动到今日已完成区末尾");
+            viewMode.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            Pump();
+            Assert(
+                FindVisualChildren<CheckBox>(weekHost)
+                    .Any(cb => cb.IsVisible && cb.DataContext is TodoItemState item && item.Id == second.Id && cb.IsChecked == true),
+                "列表勾选应立即映射到周历今天格");
+            viewMode.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            Pump();
+            var secondListCheck = FindVisualChildren<CheckBox>(list)
+                .First(cb => cb.DataContext is TodoItemState item && item.Id == second.Id);
+            secondListCheck.IsChecked = false;
+            Pump();
+            Assert(TodayOrder().SequenceEqual([second.Id, first.Id]),
+                "取消完成应将任务移回未完成区末尾");
+
+            var add = FindVisualChildren<Button>(window).Single(x => Equals(x.Content, "+"));
+            add.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            Pump();
+            var added = state.Items.Single(x => x.Id != first.Id && x.Id != second.Id
+                && x.Id != yesterdayOpen.Id && x.Id != yesterdayCompleted.Id && x.Id != tomorrow.Id);
+            Assert(added.Date == DateTime.Today && TodoService.ItemsForDate(state, DateTime.Today).Any(x => x.Id == added.Id),
+                "今日列表新增任务应写入今天日期并映射到周历今天格");
+            // 模拟用户已在新行输入文字；没写内容的空白行在光标离开后会被删除。
+            added.Text = "新增的任务";
+            Assert(TodayOrder().SequenceEqual([second.Id, added.Id, first.Id]),
+                "列表新增未完成任务应排在今日已完成任务之前");
+
+            // 模拟午夜刷新：当前列表的任务改为昨天，明日任务改为今天；刷新后旧行必须折叠，新行必须出现。
+            first.Date = DateTime.Today.AddDays(-1);
+            second.Date = DateTime.Today.AddDays(-1);
+            added.Date = DateTime.Today.AddDays(-1);
+            typeof(TodoWidgetWindow)
+                .GetField("_todayScopeDate", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+                .SetValue(window, DateTime.Today.AddDays(-1));
+            tomorrow.Date = DateTime.Today;
+            typeof(TodoWidgetWindow)
+                .GetMethod("TodayRefreshTimer_Tick", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+                .Invoke(window, [null, EventArgs.Empty]);
+            Pump();
+            Assert(TodayOrder().SequenceEqual([tomorrow.Id])
+                    && list.ItemContainerGenerator.ContainerFromItem(first) is UIElement firstRow
+                    && firstRow.Visibility == Visibility.Collapsed
+                    && list.ItemContainerGenerator.ContainerFromItem(added) is UIElement addedRow
+                    && addedRow.Visibility == Visibility.Collapsed
+                    && list.ItemContainerGenerator.ContainerFromItem(tomorrow) is UIElement tomorrowRow
+                    && tomorrowRow.Visibility == Visibility.Visible,
+                "跨天刷新后旧日期行必须折叠，只有新当天日期行显示");
+
+            var clear = Require<Button>(window, "ClearCompletedButton");
+            clear.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            Pump();
+            Assert(state.Items.Any(x => x.Id == yesterdayCompleted.Id),
+                "清理今日已完成不得删除历史日期的已完成任务");
+        }
+        finally
+        {
+            Close(window);
+        }
     }
 
     private static void TestHighContrastThemeSwitch()
@@ -4537,5 +4661,6 @@ internal static class Program
         internal TaskbarEdgeGuard.PixelRect Rectangle;
         internal nint Parameter;
     }
+
 
 }
