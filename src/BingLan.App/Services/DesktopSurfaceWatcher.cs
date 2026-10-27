@@ -82,19 +82,22 @@ internal sealed class DesktopSurfaceWatcher : IDisposable
             return;
         }
         // The shell raises the desktop surface while it minimises everything, so the
-        // z-order settles a moment after the first event. Coalesce the burst.
+        // z-order settles a moment after the first event. Coalesce the burst. This
+        // constructor starts the timer, and a timer keeps ticking until stopped: each
+        // one must stop itself after its single check, or every burst would leave
+        // another timer re-enumerating the windows every 150 ms for good.
         if (_evaluateTimer is null)
         {
             _evaluateTimer = new DispatcherTimer(
                 SettleDelay,
                 DispatcherPriority.Background,
-                (_, _) =>
+                (sender, _) =>
                 {
+                    ((DispatcherTimer)sender!).Stop();
                     _evaluateTimer = null;
                     Evaluate();
                 },
                 Dispatcher.CurrentDispatcher);
-            _evaluateTimer.Start();
         }
     }
 
