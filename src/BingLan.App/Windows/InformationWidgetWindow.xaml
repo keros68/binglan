@@ -70,7 +70,7 @@
                         <ColumnDefinition Width="1.25*"/>
                     </Grid.ColumnDefinitions>
                     <StackPanel Grid.Column="0" VerticalAlignment="Center">
-                        <TextBlock Text="CPU" FontSize="10" FontWeight="Bold" Opacity="0.72"
+                        <TextBlock x:Name="CpuLabelText" Text="CPU" FontSize="10" FontWeight="Bold" Opacity="0.72"
                                    Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
                         <TextBlock x:Name="CpuValueText" Text="--" FontSize="18" FontWeight="Bold"
                                    Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
@@ -90,7 +90,7 @@
                     <Rectangle Grid.Column="1" Width="1" Margin="0,3,10,3" Opacity="0.2"
                                Fill="{Binding Foreground, ElementName=CpuValueText}"/>
                     <StackPanel Grid.Column="2" VerticalAlignment="Center">
-                        <TextBlock Text="RAM" FontSize="10" FontWeight="Bold" Opacity="0.72"
+                        <TextBlock x:Name="RamLabelText" Text="RAM" FontSize="10" FontWeight="Bold" Opacity="0.72"
                                    Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
                         <TextBlock x:Name="RamValueText" Text="--" FontSize="18" FontWeight="Bold"
                                    Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
@@ -119,14 +119,14 @@
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
                         </Grid.RowDefinitions>
-                        <TextBlock Grid.ColumnSpan="2" Margin="0,0,0,3" Text="NETWORK" FontSize="10" FontWeight="Bold"
+                        <TextBlock Grid.ColumnSpan="2" Margin="0,0,0,3" x:Name="NetworkLabelText" Text="NETWORK" FontSize="10" FontWeight="Bold"
                                    Opacity="0.72" Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
-                        <TextBlock Grid.Row="1" Margin="0,0,6,0" Text="UP" FontSize="12" FontWeight="Bold"
+                        <TextBlock Grid.Row="1" Margin="0,0,6,0" x:Name="UploadLabelText" Text="UP" FontSize="12" FontWeight="Bold"
                                    Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
                         <TextBlock x:Name="UploadValueText" Grid.Row="1" Grid.Column="1" Text="--" FontSize="12"
                                    FontWeight="Bold" Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
                         <!-- Download stands out in the accent colour. -->
-                        <TextBlock Grid.Row="2" Margin="0,0,6,0" Text="DN" FontSize="12" FontWeight="Bold"
+                        <TextBlock Grid.Row="2" Margin="0,0,6,0" x:Name="DownloadLabelText" Text="DN" FontSize="12" FontWeight="Bold"
                                    Tag="Accent" Foreground="{DynamicResource PerformanceAccentBrush}"/>
                         <TextBlock x:Name="DownloadValueText" Grid.Row="2" Grid.Column="1" Text="--" FontSize="12"
                                    FontWeight="Bold" Tag="Accent" Foreground="{DynamicResource PerformanceAccentBrush}"/>

@@ -844,7 +844,7 @@
                                         <Button Margin="8,0,0,0" Content="无底板" Tag="Clear" Click="ComponentLook_Click"/>
                                     </StackPanel>
                                 </local:SettingsRow>
-                                <local:SettingsRow Header="字体">
+                                <local:SettingsRow x:Name="SelectedComponentFontRow" Header="字体">
                                     <ComboBox x:Name="SelectedComponentFontPicker"
                                               Width="240"
                                               AutomationProperties.Name="卡片字体"
@@ -916,7 +916,7 @@
                                         <TextBlock x:Name="SelectedComponentCornerRadiusValueText" Style="{StaticResource ValueTextStyle}"/>
                                     </StackPanel>
                                 </local:SettingsRow>
-                                <local:SettingsRow Header="信息密度">
+                                <local:SettingsRow x:Name="SelectedComponentDensityRow" Header="信息密度">
                                     <ComboBox x:Name="SelectedComponentDensitySelector"
                                               Width="160"
                                               AutomationProperties.Name="信息密度"

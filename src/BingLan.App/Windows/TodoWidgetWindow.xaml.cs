@@ -80,6 +80,8 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         InitializeComponent();
         DataContext = state;
         ApplyAppearance(state.Appearance);
+        SetContentFontScale(1d);
+        SetContentFontFamily(null);
         TodoList.ItemsSource = _items;
         TodoList.ItemContainerGenerator.StatusChanged += (_, _) => ApplyCompletedVisibility();
         ApplyPlacement(state.Placement, state.IsLocked);
@@ -355,6 +357,52 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         State.WeeklyView = !State.WeeklyView;
         ApplyViewMode();
         NotifyStateChanged();
+    }
+
+    // Base sizes of the card's reading text at 100%. The 字号缩放 setting scales them
+    // together, so the list stays larger than the weekly cells by the same ratio.
+    // Buttons and glyphs keep their sizes: they sit in fixed boxes. The cell text's
+    // fixed line box scales with it, or wrapped lines would overlap.
+    private static readonly (string Key, double Size)[] ScaledFontSizes =
+    [
+        ("TodoFont.ListItem", 14),
+        ("TodoFont.CellItem", 12),
+        ("TodoFont.CellLineHeight", 16),
+        ("TodoFont.CellTwoLines", 32),
+        ("TodoFont.Weekday", 11.5),
+        ("TodoFont.DayNumber", 13.5),
+        ("TodoFont.Lunar", 9.5),
+        ("TodoFont.Overflow", 10.5),
+        ("TodoFont.WeekRange", 12.5),
+        ("TodoFont.PeekTitle", 13),
+        ("TodoFont.PeekItem", 12),
+        ("TodoFont.Status", 11.5)
+    ];
+
+    /// <summary>The todo component's 字号缩放 value, also handed to the day editor.</summary>
+    public double ContentFontScale { get; private set; } = 1d;
+
+    /// <summary>The todo component's 字体 choice (or the interface font), also handed to the day editor.</summary>
+    public System.Windows.Media.FontFamily ContentFontFamily =>
+        (System.Windows.Media.FontFamily)Resources["TodoContentFont"];
+
+    /// <summary>
+    /// Applies the 字体 setting to the card's reading text; null restores the interface
+    /// font. The app-wide TextBox style pins its font, so the card's editors read this
+    /// resource explicitly instead of inheriting it. The title keeps its own title font.
+    /// </summary>
+    public void SetContentFontFamily(string? fontName) =>
+        Resources["TodoContentFont"] = fontName is { } name
+            ? InstalledFontCatalog.Create(InstalledFontCatalog.Resolve(name))
+            : (System.Windows.Media.FontFamily)FindResource("UiFont");
+
+    public void SetContentFontScale(double scale)
+    {
+        ContentFontScale = DesktopExperienceRules.CoerceFontScale(scale);
+        foreach (var (key, size) in ScaledFontSizes)
+        {
+            Resources[key] = size * ContentFontScale;
+        }
     }
 
     /// <summary>设置窗口用：调整周历窗口的周数（1~5），立即重排并通知保存。</summary>
@@ -1539,7 +1587,7 @@ public partial class TodoWidgetWindow : WidgetWindowBase
             .Select(x => x.Text)
             .Where(text => text.Length > 0)
             .ToList();
-        _dayEditor = new DayEditWindow(cell.Date, lines) { Owner = this };
+        _dayEditor = new DayEditWindow(cell.Date, lines, ContentFontScale, ContentFontFamily) { Owner = this };
         _dayEditor.Committed += (date, committedLines) => CommitDayEditor(date, committedLines);
         _dayEditor.Closed += (_, _) => _dayEditor = null;
         _dayEditor.ShowDialog();

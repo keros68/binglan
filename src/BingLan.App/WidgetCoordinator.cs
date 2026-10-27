@@ -718,10 +718,23 @@ public sealed class WidgetCoordinator : IDisposable
         {
             ShowInTaskbar = false
         };
+        ApplyTodoComponent(window, _state.DesktopExperience.GetComponent(DesktopComponentKind.Todo));
         Wire(window);
         _windows.Add(window);
         window.Show();
         return window;
+    }
+
+    // A todo card takes the component's look from the moment it opens, not only after
+    // the next settings change.
+    private static void ApplyTodoComponent(TodoWidgetWindow window, DesktopComponentState component)
+    {
+        window.SetWidgetBackgroundColor(component.Appearance.BackgroundColor);
+        window.SetWidgetBackgroundOpacity(component.Appearance.BackgroundOpacity);
+        window.SetWidgetTextColor(component.Appearance.TextColor);
+        window.SetContentFontScale(component.FontScale);
+        window.SetContentFontFamily(component.FontFamily);
+        window.WidgetCornerRadius = component.CornerRadius;
     }
 
     private FileBoxWindow ShowFileBox(FileBoxState state)
@@ -1229,10 +1242,7 @@ public sealed class WidgetCoordinator : IDisposable
                 {
                     window = ShowTodo(state);
                 }
-                window.SetWidgetBackgroundColor(todoComponent.Appearance.BackgroundColor);
-                window.SetWidgetBackgroundOpacity(todoComponent.Appearance.BackgroundOpacity);
-                window.SetWidgetTextColor(todoComponent.Appearance.TextColor);
-                window.WidgetCornerRadius = todoComponent.CornerRadius;
+                ApplyTodoComponent(window, todoComponent);
                 var placement = ReferenceEquals(state, _state.TodoWidgets.FirstOrDefault())
                     ? todoComponent.Placement
                     : state.Placement;
