@@ -164,6 +164,7 @@ internal static class Program
         Run("旧图标不被 Jumbo 透明占位缩成小点", TestSmallShellIconFrames, failures);
         Run("屏幕阅读器名称、Tab 顺序与实际 DPI 边界", TestAccessibilityAndKeyboardNavigation, failures);
         Run("高对比度系统色切换与冰蓝材质恢复", TestHighContrastThemeSwitch, failures);
+        Run("今日列表与周历按日期映射", TestTodoTodayCalendarMapping, failures);
         Run("单实例门禁占用与释放", TestSingleInstanceGate, failures);
         Run("托盘双击打开并恢复设置窗口", TestTrayDoubleClick, failures);
         Run("缺失本机标题字体安全回退", TestUnavailableTitleFontFallback, failures);
@@ -182,6 +183,9 @@ internal static class Program
         Run("设置行分隔线对齐标题", TestSettingsRowDividersAlignWithTitles, failures);
         Run("待办周历周数设置面板", TestTodoWeekCountSettingPanel, failures);
         Run("待办日期编辑在保存与父窗口关闭时提交", TestTodoDayEditorPersistence, failures);
+        Run("空白待办在光标离开后自动删除", TestTodoBlankRowsPruned, failures);
+        Run("周历当日浮层点击别处自动关闭", TestTodoDayPeekClosesOnOutsideClick, failures);
+        Run("正在编辑的待办可拖选文字，Esc 不被上浮吞掉", TestTodoEditingTextKeepsSelection, failures);
         Run("待办日期编辑对话框独占并保留条目", TestTodoDayEditorExclusive, failures);
         Run("待办详情浮层随内容与尺寸保持可见", TestTodoPeekBounds, failures);
         Run("整体风格与清爽桌面恢复提示", TestStyleSettingsAndRestoreNotice, failures);
@@ -509,8 +513,10 @@ internal static class Program
 
             var add = FindVisualChildren<Button>(window).Single(x => Equals(x.Content, "+"));
             add.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
-            Pump();
             Assert(state.Items.Count == 2, "新增按钮未创建待办");
+            // 写入文字模拟用户已输入：空白行会在卡片失去光标（如前台被抢走）时被删除。
+            state.Items.Single(x => x.Text != "原待办").Text = "新增待办";
+            Pump();
 
             WidgetWindowBase? settingsTarget = null;
             window.OpenAppSettingsRequested += target => settingsTarget = target;
@@ -526,7 +532,8 @@ internal static class Program
             Assert(
                 deleteButtons.All(x => x.ActualWidth >= 32d && x.ActualHeight >= 32d),
                 "待办删除按钮的点击区域小于 32 DIP");
-            deleteButtons[0].RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            deleteButtons.Single(x => x.DataContext is TodoItemState { Text: "原待办" })
+                .RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
             Pump();
             Assert(
                 state.Items.Count == 1 && state.Items[0].Text != "原待办",
@@ -544,6 +551,129 @@ internal static class Program
         TestTodoAccessibility();
         TestFileBoxAccessibility();
         TestSettingsAccessibility();
+    }
+
+    private static void TestTodoTodayCalendarMapping()
+    {
+        var state = new TodoWidgetState();
+        var yesterdayOpen = TodoService.Add(state, "昨日未完成任务", DateTime.Today.AddDays(-1));
+        var yesterdayCompleted = TodoService.Add(state, "昨日完成任务", DateTime.Today.AddDays(-1));
+        yesterdayCompleted.IsCompleted = true;
+        TodoService.StampCompletion(yesterdayCompleted);
+        var first = TodoService.Add(state, "今天的第一项", DateTime.Today);
+        var second = TodoService.Add(state, "今天的第二项", DateTime.Today);
+        var tomorrow = TodoService.Add(state, "明天的任务", DateTime.Today.AddDays(1));
+        var window = new TodoWidgetWindow(state);
+        ShowAndPump(window);
+        try
+        {
+            var list = Require<ItemsControl>(window, "TodoList");
+            List<Guid> TodayOrder() => list.Items.OfType<TodoItemState>()
+                .Where(x => TodoService.BelongsToTodayList(x, DateTime.Today)
+                    && list.ItemContainerGenerator.ContainerFromItem(x) is UIElement row
+                    && row.Visibility == Visibility.Visible)
+                .Select(x => x.Id).ToList();
+            Assert(TodayOrder().SequenceEqual([first.Id, second.Id]),
+                "重新打开列表时，昨日完成和未完成任务均不得出现在今日列表");
+            Assert(
+                TodoService.ItemsForDate(state, DateTime.Today.AddDays(-1)).Select(x => x.Id)
+                    .SequenceEqual([yesterdayOpen.Id, yesterdayCompleted.Id]),
+                "昨日任务应保留在昨日周历，供后续重新安排");
+
+            var viewMode = Require<Button>(window, "ViewModeButton");
+            viewMode.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            Pump();
+            var weekHost = Require<Grid>(window, "WeekHost");
+            var weeklyFirstCheck = FindVisualChildren<CheckBox>(weekHost)
+                .First(cb => cb.IsVisible && cb.DataContext is TodoItemState item && item.Id == first.Id);
+            weeklyFirstCheck.IsChecked = true;
+            Pump();
+            Assert(first.IsCompleted && TodoService.ItemsForDate(state, DateTime.Today).Any(x => x.Id == first.Id && x.IsCompleted),
+                "周历勾选应修改今日列表使用的同一任务记录");
+
+            viewMode.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            Pump();
+            Assert(TodayOrder().SequenceEqual([second.Id, first.Id]),
+                "从周历切回今日列表后应反映周历勾选后的完成排序");
+            foreach (var item in new[] { first, second })
+            {
+                var row = list.ItemContainerGenerator.ContainerFromItem(item) as FrameworkElement;
+                Assert(row is not null, "今日列表应生成可见任务行");
+                var renderedText = FindVisualChildren<TextBox>(row).Single().Text;
+                Assert(renderedText == item.Text,
+                    $"今日列表行文本与任务记录不一致：期望 {item.Text}，实际 {renderedText}");
+            }
+
+            var previewPath = Environment.GetEnvironmentVariable("BINGLAN_TODO_ORDER_PREVIEW");
+            if (!string.IsNullOrWhiteSpace(previewPath))
+            {
+                SavePreview(window, previewPath);
+            }
+
+            var firstCheck = FindVisualChildren<CheckBox>(list)
+                .First(cb => cb.DataContext is TodoItemState item && item.Id == second.Id);
+            firstCheck.IsChecked = true;
+            Pump();
+            Assert(TodayOrder().SequenceEqual([first.Id, second.Id]),
+                "列表新勾选的任务应移动到今日已完成区末尾");
+            viewMode.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            Pump();
+            Assert(
+                FindVisualChildren<CheckBox>(weekHost)
+                    .Any(cb => cb.IsVisible && cb.DataContext is TodoItemState item && item.Id == second.Id && cb.IsChecked == true),
+                "列表勾选应立即映射到周历今天格");
+            viewMode.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            Pump();
+            var secondListCheck = FindVisualChildren<CheckBox>(list)
+                .First(cb => cb.DataContext is TodoItemState item && item.Id == second.Id);
+            secondListCheck.IsChecked = false;
+            Pump();
+            Assert(TodayOrder().SequenceEqual([second.Id, first.Id]),
+                "取消完成应将任务移回未完成区末尾");
+
+            var add = FindVisualChildren<Button>(window).Single(x => Equals(x.Content, "+"));
+            add.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            Pump();
+            var added = state.Items.Single(x => x.Id != first.Id && x.Id != second.Id
+                && x.Id != yesterdayOpen.Id && x.Id != yesterdayCompleted.Id && x.Id != tomorrow.Id);
+            Assert(added.Date == DateTime.Today && TodoService.ItemsForDate(state, DateTime.Today).Any(x => x.Id == added.Id),
+                "今日列表新增任务应写入今天日期并映射到周历今天格");
+            // 模拟用户已在新行输入文字；没写内容的空白行在光标离开后会被删除。
+            added.Text = "新增的任务";
+            Assert(TodayOrder().SequenceEqual([second.Id, added.Id, first.Id]),
+                "列表新增未完成任务应排在今日已完成任务之前");
+
+            // 模拟午夜刷新：当前列表的任务改为昨天，明日任务改为今天；刷新后旧行必须折叠，新行必须出现。
+            first.Date = DateTime.Today.AddDays(-1);
+            second.Date = DateTime.Today.AddDays(-1);
+            added.Date = DateTime.Today.AddDays(-1);
+            typeof(TodoWidgetWindow)
+                .GetField("_todayScopeDate", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+                .SetValue(window, DateTime.Today.AddDays(-1));
+            tomorrow.Date = DateTime.Today;
+            typeof(TodoWidgetWindow)
+                .GetMethod("TodayRefreshTimer_Tick", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+                .Invoke(window, [null, EventArgs.Empty]);
+            Pump();
+            Assert(TodayOrder().SequenceEqual([tomorrow.Id])
+                    && list.ItemContainerGenerator.ContainerFromItem(first) is UIElement firstRow
+                    && firstRow.Visibility == Visibility.Collapsed
+                    && list.ItemContainerGenerator.ContainerFromItem(added) is UIElement addedRow
+                    && addedRow.Visibility == Visibility.Collapsed
+                    && list.ItemContainerGenerator.ContainerFromItem(tomorrow) is UIElement tomorrowRow
+                    && tomorrowRow.Visibility == Visibility.Visible,
+                "跨天刷新后旧日期行必须折叠，只有新当天日期行显示");
+
+            var clear = Require<Button>(window, "ClearCompletedButton");
+            clear.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            Pump();
+            Assert(state.Items.Any(x => x.Id == yesterdayCompleted.Id),
+                "清理今日已完成不得删除历史日期的已完成任务");
+        }
+        finally
+        {
+            Close(window);
+        }
     }
 
     private static void TestHighContrastThemeSwitch()
@@ -2325,8 +2455,8 @@ internal static class Program
         var state = TodoService.CreateDefaultWidget();
         TodoService.Add(state, "第一条");
         TodoService.Add(state, "第二条");
-        // 空白行模拟手动点 + 产生的输入位：统计不应把它算进完成度。
-        TodoService.Add(state, "");
+        // 第三行稍后清空并保持光标，模拟正在输入的空白行：统计不应把它算进完成度。
+        TodoService.Add(state, "第三条");
         var window = new TodoWidgetWindow(state);
         ShowAndPump(window);
         try
@@ -2352,6 +2482,16 @@ internal static class Program
             Pump();
             Assert(Equals(toggle.Content, "隐藏已完成") && AccessibleRows() == 3, "再次点击应恢复显示");
 
+            var typing = FindVisualChildren<TextBox>(list)
+                .Single(x => x.DataContext is TodoItemState { Text: "第三条" });
+            window.Activate();
+            Assert(typing.Focus(), "待办文字框无法聚焦");
+            typing.Text = "";
+            Pump();
+            Assert(state.Items.Count == 3, "仍有输入光标的空白行不应被删除");
+            Keyboard.ClearFocus();
+            Pump();
+            Assert(state.Items.Count == 2 && AccessibleRows() == 2, "光标离开后空白行应删除，其余行仍可访问");
             Assert(Require<TextBlock>(window, "SummaryText").Text == "1/2 已完成", "统计应只计算写了内容的待办");
         }
         finally
@@ -2364,7 +2504,7 @@ internal static class Program
     private static void TestTodoEnterCommitsText()
     {
         var state = new TodoWidgetState();
-        TodoService.Add(state, string.Empty);
+        TodoService.Add(state, "初始文字");
         var window = new TodoWidgetWindow(state);
         ShowAndPump(window);
         try
@@ -2849,22 +2989,38 @@ internal static class Program
                     "1 周窗口应恰好覆盖本周（含今天）");
 
                 // 周历模式下点击 + 应打开今天（或当前选中格）的 DayPeek 并聚焦输入框，不产生空白孤儿项。
+                // 设置窗口与卡片同时打开，前台可能在两者间来回；卡片失活时浮层按“点别处即关闭”规则关闭。
+                // 先激活卡片，之后每个依赖浮层的步骤前若浮层已因失活关闭，就重新激活并重开今天的浮层。
+                todo.Activate();
+                Pump();
                 var countBeforePlus = todo.State.Items.Count;
                 var addBtn = FindVisualChildren<Button>(todo).Single(x => Equals(x.Content, "+"));
                 addBtn.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
                 Pump();
                 var peekOverlay = Require<Canvas>(todo, "WeekPeekOverlay");
                 var peekInput = Require<TextBox>(todo, "WeekPeekInput");
+                void KeepPeekOpen()
+                {
+                    if (peekOverlay.Visibility != Visibility.Visible)
+                    {
+                        Assert(!todo.IsActive, "卡片仍处于激活状态时浮层不应自行关闭");
+                        todo.Activate();
+                        addBtn.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+                        Pump();
+                    }
+                }
                 Assert(peekOverlay.Visibility == Visibility.Visible, "周历模式下点击 + 应打开 DayPeek 浮层");
                 Assert(todo.State.Items.Count == countBeforePlus, "周历模式下点击 + 不应直接插入空白待办");
 
                 var peekInputSource = PresentationSource.FromVisual(peekInput)!;
+                KeepPeekOpen();
                 peekInput.Text = "周历首条任务";
                 peekInput.RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, peekInputSource, 0, Key.Enter)
                 {
                     RoutedEvent = Keyboard.KeyDownEvent
                 });
                 Pump();
+                KeepPeekOpen();
                 peekInput.Text = "周历第二条任务";
                 peekInput.RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, peekInputSource, 0, Key.Enter)
                 {
@@ -2876,6 +3032,7 @@ internal static class Program
                     "DayPeek 输入框回车应向当前日期添加待办");
 
                 // DayPeek 行内编辑：双击解锁，Esc 还原原文，Enter 提交修改并写回状态。
+                KeepPeekOpen();
                 var peekList = Require<ItemsControl>(todo, "WeekPeekList");
                 var firstRowEditor = FindVisualChildren<TextBox>(peekList).First();
                 static MouseButtonEventArgs DoubleClick()
@@ -2907,6 +3064,7 @@ internal static class Program
                     "DayPeek 行内编辑按 Enter 应提交修改并同步到 State");
 
                 // 跨行切换编辑：第一行编辑中直接双击第二行，第一行修改应自动提交且第二行保持编辑态（Esc 可还原第二行）。
+                KeepPeekOpen();
                 var rowEditors = FindVisualChildren<TextBox>(peekList).ToList();
                 rowEditors[0].RaiseEvent(DoubleClick());
                 Pump();
@@ -2922,6 +3080,7 @@ internal static class Program
                     "切入第二行后按 Esc 应正确还原第二行原文");
 
                 // 跨日移动与单步撤销（含多日穿插全局 Order）：插入第三条后移动今日第 1 条与第 2 条验证日内下标精确还原。
+                KeepPeekOpen();
                 peekInput.Text = "周历第三条任务";
                 peekInput.RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, peekInputSource, 0, Key.Enter)
                 {
@@ -2958,6 +3117,7 @@ internal static class Program
                 Pump();
                 picker.SelectedIndex = 0;
                 Pump();
+                KeepPeekOpen();
                 var weekHost = Require<Grid>(todo, "WeekHost");
                 var peekPanel = Require<Border>(todo, "WeekPeekPanel");
                 Assert(
@@ -2966,6 +3126,7 @@ internal static class Program
                     "DayPeek 保持打开期间缩小周数后，浮层应重新锚定且不超出周历宿主底部边界");
 
                 // 周历 DayPeek 完成自动下滑：勾选浮层首条待办后应沉底到当日列表末尾，取消勾选后恢复到未完成待办末尾。
+                KeepPeekOpen();
                 var peekListControl = Require<ItemsControl>(todo, "WeekPeekList");
                 var firstPeekItem = TodoService.ItemsForDate(todo.State, DateTime.Today)[0];
                 var firstPeekCheck = FindVisualChildren<CheckBox>(peekListControl)
@@ -3017,7 +3178,7 @@ internal static class Program
                 firstTodayCheck.IsChecked = false;
                 Pump();
 
-                // 列表视图 500ms 停顿上浮与上下拖拽移动：首条可见今日待办上浮后向下拖动越过邻行，松开后顺序交换且主题底色绑定保持完整。
+                // 列表视图 300ms 停顿上浮与上下拖拽移动：首条可见今日待办上浮后向下拖动越过邻行，松开后顺序交换且主题底色绑定保持完整。
                 var currentTodayItems = todoListControl.Items.OfType<TodoItemState>()
                     .Where(x => TodoService.BelongsToTodayList(x, DateTime.Today))
                     .ToList();
@@ -3040,7 +3201,7 @@ internal static class Program
                 Assert(
                     Panel.GetZIndex(firstContainer) == 100
                         && firstContainer.RenderTransform is TranslateTransform { Y: < 0 },
-                    "列表视图停顿满 500ms 后待办行应进入上浮态（ZIndex=100 且向上微抬）");
+                    "列表视图停顿满 300ms 后待办行应进入上浮态（ZIndex=100 且向上微抬）");
                 typeof(TodoWidgetWindow)
                     .GetMethod("DoPeekDragMove", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
                     .Invoke(todo, [secondCenterInList]);
@@ -3151,6 +3312,278 @@ internal static class Program
         if (failure is not null)
         {
             throw failure;
+        }
+    }
+
+    private static void TestTodoBlankRowsPruned()
+    {
+        var state = new TodoWidgetState();
+        TodoService.Add(state, "保留的待办");
+        TodoService.Add(state, "");
+        TodoService.Add(state, "  ", DateTime.Today.AddDays(-1));
+        var window = new TodoWidgetWindow(state);
+        ShowAndPump(window);
+        try
+        {
+            Assert(state.Items.Count == 1 && state.Items[0].Text == "保留的待办",
+                "加载时应删除今日与历史日期中遗留的空白待办");
+            var list = Require<ItemsControl>(window, "TodoList");
+            window.Activate();
+
+            // + 新建的空白行在获得光标期间保留，光标离开后自动删除。
+            var add = FindVisualChildren<Button>(window).Single(x => Equals(x.Content, "+"));
+            add.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            Pump();
+            Assert(state.Items.Count == 2, "+ 新建的空白行在输入期间不应被删除");
+            var blankEditor = FindVisualChildren<TextBox>(list)
+                .Single(x => x.DataContext is TodoItemState { Text: "" });
+            Assert(blankEditor.Focus(), "新建行的文字框无法聚焦");
+            Pump();
+            Assert(state.Items.Count == 2, "仍有输入光标的空白行不应被删除");
+            Keyboard.ClearFocus();
+            Pump();
+            Assert(state.Items.Count == 1 && FindVisualChildren<TextBox>(list).Count() == 1,
+                "光标离开后空白行应从状态和列表中同时删除");
+
+            // 已有文字被删空时：仍在输入则保留，按 Enter 结束后删除。
+            var editor = FindVisualChildren<TextBox>(list).Single();
+            Assert(editor.Focus(), "待办文字框无法聚焦");
+            editor.Text = "";
+            Pump();
+            Assert(state.Items.Count == 1, "删空文字但仍在输入时不应删除");
+            editor.RaiseEvent(new KeyEventArgs(
+                Keyboard.PrimaryDevice,
+                PresentationSource.FromVisual(editor),
+                0,
+                Key.Enter)
+            {
+                RoutedEvent = Keyboard.KeyDownEvent
+            });
+            Pump();
+            Assert(state.Items.Count == 0, "Enter 结束输入后删空的待办应自动删除");
+            Assert(Require<TextBlock>(window, "SummaryText").Text == "写下第一条待办", "删空后统计应回到空状态");
+
+            // 周历 DayPeek：双击编辑删空并按 Enter 后，格内与今日列表同时消失。
+            var toggleView = Require<Button>(window, "ViewModeButton");
+            toggleView.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            Pump();
+            add.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            Pump();
+            var peekInput = Require<TextBox>(window, "WeekPeekInput");
+            peekInput.Text = "周历里删空的任务";
+            peekInput.RaiseEvent(new KeyEventArgs(
+                Keyboard.PrimaryDevice, PresentationSource.FromVisual(peekInput)!, 0, Key.Enter)
+            {
+                RoutedEvent = Keyboard.KeyDownEvent
+            });
+            Pump();
+            Assert(state.Items.Count == 1, "DayPeek 输入框应新增一条待办");
+            var peekList = Require<ItemsControl>(window, "WeekPeekList");
+            var peekEditor = FindVisualChildren<TextBox>(peekList).Single();
+            var doubleClick = new MouseButtonEventArgs(Mouse.PrimaryDevice, Environment.TickCount, MouseButton.Left)
+            {
+                RoutedEvent = UIElement.PreviewMouseLeftButtonDownEvent
+            };
+            typeof(MouseButtonEventArgs)
+                .GetProperty("ClickCount", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic)!
+                .SetValue(doubleClick, 2);
+            peekEditor.RaiseEvent(doubleClick);
+            Pump();
+            Assert(!peekEditor.IsReadOnly, "双击 DayPeek 文本应进入编辑");
+            peekEditor.Text = "";
+            Pump();
+            Assert(state.Items.Count == 1, "DayPeek 删空但仍在输入时不应删除");
+            PressKey(peekEditor, Key.Enter);
+            Pump();
+            Assert(
+                state.Items.Count == 0
+                    && !FindVisualChildren<TextBox>(peekList).Any()
+                    && !TodoService.ItemsForDate(state, DateTime.Today).Any(),
+                "DayPeek 删空并结束编辑后，待办应从周历格与状态中删除");
+        }
+        finally
+        {
+            Close(window);
+        }
+
+        if (Environment.GetEnvironmentVariable("BINGLAN_BLANK_PRUNE_PREVIEW_DIR") is { Length: > 0 } previewDir)
+        {
+            SaveBlankPrunePreviews(previewDir);
+        }
+    }
+
+    private static void TestTodoDayPeekClosesOnOutsideClick()
+    {
+        var state = new TodoWidgetState { WeeklyView = true };
+        TodoService.Add(state, "浮层里的任务", DateTime.Today);
+        var window = new TodoWidgetWindow(state);
+        ShowAndPump(window);
+        try
+        {
+            var overlay = Require<Canvas>(window, "WeekPeekOverlay");
+            var add = FindVisualChildren<Button>(window).Single(x => Equals(x.Content, "+"));
+            void OpenPeek()
+            {
+                add.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+                Pump();
+                Assert(overlay.Visibility == Visibility.Visible, "周历中点 + 应打开当日浮层");
+            }
+            // 左键按下的 Preview/普通事件都是 Direct 路由，由 Mouse.PreviewMouseDown（隧道）
+            // 与 Mouse.MouseDown（冒泡）沿途逐元素拆出；直接触发左键事件到不了窗口。
+            static void Press(UIElement target, RoutedEvent routedEvent) =>
+                target.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, Environment.TickCount, MouseButton.Left)
+                {
+                    RoutedEvent = routedEvent
+                });
+
+            // 浮层内部的点击（输入框）不关闭浮层。
+            OpenPeek();
+            Press(Require<TextBox>(window, "WeekPeekInput"), Mouse.PreviewMouseDownEvent);
+            Pump();
+            Assert(overlay.Visibility == Visibility.Visible, "点浮层内部不应关闭浮层");
+
+            // 点别的日期格：先关闭浮层，点击照常落到格子上（选中该格）。
+            var otherDate = DateTime.Today.DayOfWeek == DayOfWeek.Sunday
+                ? DateTime.Today.AddDays(-1)
+                : DateTime.Today.AddDays(1);
+            var otherCell = FindVisualChildren<Border>(Require<Grid>(window, "WeekHost"))
+                .First(x => x.DataContext is WeekCellView { IsFiller: false } cell && cell.Date == otherDate
+                    && Equals(x.Tag, "Interactive"));
+            Press(otherCell, Mouse.PreviewMouseDownEvent);
+            Press(otherCell, Mouse.MouseDownEvent);
+            Pump();
+            Assert(overlay.Visibility == Visibility.Collapsed, "点浮层外的日期格应关闭浮层");
+            Assert(((WeekCellView)otherCell.DataContext).IsSelected, "关闭浮层的那次点击应照常选中被点的日期格");
+
+            // 撤销提示条在浮层外，点它不应关闭浮层。
+            OpenPeek();
+            var toast = Require<Border>(window, "MoveToast");
+            toast.Visibility = Visibility.Visible;
+            Pump();
+            Press(toast, Mouse.PreviewMouseDownEvent);
+            Pump();
+            Assert(overlay.Visibility == Visibility.Visible, "点撤销提示条不应关闭浮层");
+            toast.Visibility = Visibility.Collapsed;
+
+            // 点卡片外（卡片失去激活）也关闭浮层；正在编辑且已删空的那一行随之删除。
+            // 先点回今天的格子，让 + 打开有任务的今天浮层。
+            var todayCell = FindVisualChildren<Border>(Require<Grid>(window, "WeekHost"))
+                .First(x => x.DataContext is WeekCellView { IsFiller: false } cell && cell.Date == DateTime.Today
+                    && Equals(x.Tag, "Interactive"));
+            Press(todayCell, Mouse.PreviewMouseDownEvent);
+            Press(todayCell, Mouse.MouseDownEvent);
+            Pump();
+            Assert(overlay.Visibility == Visibility.Collapsed, "点浮层外的今天格应关闭浮层");
+            OpenPeek();
+            var peekEditor = FindVisualChildren<TextBox>(Require<ItemsControl>(window, "WeekPeekList")).Single();
+            var doubleClick = new MouseButtonEventArgs(Mouse.PrimaryDevice, Environment.TickCount, MouseButton.Left)
+            {
+                RoutedEvent = UIElement.PreviewMouseLeftButtonDownEvent
+            };
+            typeof(MouseButtonEventArgs)
+                .GetProperty("ClickCount", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic)!
+                .SetValue(doubleClick, 2);
+            peekEditor.RaiseEvent(doubleClick);
+            Pump();
+            Assert(!peekEditor.IsReadOnly, "双击浮层文本应进入编辑");
+            peekEditor.Text = "";
+            typeof(Window).GetMethod("OnDeactivated",
+                    System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+                .Invoke(window, [EventArgs.Empty]);
+            Pump();
+            Assert(overlay.Visibility == Visibility.Collapsed, "卡片失去激活时应关闭浮层");
+            Assert(state.Items.Count == 0, "失去激活时，浮层里正在编辑且已删空的待办应删除");
+        }
+        finally
+        {
+            Close(window);
+        }
+    }
+
+    // 列表行正在编辑时按住拖动是选中文字：该行不上浮；别的行已上浮时 Esc 交给编辑框。
+    private static void TestTodoEditingTextKeepsSelection()
+    {
+        var state = new TodoWidgetState();
+        TodoService.Add(state, "第一条");
+        TodoService.Add(state, "第二条");
+        var window = new TodoWidgetWindow(state);
+        ShowAndPump(window);
+        const System.Reflection.BindingFlags Private =
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+        try
+        {
+            var list = Require<ItemsControl>(window, "TodoList");
+            var items = list.Items.OfType<TodoItemState>().ToList();
+            var first = (ContentPresenter)list.ItemContainerGenerator.ContainerFromItem(items[0]);
+            var second = (ContentPresenter)list.ItemContainerGenerator.ContainerFromItem(items[1]);
+            var editor = FindVisualChildren<TextBox>(first).First(x => x.DataContext is TodoItemState);
+            void Dwell(ContentPresenter container, DependencyObject source)
+            {
+                typeof(TodoWidgetWindow).GetField("_peekDwellAnchor", Private)!
+                    .SetValue(window, container.TranslatePoint(new Point(10, container.ActualHeight / 2), list));
+                typeof(TodoWidgetWindow).GetField("_peekDwellSource", Private)!.SetValue(window, source);
+                typeof(TodoWidgetWindow).GetMethod("PeekDwellTimer_Tick", Private)!
+                    .Invoke(window, [null, EventArgs.Empty]);
+                Pump();
+            }
+
+            window.Activate();
+            Keyboard.Focus(editor);
+            Pump();
+            Assert(editor.IsKeyboardFocusWithin, "测试前提：第一行编辑框持有键盘焦点");
+            Dwell(first, editor);
+            Assert(Panel.GetZIndex(first) == 0, "在正在编辑的文字上停顿不应上浮该行");
+
+            Dwell(second, second);
+            Assert(Panel.GetZIndex(second) == 100, "未在编辑的行停顿后照常上浮");
+            var esc = new System.Windows.Input.KeyEventArgs(
+                Keyboard.PrimaryDevice, PresentationSource.FromVisual(editor)!, Environment.TickCount, Key.Escape)
+            {
+                RoutedEvent = Keyboard.PreviewKeyDownEvent
+            };
+            editor.RaiseEvent(esc);
+            Pump();
+            Assert(Panel.GetZIndex(second) == 0, "Esc 应取消上浮");
+            Assert(!esc.Handled, "有行上浮时 Esc 不应被吞掉，要交给正在编辑的文本框还原");
+        }
+        finally
+        {
+            Close(window);
+        }
+    }
+
+    // 隔离样例：今日与昨日各混入空白条目，加载后截取列表与周历，供与用户截图对照。
+    private static void SaveBlankPrunePreviews(string directory)
+    {
+        var state = new TodoWidgetState { Title = "今日待办" };
+        var yesterday = DateTime.Today.AddDays(-1);
+        TodoService.Add(state, "隔离样例：第一项");
+        TodoService.Add(state, "");
+        TodoService.Add(state, "隔离样例：第二项");
+        TodoService.Add(state, "   ");
+        var done = TodoService.Add(state, "隔离样例：已完成");
+        done.IsCompleted = true;
+        TodoService.StampCompletion(done);
+        TodoService.Add(state, "", yesterday);
+        TodoService.Add(state, "", yesterday);
+        TodoService.Add(state, "隔离样例：昨日任务", yesterday);
+        // 与用户截图同尺寸，便于并排对照。
+        var window = new TodoWidgetWindow(state) { Width = 1150, Height = 1080 };
+        ShowAndPump(window);
+        try
+        {
+            Assert(state.Items.Count == 4, "预览样例加载后应只剩四条有内容的待办");
+            Directory.CreateDirectory(directory);
+            SavePreview(window, Path.Combine(directory, "空白待办删除-列表-修复后隔离.png"));
+            Require<Button>(window, "ViewModeButton").RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            Pump();
+            window.UpdateLayout();
+            Pump();
+            SavePreview(window, Path.Combine(directory, "空白待办删除-周历-修复后隔离.png"));
+        }
+        finally
+        {
+            Close(window);
         }
     }
 
@@ -4228,4 +4661,6 @@ internal static class Program
         internal TaskbarEdgeGuard.PixelRect Rectangle;
         internal nint Parameter;
     }
+
+
 }

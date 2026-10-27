@@ -15,7 +15,7 @@
                         FontFamily="{StaticResource UiFont}"
                         Foreground="{DynamicResource PrimaryTextBrush}">
     <local:WidgetWindowBase.Resources>
-        <!-- Full entry row for the day peek popup: dwell 500 ms to lift and drag to
+        <!-- Full entry row for the day peek popup: dwell 300 ms to lift and drag to
              reorder, double-click the text to edit in place, right-click for move-to-day. -->
         <DataTemplate x:Key="DayPeekItemTemplate">
             <Border x:Name="PeekRowBorder"
@@ -335,7 +335,7 @@
                                              AcceptsReturn="False"
                                              Text="{Binding Text, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                              GotKeyboardFocus="TodoText_GotKeyboardFocus"
-                                             LostFocus="TodoText_LostFocus"
+                                             LostKeyboardFocus="TodoText_LostKeyboardFocus"
                                              KeyDown="TodoText_KeyDown">
                                         <TextBox.Style>
                                             <Style TargetType="TextBox" BasedOn="{StaticResource {x:Type TextBox}}">
@@ -639,12 +639,12 @@
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
 
-                    <!-- Day peek popup: the full day list, opened from a cell's overflow chip. -->
+                    <!-- Day peek popup: the full day list, opened from a cell's overflow chip.
+                         No background: a click beside the panel reaches the cell under it,
+                         and OnPreviewMouseLeftButtonDown closes the popup first. -->
                     <Canvas x:Name="WeekPeekOverlay"
                             Grid.Row="0" Grid.RowSpan="3"
-                            Background="Transparent"
                             Visibility="Collapsed"
-                            MouseLeftButtonDown="WeekPeekOverlay_BackdropClick"
                             MouseLeave="WeekPeekOverlay_MouseLeave"
                             PreviewMouseWheel="WeekPeekOverlay_PreviewMouseWheel">
                         <Border x:Name="WeekPeekPanel"

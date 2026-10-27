@@ -153,8 +153,9 @@ public sealed class TodoItemState : INotifyPropertyChanged
     public int Order { get; set; }
 
     /// <summary>
-    /// The calendar day this entry sits on in the weekly view; null keeps it on the
-    /// today list. Stored as an Unspecified-kind midnight so the JSON round trip keeps
+    /// The calendar day this entry sits on in both the weekly view and today list.
+    /// Null is reserved for legacy data awaiting migration. Stored as an
+    /// Unspecified-kind midnight so the JSON round trip keeps
     /// the same ticks even when the file moves between time zones.
     /// </summary>
     public DateTime? Date

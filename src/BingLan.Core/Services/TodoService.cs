@@ -16,6 +16,7 @@ public static class TodoService
         {
             Text = text,
             Order = widget.Items.Count == 0 ? 0 : widget.Items.Max(x => x.Order) + 1,
+            Date = DateTime.Today,
             CreatedDate = DateTimeOffset.Now
         };
         widget.Items.Add(item);
@@ -27,8 +28,30 @@ public static class TodoService
     public static TodoItemState Add(TodoWidgetState widget, string text, DateTime? date)
     {
         var item = Add(widget, text);
-        item.Date = date;
+        item.Date = date ?? DateTime.Today;
         return item;
+    }
+
+    /// <summary>
+    /// Places legacy undated entries on their original creation day. Entries without a
+    /// creation stamp use their completion day, then the supplied migration day as a
+    /// last resort. This preserves their identity, order, text, and completion history
+    /// while making every entry reachable from a calendar day.
+    /// </summary>
+    public static int MigrateUndatedItems(TodoWidgetState widget, DateTime fallbackDate)
+    {
+        var migrated = 0;
+        foreach (var item in widget.Items)
+        {
+            if (item.Date is not null)
+            {
+                continue;
+            }
+
+            item.Date = item.CreatedDate?.Date ?? item.CompletedDate?.Date ?? fallbackDate.Date;
+            migrated++;
+        }
+        return migrated;
     }
 
     public static bool Remove(TodoWidgetState widget, Guid itemId)
@@ -63,6 +86,26 @@ public static class TodoService
             Normalize(widget);
         }
         return removed;
+    }
+
+    /// <summary>
+    /// Removes entries whose text is empty or whitespace. A blank entry is only a
+    /// place to type, so it survives solely while it is being typed into
+    /// (<paramref name="keep"/>); once editing ends it is not a task.
+    /// </summary>
+    public static List<TodoItemState> RemoveBlank(
+        TodoWidgetState widget,
+        Func<TodoItemState, bool>? keep = null)
+    {
+        var blanks = widget.Items
+            .Where(x => string.IsNullOrWhiteSpace(x.Text) && keep?.Invoke(x) != true)
+            .ToList();
+        if (blanks.Count > 0)
+        {
+            widget.Items.RemoveAll(blanks.Contains);
+            Normalize(widget);
+        }
+        return blanks;
     }
 
     /// <summary>
@@ -108,6 +151,18 @@ public static class TodoService
     /// </summary>
     public static bool SinkCompletedWithinScope(
         TodoWidgetState widget, Guid toggledItemId, Func<TodoItemState, bool> scope)
+        => OrderCompletedWithinScope(widget, scope, toggledItemId);
+
+    /// <summary>
+    /// Keeps the current today list's incomplete entries ahead of completed ones when
+    /// its membership changes (for example, after midnight or after adding an entry).
+    /// The order within each group and all out-of-scope positions remain unchanged.
+    /// </summary>
+    public static bool NormalizeTodayCompletionOrder(TodoWidgetState widget, DateTime today)
+        => OrderCompletedWithinScope(widget, x => BelongsToTodayList(x, today), null);
+
+    private static bool OrderCompletedWithinScope(
+        TodoWidgetState widget, Func<TodoItemState, bool> scope, Guid? toggledItemId)
     {
         var ordered = widget.Items.OrderBy(x => x.Order).ToList();
         var scopedIndices = new List<int>();
@@ -121,24 +176,26 @@ public static class TodoService
             }
         }
 
-        var toggled = scopedItems.FirstOrDefault(x => x.Id == toggledItemId);
-        if (toggled is null || scopedItems.Count <= 1)
+        var toggled = toggledItemId is { } id
+            ? scopedItems.FirstOrDefault(x => x.Id == id)
+            : null;
+        if ((toggledItemId is not null && toggled is null) || scopedItems.Count <= 1)
         {
             return false;
         }
 
         var incomplete = scopedItems
-            .Where(x => !x.IsCompleted && x.Id != toggledItemId)
+            .Where(x => !x.IsCompleted && !ReferenceEquals(x, toggled))
             .ToList();
         var completed = scopedItems
-            .Where(x => x.IsCompleted && x.Id != toggledItemId)
+            .Where(x => x.IsCompleted && !ReferenceEquals(x, toggled))
             .ToList();
 
-        if (toggled.IsCompleted)
+        if (toggled is { IsCompleted: true })
         {
             completed.Add(toggled);
         }
-        else
+        else if (toggled is not null)
         {
             incomplete.Add(toggled);
         }
@@ -178,8 +235,8 @@ public static class TodoService
 
     /// <summary>
     /// Automatically sinks a completed entry to the bottom (or raises an uncompleted entry
-    /// back above completed entries) within its active scope: today's list scope for undated
-    /// or today-dated entries, or the entry's calendar day for other dates.
+    /// back above completed entries) within its calendar day. Today's list uses the same
+    /// day scope as the weekly calendar.
     /// </summary>
     public static bool SinkCompleted(TodoWidgetState widget, Guid toggledItemId, DateTime today)
     {
@@ -295,7 +352,9 @@ public static class TodoService
     /// unchanged lines match by text first (establishing order anchors), remaining lines
     /// reuse unclaimed existing entries within the same anchor span in order (in-place
     /// edits keep their Id and completion state, whereas lines inserted outside an
-    /// unclaimed span become new incomplete entries), surplus entries are removed, and
+    /// unclaimed span become new incomplete entries). A span holding fewer lines than
+    /// unclaimed entries had something deleted, so it reuses none of them. Surplus
+    /// entries are removed, and
     /// blank lines are skipped. A leading "1. "/"1、" numbering prefix is display sugar
     /// and is stripped, while content like "3D建模" survives untouched.
     /// Returns how many entries the day holds afterwards.
@@ -333,6 +392,13 @@ public static class TodoService
         // text edits (whether completed or not), while preventing a deleted entry before
         // an anchor from transferring its completion state to a newly added line after
         // the anchor (or vice versa).
+        // A span with fewer lines than free entries means something in it was deleted, and
+        // which free entry belonged to which edited line can no longer be told. Handing the
+        // edited line the first free entry would give it a deleted entry's completion state,
+        // so such a span only produces new entries. Counted before any reuse claims entries.
+        var spanOf = new (int Prev, int Next)[texts.Count];
+        var spanLines = new Dictionary<(int, int), int>();
+        var spanFreeEntries = new Dictionary<(int, int), int>();
         for (var i = 0; i < texts.Count; i++)
         {
             if (resolved[i] is not null)
@@ -360,13 +426,41 @@ public static class TodoService
                 }
             }
 
-            var reuseIndex = -1;
-            for (var j = prevJ + 1; j < nextJ; j++)
+            var key = (prevJ, nextJ);
+            spanOf[i] = key;
+            spanLines[key] = spanLines.GetValueOrDefault(key) + 1;
+            if (!spanFreeEntries.ContainsKey(key))
             {
-                if (!claimed[j])
+                var free = 0;
+                for (var j = prevJ + 1; j < nextJ; j++)
                 {
-                    reuseIndex = j;
-                    break;
+                    if (!claimed[j])
+                    {
+                        free++;
+                    }
+                }
+                spanFreeEntries[key] = free;
+            }
+        }
+
+        for (var i = 0; i < texts.Count; i++)
+        {
+            if (resolved[i] is not null)
+            {
+                continue;
+            }
+
+            var (prevJ, nextJ) = spanOf[i];
+            var reuseIndex = -1;
+            if (spanLines[spanOf[i]] >= spanFreeEntries[spanOf[i]])
+            {
+                for (var j = prevJ + 1; j < nextJ; j++)
+                {
+                    if (!claimed[j])
+                    {
+                        reuseIndex = j;
+                        break;
+                    }
                 }
             }
 
@@ -428,11 +522,10 @@ public static class TodoService
     }
 
     /// <summary>
-    /// Which entries the today list shows: undated ones plus entries placed on today,
-    /// so a task written into today's cell appears in both views.
+    /// The today list is a projection of the weekly calendar's current day.
     /// </summary>
     public static bool BelongsToTodayList(TodoItemState item, DateTime today) =>
-        item.Date is null || item.Date.Value == today;
+        item.Date is { } date && date.Date == today.Date;
 
     public static void Normalize(TodoWidgetState widget)
     {
