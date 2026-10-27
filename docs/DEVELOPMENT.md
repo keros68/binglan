@@ -68,10 +68,10 @@ dotnet run --project .\src\BingLan.App\BingLan.App.csproj
 ## 安装包
 
 ```powershell
-pwsh -NoProfile -File .\installer\build.ps1 -Version 0.2.41
+pwsh -NoProfile -File .\installer\build.ps1 -Version 0.2.42
 ```
 
-生成按用户安装的 `installer\bin\BingLan-Setup-0.2.41.exe`（Inno Setup，自包含 .NET 运行时，不需要管理员权限）。安装位置、卸载行为、依赖许可证和验证状态见 [安装包](INSTALLER.md)。v0.2.41 为当前正式版，独立托盘验收包由 `installer/build-tray-preview.ps1` 生成；操作步骤与限制见[托盘验收说明](TRAY-PREVIEW.md)。
+生成按用户安装的 `installer\bin\BingLan-Setup-0.2.42.exe`（Inno Setup，自包含 .NET 运行时，不需要管理员权限）。安装位置、卸载行为、依赖许可证和验证状态见 [安装包](INSTALLER.md)。v0.2.42 为当前正式版，独立托盘验收包由 `installer/build-tray-preview.ps1` 生成；操作步骤与限制见[托盘验收说明](TRAY-PREVIEW.md)。
 
 ## 验证
 
@@ -102,7 +102,7 @@ Dock 玻璃已在 Windows 11 Build 26200、125% 缩放下检查正式 Dock 窗�
 
 顶栏右侧的“托盘”按钮通过 `TrayOverflowController` 打开 Windows 原生隐藏图标面板；Windows 11 默认显示，模块开关可关闭，Windows 10 隐藏该入口。控制器由 `WidgetCoordinator` 按应用生命周期管理，按需挂接 Explorer 事件，面板关闭后停止轮询；重复请求不排队切换。关闭模块与应用退出复用同一次取消和清理，退出先确认浮层关闭，未确认时由用户选择继续退出或保留应用重试。按钮不改变自动隐藏设置，面板位置由 Windows 管理，Dock 在面板处于前台时收起。个人配置 Schema v33 将已有顶栏的托盘模块初始化为开启，保留顶栏总开关及其他模块设置；模块开关随顶栏主题字段导入导出。
 
-隔离验收入口 `--shell-surfaces-preview` 与正式入口复用控制器，附加 `--tray-corners` 检查两角唤出；`--tray-slow-uia=<毫秒>` 仅在验收时模拟调用前延迟。v0.2.41 安装版和免安装版包含顶栏托盘入口，独立工具用于兼容性验收。兼容范围、观察结果与未覆盖场景见 [顶栏与系统入口验证](TOPBAR-QA.md)。
+隔离验收入口 `--shell-surfaces-preview` 与正式入口复用控制器，附加 `--tray-corners` 检查两角唤出；`--tray-slow-uia=<毫秒>` 仅在验收时模拟调用前延迟。v0.2.42 安装版和免安装版包含顶栏托盘入口，独立工具用于兼容性验收。兼容范围、观察结果与未覆盖场景见 [顶栏与系统入口验证](TOPBAR-QA.md)。
 
 正式 Dock 的真机结果、资源占用和已知限制见 [冰蓝 Dock 真机验证](DOCK-QA.md)；本机单屏 125% 下的点击、固定、排序、最大化、全屏、智能隐藏、Explorer 重启和强制结束恢复均已通过，多显示器与混合缩放尚未覆盖。阶段 0 隔离实验、ManagedShell 取舍和四边 AppBar 记录保留在 `design-lab/BingLan.DockSpike/README.md`。任务栏透明、模糊、自动隐藏、崩溃恢复和桌面模式的真机结果见 [Windows 任务栏适配真机验证](TASKBAR-QA.md)。清爽桌面的恢复协议与真机结果见 [清爽桌面技术设计与恢复协议](DESKTOP-CLEAN-MODE-TECHNICAL-DESIGN.md)。
 
