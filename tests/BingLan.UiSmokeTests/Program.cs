@@ -137,6 +137,12 @@ internal static class Program
         }
 
         Run("待办真实控件编辑与勾选", TestTodoControls, failures);
+        Run("今日待办字号缩放覆盖列表、周历、当日浮层与编辑窗", TestTodoFontScale, failures);
+        Run("今日待办字体覆盖列表、周历、当日浮层与编辑窗", TestTodoFontFamily, failures);
+        Run("今日待办字号缩放与字体跟随设置页", TestTodoFontScaleFollowsSetting, failures);
+        Run("周历与底部统计跟随文字颜色，当日浮层保持固定配色", TestTodoTextColorFollowsAppearance, failures);
+        Run("新建与启动时待办卡立即使用组件外观", TestTodoTakesComponentLookOnCreate, failures);
+        Run("组件设置隐藏不生效的信息密度与字体选项", TestComponentEditorHidesUnusedOptions, failures);
         Run("逐像素透明 HWND 与单一可调圆角", TestUnifiedCornerAndSettings, failures);
         Run("卡片自己跟随指针拖动，锁定后不动，边缘不缩放", TestNativeHitTesting, failures);
         Run("分组盒图标按宽度均分成整列", TestFileBoxTilesFillRow, failures);
@@ -910,7 +916,6 @@ internal static class Program
                 Require<TextBox>(window, "SelectedComponentBackgroundColorEditor"),
                 Require<Slider>(window, "SelectedComponentOpacitySlider"),
                 Require<Slider>(window, "SelectedComponentCornerRadiusSlider"),
-                Require<ComboBox>(window, "SelectedComponentDensitySelector"),
                 Require<TextBox>(window, "SelectedComponentWidthEditor"),
                 Require<TextBox>(window, "SelectedComponentHeightEditor")
             };
@@ -2474,6 +2479,426 @@ internal static class Program
             Thread.Sleep(10);
         }
         Assert(condition(), failureMessage);
+    }
+
+    private static void TestTodoFontScale()
+    {
+        var state = new TodoWidgetState();
+        TodoService.Add(state, "今天的任务", DateTime.Today);
+        var window = new TodoWidgetWindow(state);
+        ShowAndPump(window);
+        DayEditWindow? editor = null;
+        try
+        {
+            var list = Require<ItemsControl>(window, "TodoList");
+            var plus = FindVisualChildren<Button>(window).Single(x => Equals(x.Content, "+"));
+            double ListText() => FindVisualChildren<TextBox>(list).First(x => x.DataContext is TodoItemState).FontSize;
+            Assert(ListText() == 14 && plus.FontSize == 20, "100% 时列表待办应为原来的 14 号");
+
+            window.SetContentFontScale(1.5);
+            Pump();
+            Assert(ListText() == 21, "字号缩放 150% 时列表待办应为 14×1.5");
+            Assert(plus.FontSize == 20, "按钮图标不随字号缩放（固定尺寸的框）");
+
+            // 周历：格内任务、日期数字和星期表头一起按同一比例缩放，列表与周历的比例保持不变。
+            Require<Button>(window, "ViewModeButton").RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            Pump();
+            var weekHost = Require<Grid>(window, "WeekHost");
+            var cellText = FindVisualChildren<TextBlock>(weekHost)
+                .First(x => x.DataContext is TodoItemState && x.IsVisible);
+            Assert(cellText.FontSize == 18, "周历格内待办应为 12×1.5");
+            Assert(FindVisualChildren<TextBlock>(weekHost).Any(x => Equals(x.Text, "周一") && x.FontSize == 11.5 * 1.5),
+                "星期表头应随字号缩放");
+
+            // 当日浮层与当日编辑窗也跟随同一比例。
+            plus.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            Pump();
+            var peekRow = FindVisualChildren<TextBox>(Require<ItemsControl>(window, "WeekPeekList")).First();
+            Assert(peekRow.FontSize == 18 && Require<TextBox>(window, "WeekPeekInput").FontSize == 18
+                    && Require<TextBlock>(window, "WeekPeekTitle").FontSize == 13 * 1.5,
+                "当日浮层的标题、任务行与输入框应随字号缩放");
+
+            const System.Reflection.BindingFlags Private =
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+            var cells = (System.Collections.IDictionary)typeof(TodoWidgetWindow).GetField("_cellsByDate", Private)!
+                .GetValue(window)!;
+            // 当日编辑窗是模态对话框，要在它打开期间由计时器回调读取。
+            WithDayEditor(window, dayEditor => Assert(
+                Require<TextBox>(dayEditor, "Editor").FontSize == 13 * 1.5
+                    && Require<TextBlock>(dayEditor, "DateTitle").FontSize == 15 * 1.5,
+                "当日编辑窗的正文与日期标题应随字号缩放"));
+
+            // 越界值按设置项本身的范围钳制。
+            window.SetContentFontScale(5);
+            Assert(window.ContentFontScale == DesktopExperienceRules.MaximumFontScale, "字号缩放应钳在设置项的上限");
+        }
+        finally
+        {
+            editor?.Close();
+            Close(window);
+        }
+
+        if (Environment.GetEnvironmentVariable("BINGLAN_FONT_SCALE_PREVIEW_DIR") is { Length: > 0 } previewDir)
+        {
+            SaveFontScalePreviews(previewDir);
+        }
+    }
+
+    private static void TestTodoFontFamily()
+    {
+        var state = new TodoWidgetState { WeeklyView = true };
+        TodoService.Add(state, "今天的任务", DateTime.Today);
+        var window = new TodoWidgetWindow(state);
+        ShowAndPump(window);
+        DayEditWindow? editor = null;
+        try
+        {
+            var uiFont = (FontFamily)window.FindResource("UiFont");
+            var chosen = InstalledFontCatalog.BundledNames.First();
+            var expected = InstalledFontCatalog.Create(InstalledFontCatalog.Resolve(chosen)).Source;
+            Assert(expected != uiFont.Source, "测试字体应与界面字体不同");
+            var weekHost = Require<Grid>(window, "WeekHost");
+            var plus = FindVisualChildren<Button>(window).Single(x => Equals(x.Content, "+"));
+            string CellFont() => FindVisualChildren<TextBlock>(weekHost)
+                .First(x => x.DataContext is TodoItemState && x.IsVisible).FontFamily.Source;
+            Assert(CellFont() == uiFont.Source, "默认应使用界面字体");
+
+            window.SetContentFontFamily(chosen);
+            Pump();
+            Assert(CellFont() == expected, "周历格内待办应改用所选字体");
+            Assert(plus.FontFamily.Source == uiFont.Source, "按钮保持界面字体");
+
+            // 当日浮层的任务行与输入框是 TextBox：全局 TextBox 样式固定了界面字体，需显式跟随。
+            plus.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            Pump();
+            Assert(FindVisualChildren<TextBox>(Require<ItemsControl>(window, "WeekPeekList")).First().FontFamily.Source == expected
+                    && Require<TextBox>(window, "WeekPeekInput").FontFamily.Source == expected,
+                "当日浮层的任务行与输入框应改用所选字体");
+
+            const System.Reflection.BindingFlags Private =
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+            var cells = (System.Collections.IDictionary)typeof(TodoWidgetWindow).GetField("_cellsByDate", Private)!
+                .GetValue(window)!;
+            WithDayEditor(window, dayEditor => Assert(
+                Require<TextBox>(dayEditor, "Editor").FontFamily.Source == expected
+                    && Require<TextBlock>(dayEditor, "DateTitle").FontFamily.Source == expected,
+                "当日编辑窗的正文与日期标题应改用所选字体"));
+
+            // 列表视图的待办编辑框同样跟随；改回默认后恢复界面字体。
+            Require<Button>(window, "ViewModeButton").RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            Pump();
+            var listEditor = FindVisualChildren<TextBox>(Require<ItemsControl>(window, "TodoList"))
+                .First(x => x.DataContext is TodoItemState);
+            Assert(listEditor.FontFamily.Source == expected, "列表待办应改用所选字体");
+            window.SetContentFontFamily(null);
+            Pump();
+            Assert(listEditor.FontFamily.Source == uiFont.Source, "选回默认后应恢复界面字体");
+        }
+        finally
+        {
+            editor?.Close();
+            Close(window);
+        }
+    }
+
+    // 设置页“桌面组件 → 今日待办 → 字号缩放”保存在 Todo 组件上；卡片启动时和设置改动后都要跟随。
+    private static void TestTodoFontScaleFollowsSetting()
+    {
+        var temp = Path.Combine(Path.GetTempPath(), $"BingLan-todo-scale-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(temp);
+        var coordinator = new WidgetCoordinator(interactiveQa: true, dataDirectory: temp);
+        const System.Reflection.BindingFlags Private =
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+        try
+        {
+            var appState = (AppState)typeof(WidgetCoordinator).GetField("_state", Private)!.GetValue(coordinator)!;
+            foreach (var kind in new[]
+                     {
+                         DesktopComponentKind.TimeDate,
+                         DesktopComponentKind.Greeting,
+                         DesktopComponentKind.Weather,
+                         DesktopComponentKind.Performance
+                     })
+            {
+                appState.DesktopExperience.GetComponent(kind).IsVisible = false;
+            }
+            var todoComponent = appState.DesktopExperience.GetComponent(DesktopComponentKind.Todo);
+            todoComponent.IsVisible = true;
+            todoComponent.FontScale = 1.3;
+            var chosen = InstalledFontCatalog.BundledNames.First();
+            var expected = InstalledFontCatalog.Create(InstalledFontCatalog.Resolve(chosen)).Source;
+            todoComponent.FontFamily = chosen;
+
+            coordinator.Start();
+            PumpUntil(() => Application.Current.Windows.OfType<TodoWidgetWindow>().Any(x => x.IsLoaded),
+                "今日待办卡片应随启动打开");
+            var todo = Application.Current.Windows.OfType<TodoWidgetWindow>().Single();
+            Assert(Math.Abs(todo.ContentFontScale - 1.3) < 1e-9, "启动时卡片应读取已保存的字号缩放");
+            Assert(todo.ContentFontFamily.Source == expected, "启动时卡片应读取已保存的字体");
+
+            todoComponent.FontScale = 0.8;
+            todoComponent.FontFamily = null;
+            typeof(WidgetCoordinator).GetMethod("ApplyDesktopExperience", Private)!
+                .Invoke(coordinator, [appState.DesktopExperience]);
+            Pump();
+            Assert(Math.Abs(todo.ContentFontScale - 0.8) < 1e-9, "设置页修改字号缩放后卡片应立即跟随");
+            Assert(todo.ContentFontFamily.Source == ((FontFamily)todo.FindResource("UiFont")).Source,
+                "设置页把字体改回默认后卡片应恢复界面字体");
+        }
+        finally
+        {
+            coordinator.Dispose();
+            foreach (var window in Application.Current.Windows.OfType<WidgetWindowBase>().ToList())
+            {
+                window.CanClose = true;
+                window.Close();
+            }
+            Pump();
+            Directory.Delete(temp, true);
+        }
+    }
+
+    // 周历格、周范围和底部统计跟随“文字颜色”；当日浮层自带浅色底板，配色保持固定。
+    private static void TestTodoTextColorFollowsAppearance()
+    {
+        var state = new TodoWidgetState { WeeklyView = true };
+        TodoService.Add(state, "今天的任务", DateTime.Today);
+        var window = new TodoWidgetWindow(state);
+        ShowAndPump(window);
+        try
+        {
+            window.SetWidgetTextColor("#FFFFFF");
+            Pump();
+            static Color ColorOf(Brush brush) => ((SolidColorBrush)brush).Color;
+            var ink = ColorOf(window.WidgetTextBrush);
+            var secondary = ColorOf(window.WidgetSecondaryTextBrush);
+            Assert(ink == Colors.White, "文字颜色应为白色");
+            var weekHost = Require<Grid>(window, "WeekHost");
+            var cellText = FindVisualChildren<TextBlock>(weekHost).First(x => x.Text == "今天的任务");
+            Assert(ColorOf(cellText.Foreground) == ink, "周历格内待办文字应跟随文字颜色");
+            Assert(ColorOf(Require<TextBlock>(window, "WeekRange").Foreground) == ink, "周范围应跟随文字颜色");
+            Assert(ColorOf(Require<TextBlock>(window, "SummaryText").Foreground) == secondary,
+                "底部统计应跟随文字颜色（次要色），与官方 v0.2.33 一致");
+            var chip = FindVisualChildren<Border>(weekHost)
+                .First(x => x.DataContext is TodoItemState && Equals(x.Tag, "Interactive"));
+            Assert(ReferenceEquals(chip.Background, window.FindResource("WidgetItemSurfaceBrush")),
+                "周历条目底色应使用卡片的条目底色");
+            Assert(ColorOf(Require<TextBlock>(window, "WeekPeekTitle").Foreground)
+                    == (Color)ColorConverter.ConvertFromString("#FF243146"),
+                "当日浮层自带浅色底板，标题保持固定深色");
+        }
+        finally
+        {
+            Close(window);
+        }
+        if (Environment.GetEnvironmentVariable("BINGLAN_TEXT_COLOR_PREVIEW_DIR") is { Length: > 0 } previewDir)
+        {
+            SaveTextColorPreviews(previewDir);
+        }
+    }
+
+    // 三种外观下的周历隔离预览，铺在接近用户壁纸的蓝灰底色上，用于人工对照可读性。
+    // “当前”与上一轮 字号缩放-周历-100.png 使用相同样例和尺寸，可直接前后对照。
+    private static void SaveTextColorPreviews(string directory)
+    {
+        Directory.CreateDirectory(directory);
+        foreach (var (background, opacity, text, itemSurface, label) in new (string, double, string, string, string)[]
+                 {
+                     ("#ECEFF4", 0.26352941176470596, "#2E3440", "#7AFFFFFF", "当前外观"),
+                     ("#18222F", 0.32, "#FFFFFF", "#1FFFFFFF", "深色玻璃白字"),
+                     ("#FFFFFF", 0.01, "#FFFFFF", "#00FFFFFF", "无底板白字")
+                 })
+        {
+            var state = new TodoWidgetState { Title = "今日待办", WeeklyView = true };
+            TodoService.Add(state, "隔离样例：问一下辅导员助学金的事", DateTime.Today);
+            TodoService.Add(state, "隔离样例：买礼品卡", DateTime.Today);
+            TodoService.Add(state, "隔离样例：看论文", DateTime.Today.AddDays(1));
+            var window = new TodoWidgetWindow(state) { Width = 1150, Height = 1080 };
+            window.SetWidgetBackgroundColor(background);
+            window.SetWidgetBackgroundOpacity(opacity);
+            window.SetWidgetTextColor(text);
+            window.Resources["WidgetItemSurfaceBrush"] = new SolidColorBrush((Color)ColorConverter.ConvertFromString(itemSurface));
+            ShowAndPump(window);
+            try
+            {
+                window.UpdateLayout();
+                Pump();
+                var width = Math.Max(1, (int)Math.Ceiling(window.ActualWidth));
+                var height = Math.Max(1, (int)Math.Ceiling(window.ActualHeight));
+                var card = new RenderTargetBitmap(width, height, 96, 96, PixelFormats.Pbgra32);
+                card.Render(window);
+                var visual = new DrawingVisual();
+                using (var context = visual.RenderOpen())
+                {
+                    context.DrawRectangle(
+                        new SolidColorBrush((Color)ColorConverter.ConvertFromString("#FF7E9AAF")),
+                        null,
+                        new Rect(0, 0, width, height));
+                    context.DrawImage(card, new Rect(0, 0, width, height));
+                }
+                var composed = new RenderTargetBitmap(width, height, 96, 96, PixelFormats.Pbgra32);
+                composed.Render(visual);
+                var encoder = new PngBitmapEncoder();
+                encoder.Frames.Add(BitmapFrame.Create(composed));
+                using var stream = File.Create(Path.Combine(directory, $"文字颜色-周历-{label}.png"));
+                encoder.Save(stream);
+            }
+            finally
+            {
+                Close(window);
+            }
+        }
+    }
+
+    // 隔离样例：同一份数据分别按 100%、150% 和“100% + 第一款内置字体”截取列表、周历与当日编辑窗，供与用户截图对照。
+    private static void SaveFontScalePreviews(string directory)
+    {
+        Directory.CreateDirectory(directory);
+        foreach (var (scale, font, label) in new (double, string?, string)[]
+                 {
+                     (1d, null, "100"),
+                     (1.5d, null, "150"),
+                     (1d, InstalledFontCatalog.BundledNames.First(), "字体")
+                 })
+        {
+            var state = new TodoWidgetState { Title = "今日待办" };
+            TodoService.Add(state, "隔离样例：问一下辅导员助学金的事", DateTime.Today);
+            TodoService.Add(state, "隔离样例：买礼品卡", DateTime.Today);
+            TodoService.Add(state, "隔离样例：看论文", DateTime.Today.AddDays(1));
+            var window = new TodoWidgetWindow(state) { Width = 1150, Height = 1080 };
+            window.SetContentFontScale(scale);
+            window.SetContentFontFamily(font);
+            ShowAndPump(window);
+            DayEditWindow? editor = null;
+            try
+            {
+                var percent = label;
+                SavePreview(window, Path.Combine(directory, $"字号缩放-列表-{percent}.png"));
+                Require<Button>(window, "ViewModeButton").RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+                Pump();
+                window.UpdateLayout();
+                Pump();
+                SavePreview(window, Path.Combine(directory, $"字号缩放-周历-{percent}.png"));
+                const System.Reflection.BindingFlags Private =
+                    System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+                var cells = (System.Collections.IDictionary)typeof(TodoWidgetWindow).GetField("_cellsByDate", Private)!
+                    .GetValue(window)!;
+                WithDayEditor(window, dayEditor =>
+                {
+                    dayEditor.UpdateLayout();
+                    Pump();
+                    SavePreview(dayEditor, Path.Combine(directory, $"字号缩放-编辑窗-{percent}.png"));
+                });
+            }
+            finally
+            {
+                editor?.Close();
+                Close(window);
+            }
+        }
+    }
+
+    // 新建与启动时，待办卡立即使用“桌面组件 → 今日待办”的外观，不等下一次改设置。
+    private static void TestTodoTakesComponentLookOnCreate()
+    {
+        var temp = Path.Combine(Path.GetTempPath(), $"BingLan-todo-look-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(temp);
+        var coordinator = new WidgetCoordinator(interactiveQa: true, dataDirectory: temp);
+        const System.Reflection.BindingFlags Private =
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+        try
+        {
+            var appState = (AppState)typeof(WidgetCoordinator).GetField("_state", Private)!.GetValue(coordinator)!;
+            foreach (var kind in new[]
+                     {
+                         DesktopComponentKind.TimeDate,
+                         DesktopComponentKind.Greeting,
+                         DesktopComponentKind.Weather,
+                         DesktopComponentKind.Performance
+                     })
+            {
+                appState.DesktopExperience.GetComponent(kind).IsVisible = false;
+            }
+            var todoComponent = appState.DesktopExperience.GetComponent(DesktopComponentKind.Todo);
+            todoComponent.IsVisible = true;
+            todoComponent.Appearance.TextColor = "#FFFFFF";
+            todoComponent.Appearance.BackgroundColor = "#18222F";
+            todoComponent.CornerRadius = 6;
+
+            static void AssertLook(TodoWidgetWindow todo, string what)
+            {
+                Assert(((SolidColorBrush)todo.WidgetTextBrush).Color == Colors.White, $"{what}应使用组件文字颜色");
+                var body = ((SolidColorBrush)todo.WidgetBackgroundBrush).Color;
+                Assert(body.R == 0x18 && body.G == 0x22 && body.B == 0x2F, $"{what}应使用组件玻璃颜色");
+                Assert(Math.Abs(todo.WidgetCornerRadius - 6) < 1e-9, $"{what}应使用组件圆角");
+            }
+
+            coordinator.Start();
+            PumpUntil(() => Application.Current.Windows.OfType<TodoWidgetWindow>().Any(x => x.IsLoaded),
+                "今日待办卡片应随启动打开");
+            AssertLook(Application.Current.Windows.OfType<TodoWidgetWindow>().Single(), "启动时的待办卡");
+
+            typeof(WidgetCoordinator).GetMethod("AddTodo", Private)!.Invoke(coordinator, []);
+            PumpUntil(() => Application.Current.Windows.OfType<TodoWidgetWindow>().Count(x => x.IsLoaded) == 2,
+                "新建待办卡应打开");
+            AssertLook(Application.Current.Windows.OfType<TodoWidgetWindow>().Last(), "新建的待办卡");
+        }
+        finally
+        {
+            coordinator.Dispose();
+            foreach (var window in Application.Current.Windows.OfType<WidgetWindowBase>().ToList())
+            {
+                window.CanClose = true;
+                window.Close();
+            }
+            Pump();
+            Directory.Delete(temp, true);
+        }
+    }
+
+    // “信息密度”只对天气、性能生效，“字体”对只有图标的快捷入口无效；其余组件不显示这些选项。
+    private static void TestComponentEditorHidesUnusedOptions()
+    {
+        var window = new SettingsWindow(
+            new CityLookupService(),
+            new InformationWidgetState(),
+            DesktopExperienceRules.CreateDefault(),
+            (_, _) => { },
+            _ => { },
+            _ => { });
+        ShowAndPump(window);
+        try
+        {
+            Require<ListBox>(window, "SettingsNavigationList").SelectedIndex = 1;
+            Pump();
+            var components = Require<ListBox>(window, "DesktopComponentList");
+            var fontRow = Require<FrameworkElement>(window, "SelectedComponentFontRow");
+            var densityRow = Require<FrameworkElement>(window, "SelectedComponentDensityRow");
+            var seen = new HashSet<DesktopComponentKind>();
+            foreach (var entry in components.Items.OfType<SettingsWindow.DesktopComponentSettingsEntry>().ToList())
+            {
+                if (entry.Kind is not { } kind)
+                {
+                    continue;
+                }
+                components.SelectedItem = entry;
+                Pump();
+                seen.Add(kind);
+                var usesDensity = kind is DesktopComponentKind.Weather or DesktopComponentKind.Performance;
+                Assert(densityRow.Visibility == (usesDensity ? Visibility.Visible : Visibility.Collapsed),
+                    $"{kind} 的信息密度选项可见性不对");
+                Assert(fontRow.Visibility == (kind == DesktopComponentKind.QuickLaunch ? Visibility.Collapsed : Visibility.Visible),
+                    $"{kind} 的字体选项可见性不对");
+            }
+            Assert(seen.Contains(DesktopComponentKind.Performance) && seen.Contains(DesktopComponentKind.QuickLaunch)
+                    && seen.Contains(DesktopComponentKind.Todo),
+                "应覆盖性能、快捷入口与今日待办");
+        }
+        finally
+        {
+            window.Close();
+            Pump();
+        }
     }
 
     private static void TestTodoRowsStayAccessible()

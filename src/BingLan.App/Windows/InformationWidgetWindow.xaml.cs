@@ -160,6 +160,7 @@ public partial class InformationWidgetWindow : WidgetWindowBase
         var clockAlignment = bigClock ? TextAlignment.Center : TextAlignment.Left;
         TimeText.TextAlignment = clockAlignment;
         DateText.TextAlignment = clockAlignment;
+        DateText.FontSize = 13d * timeDate.FontScale;
         var isolatedGreeting = _componentKind == DesktopComponentKind.Greeting;
         GreetingText.FontSize = (isolatedGreeting ? 34d : 14d) * greeting.FontScale;
         var defaultGreetingWeight = isolatedGreeting ? FontWeights.Light : FontWeights.Normal;
@@ -205,6 +206,11 @@ public partial class InformationWidgetWindow : WidgetWindowBase
         RamValueText.FontSize = 18d * performance.FontScale;
         UploadValueText.FontSize = 12d * performance.FontScale;
         DownloadValueText.FontSize = 12d * performance.FontScale;
+        CpuLabelText.FontSize = 10d * performance.FontScale;
+        RamLabelText.FontSize = 10d * performance.FontScale;
+        NetworkLabelText.FontSize = 10d * performance.FontScale;
+        UploadLabelText.FontSize = 12d * performance.FontScale;
+        DownloadLabelText.FontSize = 12d * performance.FontScale;
 
         ApplyTextBrush(WeatherCard, GetComponentTextBrush(weather));
         WeatherCard.Background = _componentKind == DesktopComponentKind.Weather
@@ -217,6 +223,7 @@ public partial class InformationWidgetWindow : WidgetWindowBase
         WeatherConditionText.FontSize = 19d * weather.FontScale;
         WeatherRangeText.FontSize = 13d * weather.FontScale;
         WeatherUpdatedText.FontSize = 12d * weather.FontScale;
+        WeatherStatusText.FontSize = 11d * weather.FontScale;
     }
 
     private Brush GetComponentTextBrush(DesktopComponentState component) =>

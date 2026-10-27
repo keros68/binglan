@@ -498,6 +498,44 @@ internal static class WidgetWindowTests
         }
     }
 
+    // 字号缩放覆盖日期、性能标签和天气状态文字（按钮除外）。
+    public static void FontScaleCoversAllText()
+    {
+        var experience = DesktopExperienceRules.CreateDefault();
+        foreach (var kind in new[]
+                 {
+                     DesktopComponentKind.TimeDate,
+                     DesktopComponentKind.Performance,
+                     DesktopComponentKind.Weather
+                 })
+        {
+            experience.GetComponent(kind).FontScale = 1.5;
+        }
+        var window = new InformationWidgetWindow(
+            new InformationWidgetState(),
+            new FakeSamplingService(),
+            new WeatherService(new StubHttpMessageHandler()),
+            experience);
+        ShowAndPump(window);
+        try
+        {
+            AssertEqual(19.5, Require<TextBlock>(window, "DateText").FontSize, "日期跟随时间组件的缩放");
+            AssertEqual(15d, Require<TextBlock>(window, "CpuLabelText").FontSize, "CPU 标签跟随缩放");
+            AssertEqual(15d, Require<TextBlock>(window, "RamLabelText").FontSize, "RAM 标签跟随缩放");
+            AssertEqual(15d, Require<TextBlock>(window, "NetworkLabelText").FontSize, "NETWORK 标签跟随缩放");
+            AssertEqual(18d, Require<TextBlock>(window, "UploadLabelText").FontSize, "UP 标签跟随缩放");
+            AssertEqual(18d, Require<TextBlock>(window, "DownloadLabelText").FontSize, "DN 标签跟随缩放");
+            AssertEqual(16.5, Require<TextBlock>(window, "WeatherStatusText").FontSize, "天气状态文字跟随缩放");
+            AssertEqual(15d, Require<Button>(window, "WeatherRefreshButton").FontSize, "刷新按钮不缩放");
+        }
+        finally
+        {
+            window.CanClose = true;
+            window.Close();
+            Pump();
+        }
+    }
+
     public static void NakedTextContrastDefaults()
     {
         var experience = DesktopExperienceRules.CreateDefault();

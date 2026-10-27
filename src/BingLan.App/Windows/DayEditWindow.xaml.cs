@@ -15,10 +15,24 @@ public partial class DayEditWindow : Window
     private readonly DateTime _date;
     private string _lastCommittedText;
 
-    public DayEditWindow(DateTime date, IReadOnlyList<string> initialLines)
+    /// <param name="fontScale">The todo card's 字号缩放 setting, so the editor reads at the card's size.</param>
+    /// <param name="fontFamily">The todo card's 字体 setting; null keeps the interface font.</param>
+    public DayEditWindow(
+        DateTime date,
+        IReadOnlyList<string> initialLines,
+        double fontScale = 1d,
+        System.Windows.Media.FontFamily? fontFamily = null)
     {
         InitializeComponent();
         _date = date;
+        DateTitle.FontSize *= fontScale;
+        Editor.FontSize *= fontScale;
+        if (fontFamily is not null)
+        {
+            // The app-wide TextBox style pins its font, so the editor is set directly.
+            FontFamily = fontFamily;
+            Editor.FontFamily = fontFamily;
+        }
         DateTitle.Text = date.ToString("yyyy年M月d日");
         // The first entry is numbered "1." from the moment the editor opens — the
         // first thing to do always gets the first number.

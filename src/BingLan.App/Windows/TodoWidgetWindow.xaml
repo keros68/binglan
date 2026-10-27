@@ -12,7 +12,7 @@
                         AllowsTransparency="True"
                         Background="Transparent"
                         ShowInTaskbar="False"
-                        FontFamily="{StaticResource UiFont}"
+                        FontFamily="{DynamicResource TodoContentFont}"
                         Foreground="{DynamicResource PrimaryTextBrush}">
     <local:WidgetWindowBase.Resources>
         <!-- Full entry row for the day peek popup: dwell 300 ms to lift and drag to
@@ -65,7 +65,8 @@
                     <TextBox x:Name="PeekText"
                              Grid.Column="1"
                              AutomationProperties.Name="待办内容"
-                             FontSize="12"
+                             FontFamily="{DynamicResource TodoContentFont}"
+                             FontSize="{DynamicResource TodoFont.PeekItem}"
                              TextWrapping="Wrap"
                              Background="Transparent"
                              BorderThickness="0"
@@ -124,7 +125,7 @@
                     Padding="5,3"
                     CornerRadius="5"
                     MinHeight="17"
-                    Background="#94FFFFFF"
+                    Background="{DynamicResource WidgetItemSurfaceBrush}"
                     BorderBrush="#66FFFFFF"
                     BorderThickness="1"
                     ContextMenuOpening="PeekRow_ContextMenuOpening">
@@ -167,20 +168,20 @@
                     <TextBlock Grid.Column="1"
                                AutomationProperties.Name="{Binding Text}"
                                VerticalAlignment="Top"
-                               FontSize="12"
+                               FontSize="{DynamicResource TodoFont.CellItem}"
                                TextWrapping="Wrap"
-                               LineHeight="16"
+                               LineHeight="{DynamicResource TodoFont.CellLineHeight}"
                                LineStackingStrategy="BlockLineHeight"
-                               Height="32"
+                               Height="{DynamicResource TodoFont.CellTwoLines}"
                                TextTrimming="CharacterEllipsis"
                                Text="{Binding Text, Mode=OneWay}"
                                ToolTip="{Binding Text}">
                         <TextBlock.Style>
                             <Style TargetType="TextBlock">
-                                <Setter Property="Foreground" Value="#FF22303E"/>
+                                <Setter Property="Foreground" Value="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
                                 <Style.Triggers>
                                     <DataTrigger Binding="{Binding IsCompleted}" Value="True">
-                                        <Setter Property="Foreground" Value="#FF8A98A8"/>
+                                        <Setter Property="Foreground" Value="{Binding WidgetSecondaryTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
                                         <Setter Property="TextDecorations" Value="Strikethrough"/>
                                     </DataTrigger>
                                 </Style.Triggers>
@@ -194,7 +195,7 @@
                             Margin="2,-2,-6,-2"
                             Padding="0"
                             VerticalAlignment="Top"
-                            Foreground="#FF8A98A8"
+                            Foreground="{Binding WidgetSecondaryTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
                             Background="Transparent"
                             BorderThickness="0"
                             FontSize="12"
@@ -330,7 +331,8 @@
                                              AutomationProperties.Name="待办内容"
                                              MinHeight="24"
                                              VerticalContentAlignment="Center"
-                                             FontSize="14"
+                                             FontFamily="{DynamicResource TodoContentFont}"
+                                             FontSize="{DynamicResource TodoFont.ListItem}"
                                              TextWrapping="Wrap"
                                              AcceptsReturn="False"
                                              Text="{Binding Text, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
@@ -354,7 +356,7 @@
                                     <TextBlock Grid.Column="1"
                                                Margin="4,0,0,0"
                                                VerticalAlignment="Center"
-                                               FontSize="14"
+                                               FontSize="{DynamicResource TodoFont.ListItem}"
                                                IsHitTestVisible="False"
                                                Text="输入待办…"
                                                Foreground="{Binding WidgetSecondaryTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}">
@@ -415,7 +417,7 @@
                                 Width="28"
                                 Height="26"
                                 Padding="0"
-                                Foreground="#FF3D4E60"
+                                Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
                                 Background="{DynamicResource WidgetControlBrush}"
                                 BorderBrush="{DynamicResource WidgetControlBorderBrush}"
                                 FontSize="13"
@@ -440,7 +442,7 @@
                                 Width="28"
                                 Height="26"
                                 Padding="0"
-                                Foreground="#FF3D4E60"
+                                Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
                                 Background="{DynamicResource WidgetControlBrush}"
                                 BorderBrush="{DynamicResource WidgetControlBorderBrush}"
                                 FontSize="13"
@@ -450,8 +452,8 @@
                         <TextBlock x:Name="WeekRange"
                                    TextAlignment="Center"
                                    VerticalAlignment="Center"
-                                   FontSize="12.5"
-                                   Foreground="#FF3E5062"/>
+                                   FontSize="{DynamicResource TodoFont.WeekRange}"
+                                   Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
                     </DockPanel>
 
                     <Grid Grid.Row="1" Margin="2,3,2,0">
@@ -464,19 +466,19 @@
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="*"/>
                         </Grid.ColumnDefinitions>
-                        <TextBlock Text="周一" FontSize="11.5" FontWeight="Bold" TextAlignment="Left" Margin="6,0,0,0"
+                        <TextBlock Text="周一" FontSize="{DynamicResource TodoFont.Weekday}" FontWeight="Bold" TextAlignment="Left" Margin="6,0,0,0"
                                    Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
-                        <TextBlock Grid.Column="1" Text="周二" FontSize="11.5" FontWeight="Bold" TextAlignment="Left" Margin="6,0,0,0"
+                        <TextBlock Grid.Column="1" Text="周二" FontSize="{DynamicResource TodoFont.Weekday}" FontWeight="Bold" TextAlignment="Left" Margin="6,0,0,0"
                                    Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
-                        <TextBlock Grid.Column="2" Text="周三" FontSize="11.5" FontWeight="Bold" TextAlignment="Left" Margin="6,0,0,0"
+                        <TextBlock Grid.Column="2" Text="周三" FontSize="{DynamicResource TodoFont.Weekday}" FontWeight="Bold" TextAlignment="Left" Margin="6,0,0,0"
                                    Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
-                        <TextBlock Grid.Column="3" Text="周四" FontSize="11.5" FontWeight="Bold" TextAlignment="Left" Margin="6,0,0,0"
+                        <TextBlock Grid.Column="3" Text="周四" FontSize="{DynamicResource TodoFont.Weekday}" FontWeight="Bold" TextAlignment="Left" Margin="6,0,0,0"
                                    Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
-                        <TextBlock Grid.Column="4" Text="周五" FontSize="11.5" FontWeight="Bold" TextAlignment="Left" Margin="6,0,0,0"
+                        <TextBlock Grid.Column="4" Text="周五" FontSize="{DynamicResource TodoFont.Weekday}" FontWeight="Bold" TextAlignment="Left" Margin="6,0,0,0"
                                    Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
-                        <TextBlock Grid.Column="5" Text="周六" FontSize="11.5" TextAlignment="Left" Margin="6,0,0,0"
+                        <TextBlock Grid.Column="5" Text="周六" FontSize="{DynamicResource TodoFont.Weekday}" TextAlignment="Left" Margin="6,0,0,0"
                                    Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
-                        <TextBlock Grid.Column="6" Text="周日" FontSize="11.5" TextAlignment="Left" Margin="6,0,0,0"
+                        <TextBlock Grid.Column="6" Text="周日" FontSize="{DynamicResource TodoFont.Weekday}" TextAlignment="Left" Margin="6,0,0,0"
                                    Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
                     </Grid>
 
@@ -567,26 +569,26 @@
                                                                 <StackPanel Orientation="Horizontal" Height="21"
                                             Background="Transparent">
                                                                     <TextBlock Text="{Binding DayNumber}"
-                                                                               FontSize="13.5"
+                                                                               FontSize="{DynamicResource TodoFont.DayNumber}"
                                                                                FontWeight="Medium"
                                                                                FontFamily="pack://application:,,,/BingLan;component/Assets/Fonts/#Jost, Microsoft YaHei UI"
                                                                                VerticalAlignment="Top">
                                                                         <TextBlock.Style>
                                                                             <Style TargetType="TextBlock">
-                                                                                <Setter Property="Foreground" Value="#FF1C2A38"/>
+                                                                                <Setter Property="Foreground" Value="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
                                                                                 <Style.Triggers>
                                                                                     <DataTrigger Binding="{Binding IsWeekend}" Value="True">
-                                                                                        <Setter Property="Foreground" Value="#FF6E7E8F"/>
+                                                                                        <Setter Property="Foreground" Value="{Binding WidgetSecondaryTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
                                                                                     </DataTrigger>
                                                                                 </Style.Triggers>
                                                                             </Style>
                                                                         </TextBlock.Style>
                                                                     </TextBlock>
                                                                     <TextBlock Text="{Binding LunarText}"
-                                                                               FontSize="9.5"
+                                                                               FontSize="{DynamicResource TodoFont.Lunar}"
                                                                                Margin="4,0,0,1.5"
                                                                                VerticalAlignment="Bottom"
-                                                                               Foreground="#FF66788C"/>
+                                                                               Foreground="{Binding WidgetSecondaryTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
                                                                 </StackPanel>
                                                                 <!-- Per-cell scroll: wheel over the cell rolls the day's
                                                                      entries without opening the day editor. -->
@@ -608,7 +610,7 @@
                                                                         Margin="0,4,0,0"
                                                                         Padding="7,3"
                                                                         CornerRadius="9"
-                                                                        Background="#66FFFFFF"
+                                                                        Background="{DynamicResource WidgetItemSurfaceBrush}"
                                                                         BorderBrush="#66FFFFFF"
                                                                         BorderThickness="1"
                                                                         Cursor="Hand"
@@ -624,7 +626,7 @@
                                                                             </Style.Triggers>
                                                                         </Style>
                                                                     </Border.Style>
-                                                                    <TextBlock FontSize="10.5" Foreground="#FF4E6072">
+                                                                    <TextBlock FontSize="{DynamicResource TodoFont.Overflow}" Foreground="{Binding WidgetSecondaryTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}">
                                                                         <Run Text="还有 "/><Run Text="{Binding OverflowCount, Mode=OneWay}"/><Run Text=" 条 ▾"/>
                                                                     </TextBlock>
                                                                 </Border>
@@ -687,7 +689,7 @@
                                             <TextBlock x:Name="WeekPeekTitle"
                                                        Margin="6,0"
                                                        VerticalAlignment="Center"
-                                                       FontSize="13"
+                                                       FontSize="{DynamicResource TodoFont.PeekTitle}"
                                                        FontWeight="SemiBold"
                                                        Foreground="#FF243146"/>
                                             <Button x:Name="WeekPeekNextDay"
@@ -736,7 +738,8 @@
                                         BorderThickness="1">
                                     <TextBox x:Name="WeekPeekInput"
                                              AutomationProperties.Name="添加当日待办"
-                                             FontSize="12"
+                                             FontFamily="{DynamicResource TodoContentFont}"
+                                             FontSize="{DynamicResource TodoFont.PeekItem}"
                                              MinHeight="18"
                                              Padding="2,0"
                                              BorderThickness="0"
@@ -773,7 +776,7 @@
                             </Grid.ColumnDefinitions>
                             <TextBlock x:Name="MoveToastText"
                                        VerticalAlignment="Center"
-                                       FontSize="11.5"
+                                       FontSize="{DynamicResource TodoFont.Status}"
                                        Foreground="#FF243146"
                                        TextWrapping="Wrap"/>
                             <Button Grid.Column="1"
@@ -796,8 +799,8 @@
                 <TextBlock x:Name="SummaryText"
                            AutomationProperties.LiveSetting="Polite"
                            VerticalAlignment="Center"
-                           Foreground="#FF5B6C7E"
-                           FontSize="11.5"/>
+                           Foreground="{Binding WidgetSecondaryTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
+                           FontSize="{DynamicResource TodoFont.Status}"/>
                 <!-- The two footer buttons appear only under the mouse or with keyboard focus. -->
                 <StackPanel HorizontalAlignment="Right" Orientation="Horizontal">
                     <StackPanel.Style>

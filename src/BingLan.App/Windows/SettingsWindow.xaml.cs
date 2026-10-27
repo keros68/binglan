@@ -283,6 +283,15 @@ public partial class SettingsWindow : Window
             QuickPlacesSettingsCard.Visibility = kind == DesktopComponentKind.QuickLaunch
                 ? Visibility.Visible
                 : Visibility.Collapsed;
+            // Quick launch shows only icon glyphs, and only the weather and performance
+            // cards lay out by density, so the other components hide options that do nothing.
+            SelectedComponentFontRow.Visibility = kind == DesktopComponentKind.QuickLaunch
+                ? Visibility.Collapsed
+                : Visibility.Visible;
+            SelectedComponentDensityRow.Visibility = kind is DesktopComponentKind.Weather or
+                DesktopComponentKind.Performance
+                ? Visibility.Visible
+                : Visibility.Collapsed;
             if (kind == DesktopComponentKind.QuickLaunch)
             {
                 _quickPlaces = _maintenance.QuickPlaces()
