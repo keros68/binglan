@@ -178,6 +178,7 @@ internal static class Program
         Run("只开顶栏时共享采样保持运行", TestTopBarOnlyKeepsSamplerAlive, failures);
         Run("Shell 隐藏或最小化组件后自动恢复显示", TestShellHideAndMinimizeRecovery, failures);
         Run("显示桌面时组件提升到任务栏下方、恢复后回落", TestDesktopSurfaceRaiseAndLower, failures);
+        Run("显示桌面判定每次事件突发只执行一次，不遗留计时器", TestDesktopSurfaceWatcherChecksOncePerBurst, failures);
         Run("组件恢复默认位置", TestResetComponentPlacement, failures);
         Run("清爽桌面开关", TestCleanDesktopToggle, failures);
         Run("设置行分隔线对齐标题", TestSettingsRowDividersAlignWithTitles, failures);
@@ -2742,6 +2743,47 @@ internal static class Program
         }
     }
 
+    // 一次窗口事件只触发一次“显示桌面”判定：合并用的计时器触发后必须自行停止，
+    // 否则每次切换窗口都会留下一个每 150ms 枚举全部窗口的计时器（官方 v0.2.33 的 CPU 泄漏）。
+    private static void TestDesktopSurfaceWatcherChecksOncePerBurst()
+    {
+        var checks = 0;
+        var watcher = new DesktopSurfaceWatcher(() =>
+        {
+            checks++;
+            return [];
+        });
+        const System.Reflection.BindingFlags Private =
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+        var onWinEvent = typeof(DesktopSurfaceWatcher).GetMethod("OnWinEvent", Private)!;
+        void WaitPumping(TimeSpan duration)
+        {
+            var until = DateTime.Now + duration;
+            while (DateTime.Now < until)
+            {
+                Pump();
+                Thread.Sleep(20);
+            }
+        }
+        try
+        {
+            for (var burst = 0; burst < 3; burst++)
+            {
+                onWinEvent.Invoke(watcher, [nint.Zero, 0x0003u, nint.Zero, 0, 0, 0u, 0u]);
+                onWinEvent.Invoke(watcher, [nint.Zero, 0x0008u, nint.Zero, 0, 0, 0u, 0u]);
+                WaitPumping(TimeSpan.FromMilliseconds(400));
+            }
+            var afterBursts = checks;
+            Assert(afterBursts == 3, $"三次事件突发应各判定一次，实际 {afterBursts} 次");
+            WaitPumping(TimeSpan.FromSeconds(1));
+            Assert(checks == afterBursts, $"没有新事件时不应继续判定，1 秒内又判定了 {checks - afterBursts} 次");
+        }
+        finally
+        {
+            watcher.Dispose();
+        }
+    }
+
     // While the shell shows the desktop the cards are lifted into the topmost band
     // under the taskbar; when ordinary windows return they go back below them. The
     // z-order move keeps position and visibility and never activates the card.
@@ -4661,6 +4703,5 @@ internal static class Program
         internal TaskbarEdgeGuard.PixelRect Rectangle;
         internal nint Parameter;
     }
-
 
 }
