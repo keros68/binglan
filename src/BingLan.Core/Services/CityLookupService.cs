@@ -8,7 +8,8 @@ namespace BingLan.Core.Services;
 public sealed class CityLookupService
 {
     private readonly CitySearchService _online;
-    private readonly CityLibrary _library;
+    // The built-in library is parsed on the first search, not when the app starts.
+    private readonly Lazy<CityLibrary> _library;
 
     public CityLookupService()
         : this(new CitySearchService())
@@ -18,16 +19,16 @@ public sealed class CityLookupService
     public CityLookupService(CitySearchService online, CityLibrary? library = null)
     {
         _online = online;
-        _library = library ?? CityLibrary.LoadDefault();
+        _library = library is null ? new(CityLibrary.LoadDefault) : new(() => library);
     }
 
-    public int LocalEntryCount => _library.Count;
+    public int LocalEntryCount => _library.Value.Count;
 
     public async Task<CitySearchOutcome> SearchAsync(
         string query,
         CancellationToken cancellationToken = default)
     {
-        var local = _library.Search(query ?? "");
+        var local = _library.Value.Search(query ?? "");
         if (local.Count > 0)
         {
             return new CitySearchOutcome(true, local, $"找到 {local.Count} 个候选地点");
