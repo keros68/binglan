@@ -40,6 +40,7 @@ public partial class TodoWidgetWindow : WidgetWindowBase
     private WeekCellView? _selectedCellView;
     private WeekCellView? _peekCell;
     private TodoItemState? _editingItem;
+    private TodoItemState? _pendingFocusItem;
     private string? _editingOriginalText;
     private System.Windows.Controls.TextBox? _editingTextBox;
     private TodoItemState? _lastMovedItem;
@@ -75,6 +76,8 @@ public partial class TodoWidgetWindow : WidgetWindowBase
     public TodoWidgetWindow(TodoWidgetState state)
     {
         State = state;
+        // Nothing is being edited at load, so blank leftovers from earlier sessions go.
+        var blanksRemoved = TodoService.RemoveBlank(state).Count > 0;
         _items = new ObservableCollection<TodoItemState>(state.Items.OrderBy(x => x.Order));
         SyncCompletedSnapshot();
         InitializeComponent();
@@ -85,6 +88,10 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         ApplyPlacement(state.Placement, state.IsLocked);
         WidgetCornerRadius = state.CornerRadius;
         ApplyViewMode();
+        if (blanksRemoved)
+        {
+            Loaded += (_, _) => NotifyStateChanged();
+        }
     }
 
     public TodoWidgetState State { get; }
@@ -136,6 +143,7 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         CaptureState();
         var item = TodoService.Add(State);
         _items.Add(item);
+        _pendingFocusItem = item;
         RefreshSummary();
         NotifyStateChanged();
 
@@ -210,13 +218,22 @@ public partial class TodoWidgetWindow : WidgetWindowBase
     private void TodoText_GotKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e)
     {
         _textBeforeEdit = (sender as System.Windows.Controls.TextBox)?.Text;
+        // The new row has its caret now, so the caret alone decides from here.
+        if ((sender as FrameworkElement)?.DataContext is TodoItemState item
+            && ReferenceEquals(item, _pendingFocusItem))
+        {
+            _pendingFocusItem = null;
+        }
     }
 
-    private void TodoText_LostFocus(object sender, RoutedEventArgs e)
+    // Keyboard focus also leaves when the card deactivates, so a blank row without a
+    // caret is pruned even if the user clicks into another app.
+    private void TodoText_LostKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e)
     {
         RefreshSummary();
         CaptureState();
         NotifyStateChanged();
+        SchedulePruneBlankItems();
     }
 
     private void TodoText_KeyDown(object sender, System.Windows.Input.KeyEventArgs e)
@@ -232,8 +249,62 @@ public partial class TodoWidgetWindow : WidgetWindowBase
             CaptureState();
             NotifyStateChanged();
             Keyboard.ClearFocus();
+            SchedulePruneBlankItems();
             e.Handled = true;
         }
+    }
+
+    /// <summary>
+    /// Deferred so the row losing focus is not torn down mid focus change; the
+    /// caret owner is re-read when the prune runs.
+    /// </summary>
+    private void SchedulePruneBlankItems() =>
+        Dispatcher.BeginInvoke(() => PruneBlankItems(), DispatcherPriority.Input);
+
+    private void PruneBlankItems()
+    {
+        var typing = Keyboard.FocusedElement is System.Windows.Controls.TextBox { DataContext: TodoItemState focused }
+            ? focused
+            : null;
+        CaptureState();
+        // A row just created by + has not received its caret yet, but is about to.
+        var removed = TodoService.RemoveBlank(
+            State, x => ReferenceEquals(x, typing) || ReferenceEquals(x, _pendingFocusItem));
+        if (removed.Count == 0)
+        {
+            return;
+        }
+
+        _peekDwellTimer?.Stop();
+        _peekDwellSource = null;
+        if (_peekDragPhase != PeekDragPhase.Idle)
+        {
+            CancelPeekDrag();
+        }
+        foreach (var item in removed)
+        {
+            if (ReferenceEquals(_editingItem, item))
+            {
+                _editingItem = null;
+                _editingOriginalText = null;
+                _editingTextBox = null;
+            }
+            if (ReferenceEquals(_lastMovedItem, item))
+            {
+                _lastMovedItem = null;
+                HideMoveToast(this, EventArgs.Empty);
+            }
+            _items.Remove(item);
+            if (item.Date is { } date && _cellsByDate.TryGetValue(date, out var cell))
+            {
+                cell.Items.Remove(item);
+                cell.RefreshPreview();
+            }
+            _completedItemIds.Remove(item.Id);
+        }
+        RefreshSummary();
+        CaptureState();
+        NotifyStateChanged();
     }
 
     private void ClearCompleted_Click(object sender, RoutedEventArgs e)
@@ -454,13 +525,16 @@ public partial class TodoWidgetWindow : WidgetWindowBase
     }
 
     // Safe for ContentElement hits (Run/Hyperlink are not Visuals, so
-    // VisualTreeHelper would throw on them).
+    // VisualTreeHelper would throw on them). A text box being edited counts as
+    // interactive: pressing and dragging in it selects text instead of moving the row.
     private static bool HitsInteractiveChild(DependencyObject source, DependencyObject container)
     {
         var current = source;
         while (current is not null && !ReferenceEquals(current, container))
         {
-            if (current is System.Windows.Controls.CheckBox or System.Windows.Controls.Primitives.ButtonBase)
+            if (current is System.Windows.Controls.CheckBox
+                or System.Windows.Controls.Primitives.ButtonBase
+                or System.Windows.Controls.TextBox { IsKeyboardFocusWithin: true })
             {
                 return true;
             }
@@ -473,7 +547,7 @@ public partial class TodoWidgetWindow : WidgetWindowBase
 
     // ------------------------------------------------------------------
     // Dwell-lift drag reordering inside the day peek popup.
-    // State machine: Idle → HoverArmed(cursor dwells over a row for 500 ms
+    // State machine: Idle → HoverArmed(cursor dwells over a row for 300 ms
     // with no button down; row lifts) → Dragging(left button pressed on the
     // armed row; follows the cursor, other rows shift live) → settle on
     // release. Moving the cursor past the drag threshold, leaving the
@@ -523,6 +597,19 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         // behind it (clicks on nav buttons, ✕, the input box, …).
         _peekDwellTimer?.Stop();
         _peekDwellSource = null;
+        // A press anywhere on the card outside the day peek closes it, and the
+        // press still reaches its target (another cell, a header button, …).
+        // The toast stays usable for undo; context-menu presses come from their
+        // own popup window and never count as outside.
+        if (WeekPeekOverlay.Visibility == Visibility.Visible
+            && _peekDragPhase != PeekDragPhase.Dragging
+            && e.OriginalSource is System.Windows.Media.Visual pressed
+            && ReferenceEquals(PresentationSource.FromVisual(pressed)?.RootVisual, this)
+            && !WeekPeekPanel.IsAncestorOf(pressed)
+            && !MoveToast.IsAncestorOf(pressed))
+        {
+            CloseDayPeek();
+        }
         if (_peekDragPhase != PeekDragPhase.HoverArmed)
         {
             // Idle presses no longer arm anything — only a dwell does.
@@ -660,7 +747,7 @@ public partial class TodoWidgetWindow : WidgetWindowBase
             return;
         }
         _peekDwellAnchor = pos;
-        _peekDwellTimer ??= new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
+        _peekDwellTimer ??= new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(300) };
         _peekDwellTimer.Tick -= PeekDwellTimer_Tick;
         _peekDwellTimer.Tick += PeekDwellTimer_Tick;
         _peekDwellTimer.Stop();
@@ -681,10 +768,21 @@ public partial class TodoWidgetWindow : WidgetWindowBase
             }
             return;
         }
-        // Esc cancels an active lift or drag first; otherwise closes DayPeek.
-        if (_peekDragPhase is PeekDragPhase.HoverArmed or PeekDragPhase.Dragging)
+        // Esc cancels an active drag first; otherwise closes DayPeek. A row that is
+        // only hover-lifted drops the lift and lets Esc reach the text box being edited.
+        if (_peekDragPhase == PeekDragPhase.Dragging)
         {
             CancelPeekDrag();
+            e.Handled = true;
+            return;
+        }
+        if (_peekDragPhase == PeekDragPhase.HoverArmed)
+        {
+            CancelPeekDrag();
+            if (Keyboard.FocusedElement is System.Windows.Controls.TextBox)
+            {
+                return;
+            }
             e.Handled = true;
             return;
         }
@@ -706,6 +804,14 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         {
             CancelPeekDrag();
         }
+        // Clicking outside the card is also "somewhere else": close the day peek.
+        if (WeekPeekOverlay.Visibility == Visibility.Visible && _peekDragPhase != PeekDragPhase.Dragging)
+        {
+            CloseDayPeek();
+        }
+        // No caret survives deactivation, so a new row that never got one goes too.
+        _pendingFocusItem = null;
+        SchedulePruneBlankItems();
         base.OnDeactivated(e);
     }
 
@@ -1274,8 +1380,6 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         }
     }
 
-    private void WeekPeekOverlay_BackdropClick(object sender, MouseButtonEventArgs e) => CloseDayPeek();
-
     private void WeekPeekPanel_Click(object sender, MouseButtonEventArgs e) => e.Handled = true;
 
     private void WeekPeekClose_Click(object sender, RoutedEventArgs e) => CloseDayPeek();
@@ -1453,6 +1557,7 @@ public partial class TodoWidgetWindow : WidgetWindowBase
             CaptureState();
             NotifyStateChanged();
         }
+        SchedulePruneBlankItems();
     }
 
     private static string WeekdayName(DateTime date) =>
@@ -1576,6 +1681,7 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         {
             CancelPeekDrag();
         }
+        SchedulePruneBlankItems();
         ListHost.Visibility = State.WeeklyView ? Visibility.Collapsed : Visibility.Visible;
         WeekHost.Visibility = State.WeeklyView ? Visibility.Visible : Visibility.Collapsed;
         ViewModeButton.Content = State.WeeklyView ? "列表" : "周历";
@@ -1780,7 +1886,8 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         }
     }
 
-    // Blank rows are places to type, not tasks, so they are left out of the count.
+    // A blank row only exists while it is being typed into (blanks are pruned once
+    // the caret leaves), and it is not a task, so it is left out of the count.
     private void RefreshSummary()
     {
         CompletedVisibilityButton.Content = State.HideCompleted ? "显示已完成" : "隐藏已完成";

@@ -10,6 +10,7 @@ using System.Text.Json;
 
 var failures = new List<string>();
 Run("待办编辑、勾选、排序", TestTodo);
+Run("空白待办在结束输入后删除", TestRemoveBlank);
 Run("待办日期字段、完成时间与周历规则", TestTodoDates);
 Run("按日同步待办行", TestSyncDayItems);
 Run("跨日移动待办", TestMoveToDate);
@@ -316,6 +317,44 @@ static void TestSyncDayItems()
             && !pairAfterDeleteAndAppend[1].IsCompleted
             && pairAfterDeleteAndAppend[1].CompletedDate is null,
         "删掉已完成首行并在保留行之后追加新任务时，新任务不应跨锚点复用已删完成项的完成状态");
+
+    // 删掉一条已完成的任务并同时改写相邻的另一条：无法判断改写的是哪条，新文字不得继承已删条目的完成状态。
+    var deleteAndEdit = new TodoWidgetState();
+    var day = DateTime.Today;
+    var removedDone = TodoService.Add(deleteAndEdit, "A", day);
+    TodoService.SetCompleted(deleteAndEdit, removedDone.Id, true);
+    TodoService.Add(deleteAndEdit, "B", day);
+    var anchorC = TodoService.Add(deleteAndEdit, "C", day);
+    TodoService.SyncDayItems(deleteAndEdit, day, new[] { "D", "C" });
+    var afterDeleteAndEdit = TodoService.ItemsForDate(deleteAndEdit, day).ToList();
+    Assert(
+        afterDeleteAndEdit.Count == 2
+            && afterDeleteAndEdit[0].Text == "D" && !afterDeleteAndEdit[0].IsCompleted
+            && afterDeleteAndEdit[0].CompletedDate is null && afterDeleteAndEdit[0].Id != removedDone.Id
+            && afterDeleteAndEdit[1].Id == anchorC.Id,
+        "删掉已完成条目的同时改写另一条，改写的行不应继承已删条目的完成状态与 Id");
+
+    // 改写一条已完成任务的同时新增一行：行数不少于条目数，没有删除的迹象，改写的行仍保留原 Id 与完成状态。
+    var editAndAdd = new TodoWidgetState();
+    var doneOriginal = TodoService.Add(editAndAdd, "原文", day);
+    TodoService.SetCompleted(editAndAdd, doneOriginal.Id, true);
+    TodoService.SyncDayItems(editAndAdd, day, new[] { "改后", "另加一条" });
+    var afterEditAndAdd = TodoService.ItemsForDate(editAndAdd, day).ToList();
+    Assert(
+        afterEditAndAdd.Count == 2 && afterEditAndAdd[0].Id == doneOriginal.Id
+            && afterEditAndAdd[0].IsCompleted && afterEditAndAdd[1].Id != doneOriginal.Id
+            && !afterEditAndAdd[1].IsCompleted,
+        "改写已完成任务并同时新增一行时，被改写的行应保留 Id 与完成状态");
+
+    // 只改一条已完成任务的文字、没有删除：行数等于条目数，照旧原地保留。
+    var onlyEdit = new TodoWidgetState();
+    var doneOnly = TodoService.Add(onlyEdit, "旧文字", day);
+    TodoService.SetCompleted(onlyEdit, doneOnly.Id, true);
+    TodoService.SyncDayItems(onlyEdit, day, new[] { "新文字" });
+    var afterOnlyEdit = TodoService.ItemsForDate(onlyEdit, day).Single();
+    Assert(
+        afterOnlyEdit.Id == doneOnly.Id && afterOnlyEdit.IsCompleted && afterOnlyEdit.Text == "新文字",
+        "只改文字时应原地保留 Id 与完成状态");
 }
 
 static void TestMoveToDate()
@@ -1726,4 +1765,26 @@ static void Assert(bool condition, string message)
     {
         throw new InvalidOperationException(message);
     }
+}
+
+static void TestRemoveBlank()
+{
+    var widget = new TodoWidgetState();
+    var kept = TodoService.Add(widget, "有内容");
+    TodoService.Add(widget, "");
+    TodoService.Add(widget, "   ");
+    var typing = TodoService.Add(widget, "", DateTime.Today.AddDays(-1));
+    var done = TodoService.Add(widget, "已完成");
+    done.IsCompleted = true;
+
+    var removed = TodoService.RemoveBlank(widget, x => x.Id == typing.Id);
+    Assert(removed.Count == 2 && removed.All(x => string.IsNullOrWhiteSpace(x.Text)),
+        "应删除空串与纯空白两条待办");
+    Assert(widget.Items.Select(x => x.Id).SequenceEqual([kept.Id, typing.Id, done.Id]),
+        "有内容、已完成与正在输入的条目应保留且相对顺序不变");
+    Assert(widget.Items.Select(x => x.Order).SequenceEqual([0, 1, 2]), "删除后 Order 应重新连续编号");
+
+    removed = TodoService.RemoveBlank(widget);
+    Assert(removed.Single().Id == typing.Id && widget.Items.Count == 2, "结束输入后空白条目也应删除");
+    Assert(TodoService.RemoveBlank(widget).Count == 0, "没有空白条目时不应删除");
 }

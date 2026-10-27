@@ -66,6 +66,26 @@ public static class TodoService
     }
 
     /// <summary>
+    /// Removes entries whose text is empty or whitespace. A blank entry is only a
+    /// place to type, so it survives solely while it is being typed into
+    /// (<paramref name="keep"/>); once editing ends it is not a task.
+    /// </summary>
+    public static List<TodoItemState> RemoveBlank(
+        TodoWidgetState widget,
+        Func<TodoItemState, bool>? keep = null)
+    {
+        var blanks = widget.Items
+            .Where(x => string.IsNullOrWhiteSpace(x.Text) && keep?.Invoke(x) != true)
+            .ToList();
+        if (blanks.Count > 0)
+        {
+            widget.Items.RemoveAll(blanks.Contains);
+            Normalize(widget);
+        }
+        return blanks;
+    }
+
+    /// <summary>
     /// Toggles completion by id and records when the entry was completed.
     /// Returns false when the entry is missing or already in that state.
     /// </summary>
@@ -295,7 +315,9 @@ public static class TodoService
     /// unchanged lines match by text first (establishing order anchors), remaining lines
     /// reuse unclaimed existing entries within the same anchor span in order (in-place
     /// edits keep their Id and completion state, whereas lines inserted outside an
-    /// unclaimed span become new incomplete entries), surplus entries are removed, and
+    /// unclaimed span become new incomplete entries). A span holding fewer lines than
+    /// unclaimed entries had something deleted, so it reuses none of them. Surplus
+    /// entries are removed, and
     /// blank lines are skipped. A leading "1. "/"1、" numbering prefix is display sugar
     /// and is stripped, while content like "3D建模" survives untouched.
     /// Returns how many entries the day holds afterwards.
@@ -333,6 +355,13 @@ public static class TodoService
         // text edits (whether completed or not), while preventing a deleted entry before
         // an anchor from transferring its completion state to a newly added line after
         // the anchor (or vice versa).
+        // A span with fewer lines than free entries means something in it was deleted, and
+        // which free entry belonged to which edited line can no longer be told. Handing the
+        // edited line the first free entry would give it a deleted entry's completion state,
+        // so such a span only produces new entries. Counted before any reuse claims entries.
+        var spanOf = new (int Prev, int Next)[texts.Count];
+        var spanLines = new Dictionary<(int, int), int>();
+        var spanFreeEntries = new Dictionary<(int, int), int>();
         for (var i = 0; i < texts.Count; i++)
         {
             if (resolved[i] is not null)
@@ -360,13 +389,41 @@ public static class TodoService
                 }
             }
 
-            var reuseIndex = -1;
-            for (var j = prevJ + 1; j < nextJ; j++)
+            var key = (prevJ, nextJ);
+            spanOf[i] = key;
+            spanLines[key] = spanLines.GetValueOrDefault(key) + 1;
+            if (!spanFreeEntries.ContainsKey(key))
             {
-                if (!claimed[j])
+                var free = 0;
+                for (var j = prevJ + 1; j < nextJ; j++)
                 {
-                    reuseIndex = j;
-                    break;
+                    if (!claimed[j])
+                    {
+                        free++;
+                    }
+                }
+                spanFreeEntries[key] = free;
+            }
+        }
+
+        for (var i = 0; i < texts.Count; i++)
+        {
+            if (resolved[i] is not null)
+            {
+                continue;
+            }
+
+            var (prevJ, nextJ) = spanOf[i];
+            var reuseIndex = -1;
+            if (spanLines[spanOf[i]] >= spanFreeEntries[spanOf[i]])
+            {
+                for (var j = prevJ + 1; j < nextJ; j++)
+                {
+                    if (!claimed[j])
+                    {
+                        reuseIndex = j;
+                        break;
+                    }
                 }
             }
 
