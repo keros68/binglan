@@ -94,6 +94,10 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         ApplyPlacement(state.Placement, state.IsLocked);
         WidgetCornerRadius = state.CornerRadius;
         ApplyViewMode();
+        if (state.IsCollapsed)
+        {
+            SetCollapsed(true);
+        }
         ScheduleTodayRefresh();
         if (blanksRemoved || legacyDatesChanged || restoredOrderChanged)
         {
@@ -435,6 +439,55 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         NotifyStateChanged();
     }
 
+    // 与分组盒一致：收起成一条标题栏，展开时回到记住的高度。
+    private const double CollapsedHeight = 72d;
+
+    private void CollapseButton_Click(object sender, RoutedEventArgs e)
+    {
+        SetCollapsed(!State.IsCollapsed);
+        NotifyStateChanged();
+    }
+
+    /// <summary>
+    /// Folds the card up to its title bar, or unfolds it to the height it had. A folded
+    /// card keeps its width and can still be dragged; only its height is fixed, and the
+    /// view toggle and "+" wait until the card unfolds.
+    /// </summary>
+    internal void SetCollapsed(bool collapsed)
+    {
+        if (collapsed && !State.IsCollapsed)
+        {
+            State.ExpandedHeight = Height;
+        }
+        State.IsCollapsed = collapsed;
+        var body = collapsed ? Visibility.Collapsed : Visibility.Visible;
+        foreach (var element in TodoLayout.Children.OfType<FrameworkElement>()
+                     .Where(element => System.Windows.Controls.Grid.GetRow(element) > 0))
+        {
+            element.Visibility = body;
+        }
+        // 标题条上只留标题、收起按钮和设置入口：切换视图和新增都要在展开的正文上才有意义。
+        ViewModeButton.Visibility = body;
+        AddTodoButton.Visibility = body;
+        if (collapsed)
+        {
+            // 当日浮层挂在被隐藏的正文里，先断开再收起。
+            CloseDayPeek();
+            MinHeight = CollapsedHeight;
+            MaxHeight = CollapsedHeight;
+            Height = CollapsedHeight;
+        }
+        else
+        {
+            MaxHeight = double.PositiveInfinity;
+            // 先回到收起前的高度，再由 ApplyViewMode 抬到当前视图的最小值。
+            Height = Math.Max(ListMinimumHeight, State.ExpandedHeight > 0 ? State.ExpandedHeight : Height);
+            ApplyViewMode();
+        }
+        CollapseButton.Content = collapsed ? "\uE70D" : "\uE70E";
+        CollapseButton.ToolTip = collapsed ? "展开待办卡片" : "收起成标题条";
+    }
+
     // Base sizes of the card's reading text at 100%. The 字号缩放 setting scales them
     // together, so the list stays larger than the weekly cells by the same ratio.
     // Buttons and glyphs keep their sizes: they sit in fixed boxes. The cell text's
@@ -491,11 +544,12 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         }
         State.WeeklyWeekCount = clamped;
         ApplyViewMode();
-        if (State.WeeklyView)
+        if (State.WeeklyView && !State.IsCollapsed)
         {
             // 修改立即生效：缩小周数后卡片高度也要收回来（保留两行余量给
             // 跨月断行），放大时 ApplyViewMode 已负责抬到最小高度。
             Height = Math.Max(WeeklyMinimumHeight, Math.Min(Height, WeeklyMinimumHeight + 120));
+            Dispatcher.BeginInvoke(DispatcherPriority.Loaded, EnsureFullyOnScreen);
         }
         NotifyStateChanged();
     }
@@ -1786,19 +1840,27 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         SchedulePruneBlankItems();
         ListHost.Visibility = State.WeeklyView ? Visibility.Collapsed : Visibility.Visible;
         WeekHost.Visibility = State.WeeklyView ? Visibility.Visible : Visibility.Collapsed;
-        ViewModeButton.Content = State.WeeklyView ? "列表" : "周历";
+        // 按钮标出当前所处视图，点击才切换到另一个；文案跟状态走，不显示切换目标。
+        ViewModeButton.Content = State.WeeklyView ? "周历" : "列表";
+        ViewModeButton.ToolTip = State.WeeklyView ? "切换到今日列表" : "切换到周历";
         ClearCompletedButton.Visibility = State.WeeklyView ? Visibility.Collapsed : Visibility.Visible;
         // Seven day cells only stay readable when each column has room for text and
         // the five rows have real height; the today list stays comfortable at the
-        // card's original minimum size.
-        MinWidth = State.WeeklyView ? WeeklyMinimumWidth : ListMinimumWidth;
-        MinHeight = State.WeeklyView ? WeeklyMinimumHeight : ListMinimumHeight;
+        // card's original minimum size. 折叠成标题条时尺寸先保持不动，展开再按当前视图重算。
+        if (!State.IsCollapsed)
+        {
+            MinWidth = State.WeeklyView ? WeeklyMinimumWidth : ListMinimumWidth;
+            MinHeight = State.WeeklyView ? WeeklyMinimumHeight : ListMinimumHeight;
+            if (State.WeeklyView)
+            {
+                // Min sizes alone only clamp later layout passes; widen and raise an
+                // already smaller card right away so the grid is usable from frame one.
+                Width = Math.Max(Width, WeeklyMinimumWidth);
+                Height = Math.Max(Height, WeeklyMinimumHeight);
+            }
+        }
         if (State.WeeklyView)
         {
-            // Min sizes alone only clamp later layout passes; widen and raise an
-            // already smaller card right away so the grid is usable from frame one.
-            Width = Math.Max(Width, WeeklyMinimumWidth);
-            Height = Math.Max(Height, WeeklyMinimumHeight);
             RenderWeekView();
         }
         else
@@ -1810,6 +1872,9 @@ public partial class TodoWidgetWindow : WidgetWindowBase
             }
             RefreshSummary();
         }
+        // 变大发生在布局之后，等原生矩形反映新尺寸再把卡片整体收回屏幕内，
+        // 靠近屏幕边缘的卡片不会因切到周历而溢出。
+        Dispatcher.BeginInvoke(DispatcherPriority.Loaded, EnsureFullyOnScreen);
     }
 
     private void RenderWeekView()

@@ -171,6 +171,9 @@ internal static class Program
         Run("屏幕阅读器名称、Tab 顺序与实际 DPI 边界", TestAccessibilityAndKeyboardNavigation, failures);
         Run("高对比度系统色切换与冰蓝材质恢复", TestHighContrastThemeSwitch, failures);
         Run("今日列表与周历按日期映射", TestTodoTodayCalendarMapping, failures);
+        Run("待办切换按钮标出当前视图", TestTodoViewButtonShowsCurrentView, failures);
+        Run("待办卡片收起成标题条并记住展开高度", TestTodoCollapseFoldsToTitleBar, failures);
+        Run("贴屏卡片切周历后完整留在工作区", TestTodoViewSwitchStaysInWorkArea, failures);
         Run("单实例门禁占用与释放", TestSingleInstanceGate, failures);
         Run("托盘双击打开并恢复设置窗口", TestTrayDoubleClick, failures);
         Run("缺失本机标题字体安全回退", TestUnavailableTitleFontFallback, failures);
@@ -1444,6 +1447,114 @@ internal static class Program
                 monitor.WorkingArea.Left < rect.Right && rect.Left < monitor.WorkingArea.Right
                 && monitor.WorkingArea.Top < rect.Bottom && rect.Top < monitor.WorkingArea.Bottom);
             Assert(recovered, "隐藏期间丢失显示器后，卡片在显示前就应被拉回工作区");
+        }
+        finally
+        {
+            Close(window);
+        }
+    }
+
+    private static void TestTodoViewButtonShowsCurrentView()
+    {
+        var state = new TodoWidgetState();
+        var window = new TodoWidgetWindow(state);
+        ShowAndPump(window);
+        try
+        {
+            var viewMode = Require<Button>(window, "ViewModeButton");
+            Assert(Equals(viewMode.Content, "列表"), "列表视图下按钮应标出当前视图“列表”");
+            viewMode.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            Pump();
+            Assert(Equals(viewMode.Content, "周历"), "切到周历后按钮应标出当前视图“周历”");
+            Assert(Require<Grid>(window, "WeekHost").Visibility == Visibility.Visible, "切到周历后正文应可见");
+            viewMode.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            Pump();
+            Assert(Equals(viewMode.Content, "列表"), "切回列表后按钮应标出当前视图“列表”");
+        }
+        finally
+        {
+            Close(window);
+        }
+    }
+
+    private static void TestTodoCollapseFoldsToTitleBar()
+    {
+        var temp = Path.Combine(Path.GetTempPath(), $"BingLan-ui-{Guid.NewGuid():N}");
+        var state = new AppState
+        {
+            TodoWidgets = [new TodoWidgetState
+            {
+                Placement = new WindowPlacement { Left = 120, Top = 120, Width = 286, Height = 336 }
+            }],
+            FileBoxes = []
+        };
+        var window = new TodoWidgetWindow(state.TodoWidgets[0]);
+        ShowAndPump(window);
+        try
+        {
+            window.Height = 336;
+            Pump();
+            Require<Button>(window, "CollapseButton").RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            Pump();
+            Assert(Near(window.ActualHeight, 72), "收起后卡片应只剩标题条高度");
+            // 收起隐藏的是正文的整层 Grid，所以断言要考虑祖先的 IsVisible。
+            Assert(!Require<ScrollViewer>(window, "ListHost").IsVisible, "收起后正文列表应隐藏");
+            Assert(Require<Button>(window, "ViewModeButton").Visibility == Visibility.Collapsed, "收起后视图切换按钮应隐藏");
+            Assert(Require<Button>(window, "AddTodoButton").Visibility == Visibility.Collapsed, "收起后新增按钮应隐藏");
+            Assert(state.TodoWidgets[0].IsCollapsed, "收起状态应写入待办状态");
+            Assert(Near(state.TodoWidgets[0].ExpandedHeight, 336), "收起时应记住展开高度");
+            window.CaptureState();
+            new LocalStateStore(temp).Save(state);
+        }
+        finally
+        {
+            Close(window);
+        }
+
+        var loaded = new LocalStateStore(temp).Load().TodoWidgets.Single();
+        Assert(loaded.IsCollapsed && Near(loaded.ExpandedHeight, 336), "折叠状态与展开高度应持久化");
+        var restored = new TodoWidgetWindow(loaded);
+        ShowAndPump(restored);
+        try
+        {
+            Assert(Near(restored.ActualHeight, 72), "重启后收起的卡片应以标题条打开");
+            Require<Button>(restored, "CollapseButton").RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            Pump();
+            Assert(Near(restored.ActualHeight, 336), "展开后应回到记住的展开高度");
+            Assert(Require<ScrollViewer>(restored, "ListHost").IsVisible, "展开后正文应恢复显示");
+            Assert(Require<Button>(restored, "ViewModeButton").Visibility == Visibility.Visible, "展开后视图切换按钮应恢复");
+        }
+        finally
+        {
+            Close(restored);
+        }
+    }
+
+    private static void TestTodoViewSwitchStaysInWorkArea()
+    {
+        var state = new TodoWidgetState();
+        var window = new TodoWidgetWindow(state);
+        ShowAndPump(window);
+        try
+        {
+            // 把卡片贴着主显示器工作区右下角放下，模拟停在屏幕边缘的布局，
+            // 再切到更大的周历：卡片必须完整留在工作区内，不能挂出屏幕。
+            window.Left = SystemParameters.WorkArea.Right - window.ActualWidth;
+            window.Top = SystemParameters.WorkArea.Bottom - window.ActualHeight;
+            Pump();
+            Require<Button>(window, "ViewModeButton").RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            Pump();
+            Pump();
+
+            var handle = new WindowInteropHelper(window).Handle;
+            Assert(GetWindowRect(handle, out var rect), "应能读取卡片位置");
+            var primary = MonitorCatalog.GetAll().First(monitor => monitor.IsPrimary);
+            Assert(
+                rect.Left >= primary.WorkingArea.Left && rect.Right <= primary.WorkingArea.Right + 2
+                && rect.Top >= primary.WorkingArea.Top && rect.Bottom <= primary.WorkingArea.Bottom + 2,
+                $"切到周历后卡片应完整留在主工作区内：({rect.Left},{rect.Top})-({rect.Right},{rect.Bottom})，"
+                + $"工作区 ({primary.WorkingArea.Left},{primary.WorkingArea.Top})-({primary.WorkingArea.Right},{primary.WorkingArea.Bottom})");
+            Assert(window.ActualWidth >= 520, "周历视图应保持可读的最小宽度");
         }
         finally
         {

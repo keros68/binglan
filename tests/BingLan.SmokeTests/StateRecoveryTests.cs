@@ -59,6 +59,52 @@ internal static class StateRecoveryTests
         Check(!ThemeArchive.IsValidPng(huge, ThemeArchive.MaximumIconBytes), "像素尺寸过大的 PNG 应被拒绝");
     }
 
+    internal static void TestTodoCollapseStateMigratesAndPersists()
+    {
+        var temp = Path.Combine(Path.GetTempPath(), $"BingLan-todo-collapse-{Guid.NewGuid():N}");
+        try
+        {
+            Directory.CreateDirectory(temp);
+            var store = new LocalStateStore(temp);
+            // v34 文件没有折叠字段：迁移后应保持展开，而不是误收起。
+            File.WriteAllText(
+                store.StatePath,
+                """
+                {"SchemaVersion":34,"TodoWidgets":[{"Title":"官方待办","WeeklyView":true,"WeeklyWeekCount":2,
+                "Items":[{"Id":"00000000-0000-0000-0000-000000000001","Text":"跨版本条目","Date":"2026-10-28T00:00:00"}]}]}
+                """);
+            var state = store.Load();
+            var migrated = state.TodoWidgets.Single();
+            Check(state.SchemaVersion == AppState.CurrentSchemaVersion
+                && !migrated.IsCollapsed
+                && migrated.ExpandedHeight == 0
+                && migrated.WeeklyView
+                && migrated.WeeklyWeekCount == 2
+                && migrated.Items.Single().Text == "跨版本条目",
+                "v34 待办迁移到当前版本后应保持展开并保留周历与条目");
+
+            // 折叠状态与展开高度保存后应原样读回；手工改坏的高度回到 0。
+            migrated.IsCollapsed = true;
+            migrated.ExpandedHeight = 336;
+            store.Save(state);
+            var reloaded = store.Load().TodoWidgets.Single();
+            Check(reloaded.IsCollapsed && reloaded.ExpandedHeight == 336,
+                "待办折叠状态与展开高度应随状态文件持久化");
+            var corrupted = store.Load();
+            corrupted.TodoWidgets.Single().ExpandedHeight = -40;
+            store.Save(corrupted);
+            Check(store.Load().TodoWidgets.Single().ExpandedHeight == 0,
+                "负的展开高度应被归一化为 0");
+        }
+        finally
+        {
+            if (Directory.Exists(temp))
+            {
+                Directory.Delete(temp, true);
+            }
+        }
+    }
+
     internal static void TestQuickPlaceRules()
     {
         var defaults = QuickPlaceRules.Normalize(null);

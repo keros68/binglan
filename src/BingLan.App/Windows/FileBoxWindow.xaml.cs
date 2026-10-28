@@ -131,6 +131,9 @@ public partial class FileBoxWindow : WidgetWindowBase
             MaxHeight = double.PositiveInfinity;
             MinHeight = DefaultMinHeight;
             Height = Math.Max(DefaultMinHeight, State.ExpandedHeight > 0 ? State.ExpandedHeight : 306d);
+            // 展开向下长高，等原生矩形反映新尺寸后把卡片整体收回屏幕内。
+            Dispatcher.BeginInvoke(
+                System.Windows.Threading.DispatcherPriority.Loaded, EnsureFullyOnScreen);
         }
         CollapseButton.Content = collapsed ? "" : "";
         CollapseButton.ToolTip = collapsed ? "展开分组盒" : "折叠成标题条";

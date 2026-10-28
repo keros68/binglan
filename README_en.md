@@ -39,7 +39,7 @@ The interface is in Simplified Chinese.
 
 ## Get started
 
-Stable version: [v0.2.43](https://github.com/keros68/binglan/releases/tag/v0.2.43) · [Installer](https://github.com/keros68/binglan/releases/download/v0.2.43/BingLan-Setup-0.2.43.exe) · [Portable](https://github.com/keros68/binglan/releases/download/v0.2.43/BingLan-0.2.43-portable.zip). A standalone [compatibility tool](https://github.com/keros68/binglan/releases/download/v0.2.43/BingLan-0.2.43-tray-preview.zip) is also available; see the [guide (Chinese)](docs/TRAY-PREVIEW.md).
+Stable version: [v0.2.44](https://github.com/keros68/binglan/releases/tag/v0.2.44) · [Installer](https://github.com/keros68/binglan/releases/download/v0.2.44/BingLan-Setup-0.2.44.exe) · [Portable](https://github.com/keros68/binglan/releases/download/v0.2.44/BingLan-0.2.44-portable.zip). A standalone [compatibility tool](https://github.com/keros68/binglan/releases/download/v0.2.44/BingLan-0.2.44-tray-preview.zip) is also available; see the [guide (Chinese)](docs/TRAY-PREVIEW.md).
 
 1. Open [Releases](https://github.com/keros68/binglan/releases/latest) and download `BingLan-Setup-*.exe` (installer) or `BingLan-*-portable.zip` (portable).
 2. Installer: run it — it installs for the current user and needs no administrator rights. Portable: unzip anywhere and run `BingLan.exe` inside. Both include the .NET runtime and are not code-signed yet, so Windows asks for confirmation on first run.
@@ -62,7 +62,7 @@ Requires the .NET 10 SDK and PowerShell 7. Building the installer also needs Inn
 ```powershell
 dotnet build .\BingLan.slnx -c Release
 dotnet run --project .\tests\BingLan.SmokeTests\BingLan.SmokeTests.csproj -c Release
-pwsh -NoProfile -File .\installer\build.ps1 -Version 0.2.43
+pwsh -NoProfile -File .\installer\build.ps1 -Version 0.2.44
 ```
 
 Full test commands, the technical design, and the current implementation are in the [development notes (Chinese)](docs/DEVELOPMENT.md); installer details are in [docs/INSTALLER.md](docs/INSTALLER.md).

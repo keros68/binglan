@@ -80,6 +80,7 @@ Run("备份列表摘要", BackupSummaryTests.TestBackupIsDescribed);
 Run("备份可以删除且目录外被拒绝", BackupSummaryTests.TestBackupCanBeDeleted);
 Run("新建卡片标题不重名", BackupSummaryTests.TestNewCardTitlesAreUnique);
 Run("无法读取的状态文件以默认状态启动并留存", StateRecoveryTests.TestUnreadableStateStartsFromDefaults);
+Run("待办折叠状态迁移与持久化", StateRecoveryTests.TestTodoCollapseStateMigratesAndPersists);
 Run("像素尺寸过大的 PNG 被拒绝", StateRecoveryTests.TestHugePngIsRejected);
 Run("读取 Rainmeter 皮肤的字体、颜色和底板", RainmeterLookTests.TestPerformanceSkinLook);
 Run("快捷入口列表规则", StateRecoveryTests.TestQuickPlaceRules);

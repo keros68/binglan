@@ -1187,6 +1187,62 @@ public class WidgetWindowBase : Window
         }
     }
 
+    /// <summary>
+    /// Keeps the card fully inside the work area after the app itself grew it —
+    /// switching a card's view or unfolding a folded card extends the window to the
+    /// right and bottom, and a card parked near a screen edge would hang past it.
+    /// Only moves the card; unlike <see cref="WindowScreenRecovery.EnsureOnScreen"/>
+    /// it does not accept a partly visible card. Callers dispatch this after layout,
+    /// when the native rectangle reflects the new size.
+    /// </summary>
+    internal void EnsureFullyOnScreen()
+    {
+        if (!IsLoaded ||
+            _source is null ||
+            _source.IsDisposed ||
+            WindowState != WindowState.Normal ||
+            !DockNativeMethods.GetWindowRect(_source.Handle, out var native))
+        {
+            return;
+        }
+
+        var monitors = MonitorCatalog.GetAll();
+        if (monitors.Count == 0)
+        {
+            return;
+        }
+
+        var current = new BingLan.Core.Dock.PixelRect(native.Left, native.Top, native.Right, native.Bottom);
+        if (!current.HasArea)
+        {
+            return;
+        }
+
+        var centerX = (current.Left + current.Right) / 2;
+        var centerY = (current.Top + current.Bottom) / 2;
+        var monitor = monitors.FirstOrDefault(candidate =>
+                centerX >= candidate.Bounds.Left && centerX < candidate.Bounds.Right
+                && centerY >= candidate.Bounds.Top && centerY < candidate.Bounds.Bottom)
+            ?? monitors.FirstOrDefault(candidate => candidate.IsPrimary)
+            ?? monitors[0];
+        var work = monitor.WorkingArea;
+        var left = Math.Clamp(current.Left, work.Left, Math.Max(work.Left, work.Right - current.Width));
+        var top = Math.Clamp(current.Top, work.Top, Math.Max(work.Top, work.Bottom - current.Height));
+        if (left == current.Left && top == current.Top)
+        {
+            return;
+        }
+
+        NativeMethods.SetWindowPos(
+            _source.Handle,
+            0,
+            left,
+            top,
+            0,
+            0,
+            NativeMethods.SwpNoSize | NativeMethods.SwpNoZOrder | NativeMethods.SwpNoActivate);
+    }
+
     // Nothing but the dragged card moves during a drag, so the monitors, the other cards
     // and the taskbar edges are read once when it starts instead of on every mouse step.
     private void BeginMoveSession()

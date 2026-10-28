@@ -536,6 +536,11 @@ public sealed class LocalStateStore
             // Missing calendar fields use model defaults; existing dates and timestamps stay intact.
             state.SchemaVersion = 34;
         }
+        if (state.SchemaVersion < 35)
+        {
+            // The todo card folds up to its title bar; existing cards stay unfolded at their height.
+            state.SchemaVersion = 35;
+        }
         state.Updates ??= new UpdateState();
         state.QuickPlaces = QuickPlaceRules.Normalize(state.QuickPlaces);
         state.DismissedDesktopCategories = (state.DismissedDesktopCategories ?? [])
@@ -557,6 +562,10 @@ public sealed class LocalStateStore
             if (todo.WeeklyWeekCount is < 1 or > 5)
             {
                 todo.WeeklyWeekCount = 4;
+            }
+            if (todo.ExpandedHeight < 0)
+            {
+                todo.ExpandedHeight = 0;
             }
         }
         foreach (var box in state.FileBoxes)

@@ -106,6 +106,13 @@ public sealed class TodoWidgetState
     /// <summary>How many weeks (1-5) the weekly calendar window spans; the
     /// renderer and the store both clamp, so hand-edited files stay sane.</summary>
     public int WeeklyWeekCount { get; set; } = 4;
+
+    /// <summary>Whether the card is folded up to its title bar.</summary>
+    public bool IsCollapsed { get; set; }
+
+    /// <summary>The height to unfold to, in DIPs; 0 while it has never been folded.</summary>
+    public double ExpandedHeight { get; set; }
+
     public bool IsLocked { get; set; }
     public WidgetAppearanceState Appearance { get; set; } = new();
     public double CornerRadius
