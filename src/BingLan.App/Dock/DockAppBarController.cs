@@ -343,6 +343,8 @@ internal sealed class DockAppBarController : IDisposable
 
     private void NotifyAppBar(uint message, nint parameter)
     {
+        // A synchronous call into Explorer; a stall right after this mark waited on it.
+        UiDiagnostics.Hit(UiActivity.AppBarNotifyExplorer);
         var data = CreateData();
         data.Parameter = parameter;
         DockNativeMethods.SHAppBarMessage(message, ref data);

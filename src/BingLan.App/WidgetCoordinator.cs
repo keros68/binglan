@@ -626,6 +626,11 @@ public sealed class WidgetCoordinator : IDisposable
             () =>
             {
                 ApplyDisplayRecovery();
+                // A restored spot can sit under the taskbar or dock of this arrangement.
+                foreach (var window in _windows)
+                {
+                    window.ApplyReservedEdges(WindowScreenRecovery.ReservedEdgeTarget);
+                }
                 // Saving captures the cards again, now remembered for this arrangement.
                 WindowScreenRecovery.SettleLayout();
                 ScheduleSave();
@@ -2468,24 +2473,9 @@ public sealed class WidgetCoordinator : IDisposable
             }
         }
 
-        public void OpenSearchTarget(TopBarSearchCandidate candidate)
-        {
-            _ = Task.Run(() =>
-            {
-                try
-                {
-                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(candidate.Path)
-                    {
-                        UseShellExecute = true
-                    })?.Dispose();
-                }
-                catch (Exception exception) when (exception is System.ComponentModel.Win32Exception
-                    or InvalidOperationException)
-                {
-                    // A broken or removed target fails quietly; the search keeps working.
-                }
-            });
-        }
+        // A broken or removed target fails quietly; the search keeps working.
+        public void OpenSearchTarget(TopBarSearchCandidate candidate) =>
+            _ = ShellLauncher.StartAsync(new ProcessStartInfo(candidate.Path) { UseShellExecute = true });
 
         public void OpenSearchTargetLocation(TopBarSearchCandidate candidate) =>
             _ = Task.Run(() => WindowCommandService.OpenFileLocation(candidate.Path));

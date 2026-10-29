@@ -1070,7 +1070,9 @@ internal static class Program
                 string.Equals(pin.WorkingDirectory, directory, StringComparison.OrdinalIgnoreCase),
                 $"固定项丢失了快捷方式的工作目录，实际：{pin.WorkingDirectory}");
 
-            var result = WindowCommandService.Launch(pin);
+            var launch = WindowCommandService.LaunchAsync(pin);
+            PumpUntil(() => launch.IsCompleted, "固定项启动应在后台完成");
+            var result = launch.Result;
             Assert(result.Succeeded, $"固定项启动失败：{result.Message}");
             Assert(WaitForFileContent(marker, out var content), "被固定的程序没有运行（未写出结果文件）");
             Assert(
@@ -3649,8 +3651,12 @@ internal static class Program
             Assert(pushed.Top == original.Top - 100, "被占用边缘覆盖的卡片应让开");
             Assert(changes == 0, "让开边缘不应当作用户移动而保存");
             var duringDisplacement = new WindowPlacement { Left = -1, Top = -1 };
+            WindowScreenRecovery.SettleLayout();
             note.CopyPlacementTo(duringDisplacement);
             Assert(duringDisplacement.Left == -1 && duringDisplacement.Top == -1, "被推开期间不应写入推开后的位置");
+            var remembered = duringDisplacement.DisplayLayouts.SingleOrDefault(entry => entry.Layout == WindowScreenRecovery.CurrentLayout());
+            Assert(remembered is not null && remembered.Top == original.Top && remembered.Left == original.Left,
+                "被推开期间仍应按当前显示器排列记住用户放的位置（多屏切换后才能回到原处）");
 
             // A further change while the edge is still reserved is measured from the user's spot.
             note.ApplyReservedEdges(rect => rect with { Top = rect.Top - 100, Bottom = rect.Bottom - 100 });
@@ -3666,6 +3672,19 @@ internal static class Program
             var afterReturn = new WindowPlacement();
             note.CopyPlacementTo(afterReturn);
             Assert(Math.Abs(afterReturn.Top - saved.Top) < 0.5, "回到原位后保存位置应与原位一致");
+
+            // Another arrangement of monitors: the old pixel spot is dropped instead of
+            // pulling the card back to coordinates of the previous arrangement.
+            note.ApplyReservedEdges(rect => rect with { Top = rect.Top - 100, Bottom = rect.Bottom - 100 });
+            Pump();
+            note.ApplyReservedEdges(rect => rect, layout: "另一种显示器排列");
+            Pump();
+            GetWindowRect(handle, out var otherLayout);
+            Assert(otherLayout.Top == original.Top - 100, "显示器排列变化后不应按旧排列的坐标移动卡片");
+            note.Top += 100 * 96d / VisualTreeHelper.GetDpi(note).PixelsPerInchY;
+            Pump();
+            GetWindowRect(handle, out var reset);
+            Assert(reset.Top == original.Top, "测试复位：卡片应回到原位");
 
             // Moving the card while it is pushed aside makes the new spot its own.
             note.ApplyReservedEdges(rect => rect with { Top = rect.Top - 100, Bottom = rect.Bottom - 100 });

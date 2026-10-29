@@ -37,7 +37,11 @@ internal static class WindowScreenRecovery
         _layoutChangeRaised = false;
     }
 
-    internal static void RememberLayout(Window window, WindowPlacement placement)
+    /// <summary>
+    /// Remembers the card's spot for the arrangement now in use: its current bounds, or
+    /// <paramref name="bounds"/> when the card sits pushed aside from where the user put it.
+    /// </summary>
+    internal static void RememberLayout(Window window, WindowPlacement placement, PixelRect? bounds = null)
     {
         if (_settledLayout is null)
         {
@@ -52,6 +56,12 @@ internal static class WindowScreenRecovery
                 _layoutChangeRaised = true;
                 LayoutChanged?.Invoke();
             }
+            return;
+        }
+
+        if (bounds is { } spot)
+        {
+            DisplayLayoutRules.Remember(placement, layout, spot);
             return;
         }
 

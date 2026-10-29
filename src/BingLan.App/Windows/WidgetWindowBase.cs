@@ -207,6 +207,8 @@ public class WidgetWindowBase : Window
     // program's docked toolbar) pushed it aside, in pixels. Saved positions keep this
     // spot, and the card returns to it once the edge is free again.
     private BingLan.Core.Dock.PixelRect? _displacedFrom;
+    // The arrangement of monitors the spot above belongs to; another arrangement drops it.
+    private string? _displacedLayout;
     private bool _isApplyingReservedEdges;
 
     public WidgetWindowBase()
@@ -449,8 +451,14 @@ public class WidgetWindowBase : Window
 
     public void CopyPlacementTo(WindowPlacement placement)
     {
-        if (WindowState != WindowState.Normal || _displacedFrom is not null)
+        if (WindowState != WindowState.Normal)
         {
+            return;
+        }
+        if (_displacedFrom is { } spot)
+        {
+            // The saved position stays the user's spot; the arrangement still learns it.
+            WindowScreenRecovery.RememberLayout(this, placement, spot);
             return;
         }
         placement.Left = Left;
@@ -1128,8 +1136,17 @@ public class WidgetWindowBase : Window
     /// measured from where the user put it: a card pushed aside goes back once the
     /// edge is free. <paramref name="targetFor"/> maps that spot to where it may sit now.
     /// </summary>
-    internal void ApplyReservedEdges(Func<BingLan.Core.Dock.PixelRect, BingLan.Core.Dock.PixelRect?> targetFor)
+    internal void ApplyReservedEdges(
+        Func<BingLan.Core.Dock.PixelRect, BingLan.Core.Dock.PixelRect?> targetFor,
+        string? layout = null)
     {
+        layout ??= WindowScreenRecovery.CurrentLayout();
+        if (_displacedFrom is not null && _displacedLayout != layout)
+        {
+            // Pixel spots of another arrangement mean nothing here.
+            _displacedFrom = null;
+        }
+
         var handle = new WindowInteropHelper(this).Handle;
         if (handle == 0 || !IsVisible || WindowState != WindowState.Normal
             || !DockNativeMethods.GetWindowRect(handle, out var native))
@@ -1164,6 +1181,7 @@ public class WidgetWindowBase : Window
             }
         }
         _displacedFrom = target == wanted ? null : wanted;
+        _displacedLayout = _displacedFrom is null ? null : layout;
     }
 
     private void EnsureTaskbarSafeBounds()

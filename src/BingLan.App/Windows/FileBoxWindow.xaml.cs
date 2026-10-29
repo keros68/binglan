@@ -6,6 +6,7 @@ using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using BingLan.App.Interop;
+using BingLan.App.Services;
 using BingLan.Core.Models;
 using BingLan.Core.Services;
 using Forms = System.Windows.Forms;
@@ -569,16 +570,11 @@ public partial class FileBoxWindow : WidgetWindowBase
 
     // Opening can fail (no app for the file type, the elevation prompt declined); the card
     // says so instead of the app closing.
-    private void StartShell(ProcessStartInfo start)
+    private async void StartShell(ProcessStartInfo start)
     {
-        try
+        if (await ShellLauncher.StartAsync(start) is { } failure)
         {
-            Process.Start(start)?.Dispose();
-        }
-        catch (Exception exception) when (exception is System.ComponentModel.Win32Exception
-            or InvalidOperationException)
-        {
-            StatusText.Text = $"无法打开：{exception.Message}";
+            StatusText.Text = $"无法打开：{failure.Message}";
         }
     }
 

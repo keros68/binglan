@@ -5,6 +5,7 @@ using System.Windows.Controls;
 using System.Windows.Data;
 using System.Windows.Media;
 using BingLan.App.Interop;
+using BingLan.App.Services;
 using BingLan.Core.Models;
 using Binding = System.Windows.Data.Binding;
 using Brushes = System.Windows.Media.Brushes;
@@ -107,28 +108,21 @@ public sealed class QuickPlacesWindow : WidgetWindowBase
     }
 
     /// <summary>
-    /// Opens a target: "known:" folders are looked up now, folders and "shell:" places open
-    /// in File Explorer, programs and files start with their own app. Opening can fail (a
-    /// folder that no longer exists); the strip stays as it is.
+    /// Opens a target: "known:" folders are looked up now; folders, "shell:" places,
+    /// programs and files open with whatever Windows uses for them, so a replacement
+    /// file manager opens folders directly. Starts off the UI thread; opening can fail
+    /// (a folder that no longer exists) and the strip stays as it is.
     /// </summary>
-    internal static void Open(string target)
+    internal static async void Open(string target)
     {
         var place = Resolve(target);
         if (string.IsNullOrEmpty(place))
         {
             return;
         }
-        try
+        if (await ShellLauncher.StartAsync(new ProcessStartInfo(place) { UseShellExecute = true }) is { } failure)
         {
-            var start = place.StartsWith("shell:", StringComparison.OrdinalIgnoreCase) || System.IO.Directory.Exists(place)
-                ? new ProcessStartInfo("explorer.exe", $"\"{place}\"") { UseShellExecute = true }
-                : new ProcessStartInfo(place) { UseShellExecute = true };
-            Process.Start(start)?.Dispose();
-        }
-        catch (Exception exception) when (exception is System.ComponentModel.Win32Exception
-            or InvalidOperationException)
-        {
-            Debug.WriteLine($"无法打开 {place}：{exception.Message}");
+            Debug.WriteLine($"无法打开 {place}：{failure.Message}");
         }
     }
 

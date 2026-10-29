@@ -667,11 +667,11 @@ public partial class IceBlueDockWindow : Window
         }
     }
 
-    private void LaunchNewInstance(DockItem item, string name)
+    private async void LaunchNewInstance(DockItem item, string name)
     {
         var pin = item.Pinned ?? DockAppResolver.CreatePin(item, name);
         Report(pin is not null
-            ? WindowCommandService.Launch(pin)
+            ? await WindowCommandService.LaunchAsync(pin)
             : new WindowCommandResult(false, $"{name} 不支持从 Dock 启动新实例"));
     }
 
@@ -734,7 +734,7 @@ public partial class IceBlueDockWindow : Window
             var launchPin = item.Pinned ?? DockAppResolver.CreatePin(item, name);
             if (launchPin is not null)
             {
-                menu.Items.Add(MenuItem("启动新实例", () => Report(WindowCommandService.Launch(launchPin))));
+                menu.Items.Add(MenuItem("启动新实例", async () => Report(await WindowCommandService.LaunchAsync(launchPin))));
             }
             menu.Items.Add(MenuItem(
                 item.HasMultipleWindows ? $"关闭全部 {item.WindowCount} 个窗口" : "关闭窗口",

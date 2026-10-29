@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 using BingLan.App.Interop;
+using BingLan.App.Services;
 using BingLan.Core.Dock;
 using BingLan.Core.Models;
 using BingLan.Core.TopBar;
@@ -46,11 +47,11 @@ internal static class WindowCommandService
     // in issue #12 - its tray ghost window showed up empty, and the real Qt main
     // window ignores input when force-shown). Launching the executable lets the app's
     // own single-instance logic raise its window properly.
-    internal static WindowCommandResult Launch(DockPinnedApp app)
+    internal static async Task<WindowCommandResult> LaunchAsync(DockPinnedApp app)
     {
         if (app.AppUserModelId is not null)
         {
-            var result = Start(DockAppResolver.AppsFolderPath(app.AppUserModelId), app.DisplayName);
+            var result = await StartAsync(DockAppResolver.AppsFolderPath(app.AppUserModelId), app.DisplayName);
             if (result.Succeeded || app.ExecutablePath is null)
             {
                 return result;
@@ -67,7 +68,7 @@ internal static class WindowCommandService
         var workingDirectory = app.WorkingDirectory is { } folder && Directory.Exists(folder)
             ? folder
             : Path.GetDirectoryName(app.ExecutablePath);
-        return Start(app.ExecutablePath, app.DisplayName, app.Arguments, workingDirectory);
+        return await StartAsync(app.ExecutablePath, app.DisplayName, app.Arguments, workingDirectory);
     }
 
     // WeChat closed to the tray can be raised through its own global "show window"
@@ -79,13 +80,13 @@ internal static class WindowCommandService
     {
         if (TrayAppRevealRules.HotkeyFor(app.ExecutablePath) is not { } hotkey)
         {
-            return Launch(app);
+            return await LaunchAsync(app);
         }
 
         var processIds = RunningProcessIds(app.ExecutablePath!);
         if (processIds.Count == 0)
         {
-            return Launch(app);
+            return await LaunchAsync(app);
         }
 
         // The window is already back but the dock has not refreshed yet (a second click
@@ -102,7 +103,7 @@ internal static class WindowCommandService
         if (!IsHotkeyRegistered(hotkey)
             || !ShellSurfaceNativeMethods.SendChord(ModifierKeysOf(hotkey), (ushort)hotkey.VirtualKey))
         {
-            return Launch(app);
+            return await LaunchAsync(app);
         }
 
         var deadline = Environment.TickCount64 + (long)TrayAppRevealRules.RevealTimeout.TotalMilliseconds;
@@ -115,7 +116,7 @@ internal static class WindowCommandService
             }
         }
 
-        return Launch(app);
+        return await LaunchAsync(app);
     }
 
     internal static WindowCommandResult Close(IEnumerable<TrackedWindow> windows)
@@ -245,25 +246,20 @@ internal static class WindowCommandService
     private const ushort VkMenu = 0x12;
     private const ushort VkLeftWindows = 0x5B;
 
-    private static WindowCommandResult Start(
+    private static async Task<WindowCommandResult> StartAsync(
         string target,
         string displayName,
         string? arguments = null,
         string? workingDirectory = null)
     {
-        try
+        var failure = await ShellLauncher.StartAsync(new ProcessStartInfo(target)
         {
-            Process.Start(new ProcessStartInfo(target)
-            {
-                UseShellExecute = true,
-                Arguments = arguments ?? string.Empty,
-                WorkingDirectory = workingDirectory ?? string.Empty
-            })?.Dispose();
-            return new WindowCommandResult(true, $"已启动 {displayName}");
-        }
-        catch (Exception exception) when (exception is Win32Exception or InvalidOperationException)
-        {
-            return new WindowCommandResult(false, $"无法启动 {displayName}：{exception.Message}");
-        }
+            UseShellExecute = true,
+            Arguments = arguments ?? string.Empty,
+            WorkingDirectory = workingDirectory ?? string.Empty
+        });
+        return failure is null
+            ? new WindowCommandResult(true, $"已启动 {displayName}")
+            : new WindowCommandResult(false, $"无法启动 {displayName}：{failure.Message}");
     }
 }

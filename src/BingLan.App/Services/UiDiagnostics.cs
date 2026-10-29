@@ -20,7 +20,8 @@ internal enum UiActivity
     GlassSync,
     GlassMove,
     TaskbarEvent,
-    DesktopEvent
+    DesktopEvent,
+    AppBarNotifyExplorer
 }
 
 /// <summary>
@@ -41,7 +42,7 @@ internal static class UiDiagnostics
     private static readonly string[] Names =
     [
         "窗口事件", "窗口状态事件", "Dock 刷新", "前台判定", "AppBar 位置通知", "AppBar 提交位置",
-        "玻璃同步", "玻璃窗口移动", "任务栏事件", "桌面事件"
+        "玻璃同步", "玻璃窗口移动", "任务栏事件", "桌面事件", "Dock 通知资源管理器"
     ];
 
     private static readonly long[] Counts = new long[Names.Length];
