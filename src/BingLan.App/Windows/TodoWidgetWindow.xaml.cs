@@ -434,7 +434,19 @@ public partial class TodoWidgetWindow : WidgetWindowBase
 
     private void ToggleViewMode_Click(object sender, RoutedEventArgs e)
     {
+        // 列表和周历各记一份尺寸：周历会把卡片撑大，切回列表时回到列表原来的大小，
+        // 再切到周历时回到周历上次的大小（仍不小于周历最小值）。
+        var (width, height) = (State.OtherViewWidth, State.OtherViewHeight);
+        State.OtherViewWidth = Width;
+        State.OtherViewHeight = Height;
         State.WeeklyView = !State.WeeklyView;
+        if (width > 0 && height > 0)
+        {
+            MinWidth = State.WeeklyView ? WeeklyMinimumWidth : ListMinimumWidth;
+            MinHeight = State.WeeklyView ? WeeklyMinimumHeight : ListMinimumHeight;
+            Width = width;
+            Height = height;
+        }
         ApplyViewMode();
         NotifyStateChanged();
     }

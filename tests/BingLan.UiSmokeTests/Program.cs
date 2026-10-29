@@ -173,6 +173,7 @@ internal static class Program
         Run("今日列表与周历按日期映射", TestTodoTodayCalendarMapping, failures);
         Run("待办切换按钮标出当前视图", TestTodoViewButtonShowsCurrentView, failures);
         Run("待办卡片收起成标题条并记住展开高度", TestTodoCollapseFoldsToTitleBar, failures);
+        Run("待办切到周历再切回列表恢复原尺寸", TestTodoViewToggleRestoresSize, failures);
         Run("贴屏卡片切周历后完整留在工作区", TestTodoViewSwitchStaysInWorkArea, failures);
         Run("单实例门禁占用与释放", TestSingleInstanceGate, failures);
         Run("托盘双击打开并恢复设置窗口", TestTrayDoubleClick, failures);
@@ -1470,6 +1471,39 @@ internal static class Program
             viewMode.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
             Pump();
             Assert(Equals(viewMode.Content, "列表"), "切回列表后按钮应标出当前视图“列表”");
+        }
+        finally
+        {
+            Close(window);
+        }
+    }
+
+    private static void TestTodoViewToggleRestoresSize()
+    {
+        var state = new TodoWidgetState
+        {
+            Placement = new WindowPlacement { Left = 120, Top = 120, Width = 286, Height = 336 }
+        };
+        var window = new TodoWidgetWindow(state);
+        ShowAndPump(window);
+        try
+        {
+            window.Width = 286;
+            window.Height = 336;
+            Pump();
+            var toggle = Require<Button>(window, "ViewModeButton");
+            toggle.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            Pump();
+            Assert(window.ActualWidth >= 520 - 0.5, "切到周历应撑到周历最小宽度");
+            window.Width = 600;
+            window.Height = 520;
+            Pump();
+            toggle.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            Pump();
+            Assert(Near(window.ActualWidth, 286) && Near(window.ActualHeight, 336), "切回列表应回到列表原来的尺寸");
+            toggle.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            Pump();
+            Assert(Near(window.ActualWidth, 600) && Near(window.ActualHeight, 520), "再切到周历应回到周历上次的尺寸");
         }
         finally
         {

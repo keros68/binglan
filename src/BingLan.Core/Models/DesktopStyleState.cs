@@ -139,18 +139,51 @@ public static class DesktopStyleRules
     /// and rows inside a card get a faint surface that the clear mode removes, so stacked
     /// translucent layers never turn the card milky. Text follows the material (dark on
     /// light glass, white on dark glass and on a clear card) unless white or dark was chosen.
+    /// Light text chosen on light glass gets a faint dark row surface instead of the milky
+    /// one, so the text does not sit on white.
     /// </summary>
     public static GlassAppearance Appearance(DesktopStyleState style)
     {
         ArgumentNullException.ThrowIfNull(style);
         var material = Material(style);
-        return style.TextInk switch
+        var look = style.TextInk switch
         {
             TextInk.White => material with { TextColor = "#FFFFFF" },
             TextInk.Dark => material with { TextColor = WidgetAppearanceRules.DefaultTextColor },
             TextInk.Custom => material with { TextColor = style.CustomTextColor },
             _ => material
         };
+        return LightInkOnLightGlass(style, look) ? look with { ItemSurfaceColor = "#401B2635" } : look;
+    }
+
+    /// <summary>
+    /// The fill of small surfaces inside a card (buttons, calendar day cells): faint white,
+    /// or faint dark when light text was chosen on light glass.
+    /// </summary>
+    public static string SubtleControlColor(DesktopStyleState style)
+    {
+        ArgumentNullException.ThrowIfNull(style);
+        return LightInkOnLightGlass(style, Appearance(style)) ? "#331B2635" : "#35FFFFFF";
+    }
+
+    private static bool LightInkOnLightGlass(DesktopStyleState style, GlassAppearance look) =>
+        style.Glass == GlassMode.Light && IsLight(look.TextColor);
+
+    private static bool IsLight(string rgb)
+    {
+        var hex = rgb.TrimStart('#');
+        if (hex.Length == 8)
+        {
+            hex = hex[2..];
+        }
+        if (hex.Length != 6 || !int.TryParse(hex, System.Globalization.NumberStyles.HexNumber, null, out var value))
+        {
+            return false;
+        }
+        var red = (value >> 16) & 0xFF;
+        var green = (value >> 8) & 0xFF;
+        var blue = value & 0xFF;
+        return (0.2126d * red + 0.7152d * green + 0.0722d * blue) / 255d > 0.6d;
     }
 
     private static GlassAppearance Material(DesktopStyleState style)

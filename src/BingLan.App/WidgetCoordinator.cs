@@ -1453,6 +1453,7 @@ public sealed class WidgetCoordinator : IDisposable
         }
         var resources = System.Windows.Application.Current.Resources;
         resources["WidgetItemSurfaceBrush"] = Brush(DesktopStyleRules.Appearance(_state.Style).ItemSurfaceColor);
+        resources["WidgetSubtleControlBrush"] = Brush(DesktopStyleRules.SubtleControlColor(_state.Style));
         var dock = DesktopStyleRules.Dock(_state.Style, _state.Dock);
         resources["DockSurfaceBrush"] = Brush(dock.Surface);
         resources["DockSurfaceBorderBrush"] = Brush(dock.Border);

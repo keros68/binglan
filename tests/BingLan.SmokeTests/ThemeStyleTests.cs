@@ -103,7 +103,12 @@ internal static class ThemeStyleTests
         style.Glass = GlassMode.Light;
         style.TextInk = TextInk.White;
         Check(DesktopStyleRules.Appearance(style).TextColor == "#FFFFFF", "文字颜色独立于外观：浅色玻璃也可用白字");
+        Check(DesktopStyleRules.Appearance(style).ItemSurfaceColor == "#401B2635"
+            && DesktopStyleRules.SubtleControlColor(style) == "#331B2635",
+            "浅色玻璃上选白字时，行和日期格改用淡深色底，白字不压在白底上");
         style.TextInk = TextInk.Auto;
+        Check(DesktopStyleRules.Appearance(style).ItemSurfaceColor == "#7AFFFFFF"
+            && DesktopStyleRules.SubtleControlColor(style) == "#35FFFFFF", "浅色玻璃深字保持原来的浅色行底");
         Check(DesktopStyleRules.Appearance(style).TextColor == WidgetAppearanceRules.DefaultTextColor
             && DesktopStyleRules.NakedTextColor(style) == "#FFFFFF",
             "跟随外观时浅色玻璃为深字，壁纸上的时间和问候仍为白字");

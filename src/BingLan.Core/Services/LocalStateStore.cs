@@ -567,6 +567,12 @@ public sealed class LocalStateStore
             {
                 todo.ExpandedHeight = 0;
             }
+            if (!double.IsFinite(todo.OtherViewWidth) || todo.OtherViewWidth < 0
+                || !double.IsFinite(todo.OtherViewHeight) || todo.OtherViewHeight < 0)
+            {
+                todo.OtherViewWidth = 0;
+                todo.OtherViewHeight = 0;
+            }
         }
         foreach (var box in state.FileBoxes)
         {

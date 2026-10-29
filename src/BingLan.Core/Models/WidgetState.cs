@@ -113,6 +113,16 @@ public sealed class TodoWidgetState
     /// <summary>The height to unfold to, in DIPs; 0 while it has never been folded.</summary>
     public double ExpandedHeight { get; set; }
 
+    /// <summary>
+    /// The size, in DIPs, the card had in the view that is not showing (the list while
+    /// the calendar shows, and the reverse), so toggling back returns to it. 0 while
+    /// that view has not been left yet.
+    /// </summary>
+    public double OtherViewWidth { get; set; }
+
+    /// <inheritdoc cref="OtherViewWidth"/>
+    public double OtherViewHeight { get; set; }
+
     public bool IsLocked { get; set; }
     public WidgetAppearanceState Appearance { get; set; } = new();
     public double CornerRadius
