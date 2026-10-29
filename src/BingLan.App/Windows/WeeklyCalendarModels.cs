@@ -14,9 +14,6 @@ public sealed class WeekRowView
 /// <summary>One day cell of the weekly view with the live entries placed on that day.</summary>
 public sealed class WeekCellView : INotifyPropertyChanged
 {
-    /// <summary>A shared blank placeholder that keeps the column grid aligned across month breaks.</summary>
-    public static readonly WeekCellView Filler = new() { IsFiller = true };
-
     private bool _isSelected;
     private bool _hideCompleted;
     private int _hiddenCount;
@@ -27,9 +24,6 @@ public sealed class WeekCellView : INotifyPropertyChanged
     public string LunarText { get; init; } = "";
     public bool IsToday { get; init; }
     public bool IsWeekend { get; init; }
-
-    /// <summary>True for the blank padding cells around a month fragment.</summary>
-    public bool IsFiller { get; init; }
 
     /// <summary>Whether completed entries are hidden from the cell preview and overflow count.</summary>
     public bool HideCompleted

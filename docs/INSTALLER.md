@@ -3,10 +3,10 @@
 ## 构建
 
 ```powershell
-pwsh -NoProfile -File .\installer\build.ps1 -Version 0.2.45
+pwsh -NoProfile -File .\installer\build.ps1 -Version 0.2.46
 ```
 
-输出 `installer\bin\BingLan-Setup-0.2.45.exe`（约 56.5 MB）和免安装包 `installer\bin\BingLan-0.2.45-portable.zip`。脚本先把应用发布为 win-x64 自包含程序（附带 .NET 运行时，只保留中文和英文资源），再用 Inno Setup 打包为按用户安装的安装程序，并把同一份发布输出压成免安装 zip。构建还需要 .NET 10 SDK、PowerShell 7、Visual Studio 2022 C++ x64 工具链和 Windows SDK；自有任务栏 DLL 随发布输出进入安装包，细节见 [任务栏 XAML 适配](TASKBAR-XAML.md)。需要 Inno Setup 6：`winget install JRSoftware.InnoSetup --scope user`。注意 winget 安装的 Inno Setup 不带简体中文语言文件（非官方翻译），脚本引用的 `Languages\ChineseSimplified.isl` 需从 [istrans 页面](https://jrsoftware.org/files/istrans/) 下载后放入 Inno Setup 安装目录的 `Languages\` 下。
+输出 `installer\bin\BingLan-Setup-0.2.46.exe`（约 56.5 MB）和免安装包 `installer\bin\BingLan-0.2.46-portable.zip`。脚本先把应用发布为 win-x64 自包含程序（附带 .NET 运行时，只保留中文和英文资源），再用 Inno Setup 打包为按用户安装的安装程序，并把同一份发布输出压成免安装 zip。构建还需要 .NET 10 SDK、PowerShell 7、Visual Studio 2022 C++ x64 工具链和 Windows SDK；自有任务栏 DLL 随发布输出进入安装包，细节见 [任务栏 XAML 适配](TASKBAR-XAML.md)。需要 Inno Setup 6：`winget install JRSoftware.InnoSetup --scope user`。注意 winget 安装的 Inno Setup 不带简体中文语言文件（非官方翻译），脚本引用的 `Languages\ChineseSimplified.isl` 需从 [istrans 页面](https://jrsoftware.org/files/istrans/) 下载后放入 Inno Setup 安装目录的 `Languages\` 下。
 
 ## 免安装包
 
@@ -64,6 +64,8 @@ zip 版内容与安装后的程序目录一致（程序文件、`使用说明.md
 本机覆盖安装退出码为 0，无需重启；安装前后个人配置哈希一致。在正常 Windows 桌面上下文启动后，透明模式的共享状态确认 1 个背景生效、错误码为 0，截图确认任务栏透出背景。最终设置除任务栏模式外与安装前逐项一致。新原生组件的卸载场景尚未执行。真机透明与恢复结果见 [任务栏验证](TASKBAR-QA.md)。
 
 ## 验证状态
+
+v0.2.46 在 Windows 11 Build 26300 下通过核心、便签、信息组件、Dock 与 WPF UI 五套测试；新增内部底色色调与浓度、未记录列表尺寸时切回默认大小、周历跨月不断行的回归检查，并离屏渲染 1 周周历（10月26日–11月1日）核对周日留在同一行、深浅两种内部底色。免安装包解压后确认文件版本 0.2.46.0。此轮未在真机桌面上核对设置页新控件，未重做覆盖安装、卸载、真实多显示器和混合 DPI 验证，也未在 Windows 10 真机上验证。
 
 v0.2.45 在 Windows 11 Build 26300 下通过核心、便签、信息组件、Dock 与 WPF UI 五套测试；新增待办列表与周历切换来回恢复各自尺寸、浅色玻璃配白字时行与日期格改用淡深色底的回归检查。免安装包解压后确认文件版本 0.2.45.0。此轮未在真机上目视核对新配色，未重做覆盖安装、卸载、真实多显示器和混合 DPI 验证，也未在 Windows 10 真机上验证。
 

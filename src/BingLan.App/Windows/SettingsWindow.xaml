@@ -297,6 +297,41 @@
                     <local:SettingsRow x:Name="GlassPalettePanel" Style="{StaticResource NestedSettingsRowStyle}" Header="配色">
                         <WrapPanel x:Name="GlassPaletteSwatches"/>
                     </local:SettingsRow>
+                    <local:SettingsRow x:Name="ItemSurfacePanel"
+                                       Style="{StaticResource NestedSettingsRowStyle}"
+                                       Header="内部底色"
+                                       Description="卡片里的行、按钮和日期格；浅色玻璃时可用">
+                        <StackPanel Orientation="Horizontal">
+                            <Border Style="{StaticResource SegmentHostStyle}">
+                                <StackPanel Orientation="Horizontal">
+                                    <RadioButton x:Name="ItemSurfaceLightRadio"
+                                                 GroupName="ItemSurfaceTone"
+                                                 Style="{StaticResource SegmentRadioStyle}"
+                                                 Content="浅色"
+                                                 AutomationProperties.Name="内部底色浅色"
+                                                 Checked="ItemSurfaceTone_Changed"/>
+                                    <RadioButton x:Name="ItemSurfaceDarkRadio"
+                                                 GroupName="ItemSurfaceTone"
+                                                 Style="{StaticResource SegmentRadioStyle}"
+                                                 Content="深色"
+                                                 ToolTip="适合白色文字"
+                                                 AutomationProperties.Name="内部底色深色"
+                                                 Checked="ItemSurfaceTone_Changed"/>
+                                </StackPanel>
+                            </Border>
+                            <Slider x:Name="ItemSurfaceStrengthSlider"
+                                    Width="160"
+                                    Margin="12,0,0,0"
+                                    VerticalAlignment="Center"
+                                    Minimum="0"
+                                    Maximum="0.8"
+                                    SmallChange="0.02"
+                                    LargeChange="0.1"
+                                    AutomationProperties.Name="内部底色浓度"
+                                    ValueChanged="ItemSurfaceStrength_Changed"/>
+                            <TextBlock x:Name="ItemSurfaceStrengthText" Style="{StaticResource ValueTextStyle}"/>
+                        </StackPanel>
+                    </local:SettingsRow>
                     <local:SettingsRow x:Name="GlassDensityPanel"
                                        Style="{StaticResource NestedSettingsRowStyle}"
                                        Header="玻璃浓度"

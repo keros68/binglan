@@ -174,6 +174,7 @@ internal static class Program
         Run("待办切换按钮标出当前视图", TestTodoViewButtonShowsCurrentView, failures);
         Run("待办卡片收起成标题条并记住展开高度", TestTodoCollapseFoldsToTitleBar, failures);
         Run("待办切到周历再切回列表恢复原尺寸", TestTodoViewToggleRestoresSize, failures);
+        Run("周历跨月不断行，每月 1 日标出月份", TestTodoWeekRowsStayContinuous, failures);
         Run("贴屏卡片切周历后完整留在工作区", TestTodoViewSwitchStaysInWorkArea, failures);
         Run("单实例门禁占用与释放", TestSingleInstanceGate, failures);
         Run("托盘双击打开并恢复设置窗口", TestTrayDoubleClick, failures);
@@ -1508,6 +1509,47 @@ internal static class Program
         finally
         {
             Close(window);
+        }
+
+        // 从周历打开、还没记过列表尺寸的卡片，切到列表时回到新卡片的默认大小。
+        var weekly = new TodoWidgetWindow(new TodoWidgetState
+        {
+            WeeklyView = true,
+            Placement = new WindowPlacement { Left = 120, Top = 120, Width = 700, Height = 520 }
+        });
+        ShowAndPump(weekly);
+        try
+        {
+            Require<Button>(weekly, "ViewModeButton").RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            Pump();
+            var defaults = new WindowPlacement();
+            Assert(Near(weekly.ActualWidth, defaults.Width) && Near(weekly.ActualHeight, defaults.Height),
+                "没记过列表尺寸时，切回列表应回到默认卡片大小");
+        }
+        finally
+        {
+            Close(weekly);
+        }
+    }
+
+    private static void TestTodoWeekRowsStayContinuous()
+    {
+        var todo = new TodoWidgetWindow(new TodoWidgetState { WeeklyView = true, WeeklyWeekCount = 5 });
+        ShowAndPump(todo);
+        try
+        {
+            var rows = Require<ItemsControl>(todo, "WeekRows").Items.OfType<WeekRowView>().ToList();
+            Assert(rows.Count == 5 && rows.All(row => row.Days.Count == 7), "5 周周历应正好 5 行，每行 7 天");
+            var days = rows.SelectMany(row => row.Days).ToList();
+            Assert(days[0].Date.DayOfWeek == DayOfWeek.Monday
+                && days.Zip(days.Skip(1)).All(pair => pair.Second.Date == pair.First.Date.AddDays(1)),
+                "跨月时不断行：每行从周一到周日连续排列");
+            var first = days.First(day => day.Date.Day == 1);
+            Assert(first.DayNumber == $"{first.Date.Month}月1日", "每月 1 日标出月份");
+        }
+        finally
+        {
+            Close(todo);
         }
     }
 
@@ -4036,7 +4078,7 @@ internal static class Program
     private static WeekCellView TodoDayCell(TodoWidgetWindow todo, DateTime? date = null) =>
         Require<ItemsControl>(todo, "WeekRows").Items.OfType<WeekRowView>()
             .SelectMany(row => row.Days)
-            .Single(cell => !cell.IsFiller && cell.Date == (date ?? DateTime.Today));
+            .Single(cell => cell.Date == (date ?? DateTime.Today));
 
     private static void WithDayEditor(TodoWidgetWindow todo, Action<DayEditWindow> action)
     {
@@ -4203,7 +4245,7 @@ internal static class Program
                 ? DateTime.Today.AddDays(-1)
                 : DateTime.Today.AddDays(1);
             var otherCell = FindVisualChildren<Border>(Require<Grid>(window, "WeekHost"))
-                .First(x => x.DataContext is WeekCellView { IsFiller: false } cell && cell.Date == otherDate
+                .First(x => x.DataContext is WeekCellView cell && cell.Date == otherDate
                     && Equals(x.Tag, "Interactive"));
             Press(otherCell, Mouse.PreviewMouseDownEvent);
             Press(otherCell, Mouse.MouseDownEvent);
@@ -4224,7 +4266,7 @@ internal static class Program
             // 点卡片外（卡片失去激活）也关闭浮层；正在编辑且已删空的那一行随之删除。
             // 先点回今天的格子，让 + 打开有任务的今天浮层。
             var todayCell = FindVisualChildren<Border>(Require<Grid>(window, "WeekHost"))
-                .First(x => x.DataContext is WeekCellView { IsFiller: false } cell && cell.Date == DateTime.Today
+                .First(x => x.DataContext is WeekCellView cell && cell.Date == DateTime.Today
                     && Equals(x.Tag, "Interactive"));
             Press(todayCell, Mouse.PreviewMouseDownEvent);
             Press(todayCell, Mouse.MouseDownEvent);
@@ -4421,7 +4463,7 @@ internal static class Program
         try
         {
             var cells = Require<ItemsControl>(todo, "WeekRows").Items.OfType<WeekRowView>()
-                .SelectMany(row => row.Days).Where(cell => !cell.IsFiller).ToList();
+                .SelectMany(row => row.Days).ToList();
             typeof(TodoWidgetWindow).GetMethod("OpenDayPeek",
                 System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
                 .Invoke(todo, [cells.MaxBy(cell => cell.Date)!, null]);

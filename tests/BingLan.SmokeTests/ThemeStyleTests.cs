@@ -103,9 +103,21 @@ internal static class ThemeStyleTests
         style.Glass = GlassMode.Light;
         style.TextInk = TextInk.White;
         Check(DesktopStyleRules.Appearance(style).TextColor == "#FFFFFF", "文字颜色独立于外观：浅色玻璃也可用白字");
-        Check(DesktopStyleRules.Appearance(style).ItemSurfaceColor == "#401B2635"
-            && DesktopStyleRules.SubtleControlColor(style) == "#331B2635",
-            "浅色玻璃上选白字时，行和日期格改用淡深色底，白字不压在白底上");
+        Check(DesktopStyleRules.Appearance(style).ItemSurfaceColor == "#7AFFFFFF"
+            && DesktopStyleRules.SubtleControlColor(style) == "#35FFFFFF",
+            "内部底色默认保持原来的浅色，不随文字颜色自动变化");
+        style.ItemSurfaceTone = SurfaceTone.Dark;
+        style.ItemSurfaceStrength = 0.4;
+        Check(DesktopStyleRules.Appearance(style).ItemSurfaceColor == "#661B2635"
+            && DesktopStyleRules.SubtleControlColor(style) == "#2C1B2635",
+            "内部底色可选深色并调整浓度，按钮和日期格按同一比例变淡");
+        style.ItemSurfaceStrength = 5;
+        Check(style.ItemSurfaceStrength == DesktopStyleRules.MaximumItemSurfaceStrength, "内部底色浓度应钳制");
+        style.Glass = GlassMode.Dark;
+        Check(DesktopStyleRules.SubtleControlColor(style) == "#35FFFFFF", "内部底色只作用于浅色玻璃");
+        style.Glass = GlassMode.Light;
+        style.ItemSurfaceTone = SurfaceTone.Light;
+        style.ItemSurfaceStrength = DesktopStyleRules.DefaultItemSurfaceStrength;
         style.TextInk = TextInk.Auto;
         Check(DesktopStyleRules.Appearance(style).ItemSurfaceColor == "#7AFFFFFF"
             && DesktopStyleRules.SubtleControlColor(style) == "#35FFFFFF", "浅色玻璃深字保持原来的浅色行底");

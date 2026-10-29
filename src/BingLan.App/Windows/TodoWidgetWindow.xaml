@@ -520,9 +520,6 @@
                                                                         <Setter Property="BorderBrush" Value="#D9A441"/>
                                                                         <Setter Property="BorderThickness" Value="1.5"/>
                                                                     </DataTrigger>
-                                                                    <DataTrigger Binding="{Binding IsFiller}" Value="True">
-                                                                        <Setter Property="IsHitTestVisible" Value="False"/>
-                                                                    </DataTrigger>
                                                                 </Style.Triggers>
                                                             </Style>
                                                         </Border.Style>
@@ -538,23 +535,11 @@
                                                                             <DataTrigger Binding="{Binding IsWeekend}" Value="True">
                                                                                 <Setter Property="Opacity" Value="0.4"/>
                                                                             </DataTrigger>
-                                                                            <DataTrigger Binding="{Binding IsFiller}" Value="True">
-                                                                                <Setter Property="Background" Value="{x:Null}"/>
-                                                                            </DataTrigger>
                                                                         </Style.Triggers>
                                                                     </Style>
                                                                 </Border.Style>
                                                             </Border>
                                                             <Grid>
-                                                                <Grid.Style>
-                                                                    <Style TargetType="Grid">
-                                                                        <Style.Triggers>
-                                                                            <DataTrigger Binding="{Binding IsFiller}" Value="True">
-                                                                                <Setter Property="Visibility" Value="Collapsed"/>
-                                                                            </DataTrigger>
-                                                                        </Style.Triggers>
-                                                                    </Style>
-                                                                </Grid.Style>
                                                                 <Grid.RowDefinitions>
                                                                     <RowDefinition Height="Auto"/>
                                                                     <RowDefinition Height="*"/>

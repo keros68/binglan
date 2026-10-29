@@ -54,6 +54,11 @@ public sealed class LocalStateStore
         return CreateDefault();
     }
 
+    // A remembered view size is either unset (both 0) or two finite positive lengths.
+    private static bool IsViewSize(double width, double height) =>
+        (width == 0 && height == 0)
+        || (double.IsFinite(width) && double.IsFinite(height) && width > 0 && height > 0);
+
     private static bool TryLoad(string path, [NotNullWhen(true)] out AppState? state, out int storedVersion)
     {
         state = null;
@@ -567,11 +572,15 @@ public sealed class LocalStateStore
             {
                 todo.ExpandedHeight = 0;
             }
-            if (!double.IsFinite(todo.OtherViewWidth) || todo.OtherViewWidth < 0
-                || !double.IsFinite(todo.OtherViewHeight) || todo.OtherViewHeight < 0)
+            if (!IsViewSize(todo.ListWidth, todo.ListHeight))
             {
-                todo.OtherViewWidth = 0;
-                todo.OtherViewHeight = 0;
+                todo.ListWidth = 0;
+                todo.ListHeight = 0;
+            }
+            if (!IsViewSize(todo.WeeklyWidth, todo.WeeklyHeight))
+            {
+                todo.WeeklyWidth = 0;
+                todo.WeeklyHeight = 0;
             }
         }
         foreach (var box in state.FileBoxes)

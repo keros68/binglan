@@ -114,14 +114,19 @@ public sealed class TodoWidgetState
     public double ExpandedHeight { get; set; }
 
     /// <summary>
-    /// The size, in DIPs, the card had in the view that is not showing (the list while
-    /// the calendar shows, and the reverse), so toggling back returns to it. 0 while
-    /// that view has not been left yet.
+    /// The size, in DIPs, the card had when it last left the today list, so switching
+    /// back from the calendar returns to it. 0 while the list has not been left yet.
     /// </summary>
-    public double OtherViewWidth { get; set; }
+    public double ListWidth { get; set; }
 
-    /// <inheritdoc cref="OtherViewWidth"/>
-    public double OtherViewHeight { get; set; }
+    /// <inheritdoc cref="ListWidth"/>
+    public double ListHeight { get; set; }
+
+    /// <summary>The size, in DIPs, the card had when it last left the calendar; 0 until then.</summary>
+    public double WeeklyWidth { get; set; }
+
+    /// <inheritdoc cref="WeeklyWidth"/>
+    public double WeeklyHeight { get; set; }
 
     public bool IsLocked { get; set; }
     public WidgetAppearanceState Appearance { get; set; } = new();

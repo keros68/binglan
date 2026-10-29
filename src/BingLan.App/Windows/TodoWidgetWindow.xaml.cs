@@ -133,9 +133,7 @@ public partial class TodoWidgetWindow : WidgetWindowBase
     {
         if (State.WeeklyView)
         {
-            var targetCell = _selectedCellView is { IsFiller: false } selected
-                ? selected
-                : null;
+            var targetCell = _selectedCellView;
             if (targetCell is null && !_cellsByDate.TryGetValue(DateTime.Today, out targetCell))
             {
                 _weekOffset = 0;
@@ -434,12 +432,21 @@ public partial class TodoWidgetWindow : WidgetWindowBase
 
     private void ToggleViewMode_Click(object sender, RoutedEventArgs e)
     {
-        // 列表和周历各记一份尺寸：周历会把卡片撑大，切回列表时回到列表原来的大小，
-        // 再切到周历时回到周历上次的大小（仍不小于周历最小值）。
-        var (width, height) = (State.OtherViewWidth, State.OtherViewHeight);
-        State.OtherViewWidth = Width;
-        State.OtherViewHeight = Height;
+        // 列表和周历各记一份尺寸：周历会把卡片撑大，切回列表时回到列表离开时的大小
+        // （从没记过就用新卡片的默认大小），再切到周历时回到周历上次的大小。
+        if (State.WeeklyView)
+        {
+            (State.WeeklyWidth, State.WeeklyHeight) = (Width, Height);
+        }
+        else
+        {
+            (State.ListWidth, State.ListHeight) = (Width, Height);
+        }
         State.WeeklyView = !State.WeeklyView;
+        var defaults = new WindowPlacement();
+        var (width, height) = State.WeeklyView
+            ? (State.WeeklyWidth, State.WeeklyHeight)
+            : State.ListWidth > 0 ? (State.ListWidth, State.ListHeight) : (defaults.Width, defaults.Height);
         if (width > 0 && height > 0)
         {
             MinWidth = State.WeeklyView ? WeeklyMinimumWidth : ListMinimumWidth;
@@ -558,8 +565,8 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         ApplyViewMode();
         if (State.WeeklyView && !State.IsCollapsed)
         {
-            // 修改立即生效：缩小周数后卡片高度也要收回来（保留两行余量给
-            // 跨月断行），放大时 ApplyViewMode 已负责抬到最小高度。
+            // 修改立即生效：缩小周数后卡片高度也要收回来（最多保留 120 DIP
+            // 余量），放大时 ApplyViewMode 已负责抬到最小高度。
             Height = Math.Max(WeeklyMinimumHeight, Math.Min(Height, WeeklyMinimumHeight + 120));
             Dispatcher.BeginInvoke(DispatcherPriority.Loaded, EnsureFullyOnScreen);
         }
@@ -590,7 +597,7 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         // re-dispatch) want the event consumed on every branch, including the
         // early returns.
         e.Handled = true;
-        if (sender is not FrameworkElement { DataContext: WeekCellView cell } surface || cell.IsFiller)
+        if (sender is not FrameworkElement { DataContext: WeekCellView cell } surface)
         {
             return;
         }
@@ -1405,7 +1412,7 @@ public partial class TodoWidgetWindow : WidgetWindowBase
 
     private void WeekOverflow_Click(object sender, MouseButtonEventArgs e)
     {
-        if ((sender as FrameworkElement)?.DataContext is WeekCellView cell && !cell.IsFiller)
+        if ((sender as FrameworkElement)?.DataContext is WeekCellView cell)
         {
             OpenDayPeek(cell, sender as FrameworkElement);
             e.Handled = true;
@@ -1891,9 +1898,8 @@ public partial class TodoWidgetWindow : WidgetWindowBase
 
     private void RenderWeekView()
     {
-        // The window still slides one week per page, but rows are month-aligned:
-        // when a month ends mid-week the row ends there and the next month starts
-        // on a fresh row at its own weekday column, so months read at a glance.
+        // One row per Monday-to-Sunday week, sliding one week per page. A new month
+        // shows its month on its first day instead of breaking the row.
         var firstMonday = WeekWindowStart;
         var lastDay = firstMonday.AddDays(7 * WeeklyRowCount - 1);
         WeekRange.Text = $"{firstMonday:M月d日} – {lastDay:M月d日}";
@@ -1906,33 +1912,13 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         _selectedCellView = null;
         var rows = new List<WeekRowView>();
         var current = new List<WeekCellView>(7);
-        var currentMonth = -1;
-        var weekdayCursor = -1;
         for (var index = 0; index < 7 * WeeklyRowCount; index++)
         {
             var date = firstMonday.AddDays(index);
-            if (date.Month != currentMonth)
-            {
-                if (current.Count > 0)
-                {
-                    PadRow(current, weekdayCursor);
-                    rows.Add(new WeekRowView { Days = current });
-                }
-                current = new List<WeekCellView>(7);
-                currentMonth = date.Month;
-                weekdayCursor = 0;
-                // The month's first row starts at its own weekday column.
-                for (var lead = ((int)date.DayOfWeek + 6) % 7; lead > 0; lead--)
-                {
-                    current.Add(WeekCellView.Filler);
-                    weekdayCursor++;
-                }
-            }
-
             var cell = new WeekCellView
             {
                 Date = date,
-                DayNumber = date.Day.ToString(),
+                DayNumber = date.Day == 1 ? $"{date.Month}月1日" : date.Day.ToString(),
                 LunarText = LunarDayText.For(date),
                 IsToday = date == DateTime.Today,
                 IsWeekend = date.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday,
@@ -1944,17 +1930,11 @@ public partial class TodoWidgetWindow : WidgetWindowBase
             }
             _cellsByDate[date] = cell;
             current.Add(cell);
-            weekdayCursor = (weekdayCursor + 1) % 7;
-            if (weekdayCursor == 0)
+            if (current.Count == 7)
             {
                 rows.Add(new WeekRowView { Days = current });
                 current = new List<WeekCellView>(7);
             }
-        }
-        if (current.Count > 0)
-        {
-            PadRow(current, weekdayCursor);
-            rows.Add(new WeekRowView { Days = current });
         }
 
         WeekRows.DataContext = rows;
@@ -1989,15 +1969,6 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         }
 
         RefreshSummary();
-    }
-
-    private static void PadRow(List<WeekCellView> row, int weekdayCursor)
-    {
-        while (row.Count < 7)
-        {
-            row.Insert(weekdayCursor, WeekCellView.Filler);
-            weekdayCursor++;
-        }
     }
 
     private void ResortCell(WeekCellView cell)

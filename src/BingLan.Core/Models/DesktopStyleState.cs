@@ -26,6 +26,13 @@ public enum GlassMode
 /// Card text colour: the material's own, white or dark to suit the wallpaper, or a colour
 /// the user picked.
 /// </summary>
+/// <summary>The tint of rows, buttons and calendar cells inside a light-glass card.</summary>
+public enum SurfaceTone
+{
+    Light,
+    Dark
+}
+
 public enum TextInk
 {
     Auto,
@@ -100,6 +107,18 @@ public sealed class DesktopStyleState
         get => _glassDensity;
         set => _glassDensity = DesktopStyleRules.CoerceGlassDensity(value);
     }
+
+    /// <summary>Whether surfaces inside a light-glass card are tinted white or dark.</summary>
+    public SurfaceTone ItemSurfaceTone { get; set; } = SurfaceTone.Light;
+
+    private double _itemSurfaceStrength = DesktopStyleRules.DefaultItemSurfaceStrength;
+
+    /// <summary>How strong the surfaces inside a light-glass card are, as the row opacity.</summary>
+    public double ItemSurfaceStrength
+    {
+        get => _itemSurfaceStrength;
+        set => _itemSurfaceStrength = DesktopStyleRules.CoerceItemSurfaceStrength(value);
+    }
 }
 
 public static class DesktopStyleRules
@@ -113,6 +132,8 @@ public static class DesktopStyleRules
     public const double MaximumGlassDensity = 0.96d;
     public const double DefaultGlassDensity = WidgetAppearanceRules.DefaultBackgroundOpacity;
     public const string DefaultPalette = "ice";
+    public const double DefaultItemSurfaceStrength = 0.48d;
+    public const double MaximumItemSurfaceStrength = 0.8d;
 
     /// <summary>Light-glass palettes, the first being the original ice blue.</summary>
     public static IReadOnlyList<CardPalette> Palettes { get; } =
@@ -139,8 +160,7 @@ public static class DesktopStyleRules
     /// and rows inside a card get a faint surface that the clear mode removes, so stacked
     /// translucent layers never turn the card milky. Text follows the material (dark on
     /// light glass, white on dark glass and on a clear card) unless white or dark was chosen.
-    /// Light text chosen on light glass gets a faint dark row surface instead of the milky
-    /// one, so the text does not sit on white.
+    /// On light glass the row surface follows the chosen tone and strength.
     /// </summary>
     public static GlassAppearance Appearance(DesktopStyleState style)
     {
@@ -153,38 +173,34 @@ public static class DesktopStyleRules
             TextInk.Custom => material with { TextColor = style.CustomTextColor },
             _ => material
         };
-        return LightInkOnLightGlass(style, look) ? look with { ItemSurfaceColor = "#401B2635" } : look;
+        return style.Glass == GlassMode.Light
+            ? look with { ItemSurfaceColor = WithAlpha(SurfaceToneColor(style), style.ItemSurfaceStrength) }
+            : look;
     }
 
     /// <summary>
-    /// The fill of small surfaces inside a card (buttons, calendar day cells): faint white,
-    /// or faint dark when light text was chosen on light glass.
+    /// The fill of small surfaces inside a card (buttons, calendar day cells). On light
+    /// glass it follows the chosen tone at a little under half the row strength, which at
+    /// the default strength is the original faint white.
     /// </summary>
     public static string SubtleControlColor(DesktopStyleState style)
     {
         ArgumentNullException.ThrowIfNull(style);
-        return LightInkOnLightGlass(style, Appearance(style)) ? "#331B2635" : "#35FFFFFF";
+        return style.Glass == GlassMode.Light
+            ? WithAlpha(SurfaceToneColor(style), style.ItemSurfaceStrength * SubtleControlRatio)
+            : "#35FFFFFF";
     }
 
-    private static bool LightInkOnLightGlass(DesktopStyleState style, GlassAppearance look) =>
-        style.Glass == GlassMode.Light && IsLight(look.TextColor);
+    // 0x35 / 0x7A: the original button fill against the original row surface.
+    private const double SubtleControlRatio = 53d / 122d;
 
-    private static bool IsLight(string rgb)
-    {
-        var hex = rgb.TrimStart('#');
-        if (hex.Length == 8)
-        {
-            hex = hex[2..];
-        }
-        if (hex.Length != 6 || !int.TryParse(hex, System.Globalization.NumberStyles.HexNumber, null, out var value))
-        {
-            return false;
-        }
-        var red = (value >> 16) & 0xFF;
-        var green = (value >> 8) & 0xFF;
-        var blue = value & 0xFF;
-        return (0.2126d * red + 0.7152d * green + 0.0722d * blue) / 255d > 0.6d;
-    }
+    private static string SurfaceToneColor(DesktopStyleState style) =>
+        style.ItemSurfaceTone == SurfaceTone.Dark ? "#1B2635" : "#FFFFFF";
+
+    public static double CoerceItemSurfaceStrength(double value) =>
+        double.IsFinite(value)
+            ? Math.Clamp(value, 0d, MaximumItemSurfaceStrength)
+            : DefaultItemSurfaceStrength;
 
     private static GlassAppearance Material(DesktopStyleState style)
     {
@@ -325,6 +341,10 @@ public static class DesktopStyleRules
         if (!Enum.IsDefined(style.TextInk))
         {
             style.TextInk = TextInk.Auto;
+        }
+        if (!Enum.IsDefined(style.ItemSurfaceTone))
+        {
+            style.ItemSurfaceTone = SurfaceTone.Light;
         }
         style.GlassDensity = style.GlassDensity;
         style.Palette = GetPalette(style.Palette).Key;

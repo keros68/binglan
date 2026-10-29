@@ -1154,6 +1154,11 @@ public partial class SettingsWindow : Window
             GlassDensitySlider.Value = style.GlassDensity;
             GlassDensityText.Text = $"{style.GlassDensity * 100:0}%";
             GlassDensityPanel.IsEnabled = style.Glass != GlassMode.Clear;
+            ItemSurfaceLightRadio.IsChecked = style.ItemSurfaceTone == SurfaceTone.Light;
+            ItemSurfaceDarkRadio.IsChecked = style.ItemSurfaceTone == SurfaceTone.Dark;
+            ItemSurfaceStrengthSlider.Value = style.ItemSurfaceStrength;
+            ItemSurfaceStrengthText.Text = $"{style.ItemSurfaceStrength * 100:0}%";
+            ItemSurfacePanel.IsEnabled = style.Glass == GlassMode.Light;
             PaletteSwatches.Select(GlassPaletteSwatches, style.Glass == GlassMode.Light ? style.Palette : null);
         }
         finally
@@ -1272,6 +1277,32 @@ public partial class SettingsWindow : Window
         GlassDensityText.Text = $"{_maintenance.Style.GlassDensity * 100:0}%";
         _maintenance.ApplyGlass();
         UpdatePresetPreview(GetSelectedPreset());
+    }
+
+    // Inner surfaces only change the shared brushes, so the cards keep their own colours.
+    private void ItemSurfaceTone_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_loadingStyle || ItemSurfaceDarkRadio is null)
+        {
+            return;
+        }
+
+        _maintenance.Style.ItemSurfaceTone = ItemSurfaceDarkRadio.IsChecked == true
+            ? SurfaceTone.Dark
+            : SurfaceTone.Light;
+        _maintenance.ApplyStyle();
+    }
+
+    private void ItemSurfaceStrength_Changed(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (_loadingStyle || ItemSurfaceStrengthText is null)
+        {
+            return;
+        }
+
+        _maintenance.Style.ItemSurfaceStrength = e.NewValue;
+        ItemSurfaceStrengthText.Text = $"{_maintenance.Style.ItemSurfaceStrength * 100:0}%";
+        _maintenance.ApplyStyle();
     }
 
     private static void SelectByTag(System.Windows.Controls.ComboBox selector, string tag) =>
