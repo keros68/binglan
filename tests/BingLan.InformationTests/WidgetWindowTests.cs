@@ -498,6 +498,55 @@ internal static class WidgetWindowTests
         }
     }
 
+    // 设置中心改圆角后，独立的时间、天气、性能卡要换成新的外形，而不只是待办卡。
+    public static void IsolatedCardsFollowComponentCornerRadius()
+    {
+        foreach (var kind in new[]
+                 {
+                     DesktopComponentKind.TimeDate,
+                     DesktopComponentKind.Weather,
+                     DesktopComponentKind.Performance
+                 })
+        {
+            var experience = DesktopExperienceRules.CreateDefault();
+            var component = experience.GetComponent(kind);
+            component.CornerRadius = 4d;
+            var window = new InformationWidgetWindow(
+                new InformationWidgetState(),
+                new FakeSamplingService(),
+                new WeatherService(new StubHttpMessageHandler()),
+                experience,
+                kind);
+            window.ApplyPlacement(component.Placement, component.IsLocked);
+            ShowAndPump(window);
+            try
+            {
+                AssertCorner(window, 4d, $"{kind} 打开时");
+
+                component.CornerRadius = 24d;
+                window.ApplyDesktopExperience(experience);
+                Pump();
+                AssertCorner(window, 24d, $"{kind} 改圆角后");
+            }
+            finally
+            {
+                window.CanClose = true;
+                window.Close();
+                Pump();
+            }
+        }
+
+        static void AssertCorner(InformationWidgetWindow window, double expected, string label)
+        {
+            AssertEqual(expected, window.WidgetCornerRadius, $"{label}窗口圆角");
+            AssertEqual(new CornerRadius(expected), Require<Border>(window, "Surface").CornerRadius,
+                $"{label}外框圆角");
+            Assert(window.Clip is System.Windows.Media.RectangleGeometry clip &&
+                   Math.Abs(clip.RadiusX - expected) < 0.01,
+                $"{label}窗口裁剪形状应使用新圆角");
+        }
+    }
+
     // 字号缩放覆盖日期、性能标签和天气状态文字（按钮除外）。
     public static void FontScaleCoversAllText()
     {

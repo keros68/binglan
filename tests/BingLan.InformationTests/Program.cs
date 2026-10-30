@@ -53,6 +53,7 @@ internal static class Program
         Run("字号缩放覆盖日期、性能标签与天气状态", WidgetWindowTests.FontScaleCoversAllText, failures);
         Run("信息组件默认高度完整显示天气内容", WidgetWindowTests.DefaultHeightShowsWeatherDetails, failures);
         Run("独立信息表面显示与保存位置", WidgetWindowTests.IsolatedSurfaceVisibilityAndPlacement, failures);
+        Run("独立时间、天气、性能卡跟随组件圆角", WidgetWindowTests.IsolatedCardsFollowComponentCornerRadius, failures);
         Run("时间细线选项与右键锁定", WidgetWindowTests.ClockDividerAndLockMenu, failures);
         Run("裸文字表面白色默认与对比度阴影", WidgetWindowTests.NakedTextContrastDefaults, failures);
         Run("信息组件天气成功管线", WidgetWindowTests.WeatherPipelineUpdatesWindow, failures);
