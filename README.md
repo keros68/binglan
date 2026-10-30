@@ -37,12 +37,13 @@ Windows 11 开启系统透明效果时，Dock 和隐藏把手使用实时毛玻�
 
 ## 快速开始
 
-稳定版：[v0.2.47](https://github.com/keros68/binglan/releases/tag/v0.2.47) · [安装版](https://github.com/keros68/binglan/releases/download/v0.2.47/BingLan-Setup-0.2.47.exe) · [免安装版](https://github.com/keros68/binglan/releases/download/v0.2.47/BingLan-0.2.47-portable.zip)。另附[兼容性验收工具](https://github.com/keros68/binglan/releases/download/v0.2.47/BingLan-0.2.47-tray-preview.zip)，使用步骤见[托盘验收说明](docs/TRAY-PREVIEW.md)。
+稳定版：[v0.2.48](https://github.com/keros68/binglan/releases/tag/v0.2.48) · [安装版](https://github.com/keros68/binglan/releases/download/v0.2.48/BingLan-Setup-0.2.48.exe) · [免安装版](https://github.com/keros68/binglan/releases/download/v0.2.48/BingLan-0.2.48-portable.zip)。另附[兼容性验收工具](https://github.com/keros68/binglan/releases/download/v0.2.48/BingLan-0.2.48-tray-preview.zip)，使用步骤见[托盘验收说明](docs/TRAY-PREVIEW.md)。
 
 1. 打开 [Releases](https://github.com/keros68/binglan/releases/latest)，下载 `BingLan-Setup-*.exe`（安装版）或 `BingLan-*-portable.zip`（免安装版）。
 2. 安装版运行安装包，按当前用户安装，不需要管理员权限；免安装版解压到任意文件夹后运行其中的 `BingLan.exe`。两者均自带 .NET 运行时，尚未加入代码签名，首次运行需按 Windows 提示手动放行。
 3. 免安装版更新时重新下载 zip 覆盖，不要使用应用内“下载并安装”（它安装的是安装版）；与已安装版本不要同时运行。
 4. 首次启动后按引导选择布局和常用应用。之后可从托盘图标或卡片右键菜单打开设置中心。
+5. 卸载安装版：在设置“通用”页最下方点“卸载…”，或在开始菜单搜索“卸载冰蓝桌面”；免安装版退出后删除文件夹即可。
 
 系统要求：Windows 11 x64；Windows 10 版本 2004 及以上可安装使用，但任务栏外观（透明、模糊、自动隐藏）不可用，设置窗口不显示 Mica 材质。各模块的详细用法见[使用说明](docs/USER-GUIDE.md)。
 
@@ -60,7 +61,7 @@ Windows 11 开启系统透明效果时，Dock 和隐藏把手使用实时毛玻�
 ```powershell
 dotnet build .\BingLan.slnx -c Release
 dotnet run --project .\tests\BingLan.SmokeTests\BingLan.SmokeTests.csproj -c Release
-pwsh -NoProfile -File .\installer\build.ps1 -Version 0.2.47
+pwsh -NoProfile -File .\installer\build.ps1 -Version 0.2.48
 ```
 
 完整测试命令、技术方案和当前实现见[开发说明](docs/DEVELOPMENT.md)，安装包细节见[安装包](docs/INSTALLER.md)。

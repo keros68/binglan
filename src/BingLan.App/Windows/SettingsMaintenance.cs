@@ -56,6 +56,12 @@ public sealed class SettingsMaintenance
     public Func<NewWidgetKind, WidgetWindowBase?> AddWidget { get; init; } = _ => null;
     public Action ExitApp { get; init; } = () => { };
 
+    /// <summary>Whether this copy was installed by setup and can be uninstalled.</summary>
+    public bool CanUninstall { get; init; }
+
+    /// <summary>Starts the uninstaller and exits; returns why it could not start, or null.</summary>
+    public Func<string?> Uninstall { get; init; } = () => null;
+
     /// <summary>Update checking and installing, or null where it is not offered.</summary>
     public BingLan.App.Services.AppUpdater? Updater { get; init; }
 

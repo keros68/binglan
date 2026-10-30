@@ -39,12 +39,13 @@ The interface is in Simplified Chinese.
 
 ## Get started
 
-Stable version: [v0.2.47](https://github.com/keros68/binglan/releases/tag/v0.2.47) · [Installer](https://github.com/keros68/binglan/releases/download/v0.2.47/BingLan-Setup-0.2.47.exe) · [Portable](https://github.com/keros68/binglan/releases/download/v0.2.47/BingLan-0.2.47-portable.zip). A standalone [compatibility tool](https://github.com/keros68/binglan/releases/download/v0.2.47/BingLan-0.2.47-tray-preview.zip) is also available; see the [guide (Chinese)](docs/TRAY-PREVIEW.md).
+Stable version: [v0.2.48](https://github.com/keros68/binglan/releases/tag/v0.2.48) · [Installer](https://github.com/keros68/binglan/releases/download/v0.2.48/BingLan-Setup-0.2.48.exe) · [Portable](https://github.com/keros68/binglan/releases/download/v0.2.48/BingLan-0.2.48-portable.zip). A standalone [compatibility tool](https://github.com/keros68/binglan/releases/download/v0.2.48/BingLan-0.2.48-tray-preview.zip) is also available; see the [guide (Chinese)](docs/TRAY-PREVIEW.md).
 
 1. Open [Releases](https://github.com/keros68/binglan/releases/latest) and download `BingLan-Setup-*.exe` (installer) or `BingLan-*-portable.zip` (portable).
 2. Installer: run it — it installs for the current user and needs no administrator rights. Portable: unzip anywhere and run `BingLan.exe` inside. Both include the .NET runtime and are not code-signed yet, so Windows asks for confirmation on first run.
 3. Portable: to update, download the new zip and overwrite — don't use the in-app update (it installs the setup version); don't run the portable and installed copies at the same time.
 4. On first launch, pick a layout and your common apps. Settings open from the tray icon or any card's right-click menu.
+5. Uninstall (installer version): click “卸载…” at the bottom of Settings → 通用, or search the Start menu for “卸载冰蓝桌面”. Portable: exit the app and delete its folder.
 
 Requires Windows 11 x64. Windows 10 version 2004 or later also works, without the taskbar styles (transparent, blur, auto-hide) and without the Mica material in the settings window. See the [user guide (Chinese)](docs/USER-GUIDE.md) for details.
 
@@ -62,7 +63,7 @@ Requires the .NET 10 SDK and PowerShell 7. Building the installer also needs Inn
 ```powershell
 dotnet build .\BingLan.slnx -c Release
 dotnet run --project .\tests\BingLan.SmokeTests\BingLan.SmokeTests.csproj -c Release
-pwsh -NoProfile -File .\installer\build.ps1 -Version 0.2.47
+pwsh -NoProfile -File .\installer\build.ps1 -Version 0.2.48
 ```
 
 Full test commands, the technical design, and the current implementation are in the [development notes (Chinese)](docs/DEVELOPMENT.md); installer details are in [docs/INSTALLER.md](docs/INSTALLER.md).

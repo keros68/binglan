@@ -982,6 +982,15 @@ public partial class SettingsWindow : Window
 
     private void ExitApp_Click(object sender, RoutedEventArgs e) => _maintenance.ExitApp();
 
+    private void Uninstall_Click(object sender, RoutedEventArgs e)
+    {
+        if (_maintenance.Uninstall() is { } error)
+        {
+            UninstallStatusText.Text = $"无法打开卸载程序：{error}。也可以在 Windows 设置 > 应用 > 已安装的应用中卸载。";
+            UninstallStatusText.Visibility = Visibility.Visible;
+        }
+    }
+
     private void SettingsNavigationList_SelectionChanged(
         object sender,
         SelectionChangedEventArgs e)
@@ -1079,6 +1088,7 @@ public partial class SettingsWindow : Window
             _loadingStartup = false;
         }
         DataDirectoryText.Text = _maintenance.DataDirectory;
+        UninstallRow.Visibility = _maintenance.CanUninstall ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void StartupCheckBox_Changed(object sender, RoutedEventArgs e)

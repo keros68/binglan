@@ -1069,6 +1069,8 @@ public sealed class WidgetCoordinator : IDisposable
         }
 
         var state = informationState;
+        // A test run with its own data folder never offers to uninstall the real copy.
+        var uninstaller = _startup.CanModify ? AppUninstaller.Find(Environment.ProcessPath) : null;
         var settings = new SettingsWindow(
             _citySearchService,
             state,
@@ -1141,6 +1143,23 @@ public sealed class WidgetCoordinator : IDisposable
                     }
                 },
                 ExitApp = Exit,
+                CanUninstall = uninstaller is not null,
+                Uninstall = () =>
+                {
+                    if (uninstaller is null)
+                    {
+                        return "没有找到卸载程序";
+                    }
+                    // The app then exits normally, saving its state and putting the taskbar
+                    // and desktop icons back, instead of being stopped by the uninstaller.
+                    if (AppUninstaller.Start(uninstaller) is { } error)
+                    {
+                        return error;
+                    }
+                    StartupLog.Write("启动卸载程序");
+                    Exit();
+                    return null;
+                },
                 Updater = _updater,
                 ApplyGlass = ApplyGlass,
                 ImportTaskbarPins = () =>

@@ -1819,7 +1819,18 @@
                                            Description="关闭所有卡片和 Dock，并把任务栏与桌面图标恢复为系统默认">
                             <Button x:Name="ExitAppButton" Content="退出" AutomationProperties.Name="退出冰蓝桌面" Click="ExitApp_Click"/>
                         </local:SettingsRow>
+                        <local:SettingsRow x:Name="UninstallRow"
+                                           Style="{StaticResource NestedSettingsRowStyle}"
+                                           Header="卸载冰蓝桌面"
+                                           Description="冰蓝桌面会先退出，再打开卸载程序；卸载时可选择保留个人数据">
+                            <Button x:Name="UninstallButton" Content="卸载…" AutomationProperties.Name="卸载冰蓝桌面" Click="Uninstall_Click"/>
+                        </local:SettingsRow>
                     </local:SettingsGroup>
+                    <TextBlock x:Name="UninstallStatusText"
+                               Margin="6,2,0,0"
+                               Style="{StaticResource CaptionStyle}"
+                               AutomationProperties.LiveSetting="Polite"
+                               Visibility="Collapsed"/>
                 </StackPanel>
             </ScrollViewer>
         </Grid>

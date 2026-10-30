@@ -357,4 +357,65 @@ internal static class SettingsWindowTests
             Pump();
         }
     }
+
+    // 卸载入口只在安装版出现；点击只交给宿主启动卸载程序，失败时在页面说明并指向 Windows 设置。
+    public static void UninstallEntryFollowsInstallation()
+    {
+        static SettingsWindow Create(SettingsMaintenance maintenance) => new(
+            new CityLookupService(new CitySearchService(new StubHttpMessageHandler()), CityLibrary.Empty),
+            new InformationWidgetState(),
+            DesktopExperienceRules.CreateDefault(),
+            (_, _) => { },
+            _ => { },
+            _ => { },
+            maintenance: maintenance);
+
+        var portable = Create(new SettingsMaintenance());
+        ShowAndPump(portable);
+        try
+        {
+            AssertEqual(Visibility.Collapsed, Require<FrameworkElement>(portable, "UninstallRow").Visibility,
+                "免安装版不显示卸载入口");
+        }
+        finally
+        {
+            portable.Close();
+            Pump();
+        }
+
+        var calls = 0;
+        string? failure = null;
+        var installed = Create(new SettingsMaintenance
+        {
+            CanUninstall = true,
+            Uninstall = () =>
+            {
+                calls++;
+                return failure;
+            }
+        });
+        ShowAndPump(installed);
+        try
+        {
+            AssertEqual(Visibility.Visible, Require<FrameworkElement>(installed, "UninstallRow").Visibility,
+                "安装版显示卸载入口");
+            var button = Require<Button>(installed, "UninstallButton");
+            var status = Require<TextBlock>(installed, "UninstallStatusText");
+            button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Pump();
+            Assert(calls == 1 && status.Visibility == Visibility.Collapsed, "启动成功时只调用一次卸载且不显示错误");
+
+            failure = "找不到文件";
+            button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Pump();
+            Assert(calls == 2 && status.Visibility == Visibility.Visible &&
+                   status.Text.Contains("找不到文件") && status.Text.Contains("已安装的应用"),
+                "启动失败时说明原因并指向 Windows 设置");
+        }
+        finally
+        {
+            installed.Close();
+            Pump();
+        }
+    }
 }

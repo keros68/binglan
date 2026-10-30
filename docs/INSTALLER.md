@@ -3,10 +3,10 @@
 ## 构建
 
 ```powershell
-pwsh -NoProfile -File .\installer\build.ps1 -Version 0.2.47
+pwsh -NoProfile -File .\installer\build.ps1 -Version 0.2.48
 ```
 
-输出 `installer\bin\BingLan-Setup-0.2.47.exe`（约 56.5 MB）和免安装包 `installer\bin\BingLan-0.2.47-portable.zip`。脚本先把应用发布为 win-x64 自包含程序（附带 .NET 运行时，只保留中文和英文资源），再用 Inno Setup 打包为按用户安装的安装程序，并把同一份发布输出压成免安装 zip。构建还需要 .NET 10 SDK、PowerShell 7、Visual Studio 2022 C++ x64 工具链和 Windows SDK；自有任务栏 DLL 随发布输出进入安装包，细节见 [任务栏 XAML 适配](TASKBAR-XAML.md)。需要 Inno Setup 6：`winget install JRSoftware.InnoSetup --scope user`。注意 winget 安装的 Inno Setup 不带简体中文语言文件（非官方翻译），脚本引用的 `Languages\ChineseSimplified.isl` 需从 [istrans 页面](https://jrsoftware.org/files/istrans/) 下载后放入 Inno Setup 安装目录的 `Languages\` 下。
+输出 `installer\bin\BingLan-Setup-0.2.48.exe`（约 56.5 MB）和免安装包 `installer\bin\BingLan-0.2.48-portable.zip`。脚本先把应用发布为 win-x64 自包含程序（附带 .NET 运行时，只保留中文和英文资源），再用 Inno Setup 打包为按用户安装的安装程序，并把同一份发布输出压成免安装 zip。构建还需要 .NET 10 SDK、PowerShell 7、Visual Studio 2022 C++ x64 工具链和 Windows SDK；自有任务栏 DLL 随发布输出进入安装包，细节见 [任务栏 XAML 适配](TASKBAR-XAML.md)。需要 Inno Setup 6：`winget install JRSoftware.InnoSetup --scope user`。注意 winget 安装的 Inno Setup 不带简体中文语言文件（非官方翻译），脚本引用的 `Languages\ChineseSimplified.isl` 需从 [istrans 页面](https://jrsoftware.org/files/istrans/) 下载后放入 Inno Setup 安装目录的 `Languages\` 下。
 
 ## 免安装包
 
@@ -18,6 +18,7 @@ zip 版内容与安装后的程序目录一致（程序文件、`使用说明.md
 - 在开始菜单添加“冰蓝桌面”；桌面快捷方式为可选项，默认不勾选。
 - “登录 Windows 时启动冰蓝桌面”默认勾选，写入当前用户的单个启动项；可在设置中心“通用”页开关。卸载时只要启动项启动的正是本安装位置的程序就删除，不论它由安装程序还是应用创建；指向其他位置的同名启动项保留。
 - 安装目录附带面向用户的 `使用说明.md`，开始菜单提供“冰蓝桌面使用说明”入口。
+- 卸载入口有三处：设置中心“通用”页“退出”分组中的“卸载冰蓝桌面”、开始菜单“卸载冰蓝桌面”，以及 Windows 设置 > 应用 > 已安装的应用。设置中心的入口只在程序目录中有 `unins000.exe` 时显示（免安装版和测试模式不显示），点击后先打开卸载程序，再正常退出冰蓝桌面（保存状态并恢复任务栏和桌面图标）；卸载程序打开失败时在设置页说明原因并指向 Windows 设置。
 - 覆盖安装（更新）前先结束本安装位置运行中的冰蓝桌面，并运行 `--restore-taskbar` 恢复任务栏和桌面图标，再替换文件。恢复未完成时检查点保留，新版本启动时再次恢复。
 - 安装完成后可直接启动冰蓝桌面；升级安装时先关闭正在运行的冰蓝桌面。应用内更新以 `/SILENT /SUPPRESSMSGBOXES /NORESTART /UPDATE=1` 启动安装程序，带 `/UPDATE=1` 时装完自动重新打开冰蓝桌面。
 - 卸载时先结束本安装位置的冰蓝桌面进程（按完整路径匹配，不影响同名程序），再运行 `BingLan.exe --restore-taskbar` 撤销任务栏和清爽桌面改动，然后删除程序文件、快捷方式和启动项；恢复失败时提示用户在 Windows 设置和桌面右键菜单中手动恢复，并且不再询问删除个人数据，保留其中的恢复记录。
@@ -64,6 +65,8 @@ zip 版内容与安装后的程序目录一致（程序文件、`使用说明.md
 本机覆盖安装退出码为 0，无需重启；安装前后个人配置哈希一致。在正常 Windows 桌面上下文启动后，透明模式的共享状态确认 1 个背景生效、错误码为 0，截图确认任务栏透出背景。最终设置除任务栏模式外与安装前逐项一致。新原生组件的卸载场景尚未执行。真机透明与恢复结果见 [任务栏验证](TASKBAR-QA.md)。
 
 ## 验证状态
+
+v0.2.48 在 Windows 11 Build 26300 下通过核心、便签、信息组件、Dock 与 WPF UI 五套测试；新增设置中心卸载入口只在安装版显示、启动失败时提示原因的回归检查，以及独立时间、天气、性能卡跟随组件圆角的回归检查。确认本机安装目录存在 `unins000.exe`，免安装包 267 个条目中不含卸载程序，发布输出文件版本 0.2.48.0。此轮未在真机上执行从设置中心卸载、未核对开始菜单“卸载冰蓝桌面”快捷方式，未重做覆盖安装、真实多显示器和混合 DPI 验证，也未在 Windows 10 真机上验证。
 
 v0.2.47 在 Windows 11 Build 26300 下通过核心、便签、信息组件、Dock 与 WPF UI 五套测试；新增卡片被贴边工具栏推开期间仍按显示器排列记住位置、换排列后不回到旧排列坐标、Dock 后台启动保留快捷方式参数的回归检查，并在交互验收实例中实际打开快捷入口的下载、此电脑和回收站。免安装包解压后确认文件版本 0.2.47.0。此轮未在真实多显示器、混合 DPI 环境和装有 Directory Opus 的电脑上验证，未重做覆盖安装和卸载，也未在 Windows 10 真机上验证。
 

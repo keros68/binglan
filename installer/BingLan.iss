@@ -2,7 +2,7 @@
 ; installer\obj\publish and passes the version with /DAppVersion=x.y.z.
 
 #ifndef AppVersion
-  #define AppVersion "0.2.47"
+  #define AppVersion "0.2.48"
 #endif
 
 [Setup]
@@ -47,6 +47,7 @@ Source: "..\src\BingLan.App\Assets\Fonts\LICENSE-*.txt"; DestDir: "{app}\字体�
 [Icons]
 Name: "{autoprograms}\冰蓝桌面"; Filename: "{app}\BingLan.exe"
 Name: "{autoprograms}\冰蓝桌面使用说明"; Filename: "{app}\使用说明.md"
+Name: "{autoprograms}\卸载冰蓝桌面"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\冰蓝桌面"; Filename: "{app}\BingLan.exe"; Tasks: desktopicon
 
 [Registry]
