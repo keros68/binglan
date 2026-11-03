@@ -1058,6 +1058,11 @@ public class WidgetWindowBase : Window
             RefreshBackdrop();
         }
 
+        if (message == NativeMethods.WmWindowPosChanging)
+        {
+            KeepOnDesktopLayer(lParam);
+        }
+
         if (!_isClosing && !_isChangingVisibilityByApp)
         {
             if (message == NativeMethods.WmSize && wParam == NativeMethods.SizeMinimized)
@@ -1080,6 +1085,27 @@ public class WidgetWindowBase : Window
         }
 
         return 0;
+    }
+
+    /// <summary>
+    /// Cards are pinned to the desktop layer: clicking, editing or dragging one keeps
+    /// it below every ordinary window instead of lifting it over them. Only "show
+    /// desktop" raises it, because the raised desktop surface would cover it otherwise.
+    /// </summary>
+    private void KeepOnDesktopLayer(nint lParam)
+    {
+        if (_raisedAboveDesktop)
+        {
+            return;
+        }
+
+        var position = Marshal.PtrToStructure<NativeMethods.WindowPos>(lParam);
+        if ((position.Flags & NativeMethods.SwpNoZOrder) == 0
+            && position.InsertAfter != DockNativeMethods.HwndBottom)
+        {
+            position.InsertAfter = DockNativeMethods.HwndBottom;
+            Marshal.StructureToPtr(position, lParam, false);
+        }
     }
 
     /// <summary>

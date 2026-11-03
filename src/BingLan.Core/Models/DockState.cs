@@ -8,6 +8,14 @@ public enum DockVisibilityMode
     SmartHide
 }
 
+/// <summary>How a hidden dock is brought back: the screen bottom edge, the handle, or both.</summary>
+public enum DockRevealMode
+{
+    EdgeAndHandle,
+    HandleOnly,
+    EdgeOnly
+}
+
 public sealed class DockPinnedApp
 {
     public string DisplayName { get; set; } = string.Empty;
@@ -71,6 +79,8 @@ public sealed class DockState
     /// maximized on the dock's monitor, letting the window use the full height.
     /// </summary>
     public bool ReleaseWhenMaximized { get; set; }
+
+    public DockRevealMode RevealMode { get; set; } = DockRevealMode.EdgeAndHandle;
 
     /// <summary>
     /// Top-left of the hidden-dock handle in DIPs relative to the dock monitor, or

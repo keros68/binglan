@@ -165,6 +165,7 @@ internal static class Program
         Run("桌面新文件触发自动收纳，非桌面目录不触发", TestFileMappingWatchImportTrigger, failures);
         Run("分组盒自动刷新开关默认关闭并按需写回", TestFileBoxAutomationToggle, failures);
         Run("桌面分组盒显示名称与盒间转移", TestFileBoxRenameAndTransfer, failures);
+        Run("分组盒删除原文件：默认关闭、确认后移到回收站", TestFileBoxDeleteOriginal, failures);
         Run("桌面分组盒图标与列表视图切换", TestFileBoxViewModeSwitch, failures);
         Run("卡片图标取高分辨率帧而非 32px 拉伸", TestIconProviderReturnsHighResolutionFrames, failures);
         Run("旧图标不被 Jumbo 透明占位缩成小点", TestSmallShellIconFrames, failures);
@@ -1224,7 +1225,17 @@ internal static class Program
 
             card.Activate();
             Pump();
-            Assert(IsAbove(cardHandle, otherHandle), "点击卡片时卡片应到前面以便操作");
+            Assert(card.IsActive, "卡片应能被激活以接收输入");
+            Assert(IsAbove(otherHandle, cardHandle), "点击卡片时卡片应固定在桌面层，不浮到普通窗口上面");
+            var dialog = new Window { Left = 380, Top = 380, Width = 200, Height = 120, ShowInTaskbar = false, Owner = card, Title = "卡片对话框" };
+            ShowAndPump(dialog);
+            dialog.Activate();
+            Pump();
+            var dialogHandle = new WindowInteropHelper(dialog).Handle;
+            Assert(IsAbove(dialogHandle, otherHandle), "卡片打开的对话框应显示在普通窗口上面");
+            Assert(IsAbove(otherHandle, cardHandle), "对话框打开时卡片本身仍应在普通窗口下面");
+            dialog.Close();
+            Pump();
             other.Activate();
             Pump();
             Assert(IsAbove(otherHandle, cardHandle), "切换到其他窗口后卡片应回到下方");
@@ -2244,8 +2255,13 @@ internal static class Program
                 .Select(item => item.Header?.ToString()).ToList();
             Assert(
                 missingMenuHeaders.SequenceEqual(
-                    ["打开", "打开所在位置", "刷新图标", "上移", "下移", "修改显示名称…", "转移到其他分组盒", "重新定位…", "移除映射"]),
+                    ["打开", "打开所在位置", "刷新图标", "上移", "下移", "修改显示名称…", "转移到其他分组盒", "重新定位…", "移除映射", "删除到回收站…"]),
                 "文件项右键菜单缺少打开所在位置、刷新图标、显示名称、转移或重新定位入口");
+            Assert(
+                missingMenu.Items.OfType<FrameworkElement>()
+                    .Where(element => Equals(element.Tag, "DeleteOriginal"))
+                    .All(element => element.Visibility == Visibility.Collapsed),
+                "未开启删除原文件时不应显示删除入口");
             Assert(
                 missingMenu.Items.OfType<MenuItem>().Single(item => Equals(item.Header, "转移到其他分组盒"))
                     .Visibility == Visibility.Collapsed,
@@ -2348,6 +2364,7 @@ internal static class Program
     private static void TestFileBoxAutomationToggle()
     {
         var automation = false;
+        var deleteOriginals = false;
         var applied = new List<bool>();
         var window = new SettingsWindow(
             new CityLookupService(),
@@ -2363,7 +2380,9 @@ internal static class Program
                 {
                     automation = value;
                     applied.Add(value);
-                }
+                },
+                IsFileBoxDeleteOriginalsEnabled = () => deleteOriginals,
+                SetFileBoxDeleteOriginals = value => deleteOriginals = value
             });
         ShowAndPump(window);
         try
@@ -2376,6 +2395,15 @@ internal static class Program
             toggle.IsChecked = false;
             Pump();
             Assert(applied.SequenceEqual([true, false]) && !automation, "取消勾选后应关闭分组盒自动刷新");
+
+            var deleteToggle = Require<CheckBox>(window, "FileBoxDeleteOriginalsCheckBox");
+            Assert(deleteToggle.IsChecked == false && !deleteOriginals, "允许删除原文件应默认关闭");
+            deleteToggle.IsChecked = true;
+            Pump();
+            Assert(deleteOriginals, "勾选后应开启删除原文件");
+            deleteToggle.IsChecked = false;
+            Pump();
+            Assert(!deleteOriginals, "取消勾选后应关闭删除原文件");
         }
         finally
         {
@@ -2483,6 +2511,100 @@ internal static class Program
             Close(target);
             Directory.Delete(temp, true);
         }
+    }
+
+    private static void TestFileBoxDeleteOriginal()
+    {
+        var temp = Path.Combine(Path.GetTempPath(), $"BingLan-delete-original-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(temp);
+        var kept = Path.Combine(temp, "保留.txt");
+        var recycled = Path.Combine(temp, $"冰蓝测试删除-{Guid.NewGuid():N}.txt");
+        File.WriteAllText(kept, "冰蓝桌面");
+        File.WriteAllText(recycled, "冰蓝桌面");
+        var state = new FileBoxState();
+        FileMappingService.AddExisting(state, [kept, recycled]);
+        var enabled = false;
+        var confirmations = 0;
+        var confirm = false;
+        var window = new FileBoxWindow(state)
+        {
+            IsDeleteOriginalsEnabled = () => enabled,
+            ConfirmDeleteOriginal = _ =>
+            {
+                confirmations++;
+                return confirm;
+            }
+        };
+        var list = Require<ItemsControl>(window, "FileList");
+        ShowAndPump(window);
+        try
+        {
+            PumpUntil(
+                () => list.ItemContainerGenerator.ContainerFromIndex(0) is ContentPresenter,
+                "文件项容器未生成");
+            var keptTile = list.Items.OfType<FileBoxWindow.FileTile>().Single(tile => tile.Path == kept);
+            var presenter = (ContentPresenter)list.ItemContainerGenerator.ContainerFromItem(keptTile);
+            var button = FindVisualChildren<Button>(presenter)
+                .Single(candidate => candidate.DataContext is FileBoxWindow.FileTile);
+            var menu = button.ContextMenu ?? throw new InvalidOperationException("找不到文件项右键菜单");
+            menu.DataContext = keptTile;
+            var deleteItem = menu.Items.OfType<MenuItem>().Single(item => Equals(item.Tag, "DeleteOriginal"));
+
+            InvokeContextMenuOpened(window, menu);
+            Assert(deleteItem.Visibility == Visibility.Collapsed, "未开启时右键菜单不应出现“删除到回收站”");
+            Assert(!Wait(window.DeleteOriginalAsync(keptTile)) && confirmations == 0 && File.Exists(kept),
+                "未开启时不得删除原文件，也不应弹出确认");
+
+            button.Focus();
+            Pump();
+            window.RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(window)!, 0, Key.Delete)
+            {
+                RoutedEvent = Keyboard.PreviewKeyDownEvent
+            });
+            Pump();
+            Assert(state.Items.Count == 2 && File.Exists(kept), "未开启时 Delete 键不得移除映射或删除原文件");
+
+            enabled = true;
+            InvokeContextMenuOpened(window, menu);
+            Assert(deleteItem.Visibility == Visibility.Visible, "开启后右键菜单应出现“删除到回收站”");
+
+            Assert(!Wait(window.DeleteOriginalAsync(keptTile)) && confirmations == 1, "开启后删除前应先确认");
+            Assert(File.Exists(kept) && state.Items.Count == 2, "确认时选“否”应保留原文件和映射");
+
+            confirm = true;
+            var recycledTile = list.Items.OfType<FileBoxWindow.FileTile>().Single(tile => tile.Path == recycled);
+            Assert(Wait(window.DeleteOriginalAsync(recycledTile)), "确认后应删除成功");
+            Assert(!File.Exists(recycled), "确认后原文件应被移走");
+            Assert(state.Items.Count == 1 && state.Items.Single().Path == kept, "删除后只应移除对应映射");
+            Assert(IsInRecycleBin(Path.GetFileNameWithoutExtension(recycled)), "原文件应进入回收站而不是被永久删除");
+        }
+        finally
+        {
+            Close(window);
+            Directory.Delete(temp, true);
+        }
+    }
+
+    private static T Wait<T>(Task<T> task)
+    {
+        PumpUntil(() => task.IsCompleted, "删除操作未完成");
+        return task.Result;
+    }
+
+    private static bool IsInRecycleBin(string nameFragment)
+    {
+        var shellType = Type.GetTypeFromProgID("Shell.Application")
+            ?? throw new InvalidOperationException("找不到 Shell.Application");
+        dynamic shell = Activator.CreateInstance(shellType)!;
+        dynamic bin = shell.NameSpace(10);
+        foreach (dynamic item in bin.Items())
+        {
+            if (((string)item.Name).Contains(nameFragment, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static void InvokeContextMenuOpened(FileBoxWindow window, ContextMenu menu)
@@ -4866,6 +4988,14 @@ internal static class Program
             startEntry.IsChecked = true;
             Pump();
             Assert(dock.ShowStartMenuButton && dockApplied == 4, "重新开启入口应立即应用");
+            var revealMode = Require<ComboBox>(window, "DockRevealModeComboBox");
+            Assert(
+                (revealMode.SelectedItem as ComboBoxItem)?.Tag as string == nameof(DockRevealMode.EdgeAndHandle),
+                "唤出方式默认应为屏幕底边和把手");
+            revealMode.SelectedItem = revealMode.Items.OfType<ComboBoxItem>()
+                .Single(item => (string)item.Tag == nameof(DockRevealMode.EdgeOnly));
+            Pump();
+            Assert(dock.RevealMode == DockRevealMode.EdgeOnly && dockApplied == 5, "切换唤出方式应保存并立即应用");
         }
         finally
         {

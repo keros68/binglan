@@ -68,6 +68,7 @@ public partial class IceBlueDockWindow : Window
     private bool _vacatedForMaximized;
     private DockHandleWindow? _handleWindow;
     private bool _handleExpanded;
+    private bool _handleAllowed = true;
     private PixelRect _expandedRect;
     private readonly DockMorphAnimator _morph;
     private readonly DockGlassSurface _glass;
@@ -1081,6 +1082,17 @@ public partial class IceBlueDockWindow : Window
 
         DockNativeMethods.GetCursorPos(out var cursor);
         var revealDepth = Math.Max(2, (int)Math.Round(2 * monitor.Dpi / 96d));
+        // A visible native taskbar below the dock owns the bottom edge: pointing at it
+        // must not bring up the dock, so only the handle reveals it then.
+        var bottomEdgeFree = MonitorCatalog.TryGetWorkingArea(monitor.MonitorHandle) is not { } liveWorkArea
+            || DockRevealRules.IsBottomEdgeFree(liveWorkArea, monitor.Bounds);
+        var handleAllowed = DockRevealRules.UsesHandle(_state.RevealMode, bottomEdgeFree);
+        if (handleAllowed != _handleAllowed)
+        {
+            _handleAllowed = handleAllowed;
+            SyncHandle();
+        }
+
         var handleRect = _handleWindow is null ? default : _handleWindow.CurrentRect;
         var pointerOverHandle = _handleWindow is { IsVisible: true, IsDragActive: false } handle
             && cursor.X >= handleRect.Left && cursor.X < handleRect.Right
@@ -1098,12 +1110,13 @@ public partial class IceBlueDockWindow : Window
             // has covered the pixels, or the collapse would lag the maximize click.
             WindowOverlapsDock: overlaps || maximizedOnDockMonitor,
             ForegroundIsFullScreen: trueFullScreen,
-            PointerInRevealZone: DockRevealRules.IsInRevealZone(
-                cursor.X,
-                cursor.Y,
-                bounds,
-                monitor.Bounds,
-                revealDepth),
+            PointerInRevealZone: DockRevealRules.UsesEdge(_state.RevealMode, bottomEdgeFree)
+                && DockRevealRules.IsInRevealZone(
+                    cursor.X,
+                    cursor.Y,
+                    bounds,
+                    monitor.Bounds,
+                    revealDepth),
             PointerOverDock: pointerOverDock,
             InteractionActive: _menuOpen || _dragging || DateTimeOffset.UtcNow < _attentionRevealUntil,
             OverlapIsMaximizedWindow: maximizedOnDockMonitor);
@@ -1253,6 +1266,11 @@ public partial class IceBlueDockWindow : Window
             // AppBar notifications cannot pull the row back to the strip mid-flight.
             placement = _expandedRect;
         }
+        else if (!_handleAllowed)
+        {
+            // No handle to land in: the row shrinks in place at the strip.
+            placement = _appBar?.Bounds ?? default;
+        }
         else
         {
             // From the strip: widen the window over the whole travel path first, or
@@ -1297,7 +1315,7 @@ public partial class IceBlueDockWindow : Window
             _appBar?.SetFloatingOverride(null);
         }
         Hide();
-        if (!_trueFullScreenForeground)
+        if (!_trueFullScreenForeground && _handleAllowed)
         {
             _handleWindow?.Pulse();
         }
@@ -1306,12 +1324,12 @@ public partial class IceBlueDockWindow : Window
 
     // The point a morph converges on, in the surface's own DIP coordinates for the
     // given placement: the handle's centre while the row travels, the surface's own
-    // centre when Reduced shrinks in place. The point may lie outside the surface —
+    // centre when Reduced shrinks in place or there is no handle to land in. The point may lie outside the surface —
     // a ScaleTransform centred there pulls the shrinking row toward it.
     private Point MorphCentre(PixelRect placement)
     {
         var scale = _appBar?.Monitor is { } monitor ? monitor.Dpi / 96d : 1d;
-        if (_handleWindow is { } handle && DockMorphMotion.IsTravelEnabled(Motion))
+        if (_handleWindow is { } handle && _handleAllowed && DockMorphMotion.IsTravelEnabled(Motion))
         {
             var handleRect = handle.CurrentRect;
             var (x, y) = DockMorphMotion.ToElementPoint(
@@ -1335,7 +1353,8 @@ public partial class IceBlueDockWindow : Window
 
     // The handle stands in for the dock while it is smart-hidden: it appears then and
     // disappears with the dock — including while nothing may show over a true
-    // full-screen app. While the dock is expanded beside it the handle stays visible
+    // full-screen app, and stays away when the user reveals the dock from the edge
+    // alone. While the dock is expanded beside it the handle stays visible
     // as the row's end cap, so the pointer has somewhere to rest, and a drag in
     // progress can never lose the window to a visibility change.
     private void SyncHandle()
@@ -1347,7 +1366,7 @@ public partial class IceBlueDockWindow : Window
 
         _handleWindow.SetVisible(
             !_trueFullScreenForeground && !_suppressedBySystemMenu
-            && (_hiddenBySmartHide || _handleExpanded || _handleWindow.IsDragActive));
+            && ((_hiddenBySmartHide && _handleAllowed) || _handleExpanded || _handleWindow.IsDragActive));
     }
 
     private void CreateHandleWindow()

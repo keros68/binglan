@@ -22,6 +22,57 @@ internal static class FileBoxRuleTests
         TestTransferMovesMappingBetweenBoxes();
         TestDistributeHonoursCustomBoxes();
         TestViewModePersistenceAndMigration();
+        TestDeleteOriginalRules();
+        TestDeleteOriginalSettingDefaultsOff();
+    }
+
+    // 删除原文件只允许本地固定磁盘上的普通项目；系统入口、失效项、磁盘根目录、系统文件夹及其上级一律拒绝。
+    private static void TestDeleteOriginalRules()
+    {
+        var guarded = new[] { @"C:\Users\me", @"C:\Users\me\Desktop", @"C:\Windows" };
+        Assert(OriginalFileDeleteRules.Check(@"C:\Users\me\Desktop\报告.docx", true, true, guarded) == OriginalFileDeleteBlock.None,
+            "桌面上的普通文件应允许移到回收站");
+        Assert(OriginalFileDeleteRules.Check(@"D:\资料\项目", true, true, guarded) == OriginalFileDeleteBlock.None,
+            "普通文件夹应允许移到回收站");
+        Assert(OriginalFileDeleteRules.Check("shell:RecycleBinFolder", true, true, guarded) == OriginalFileDeleteBlock.ShellEntry,
+            "系统入口不能删除");
+        Assert(OriginalFileDeleteRules.Check(@"C:\Users\me\Desktop\已删.txt", false, true, guarded) == OriginalFileDeleteBlock.Missing,
+            "原文件不存在时不能删除");
+        Assert(OriginalFileDeleteRules.Check(@"D:\", true, true, guarded) == OriginalFileDeleteBlock.ProtectedLocation,
+            "磁盘根目录不能删除");
+        Assert(OriginalFileDeleteRules.Check(@"C:\Users\me\Desktop\", true, true, guarded) == OriginalFileDeleteBlock.ProtectedLocation,
+            "桌面文件夹本身不能删除");
+        Assert(OriginalFileDeleteRules.Check(@"c:\windows", true, true, guarded) == OriginalFileDeleteBlock.ProtectedLocation,
+            "系统文件夹不能删除（不区分大小写）");
+        Assert(OriginalFileDeleteRules.Check(@"C:\Users", true, true, guarded) == OriginalFileDeleteBlock.ProtectedLocation,
+            "包含系统文件夹的上级目录不能删除");
+        Assert(OriginalFileDeleteRules.Check(@"C:\Users\me2", true, true, guarded) == OriginalFileDeleteBlock.None,
+            "名称前缀相同的兄弟目录不应被误判为受保护");
+        Assert(OriginalFileDeleteRules.Check(@"E:\U盘\照片.jpg", true, false, guarded) == OriginalFileDeleteBlock.NotRecyclable,
+            "无法放入回收站的位置应拒绝，而不是永久删除");
+    }
+
+    // 删除原文件是选择开启的功能：新状态与旧版本升级后都默认关闭，开启后保存重载保留。
+    private static void TestDeleteOriginalSettingDefaultsOff()
+    {
+        var temp = Path.Combine(Path.GetTempPath(), $"BingLan-delete-originals-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(temp);
+        try
+        {
+            var store = new LocalStateStore(temp);
+            Assert(!LocalStateStore.CreateDefault().FileBoxDeleteOriginalsEnabled, "新安装应默认关闭删除原文件");
+            File.WriteAllText(store.StatePath, """{ "SchemaVersion": 36, "FileBoxDeleteOriginalsEnabled": true }""");
+            var upgraded = store.Load();
+            Assert(upgraded.SchemaVersion == AppState.CurrentSchemaVersion && !upgraded.FileBoxDeleteOriginalsEnabled,
+                "v36 迁移后删除原文件应保持关闭");
+            upgraded.FileBoxDeleteOriginalsEnabled = true;
+            store.Save(upgraded);
+            Assert(store.Load().FileBoxDeleteOriginalsEnabled, "开启删除原文件后保存重载应保留");
+        }
+        finally
+        {
+            Directory.Delete(temp, true);
+        }
     }
 
     // 分组盒图标/列表视图只改变显示，不触碰映射；旧状态文件升级后保持图标视图。

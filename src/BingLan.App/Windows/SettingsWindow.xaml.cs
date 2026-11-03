@@ -1341,6 +1341,7 @@ public partial class SettingsWindow : Window
         try
         {
             FileBoxAutomationCheckBox.IsChecked = _maintenance.IsFileBoxAutomationEnabled();
+            FileBoxDeleteOriginalsCheckBox.IsChecked = _maintenance.IsFileBoxDeleteOriginalsEnabled();
         }
         finally
         {
@@ -1356,6 +1357,16 @@ public partial class SettingsWindow : Window
         }
 
         _maintenance.SetFileBoxAutomation(FileBoxAutomationCheckBox.IsChecked == true);
+    }
+
+    private void FileBoxDeleteOriginalsCheckBox_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_loadingFileBoxAutomation)
+        {
+            return;
+        }
+
+        _maintenance.SetFileBoxDeleteOriginals(FileBoxDeleteOriginalsCheckBox.IsChecked == true);
     }
 
     private async void CleanDesktopCheckBox_Changed(object sender, RoutedEventArgs e)
@@ -1712,6 +1723,9 @@ public partial class SettingsWindow : Window
             LoadDockLook();
             DockIconSizeText.Text = $"{_dockState.IconSize:0}";
             DockMaximizeReleaseCheckBox.IsChecked = _dockState.ReleaseWhenMaximized;
+            DockRevealModeComboBox.SelectedItem = DockRevealModeComboBox.Items
+                .OfType<ComboBoxItem>()
+                .First(item => (string)item.Tag == _dockState.RevealMode.ToString());
             DockStartMenuButtonCheckBox.IsChecked = _dockState.ShowStartMenuButton;
             DockBottomGapSlider.Value = _dockState.BottomGapDip;
             DockBottomGapText.Text = $"{_dockState.BottomGapDip:0} DIP";
@@ -1787,6 +1801,11 @@ public partial class SettingsWindow : Window
             ? DockVisibilityMode.SmartHide
             : DockVisibilityMode.ReserveWorkArea;
         _dockState.ReleaseWhenMaximized = DockMaximizeReleaseCheckBox.IsChecked == true;
+        if (DockRevealModeComboBox?.SelectedItem is ComboBoxItem { Tag: string revealTag }
+            && Enum.TryParse<DockRevealMode>(revealTag, out var revealMode))
+        {
+            _dockState.RevealMode = revealMode;
+        }
         _dockState.ShowStartMenuButton = DockStartMenuButtonCheckBox.IsChecked == true;
         if (DockMonitorComboBox.SelectedItem is ComboBoxItem { Tag: string deviceName })
         {

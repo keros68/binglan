@@ -32,6 +32,7 @@ internal static class NativeMethods
     internal const int WmShowWindow = 0x0018;
     internal const int WmSettingChange = 0x001A;
     internal const int SpiSetWorkArea = 0x002F;
+    internal const int WmWindowPosChanging = 0x0046;
     internal const int WmWindowPosChanged = 0x0047;
     internal const int WmNcCalcSize = 0x0083;
     internal const int WmNcHitTest = 0x0084;
@@ -84,6 +85,30 @@ internal static class NativeMethods
         internal int Top;
         internal int Bottom;
     }
+
+    internal const uint FoDelete = 0x0003;
+    internal const ushort FofSilent = 0x0004;
+    internal const ushort FofNoConfirmation = 0x0010;
+    internal const ushort FofAllowUndo = 0x0040;
+    internal const ushort FofNoErrorUi = 0x0400;
+    internal const ushort FofWantNukeWarning = 0x4000;
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    internal struct ShFileOperation
+    {
+        internal nint Window;
+        internal uint Function;
+        internal string From;
+        internal string? To;
+        internal ushort Flags;
+        [MarshalAs(UnmanagedType.Bool)]
+        internal bool AnyOperationsAborted;
+        internal nint NameMappings;
+        internal string? ProgressTitle;
+    }
+
+    [DllImport("shell32.dll", EntryPoint = "SHFileOperationW", CharSet = CharSet.Unicode)]
+    internal static extern int SHFileOperation(ref ShFileOperation operation);
 
     [StructLayout(LayoutKind.Sequential)]
     internal struct WindowPos

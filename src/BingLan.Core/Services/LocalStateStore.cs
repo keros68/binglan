@@ -546,6 +546,17 @@ public sealed class LocalStateStore
             // The todo card folds up to its title bar; existing cards stay unfolded at their height.
             state.SchemaVersion = 35;
         }
+        if (state.SchemaVersion < 36)
+        {
+            // The dock reveal mode defaults to the screen edge plus the handle, as before.
+            state.SchemaVersion = 36;
+        }
+        if (state.SchemaVersion < 37)
+        {
+            // Deleting originals from a file box is opt-in and stays off for existing users.
+            state.FileBoxDeleteOriginalsEnabled = false;
+            state.SchemaVersion = 37;
+        }
         state.Updates ??= new UpdateState();
         state.QuickPlaces = QuickPlaceRules.Normalize(state.QuickPlaces);
         state.DismissedDesktopCategories = (state.DismissedDesktopCategories ?? [])

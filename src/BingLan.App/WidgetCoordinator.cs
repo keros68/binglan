@@ -754,6 +754,7 @@ public sealed class WidgetCoordinator : IDisposable
             .OfType<FileBoxWindow>()
             .Where(other => !ReferenceEquals(other, window))
             .ToList();
+        window.IsDeleteOriginalsEnabled = () => _state.FileBoxDeleteOriginalsEnabled;
         Wire(window);
         _windows.Add(window);
         window.Show();
@@ -1123,6 +1124,12 @@ public sealed class WidgetCoordinator : IDisposable
                 SetCleanDesktop = SetCleanDesktopAsync,
                 IsFileBoxAutomationEnabled = () => _state.FileBoxAutomationEnabled,
                 SetFileBoxAutomation = SetFileBoxAutomation,
+                IsFileBoxDeleteOriginalsEnabled = () => _state.FileBoxDeleteOriginalsEnabled,
+                SetFileBoxDeleteOriginals = enabled =>
+                {
+                    _state.FileBoxDeleteOriginalsEnabled = enabled;
+                    ScheduleSave();
+                },
                 CleanDesktopNotice = CleanDesktopNotice,
                 RetryCleanDesktopRestore = RetryCleanDesktopRestoreAsync,
                 Style = _state.Style,

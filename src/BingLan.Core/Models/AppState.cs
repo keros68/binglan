@@ -2,7 +2,7 @@ namespace BingLan.Core.Models;
 
 public sealed class AppState
 {
-    public const int CurrentSchemaVersion = 35;
+    public const int CurrentSchemaVersion = 37;
 
     public int SchemaVersion { get; set; } = CurrentSchemaVersion;
     public List<TodoWidgetState> TodoWidgets { get; set; } = [];
@@ -38,4 +38,10 @@ public sealed class AppState
     /// Off by default; while off, organising still clears gone mappings.
     /// </summary>
     public bool FileBoxAutomationEnabled { get; set; }
+
+    /// <summary>
+    /// Whether file boxes offer moving an item's original to the Recycle Bin. Off by
+    /// default; while off a box only ever removes its mappings and never touches files.
+    /// </summary>
+    public bool FileBoxDeleteOriginalsEnabled { get; set; }
 }

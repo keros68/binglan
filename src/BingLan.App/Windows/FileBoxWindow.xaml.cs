@@ -27,6 +27,7 @@ public partial class FileBoxWindow : WidgetWindowBase
     public FileBoxWindow(FileBoxState state)
     {
         State = state;
+        ConfirmDeleteOriginal = AskDeleteOriginal;
         _items = new ObservableCollection<FileTile>(
             state.Items.OrderBy(x => x.Order).Select(x => new FileTile(x, null)));
         InitializeComponent();
@@ -38,12 +39,21 @@ public partial class FileBoxWindow : WidgetWindowBase
         WidgetCornerRadius = state.CornerRadius;
         RefreshCount();
         Loaded += FileBoxWindow_Loaded;
+        PreviewKeyDown += FileBoxWindow_PreviewKeyDown;
     }
 
     public FileBoxState State { get; }
 
     /// <summary>The other open boxes a mapping can be transferred to.</summary>
     internal Func<IReadOnlyList<FileBoxWindow>> OtherBoxes { get; set; } = () => [];
+
+    /// <summary>Whether the user turned on deleting originals to the Recycle Bin.</summary>
+    internal Func<bool> IsDeleteOriginalsEnabled { get; set; } = () => false;
+
+    /// <summary>Asks before an original goes to the Recycle Bin; true to continue.</summary>
+    internal Func<FileTile, bool> ConfirmDeleteOriginal { get; set; }
+
+    internal Func<string, nint, Task<RecycleResult>> RecycleOriginal { get; set; } = RecycleBin.SendAsync;
 
     /// <summary>Sets the file types and whether folders this box collects when organising.</summary>
     internal void SetCollectRule(IEnumerable<string> extensions, bool folders)
@@ -406,6 +416,14 @@ public partial class FileBoxWindow : WidgetWindowBase
         // Shell namespace entries never resolve to a real path, so relocating or revealing
         // their location in Explorer does not apply to them.
         var locationVisibility = tile.IsShellEntry ? Visibility.Collapsed : Visibility.Visible;
+        var deleteVisibility = IsDeleteOriginalsEnabled() && !tile.IsShellEntry && !tile.IsMissing
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        foreach (var element in menu.Items.OfType<FrameworkElement>()
+                     .Where(element => Equals(element.Tag, "DeleteOriginal")))
+        {
+            element.Visibility = deleteVisibility;
+        }
         foreach (var item in menu.Items.OfType<System.Windows.Controls.MenuItem>())
         {
             if (Equals(item.Header, "打开所在位置") || Equals(item.Header, "重新定位…"))
@@ -634,6 +652,109 @@ public partial class FileBoxWindow : WidgetWindowBase
         CaptureState();
         RefreshCount();
         NotifyStateChanged();
+    }
+
+    private async void DeleteOriginal_Click(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is FileTile tile)
+        {
+            await DeleteOriginalAsync(tile);
+        }
+    }
+
+    // Delete acts only on a focused item and only while deleting originals is on; it
+    // never falls back to removing the mapping, so the key has a single meaning.
+    private async void FileBoxWindow_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key != Key.Delete
+            || Keyboard.Modifiers != ModifierKeys.None
+            || IsTitleEditing
+            || !IsDeleteOriginalsEnabled()
+            || Keyboard.FocusedElement is not FrameworkElement { DataContext: FileTile tile } focused
+            || !FileList.IsAncestorOf(focused))
+        {
+            return;
+        }
+
+        e.Handled = true;
+        await DeleteOriginalAsync(tile);
+    }
+
+    private bool _deletingOriginal;
+
+    /// <summary>
+    /// Moves the item's original to the Recycle Bin after the user confirms, then removes
+    /// its mapping. Locations that cannot be recycled are refused, never deleted outright.
+    /// </summary>
+    internal async Task<bool> DeleteOriginalAsync(FileTile tile)
+    {
+        if (_deletingOriginal || !IsDeleteOriginalsEnabled())
+        {
+            return false;
+        }
+
+        var exists = File.Exists(tile.Path) || Directory.Exists(tile.Path);
+        var block = OriginalFileDeleteRules.Check(
+            tile.Path,
+            exists,
+            RecycleBin.IsOnFixedLocalDrive(tile.Path),
+            RecycleBin.ProtectedFolders());
+        if (block != OriginalFileDeleteBlock.None)
+        {
+            StatusText.Text = OriginalFileDeleteRules.Describe(block);
+            return false;
+        }
+
+        if (!ConfirmDeleteOriginal(tile))
+        {
+            return false;
+        }
+
+        _deletingOriginal = true;
+        RecycleResult result;
+        try
+        {
+            result = await RecycleOriginal(tile.Path, new System.Windows.Interop.WindowInteropHelper(this).Handle);
+        }
+        catch (Exception exception) when (exception is System.ComponentModel.Win32Exception
+            or DllNotFoundException or EntryPointNotFoundException)
+        {
+            result = RecycleResult.Failed;
+        }
+        finally
+        {
+            _deletingOriginal = false;
+        }
+
+        if (result != RecycleResult.Recycled)
+        {
+            StatusText.Text = result == RecycleResult.Cancelled
+                ? "已取消，原文件未删除"
+                : "未能删除，文件可能正在使用或没有权限";
+            return false;
+        }
+
+        _items.Remove(tile);
+        FileMappingService.Remove(State, tile.Mapping.Id);
+        CaptureState();
+        RefreshCount();
+        NotifyStateChanged();
+        StatusText.Text = $"已将“{tile.Name}”移到回收站";
+        return true;
+    }
+
+    private bool AskDeleteOriginal(FileTile tile)
+    {
+        var what = Directory.Exists(tile.Path)
+            ? $"将文件夹“{tile.Name}”及其中所有内容移到回收站吗？"
+            : $"将“{tile.Name}”移到回收站吗？";
+        return System.Windows.MessageBox.Show(
+                this,
+                $"{what}\n\n位置：{tile.Path}\n\n删除的是原文件，可以从回收站恢复。",
+                "删除到回收站",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning,
+                MessageBoxResult.No) == MessageBoxResult.Yes;
     }
 
     private void MoveMappingUp_Click(object sender, RoutedEventArgs e) =>

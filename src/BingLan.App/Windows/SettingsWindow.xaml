@@ -259,6 +259,16 @@
                                   Checked="FileBoxAutomationCheckBox_Changed"
                                   Unchecked="FileBoxAutomationCheckBox_Changed"/>
                     </local:SettingsRow>
+                    <local:SettingsRow Glyph="&#xE74D;"
+                                       GlyphBrush="{DynamicResource SettingsIconOrangeBrush}"
+                                       Header="允许从分组盒删除原文件"
+                                       Description="开启后可在分组盒右键选择“删除到回收站”，或选中项目按 Delete 键，每次删除前都会确认，可从回收站恢复；U 盘、网络位置、磁盘根目录和系统文件夹不能删除。关闭时分组盒只移除映射，不会动原文件">
+                        <CheckBox x:Name="FileBoxDeleteOriginalsCheckBox"
+                                  AutomationProperties.Name="允许从分组盒删除原文件"
+                                  Style="{StaticResource ToggleSwitchStyle}"
+                                  Checked="FileBoxDeleteOriginalsCheckBox_Changed"
+                                  Unchecked="FileBoxDeleteOriginalsCheckBox_Changed"/>
+                    </local:SettingsRow>
                     </local:SettingsGroup>
 
                     <TextBlock Style="{StaticResource SectionHeaderStyle}" Text="卡片外观"/>
@@ -1125,11 +1135,23 @@
                             </local:SettingsRow>
                             <local:SettingsRow Style="{StaticResource NestedSettingsRowStyle}"
                                                Header="智能隐藏"
-                                               Description="窗口移到 Dock 位置时隐藏，鼠标移到屏幕底边中间时显示">
+                                               Description="窗口移到 Dock 位置时隐藏，按下面的唤出方式重新显示">
                                 <RadioButton x:Name="DockSmartHideRadio"
                                              GroupName="DockVisibility"
                                              AutomationProperties.Name="智能隐藏"
                                              Checked="DockSetting_Changed"/>
+                            </local:SettingsRow>
+                            <local:SettingsRow Style="{StaticResource NestedSettingsRowStyle}"
+                                               Header="唤出方式"
+                                               Description="Dock 隐藏后如何重新显示。原生任务栏常显时底边被任务栏占用，碰到任务栏不会唤出 Dock，只能通过把手唤出">
+                                <ComboBox x:Name="DockRevealModeComboBox"
+                                          Width="220"
+                                          AutomationProperties.Name="Dock 唤出方式"
+                                          SelectionChanged="DockSetting_Changed">
+                                    <ComboBoxItem Content="屏幕底边和把手" Tag="EdgeAndHandle"/>
+                                    <ComboBoxItem Content="只用把手" Tag="HandleOnly"/>
+                                    <ComboBoxItem Content="只用屏幕底边（不显示把手）" Tag="EdgeOnly"/>
+                                </ComboBox>
                             </local:SettingsRow>
                             <local:SettingsRow Style="{StaticResource NestedSettingsRowStyle}"
                                                Header="最大化窗口时让出底部空间"

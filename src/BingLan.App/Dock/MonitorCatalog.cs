@@ -18,6 +18,19 @@ internal sealed record MonitorSnapshot(
 
 internal static class MonitorCatalog
 {
+    /// <summary>The live work area of one monitor, without enumerating all of them.</summary>
+    internal static PixelRect? TryGetWorkingArea(nint monitor)
+    {
+        var info = new DockNativeMethods.MonitorInfo
+        {
+            Size = (uint)Marshal.SizeOf<DockNativeMethods.MonitorInfo>(),
+            DeviceName = string.Empty
+        };
+        return monitor != 0 && DockNativeMethods.GetMonitorInfoW(monitor, ref info)
+            ? ToPixelRect(info.WorkArea)
+            : null;
+    }
+
     internal static IReadOnlyList<MonitorSnapshot> GetAll()
     {
         var monitors = new List<MonitorSnapshot>();

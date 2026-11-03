@@ -78,4 +78,6 @@ public sealed class SettingsMaintenance
     /// <summary>File-box automation (auto-collect new desktop items, auto-clear gone mappings).</summary>
     public Func<bool> IsFileBoxAutomationEnabled { get; init; } = () => false;
     public Action<bool> SetFileBoxAutomation { get; init; } = _ => { };
+    public Func<bool> IsFileBoxDeleteOriginalsEnabled { get; init; } = () => false;
+    public Action<bool> SetFileBoxDeleteOriginals { get; init; } = _ => { };
 }

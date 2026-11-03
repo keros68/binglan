@@ -76,6 +76,8 @@
                             <MenuItem Header="选择文件夹…" Click="RelinkFolder_Click"/>
                         </MenuItem>
                         <MenuItem Header="移除映射" Click="RemoveMapping_Click"/>
+                        <Separator Tag="DeleteOriginal"/>
+                        <MenuItem Header="删除到回收站…" Tag="DeleteOriginal" Click="DeleteOriginal_Click"/>
                     </ContextMenu>
                 </Button.ContextMenu>
                 <Grid>
@@ -175,6 +177,8 @@
                             <MenuItem Header="选择文件夹…" Click="RelinkFolder_Click"/>
                         </MenuItem>
                         <MenuItem Header="移除映射" Click="RemoveMapping_Click"/>
+                        <Separator Tag="DeleteOriginal"/>
+                        <MenuItem Header="删除到回收站…" Tag="DeleteOriginal" Click="DeleteOriginal_Click"/>
                     </ContextMenu>
                 </Button.ContextMenu>
                 <DockPanel>

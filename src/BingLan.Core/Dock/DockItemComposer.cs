@@ -267,6 +267,11 @@ public static class DockPinRules
             state.VisibilityMode = DockVisibilityMode.ReserveWorkArea;
         }
 
+        if (!Enum.IsDefined(state.RevealMode))
+        {
+            state.RevealMode = DockRevealMode.EdgeAndHandle;
+        }
+
         state.IconSize = double.IsFinite(state.IconSize)
             ? Math.Clamp(state.IconSize, DockState.MinimumIconSize, DockState.MaximumIconSize)
             : DockState.DefaultIconSize;

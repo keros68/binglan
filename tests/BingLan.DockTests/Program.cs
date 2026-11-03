@@ -1094,6 +1094,23 @@ static void TestDockRevealRules()
     Assert(
         DockRevealRules.IsInRevealZone(960, 1079, overhang, monitor, 2),
         "底边超出屏幕的 Dock 仍应保留边缘条唤出区");
+
+    // 原生任务栏常显时底边被占用：碰到任务栏不唤出 Dock，只能用把手，且“只用底边”时把手也要保留。
+    var taskbarVisible = new PixelRect(0, 0, 1920, 1032);
+    var taskbarHidden = new PixelRect(0, 0, 1920, 1080);
+    Assert(!DockRevealRules.IsBottomEdgeFree(taskbarVisible, monitor), "任务栏常显时底边应视为被占用");
+    Assert(DockRevealRules.IsBottomEdgeFree(taskbarHidden, monitor), "任务栏自动隐藏时底边应可用");
+    foreach (var mode in Enum.GetValues<DockRevealMode>())
+    {
+        Assert(!DockRevealRules.UsesEdge(mode, bottomEdgeFree: false), $"{mode}：底边被占用时不应从底边唤出");
+        Assert(DockRevealRules.UsesHandle(mode, bottomEdgeFree: false), $"{mode}：底边被占用时应保留把手");
+    }
+    Assert(DockRevealRules.UsesEdge(DockRevealMode.EdgeAndHandle, true), "默认应从底边唤出");
+    Assert(DockRevealRules.UsesHandle(DockRevealMode.EdgeAndHandle, true), "默认应显示把手");
+    Assert(!DockRevealRules.UsesEdge(DockRevealMode.HandleOnly, true), "只用把手时底边不唤出");
+    Assert(DockRevealRules.UsesHandle(DockRevealMode.HandleOnly, true), "只用把手时显示把手");
+    Assert(DockRevealRules.UsesEdge(DockRevealMode.EdgeOnly, true), "只用底边时从底边唤出");
+    Assert(!DockRevealRules.UsesHandle(DockRevealMode.EdgeOnly, true), "只用底边时不显示把手");
 }
 
 static void TestDockAutoHideFullScreenHidesImmediately()
@@ -1260,6 +1277,7 @@ static void TestStartMenuMigration()
         var state = store.Load();
         AssertEqual(AppState.CurrentSchemaVersion, state.SchemaVersion, "应迁移到当前结构");
         Assert(state.Dock.ShowStartMenuButton, "开始菜单入口默认开启");
+        AssertEqual(DockRevealMode.EdgeAndHandle, state.Dock.RevealMode, "旧版本迁移后唤出方式应为底边和把手");
         AssertEqual(48d, state.Dock.IconSize, "图标大小应保留");
         AssertEqual("C:\\Apps\\Example.exe", state.Dock.PinnedApps.Single().ExecutablePath!, "应用绑定应保留");
         Assert(state.OnboardingCompleted, "升级不应触发首次引导");
@@ -1283,6 +1301,7 @@ static void TestDockStateRoundTrip()
         state.Dock.VisibilityMode = DockVisibilityMode.SmartHide;
         state.Dock.BottomGapDip = 52;
         state.Dock.ReleaseWhenMaximized = true;
+        state.Dock.RevealMode = DockRevealMode.EdgeOnly;
         state.Dock.HiddenHandleLeftDip = 120;
         state.Dock.HiddenHandleTopDip = 88;
         state.Dock.PinnedApps.Add(new DockPinnedApp
@@ -1311,6 +1330,7 @@ static void TestDockStateRoundTrip()
         AssertEqual(DockVisibilityMode.SmartHide, loaded.Dock.VisibilityMode, "可见性模式未保留");
         AssertEqual(52d, loaded.Dock.BottomGapDip, "距底高度未保留");
         Assert(loaded.Dock.ReleaseWhenMaximized, "最大化让出开关未保留");
+        AssertEqual(DockRevealMode.EdgeOnly, loaded.Dock.RevealMode, "唤出方式未保留");
         AssertEqual(120d, loaded.Dock.HiddenHandleLeftDip, "把手横坐标未保留");
         AssertEqual(88d, loaded.Dock.HiddenHandleTopDip, "把手纵坐标未保留");
         AssertEqual(2, loaded.Dock.PinnedApps.Count, "固定项数量未保留");
