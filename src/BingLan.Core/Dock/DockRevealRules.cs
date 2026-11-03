@@ -8,10 +8,10 @@ namespace BingLan.Core.Dock;
 /// needs only the thin edge strip; a dock floating above the edge (bottom gap, or a
 /// reservation that is still settling) extends the zone down to the edge so the dock
 /// does not hide while the pointer crosses the gap between the edge and the dock.
-/// When a visible native taskbar (or another bar) occupies the bottom edge, there is
-/// no free edge to hit: pointing at the taskbar must not bring up the dock, so only
-/// the handle reveals it, and the handle stays available even when the user chose the
-/// edge alone — otherwise the dock could not be reached at all.
+/// When a visible native taskbar (or another bar) occupies the bottom edge, pointing at
+/// the taskbar must not bring up the dock: with the handle available only the handle
+/// reveals it. A user who chose the edge alone gets no handle; the dock then comes up
+/// only at the screen's last pixel rows, never over the rest of the taskbar.
 /// </summary>
 public static class DockRevealRules
 {
@@ -36,9 +36,24 @@ public static class DockRevealRules
     public static bool IsBottomEdgeFree(PixelRect workArea, PixelRect monitorBounds) =>
         workArea.Bottom >= monitorBounds.Bottom;
 
-    public static bool UsesEdge(DockRevealMode mode, bool bottomEdgeFree) =>
-        bottomEdgeFree && mode != DockRevealMode.HandleOnly;
+    public static DockEdgeReveal EdgeReveal(DockRevealMode mode, bool bottomEdgeFree) => mode switch
+    {
+        DockRevealMode.HandleOnly => DockEdgeReveal.None,
+        _ when bottomEdgeFree => DockEdgeReveal.Zone,
+        DockRevealMode.EdgeOnly => DockEdgeReveal.EdgeStrip,
+        _ => DockEdgeReveal.None
+    };
 
-    public static bool UsesHandle(DockRevealMode mode, bool bottomEdgeFree) =>
-        !bottomEdgeFree || mode != DockRevealMode.EdgeOnly;
+    public static bool UsesHandle(DockRevealMode mode) => mode != DockRevealMode.EdgeOnly;
+}
+
+/// <summary>Which part of the bottom edge reveals a smart-hidden dock.</summary>
+public enum DockEdgeReveal
+{
+    /// <summary>The edge does not reveal the dock.</summary>
+    None,
+    /// <summary>From the dock's bottom down to the screen edge.</summary>
+    Zone,
+    /// <summary>Only the screen's last pixel rows under the dock, over an occupied edge.</summary>
+    EdgeStrip
 }

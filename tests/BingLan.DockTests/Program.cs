@@ -1095,22 +1095,26 @@ static void TestDockRevealRules()
         DockRevealRules.IsInRevealZone(960, 1079, overhang, monitor, 2),
         "底边超出屏幕的 Dock 仍应保留边缘条唤出区");
 
-    // 原生任务栏常显时底边被占用：碰到任务栏不唤出 Dock，只能用把手，且“只用底边”时把手也要保留。
+    // 原生任务栏常显时底边被占用：碰到任务栏不唤出 Dock；有把手时用把手，“只用底边”不显示把手、只认屏幕最底部窄条。
     var taskbarVisible = new PixelRect(0, 0, 1920, 1032);
     var taskbarHidden = new PixelRect(0, 0, 1920, 1080);
     Assert(!DockRevealRules.IsBottomEdgeFree(taskbarVisible, monitor), "任务栏常显时底边应视为被占用");
     Assert(DockRevealRules.IsBottomEdgeFree(taskbarHidden, monitor), "任务栏自动隐藏时底边应可用");
-    foreach (var mode in Enum.GetValues<DockRevealMode>())
-    {
-        Assert(!DockRevealRules.UsesEdge(mode, bottomEdgeFree: false), $"{mode}：底边被占用时不应从底边唤出");
-        Assert(DockRevealRules.UsesHandle(mode, bottomEdgeFree: false), $"{mode}：底边被占用时应保留把手");
-    }
-    Assert(DockRevealRules.UsesEdge(DockRevealMode.EdgeAndHandle, true), "默认应从底边唤出");
-    Assert(DockRevealRules.UsesHandle(DockRevealMode.EdgeAndHandle, true), "默认应显示把手");
-    Assert(!DockRevealRules.UsesEdge(DockRevealMode.HandleOnly, true), "只用把手时底边不唤出");
-    Assert(DockRevealRules.UsesHandle(DockRevealMode.HandleOnly, true), "只用把手时显示把手");
-    Assert(DockRevealRules.UsesEdge(DockRevealMode.EdgeOnly, true), "只用底边时从底边唤出");
-    Assert(!DockRevealRules.UsesHandle(DockRevealMode.EdgeOnly, true), "只用底边时不显示把手");
+    AssertEqual(DockEdgeReveal.Zone, DockRevealRules.EdgeReveal(DockRevealMode.EdgeAndHandle, true), "默认应从底边唤出");
+    AssertEqual(DockEdgeReveal.None, DockRevealRules.EdgeReveal(DockRevealMode.EdgeAndHandle, false), "默认模式下碰到常显任务栏不应唤出");
+    AssertEqual(DockEdgeReveal.None, DockRevealRules.EdgeReveal(DockRevealMode.HandleOnly, true), "只用把手时底边不唤出");
+    AssertEqual(DockEdgeReveal.Zone, DockRevealRules.EdgeReveal(DockRevealMode.EdgeOnly, true), "只用底边时从底边唤出");
+    AssertEqual(DockEdgeReveal.EdgeStrip, DockRevealRules.EdgeReveal(DockRevealMode.EdgeOnly, false),
+        "只用底边且任务栏常显时只认屏幕最底部窄条");
+    Assert(DockRevealRules.UsesHandle(DockRevealMode.EdgeAndHandle), "默认应显示把手");
+    Assert(DockRevealRules.UsesHandle(DockRevealMode.HandleOnly), "只用把手时显示把手");
+    Assert(!DockRevealRules.UsesHandle(DockRevealMode.EdgeOnly), "只用底边时无论任务栏是否常显都不显示把手");
+
+    // 窄条：Dock 悬在任务栏上方时，任务栏中部不算唤出区，屏幕最底部 2px 才算。
+    var aboveTaskbar = new PixelRect(687, 940, 1232, 1004);
+    var strip = aboveTaskbar with { Bottom = monitor.Bottom };
+    Assert(!DockRevealRules.IsInRevealZone(960, 1050, strip, monitor, 2), "任务栏中部不应唤出");
+    Assert(DockRevealRules.IsInRevealZone(960, 1079, strip, monitor, 2), "屏幕最底部窄条应唤出");
 }
 
 static void TestDockAutoHideFullScreenHidesImmediately()

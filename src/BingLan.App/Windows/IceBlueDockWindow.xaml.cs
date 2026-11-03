@@ -1083,10 +1083,11 @@ public partial class IceBlueDockWindow : Window
         DockNativeMethods.GetCursorPos(out var cursor);
         var revealDepth = Math.Max(2, (int)Math.Round(2 * monitor.Dpi / 96d));
         // A visible native taskbar below the dock owns the bottom edge: pointing at it
-        // must not bring up the dock, so only the handle reveals it then.
+        // must not bring up the dock; see DockRevealRules for what reveals it then.
         var bottomEdgeFree = MonitorCatalog.TryGetWorkingArea(monitor.MonitorHandle) is not { } liveWorkArea
             || DockRevealRules.IsBottomEdgeFree(liveWorkArea, monitor.Bounds);
-        var handleAllowed = DockRevealRules.UsesHandle(_state.RevealMode, bottomEdgeFree);
+        var edgeReveal = DockRevealRules.EdgeReveal(_state.RevealMode, bottomEdgeFree);
+        var handleAllowed = DockRevealRules.UsesHandle(_state.RevealMode);
         if (handleAllowed != _handleAllowed)
         {
             _handleAllowed = handleAllowed;
@@ -1110,11 +1111,15 @@ public partial class IceBlueDockWindow : Window
             // has covered the pixels, or the collapse would lag the maximize click.
             WindowOverlapsDock: overlaps || maximizedOnDockMonitor,
             ForegroundIsFullScreen: trueFullScreen,
-            PointerInRevealZone: DockRevealRules.UsesEdge(_state.RevealMode, bottomEdgeFree)
+            PointerInRevealZone: edgeReveal != DockEdgeReveal.None
                 && DockRevealRules.IsInRevealZone(
                     cursor.X,
                     cursor.Y,
-                    bounds,
+                    // Over an occupied edge only the last rows count: treat the dock as
+                    // flush with the screen edge so the zone shrinks to the thin strip.
+                    edgeReveal == DockEdgeReveal.EdgeStrip
+                        ? bounds with { Bottom = monitor.Bounds.Bottom }
+                        : bounds,
                     monitor.Bounds,
                     revealDepth),
             PointerOverDock: pointerOverDock,

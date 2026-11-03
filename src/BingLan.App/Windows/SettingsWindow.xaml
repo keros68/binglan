@@ -1153,7 +1153,7 @@
                             </local:SettingsRow>
                             <local:SettingsRow Style="{StaticResource NestedSettingsRowStyle}"
                                                Header="唤出方式"
-                                               Description="Dock 隐藏后如何重新显示。原生任务栏常显时底边被任务栏占用，碰到任务栏不会唤出 Dock，只能通过把手唤出">
+                                               Description="Dock 隐藏后如何重新显示。原生任务栏一直显示时，鼠标停在任务栏上不会唤出 Dock：默认用把手唤出；选“只用屏幕底边”则不显示把手，把鼠标推到屏幕最底边唤出">
                                 <ComboBox x:Name="DockRevealModeComboBox"
                                           Width="220"
                                           AutomationProperties.Name="Dock 唤出方式"
