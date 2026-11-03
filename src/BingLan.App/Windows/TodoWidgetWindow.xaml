@@ -228,6 +228,7 @@
                              FontStyle="{Binding WidgetTitleFontStyle, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
                              Text="{Binding Title, Mode=OneTime}"/>
                     <Button x:Name="ViewModeButton"
+                            Style="{StaticResource WidgetHeaderToolButtonStyle}"
                             Grid.Column="1"
                             AutomationProperties.Name="切换列表与周历视图"
                             Width="30"
@@ -241,6 +242,7 @@
                             ToolTip="切换到周历"
                             Click="ToggleViewMode_Click"/>
                     <Button x:Name="CollapseButton"
+                            Style="{StaticResource WidgetHeaderToolButtonStyle}"
                             Grid.Column="2"
                             AutomationProperties.Name="折叠或展开待办卡片"
                             Width="28"
@@ -269,6 +271,7 @@
                             ToolTip="设置"
                             Click="Settings_Click"/>
                     <Button x:Name="AddTodoButton"
+                            Style="{StaticResource WidgetHeaderToolButtonStyle}"
                             Grid.Column="4"
                             AutomationProperties.Name="新增待办"
                             Width="30"

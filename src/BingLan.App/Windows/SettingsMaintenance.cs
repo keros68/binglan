@@ -80,4 +80,6 @@ public sealed class SettingsMaintenance
     public Action<bool> SetFileBoxAutomation { get; init; } = _ => { };
     public Func<bool> IsFileBoxDeleteOriginalsEnabled { get; init; } = () => false;
     public Action<bool> SetFileBoxDeleteOriginals { get; init; } = _ => { };
+    public Func<bool> IsHeaderToolsOnHover { get; init; } = () => false;
+    public Action<bool> SetHeaderToolsOnHover { get; init; } = _ => { };
 }

@@ -249,6 +249,16 @@
                                       Unchecked="CleanDesktopCheckBox_Changed"/>
                         </StackPanel>
                     </local:SettingsRow>
+                    <local:SettingsRow Glyph="&#xE7B3;"
+                                       GlyphBrush="{DynamicResource SettingsIconIndigoBrush}"
+                                       Header="标题栏按钮仅在鼠标移上时显示"
+                                       Description="开启后，待办和分组盒标题栏上的按钮（如 +、排序、收起）平时隐藏，鼠标移到卡片上或用键盘选中卡片时出现；按钮位置保留，标题不会跳动">
+                        <CheckBox x:Name="HeaderToolsOnHoverCheckBox"
+                                  AutomationProperties.Name="标题栏按钮仅在鼠标移上时显示"
+                                  Style="{StaticResource ToggleSwitchStyle}"
+                                  Checked="HeaderToolsOnHoverCheckBox_Changed"
+                                  Unchecked="HeaderToolsOnHoverCheckBox_Changed"/>
+                    </local:SettingsRow>
                     <local:SettingsRow Glyph="&#xE72C;"
                                        GlyphBrush="{DynamicResource SettingsIconGreenBrush}"
                                        Header="分组盒自动刷新"

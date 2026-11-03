@@ -2,7 +2,7 @@ namespace BingLan.Core.Models;
 
 public sealed class AppState
 {
-    public const int CurrentSchemaVersion = 37;
+    public const int CurrentSchemaVersion = 38;
 
     public int SchemaVersion { get; set; } = CurrentSchemaVersion;
     public List<TodoWidgetState> TodoWidgets { get; set; } = [];
@@ -44,4 +44,10 @@ public sealed class AppState
     /// default; while off a box only ever removes its mappings and never touches files.
     /// </summary>
     public bool FileBoxDeleteOriginalsEnabled { get; set; }
+
+    /// <summary>
+    /// Whether card title-bar buttons stay hidden until the pointer is over the card
+    /// (or the card is selected from the keyboard). Off by default.
+    /// </summary>
+    public bool HeaderToolsOnHover { get; set; }
 }

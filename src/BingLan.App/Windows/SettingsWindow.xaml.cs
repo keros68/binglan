@@ -1342,6 +1342,7 @@ public partial class SettingsWindow : Window
         {
             FileBoxAutomationCheckBox.IsChecked = _maintenance.IsFileBoxAutomationEnabled();
             FileBoxDeleteOriginalsCheckBox.IsChecked = _maintenance.IsFileBoxDeleteOriginalsEnabled();
+            HeaderToolsOnHoverCheckBox.IsChecked = _maintenance.IsHeaderToolsOnHover();
         }
         finally
         {
@@ -1367,6 +1368,16 @@ public partial class SettingsWindow : Window
         }
 
         _maintenance.SetFileBoxDeleteOriginals(FileBoxDeleteOriginalsCheckBox.IsChecked == true);
+    }
+
+    private void HeaderToolsOnHoverCheckBox_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_loadingFileBoxAutomation)
+        {
+            return;
+        }
+
+        _maintenance.SetHeaderToolsOnHover(HeaderToolsOnHoverCheckBox.IsChecked == true);
     }
 
     private async void CleanDesktopCheckBox_Changed(object sender, RoutedEventArgs e)

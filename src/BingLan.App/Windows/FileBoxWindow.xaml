@@ -259,6 +259,7 @@
                              FontStyle="{Binding WidgetTitleFontStyle, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
                              Text="{Binding Title, Mode=OneTime}"/>
                     <Button x:Name="AddButton"
+                            Style="{StaticResource WidgetHeaderToolButtonStyle}"
                             AutomationProperties.Name="添加文件或文件夹映射"
                             Grid.Column="1"
                             Width="28"
@@ -288,6 +289,7 @@
                         </Button.ContextMenu>
                     </Button>
                     <Button x:Name="SortButton"
+                            Style="{StaticResource WidgetHeaderToolButtonStyle}"
                             AutomationProperties.Name="排序文件映射"
                             Grid.Column="2"
                             Width="28"
@@ -309,6 +311,7 @@
                         </Button.ContextMenu>
                     </Button>
                     <Button x:Name="CollapseButton"
+                            Style="{StaticResource WidgetHeaderToolButtonStyle}"
                             Grid.Column="3"
                             AutomationProperties.Name="折叠或展开分组盒"
                             Width="28"

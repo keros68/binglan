@@ -24,6 +24,30 @@ internal static class FileBoxRuleTests
         TestViewModePersistenceAndMigration();
         TestDeleteOriginalRules();
         TestDeleteOriginalSettingDefaultsOff();
+        TestHeaderToolsOnHoverDefaultsOff();
+    }
+
+    // 标题栏按钮悬停显示是选择开启的外观偏好：新状态与 v37 升级后都默认关闭，开启后保存重载保留。
+    private static void TestHeaderToolsOnHoverDefaultsOff()
+    {
+        var temp = Path.Combine(Path.GetTempPath(), $"BingLan-header-tools-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(temp);
+        try
+        {
+            var store = new LocalStateStore(temp);
+            Assert(!LocalStateStore.CreateDefault().HeaderToolsOnHover, "新安装应默认一直显示标题栏按钮");
+            File.WriteAllText(store.StatePath, """{ "SchemaVersion": 37, "HeaderToolsOnHover": true }""");
+            var upgraded = store.Load();
+            Assert(upgraded.SchemaVersion == AppState.CurrentSchemaVersion && !upgraded.HeaderToolsOnHover,
+                "v37 迁移后标题栏按钮应保持一直显示");
+            upgraded.HeaderToolsOnHover = true;
+            store.Save(upgraded);
+            Assert(store.Load().HeaderToolsOnHover, "开启悬停显示后保存重载应保留");
+        }
+        finally
+        {
+            Directory.Delete(temp, true);
+        }
     }
 
     // 删除原文件只允许本地固定磁盘上的普通项目；系统入口、失效项、磁盘根目录、系统文件夹及其上级一律拒绝。

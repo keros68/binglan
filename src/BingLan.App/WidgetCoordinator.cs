@@ -798,6 +798,7 @@ public sealed class WidgetCoordinator : IDisposable
     private void Wire(WidgetWindowBase window)
     {
         window.ApplyStyle(_state.Style);
+        window.HeaderToolsOnHover = _state.HeaderToolsOnHover;
         // A card that appears while the desktop is shown would be covered by the
         // raised desktop surface; lift it with the others.
         window.IsVisibleChanged += (_, e) =>
@@ -1125,6 +1126,16 @@ public sealed class WidgetCoordinator : IDisposable
                 IsFileBoxAutomationEnabled = () => _state.FileBoxAutomationEnabled,
                 SetFileBoxAutomation = SetFileBoxAutomation,
                 IsFileBoxDeleteOriginalsEnabled = () => _state.FileBoxDeleteOriginalsEnabled,
+                IsHeaderToolsOnHover = () => _state.HeaderToolsOnHover,
+                SetHeaderToolsOnHover = enabled =>
+                {
+                    _state.HeaderToolsOnHover = enabled;
+                    foreach (var card in _windows)
+                    {
+                        card.HeaderToolsOnHover = enabled;
+                    }
+                    ScheduleSave();
+                },
                 SetFileBoxDeleteOriginals = enabled =>
                 {
                     _state.FileBoxDeleteOriginalsEnabled = enabled;

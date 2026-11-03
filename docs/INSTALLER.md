@@ -3,10 +3,10 @@
 ## 构建
 
 ```powershell
-pwsh -NoProfile -File .\installer\build.ps1 -Version 0.2.49
+pwsh -NoProfile -File .\installer\build.ps1 -Version 0.2.50
 ```
 
-输出 `installer\bin\BingLan-Setup-0.2.49.exe`（约 56.5 MB）和免安装包 `installer\bin\BingLan-0.2.49-portable.zip`。脚本先把应用发布为 win-x64 自包含程序（附带 .NET 运行时，只保留中文和英文资源），再用 Inno Setup 打包为按用户安装的安装程序，并把同一份发布输出压成免安装 zip。构建还需要 .NET 10 SDK、PowerShell 7、Visual Studio 2022 C++ x64 工具链和 Windows SDK；自有任务栏 DLL 随发布输出进入安装包，细节见 [任务栏 XAML 适配](TASKBAR-XAML.md)。需要 Inno Setup 6：`winget install JRSoftware.InnoSetup --scope user`。注意 winget 安装的 Inno Setup 不带简体中文语言文件（非官方翻译），脚本引用的 `Languages\ChineseSimplified.isl` 需从 [istrans 页面](https://jrsoftware.org/files/istrans/) 下载后放入 Inno Setup 安装目录的 `Languages\` 下。
+输出 `installer\bin\BingLan-Setup-0.2.50.exe`（约 56.5 MB）和免安装包 `installer\bin\BingLan-0.2.50-portable.zip`。脚本先把应用发布为 win-x64 自包含程序（附带 .NET 运行时，只保留中文和英文资源），再用 Inno Setup 打包为按用户安装的安装程序，并把同一份发布输出压成免安装 zip。构建还需要 .NET 10 SDK、PowerShell 7、Visual Studio 2022 C++ x64 工具链和 Windows SDK；自有任务栏 DLL 随发布输出进入安装包，细节见 [任务栏 XAML 适配](TASKBAR-XAML.md)。需要 Inno Setup 6：`winget install JRSoftware.InnoSetup --scope user`。注意 winget 安装的 Inno Setup 不带简体中文语言文件（非官方翻译），脚本引用的 `Languages\ChineseSimplified.isl` 需从 [istrans 页面](https://jrsoftware.org/files/istrans/) 下载后放入 Inno Setup 安装目录的 `Languages\` 下。
 
 ## 免安装包
 
@@ -66,7 +66,7 @@ zip 版内容与安装后的程序目录一致（程序文件、`使用说明.md
 
 ## 验证状态
 
-v0.2.49 在 Windows 11 Build 26300 下通过核心、便签、信息组件、Dock 与 WPF UI 五套测试；新增 Dock 唤出方式与底边占用规则、卡片激活后仍在普通窗口下方、分组盒删除原文件（默认关闭、确认后进入回收站、拒绝不可回收位置）的回归检查，并以 `--interactive-qa` 在真机上验证任务栏常显时碰到任务栏不唤出 Dock、把手唤出、删除到回收站与 Delete 键流程。此轮未在 Windows 10 真机、多显示器与混合 DPI 下验证，也未重做覆盖安装。
+v0.2.50 在 Windows 11 Build 26300 下通过核心、便签、信息组件与 Dock 四套测试，WPF UI 测试中新增的标题栏按钮悬停显示检查通过（顶栏两项真实鼠标测试在运行时受外部鼠标移动干扰未通过，本轮未改动顶栏代码）；并以 `--interactive-qa` 在真机上确认开启后分组盒标题栏只显示标题、选中卡片后按钮出现且位置不变。此轮未在 Windows 10 真机、多显示器与混合 DPI 下验证，也未重做覆盖安装。
 
 v0.2.47 在 Windows 11 Build 26300 下通过核心、便签、信息组件、Dock 与 WPF UI 五套测试；新增卡片被贴边工具栏推开期间仍按显示器排列记住位置、换排列后不回到旧排列坐标、Dock 后台启动保留快捷方式参数的回归检查，并在交互验收实例中实际打开快捷入口的下载、此电脑和回收站。免安装包解压后确认文件版本 0.2.47.0。此轮未在真实多显示器、混合 DPI 环境和装有 Directory Opus 的电脑上验证，未重做覆盖安装和卸载，也未在 Windows 10 真机上验证。
 

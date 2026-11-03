@@ -166,6 +166,7 @@ internal static class Program
         Run("分组盒自动刷新开关默认关闭并按需写回", TestFileBoxAutomationToggle, failures);
         Run("桌面分组盒显示名称与盒间转移", TestFileBoxRenameAndTransfer, failures);
         Run("分组盒删除原文件：默认关闭、确认后移到回收站", TestFileBoxDeleteOriginal, failures);
+        Run("标题栏按钮可设为仅悬停或选中时显示", TestHeaderToolsOnHover, failures);
         Run("桌面分组盒图标与列表视图切换", TestFileBoxViewModeSwitch, failures);
         Run("卡片图标取高分辨率帧而非 32px 拉伸", TestIconProviderReturnsHighResolutionFrames, failures);
         Run("旧图标不被 Jumbo 透明占位缩成小点", TestSmallShellIconFrames, failures);
@@ -2365,6 +2366,7 @@ internal static class Program
     {
         var automation = false;
         var deleteOriginals = false;
+        var headerTools = false;
         var applied = new List<bool>();
         var window = new SettingsWindow(
             new CityLookupService(),
@@ -2382,7 +2384,9 @@ internal static class Program
                     applied.Add(value);
                 },
                 IsFileBoxDeleteOriginalsEnabled = () => deleteOriginals,
-                SetFileBoxDeleteOriginals = value => deleteOriginals = value
+                SetFileBoxDeleteOriginals = value => deleteOriginals = value,
+                IsHeaderToolsOnHover = () => headerTools,
+                SetHeaderToolsOnHover = value => headerTools = value
             });
         ShowAndPump(window);
         try
@@ -2404,6 +2408,12 @@ internal static class Program
             deleteToggle.IsChecked = false;
             Pump();
             Assert(!deleteOriginals, "取消勾选后应关闭删除原文件");
+
+            var headerToggle = Require<CheckBox>(window, "HeaderToolsOnHoverCheckBox");
+            Assert(headerToggle.IsChecked == false && !headerTools, "标题栏按钮悬停显示应默认关闭");
+            headerToggle.IsChecked = true;
+            Pump();
+            Assert(headerTools, "勾选后应开启标题栏按钮悬停显示");
         }
         finally
         {
@@ -2582,6 +2592,45 @@ internal static class Program
         {
             Close(window);
             Directory.Delete(temp, true);
+        }
+    }
+
+    private static void TestHeaderToolsOnHover()
+    {
+        var window = new FileBoxWindow(new FileBoxState
+        {
+            Placement = new WindowPlacement { Left = 40, Top = 40, Width = 300, Height = 260 }
+        });
+        ShowAndPump(window);
+        try
+        {
+            if (window.IsMouseOver)
+            {
+                return; // 指针恰好停在卡片上时无法观察“未悬停”状态，跳过。
+            }
+
+            var buttons = new[] { "AddButton", "SortButton", "CollapseButton" }
+                .Select(name => Require<Button>(window, name)).ToArray();
+            Assert(buttons.All(button => button.Opacity == 1 && button.IsHitTestVisible), "默认应一直显示标题栏按钮");
+
+            window.HeaderToolsOnHover = true;
+            Pump();
+            Assert(buttons.All(button => button.Opacity == 0 && !button.IsHitTestVisible),
+                "开启后未悬停、未选中时标题栏按钮应隐藏且不拦截点击");
+            Assert(buttons.All(button => button.Visibility == Visibility.Visible), "隐藏时按钮应保留位置，标题不跳动");
+
+            window.ApplySelection(true);
+            Pump();
+            Assert(buttons.All(button => button.Opacity == 1 && button.IsHitTestVisible), "选中卡片时标题栏按钮应出现");
+
+            window.ApplySelection(false);
+            window.HeaderToolsOnHover = false;
+            Pump();
+            Assert(buttons.All(button => button.Opacity == 1 && button.IsHitTestVisible), "关闭后标题栏按钮应恢复一直显示");
+        }
+        finally
+        {
+            Close(window);
         }
     }
 

@@ -195,6 +195,24 @@ public class WidgetWindowBase : Window
     public static readonly DependencyProperty IsWidgetSelectedProperty =
         IsWidgetSelectedPropertyKey.DependencyProperty;
 
+    /// <summary>
+    /// When true, title-bar tool buttons are invisible and click-through until the
+    /// pointer is over the card or the card is selected; they keep their space so the
+    /// title does not shift on hover.
+    /// </summary>
+    public static readonly DependencyProperty HeaderToolsOnHoverProperty =
+        DependencyProperty.Register(
+            nameof(HeaderToolsOnHover),
+            typeof(bool),
+            typeof(WidgetWindowBase),
+            new FrameworkPropertyMetadata(false));
+
+    public bool HeaderToolsOnHover
+    {
+        get => (bool)GetValue(HeaderToolsOnHoverProperty);
+        set => SetValue(HeaderToolsOnHoverProperty, value);
+    }
+
     private HwndSource? _source;
     private WindowPlacement? _placement;
     private bool _isUpdatingNativeWindowShape;

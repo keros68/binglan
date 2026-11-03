@@ -232,5 +232,21 @@
                 </DataTrigger>
             </Style.Triggers>
         </Style>
+        <!-- Title-bar tools: always shown, or only under the mouse / while the card is selected. -->
+        <Style x:Key="WidgetHeaderToolButtonStyle"
+               TargetType="Button"
+               BasedOn="{StaticResource {x:Type Button}}">
+            <Style.Triggers>
+                <MultiDataTrigger>
+                    <MultiDataTrigger.Conditions>
+                        <Condition Binding="{Binding HeaderToolsOnHover, RelativeSource={RelativeSource AncestorType={x:Type Window}}}" Value="True"/>
+                        <Condition Binding="{Binding IsMouseOver, RelativeSource={RelativeSource AncestorType={x:Type Window}}}" Value="False"/>
+                        <Condition Binding="{Binding IsWidgetSelected, RelativeSource={RelativeSource AncestorType={x:Type Window}}}" Value="False"/>
+                    </MultiDataTrigger.Conditions>
+                    <Setter Property="Opacity" Value="0"/>
+                    <Setter Property="IsHitTestVisible" Value="False"/>
+                </MultiDataTrigger>
+            </Style.Triggers>
+        </Style>
     </Application.Resources>
 </Application>

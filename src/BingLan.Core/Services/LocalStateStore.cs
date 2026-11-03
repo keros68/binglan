@@ -557,6 +557,12 @@ public sealed class LocalStateStore
             state.FileBoxDeleteOriginalsEnabled = false;
             state.SchemaVersion = 37;
         }
+        if (state.SchemaVersion < 38)
+        {
+            // Card title-bar buttons stay always visible for existing users.
+            state.HeaderToolsOnHover = false;
+            state.SchemaVersion = 38;
+        }
         state.Updates ??= new UpdateState();
         state.QuickPlaces = QuickPlaceRules.Normalize(state.QuickPlaces);
         state.DismissedDesktopCategories = (state.DismissedDesktopCategories ?? [])

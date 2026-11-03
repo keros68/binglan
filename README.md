@@ -24,6 +24,7 @@
 - **多显示器**：卡片按显示器组合分别记住位置。笔记本拔掉外接显示器后再接回，卡片会回到双屏时摆放的位置；拔掉后放不下的卡片会自动收拢进剩余屏幕并错开摆放，位置不够时先缩小尺寸再落位，不会留在屏幕外。
 - **快捷入口**：一排线条图标，默认是此电脑、桌面、文档、下载、图片、回收站；图标、名称和打开位置均可自定义，位置可以是文件夹、程序或文件。
 - **分组盒删除原文件（可选）**：默认关闭；在“布局”页开启后，可右键或按 Delete 把原文件移到回收站，每次都会确认，U 盘、网络位置和系统文件夹不能删除。
+- **标题栏按钮可隐藏**：可选让待办和分组盒标题栏上的按钮只在鼠标移上时出现，平时只显示标题。
 - **卡片固定在桌面**：所有桌面卡片始终在其他程序窗口下面，点击、编辑、拖动时也不会盖住正在使用的窗口。
 - **冰蓝 Dock**：固定应用与运行中的应用分区显示，有新消息的应用带提醒标记；左端默认有可关闭的 Windows 开始菜单入口，右键可打开原生系统快捷菜单。关闭到托盘的微信点击 Dock 图标即回到已登录的主窗口（借助微信默认的 Ctrl+Alt+W 快捷键，改过快捷键时改为启动微信）。拖动程序或快捷方式到 Dock 即可固定，颜色、玻璃浓度（5–96%，与卡片玻璃浓度同范围）、图标大小和距屏幕底部的高度可调，窗口最大化时可选择让出底部空间（默认关闭）；Dock 隐藏时在屏幕角落缩成一个可拖动的小把手，悬停即展开完整 Dock（展开与收起带整行向把手收缩、生长的形变动画，动效档位可调），位置跨重启保留；唤出方式可选屏幕底边和把手、只用把手或只用屏幕底边（不显示把手），原生任务栏常显时碰到任务栏不会唤出 Dock；不想出现在 Dock 上的悬浮条、小工具可右键选择“不在 Dock 中显示此应用”。
 - **任务栏**：保持默认、透明、模糊或智能隐藏；自动隐藏时，鼠标移到屏幕底边可唤出原生任务栏，也可限制鼠标仅从底部两角唤出；打开开始菜单等系统面板时，Windows 仍可能显示任务栏。隐藏托盘图标可通过原生任务栏或预发布版的顶栏入口访问。退出或异常结束后恢复原状态。
@@ -39,7 +40,7 @@ Windows 11 开启系统透明效果时，Dock 和隐藏把手使用实时毛玻�
 
 ## 快速开始
 
-稳定版：[v0.2.49](https://github.com/keros68/binglan/releases/tag/v0.2.49) · [安装版](https://github.com/keros68/binglan/releases/download/v0.2.49/BingLan-Setup-0.2.49.exe) · [免安装版](https://github.com/keros68/binglan/releases/download/v0.2.49/BingLan-0.2.49-portable.zip)。另附[兼容性验收工具](https://github.com/keros68/binglan/releases/download/v0.2.49/BingLan-0.2.49-tray-preview.zip)，使用步骤见[托盘验收说明](docs/TRAY-PREVIEW.md)。
+稳定版：[v0.2.50](https://github.com/keros68/binglan/releases/tag/v0.2.50) · [安装版](https://github.com/keros68/binglan/releases/download/v0.2.50/BingLan-Setup-0.2.50.exe) · [免安装版](https://github.com/keros68/binglan/releases/download/v0.2.50/BingLan-0.2.50-portable.zip)。另附[兼容性验收工具](https://github.com/keros68/binglan/releases/download/v0.2.50/BingLan-0.2.50-tray-preview.zip)，使用步骤见[托盘验收说明](docs/TRAY-PREVIEW.md)。
 
 1. 打开 [Releases](https://github.com/keros68/binglan/releases/latest)，下载 `BingLan-Setup-*.exe`（安装版）或 `BingLan-*-portable.zip`（免安装版）。
 2. 安装版运行安装包，按当前用户安装，不需要管理员权限；免安装版解压到任意文件夹后运行其中的 `BingLan.exe`。两者均自带 .NET 运行时，尚未加入代码签名，首次运行需按 Windows 提示手动放行。
@@ -63,7 +64,7 @@ Windows 11 开启系统透明效果时，Dock 和隐藏把手使用实时毛玻�
 ```powershell
 dotnet build .\BingLan.slnx -c Release
 dotnet run --project .\tests\BingLan.SmokeTests\BingLan.SmokeTests.csproj -c Release
-pwsh -NoProfile -File .\installer\build.ps1 -Version 0.2.49
+pwsh -NoProfile -File .\installer\build.ps1 -Version 0.2.50
 ```
 
 完整测试命令、技术方案和当前实现见[开发说明](docs/DEVELOPMENT.md)，安装包细节见[安装包](docs/INSTALLER.md)。
