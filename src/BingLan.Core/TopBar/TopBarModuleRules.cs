@@ -20,7 +20,8 @@ public static class TopBarModuleRules
     /// <summary>How many to-do items with text are still open across all to-do cards.</summary>
     public static int CountIncompleteTodos(IEnumerable<TodoWidgetState> widgets) =>
         widgets.Sum(widget => widget.Items.Count(item =>
-            !item.IsCompleted && !string.IsNullOrWhiteSpace(item.Text)));
+            item.Kind == TodoItemKind.Todo && !item.IsCompleted &&
+            !string.IsNullOrWhiteSpace(item.Text)));
 
     /// <summary>
     /// How many to-do items are still open on today's calendar day.
@@ -29,7 +30,8 @@ public static class TopBarModuleRules
     {
         var target = (today ?? DateTime.Today).Date;
         return widgets.Sum(widget => widget.Items.Count(item =>
-            !item.IsCompleted && !string.IsNullOrWhiteSpace(item.Text) &&
+            item.Kind == TodoItemKind.Todo && !item.IsCompleted &&
+            !string.IsNullOrWhiteSpace(item.Text) &&
             TodoService.BelongsToTodayList(item, target)));
     }
 

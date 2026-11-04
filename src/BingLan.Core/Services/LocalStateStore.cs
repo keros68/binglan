@@ -563,6 +563,11 @@ public sealed class LocalStateStore
             state.HeaderToolsOnHover = false;
             state.SchemaVersion = 38;
         }
+        if (state.SchemaVersion < 39)
+        {
+            // Entries without a kind stay untimed to-dos; dates, completion and timestamps stay intact.
+            state.SchemaVersion = 39;
+        }
         state.Updates ??= new UpdateState();
         state.QuickPlaces = QuickPlaceRules.Normalize(state.QuickPlaces);
         state.DismissedDesktopCategories = (state.DismissedDesktopCategories ?? [])

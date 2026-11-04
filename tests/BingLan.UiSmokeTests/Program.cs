@@ -137,6 +137,7 @@ internal static class Program
         }
 
         Run("待办真实控件编辑与勾选", TestTodoControls, failures);
+        Run("行程行不显示勾选框并显示时间", TestTodoEventRow, failures);
         Run("今日待办字号缩放覆盖列表、周历、当日浮层与编辑窗", TestTodoFontScale, failures);
         Run("今日待办字体覆盖列表、周历、当日浮层与编辑窗", TestTodoFontFamily, failures);
         Run("今日待办字号缩放与字体跟随设置页", TestTodoFontScaleFollowsSetting, failures);
@@ -444,6 +445,43 @@ internal static class Program
         finally
         {
             appearanceHost.Close();
+            Close(window);
+        }
+    }
+
+    private static void TestTodoEventRow()
+    {
+        var state = new TodoWidgetState();
+        TodoService.Add(state, "普通待办");
+        var meeting = TodoService.Add(state, "看牙");
+        TodoService.SetKind(state, meeting.Id, TodoItemKind.Event);
+        TodoService.SetTime(state, meeting.Id, new TimeOnly(14, 0));
+        var window = new TodoWidgetWindow(state);
+        ShowAndPump(window);
+        try
+        {
+            var boxes = FindVisualChildren<CheckBox>(window)
+                .Where(x => x.IsVisible)
+                .Select(x => x.DataContext)
+                .ToList();
+            Assert(boxes.Count == 1 && ReferenceEquals(boxes[0], state.Items.Single(x => x.Text == "普通待办")),
+                "只有待办应显示勾选框，行程不应显示");
+            Assert(FindVisualChildren<TextBlock>(window).Any(x => x.IsVisible && x.Text == "14:00"),
+                "行程行应显示 HH:mm 时间");
+            Assert(state.Items[0].Id == meeting.Id, "行程应排在当天待办之前");
+            Assert(FindVisualChildren<TextBlock>(window).Any(x => x.IsVisible && x.Text == "0/1 已完成"),
+                "完成计数不应包含行程");
+            Assert(TodoWidgetWindow.CompletionSummary([meeting]) == "1 项行程", "只有行程时应显示行程数");
+
+            Assert(TodoWidgetWindow.TryParseEventTime("9:05", out var parsed) && parsed == new TimeOnly(9, 5),
+                "应接受 H:mm 时间");
+            Assert(TodoWidgetWindow.TryParseEventTime("14：30", out parsed)
+                && parsed == new TimeOnly(14, 30), "应接受全角冒号输入");
+            Assert(TodoWidgetWindow.TryParseEventTime("  ", out parsed) && parsed is null, "留空应清除时间");
+            Assert(!TodoWidgetWindow.TryParseEventTime("25:00", out _), "非法时间不应提交");
+        }
+        finally
+        {
             Close(window);
         }
     }

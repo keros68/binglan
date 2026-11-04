@@ -1172,6 +1172,33 @@ public sealed partial class TopBarWindow : Window
             Opacity = 0.7,
             Effect = CreateTextShadow()
         };
+        if (item.Kind == TodoItemKind.Event)
+        {
+            // Events are not checkable: a dot and the optional time, and no click action.
+            glyph.Text = "•";
+            glyph.Width = item.Time is null ? 18 : double.NaN;
+            if (item.Time is { } time)
+            {
+                glyph.Text = $"•  {time:HH:mm}  ";
+            }
+            var eventRow = new StackPanel
+            {
+                Orientation = System.Windows.Controls.Orientation.Horizontal,
+                Margin = new Thickness(0, 3, 0, 3),
+                DataContext = item
+            };
+            eventRow.Children.Add(glyph);
+            eventRow.Children.Add(new TextBlock
+            {
+                Text = item.Text,
+                TextWrapping = TextWrapping.Wrap,
+                MaxWidth = 270,
+                Foreground = Brushes.White,
+                Effect = CreateTextShadow()
+            });
+            return eventRow;
+        }
+
         var glyphStyle = new Style(typeof(TextBlock));
         glyphStyle.Setters.Add(new Setter(TextBlock.TextProperty, "○"));
         glyphStyle.Triggers.Add(TodoCompletedTrigger(

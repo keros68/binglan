@@ -378,6 +378,120 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         NotifyStateChanged();
     }
 
+    private void ToggleKind_Click(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not TodoItemState item)
+        {
+            return;
+        }
+        CaptureState();
+        var kind = item.Kind == TodoItemKind.Event ? TodoItemKind.Todo : TodoItemKind.Event;
+        if (TodoService.SetKind(State, item.Id, kind))
+        {
+            RefreshAfterKindOrTimeChange(item);
+        }
+    }
+
+    /// <summary>
+    /// Opens a small HH:mm box at the pointer: Enter applies, an empty box clears the
+    /// time, Esc or clicking away cancels, and an invalid time keeps the box open.
+    /// </summary>
+    private void SetTime_Click(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not TodoItemState item)
+        {
+            return;
+        }
+        var box = new System.Windows.Controls.TextBox
+        {
+            Width = 72,
+            MaxLength = 5,
+            Padding = new Thickness(4, 2, 4, 2),
+            Text = item.Time?.ToString("HH:mm", System.Globalization.CultureInfo.InvariantCulture) ?? "",
+            ToolTip = "输入时间，如 14:30；留空清除"
+        };
+        System.Windows.Automation.AutomationProperties.SetName(box, "行程时间");
+        var accent = new System.Windows.Media.SolidColorBrush(
+            System.Windows.Media.Color.FromRgb(0x3E, 0x77, 0xB5));
+        var popup = new System.Windows.Controls.Primitives.Popup
+        {
+            Child = new Border
+            {
+                Padding = new Thickness(6),
+                CornerRadius = new CornerRadius(6),
+                Background = System.Windows.Media.Brushes.White,
+                BorderBrush = accent,
+                BorderThickness = new Thickness(1),
+                Child = box
+            },
+            Placement = System.Windows.Controls.Primitives.PlacementMode.MousePoint,
+            StaysOpen = false,
+            AllowsTransparency = true,
+            PlacementTarget = this
+        };
+        box.PreviewKeyDown += (_, args) =>
+        {
+            if (args.Key == Key.Escape)
+            {
+                args.Handled = true;
+                popup.IsOpen = false;
+            }
+            else if (args.Key == Key.Enter)
+            {
+                args.Handled = true;
+                if (!TryParseEventTime(box.Text, out var time))
+                {
+                    box.BorderBrush = System.Windows.Media.Brushes.IndianRed;
+                    box.SelectAll();
+                    return;
+                }
+                popup.IsOpen = false;
+                CaptureState();
+                if (TodoService.SetTime(State, item.Id, time))
+                {
+                    RefreshAfterKindOrTimeChange(item);
+                }
+            }
+        };
+        popup.Opened += (_, _) => Dispatcher.BeginInvoke(() =>
+        {
+            box.Focus();
+            box.SelectAll();
+        }, DispatcherPriority.Input);
+        // Open after the context menu has closed and released capture; opening during the
+        // menu click lets the closing menu dismiss a StaysOpen=false popup at once.
+        Dispatcher.BeginInvoke(() => popup.IsOpen = true, DispatcherPriority.Input);
+    }
+
+    internal static bool TryParseEventTime(string text, out TimeOnly? time)
+    {
+        time = null;
+        var trimmed = text.Trim().Replace('：', ':');
+        if (trimmed.Length == 0)
+        {
+            return true;
+        }
+        if (TimeOnly.TryParseExact(trimmed, ["H:mm", "HH:mm"],
+                System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.None, out var parsed))
+        {
+            time = parsed;
+            return true;
+        }
+        return false;
+    }
+
+    private void RefreshAfterKindOrTimeChange(TodoItemState item)
+    {
+        ReloadItems();
+        ApplyCompletedVisibility();
+        if (item.Date is { } date && _cellsByDate.TryGetValue(date, out var cell))
+        {
+            ResortCell(cell);
+        }
+        NotifyStateChanged();
+    }
+
     private void DeleteTodo_Click(object sender, RoutedEventArgs e)
     {
         if ((sender as FrameworkElement)?.DataContext is not TodoItemState item)
@@ -1270,7 +1384,12 @@ public partial class TodoWidgetWindow : WidgetWindowBase
                     nonCellItems[i].Order = i;
                 }
                 State.Items = nonCellItems;
+                if (TodoService.PlaceEventsFirst(State, dragCell.Date))
+                {
+                    ResortCell(dragCell);
+                }
                 ReloadItems();
+                ApplyCompletedVisibility();
                 CaptureState();
                 NotifyStateChanged();
             }
@@ -1290,9 +1409,17 @@ public partial class TodoWidgetWindow : WidgetWindowBase
                     _items[i].Order = i;
                 }
                 State.Items = _items.ToList();
-                if (dragItem.Date is { } itemDate && _cellsByDate.TryGetValue(itemDate, out var cell))
+                if (dragItem.Date is { } itemDate)
                 {
-                    ResortCell(cell);
+                    if (TodoService.PlaceEventsFirst(State, itemDate))
+                    {
+                        ReloadItems();
+                        ApplyCompletedVisibility();
+                    }
+                    if (_cellsByDate.TryGetValue(itemDate, out var cell))
+                    {
+                        ResortCell(cell);
+                    }
                 }
                 CaptureState();
                 NotifyStateChanged();
@@ -2120,8 +2247,7 @@ public partial class TodoWidgetWindow : WidgetWindowBase
                 .Where(x => !string.IsNullOrWhiteSpace(x.Text)
                     && x.Date is { } date && date >= firstMonday && date <= lastDay)
                 .ToList();
-            var completed = written.Count(x => x.IsCompleted);
-            SummaryText.Text = written.Count == 0 ? "这段时间还没有记录" : $"{completed}/{written.Count} 已完成";
+            SummaryText.Text = written.Count == 0 ? "这段时间还没有记录" : CompletionSummary(written);
             return;
         }
 
@@ -2130,9 +2256,17 @@ public partial class TodoWidgetWindow : WidgetWindowBase
             .Where(x => !string.IsNullOrWhiteSpace(x.Text)
                 && TodoService.BelongsToTodayList(x, today))
             .ToList();
-        var done = listed.Count(x => x.IsCompleted);
-        SummaryText.Text = listed.Count == 0 ? "写下第一条待办" : $"{done}/{listed.Count} 已完成";
+        SummaryText.Text = listed.Count == 0 ? "写下第一条待办" : CompletionSummary(listed);
         ClearCompletedButton.IsEnabled = _items.Any(x => x.IsCompleted && TodoService.BelongsToTodayList(x, today));
+    }
+
+    // Events cannot be completed, so the done/total count covers to-dos only.
+    internal static string CompletionSummary(IReadOnlyCollection<TodoItemState> entries)
+    {
+        var todos = entries.Where(x => x.Kind == TodoItemKind.Todo).ToList();
+        return todos.Count == 0
+            ? $"{entries.Count} 项行程"
+            : $"{todos.Count(x => x.IsCompleted)}/{todos.Count} 已完成";
     }
 
     private static DateTime MondayOf(DateTime date) =>

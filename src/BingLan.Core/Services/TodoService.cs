@@ -110,12 +110,13 @@ public static class TodoService
 
     /// <summary>
     /// Toggles completion by id and records when the entry was completed.
-    /// Returns false when the entry is missing or already in that state.
+    /// Returns false when the entry is missing, is an event (events cannot complete),
+    /// or is already in that state.
     /// </summary>
     public static bool SetCompleted(TodoWidgetState widget, Guid itemId, bool completed)
     {
         var item = widget.Items.FirstOrDefault(x => x.Id == itemId);
-        if (item is null || item.IsCompleted == completed)
+        if (item is null || item.Kind == TodoItemKind.Event || item.IsCompleted == completed)
         {
             return false;
         }
@@ -140,6 +141,92 @@ public static class TodoService
         {
             item.CompletedDate = null;
         }
+    }
+
+    /// <summary>
+    /// Sets whether an entry is a checkable to-do or an untickable calendar event.
+    /// Converting to an event clears its completion state; the calendar day reorders
+    /// so events sit ahead of to-dos. Returns false when the entry is missing or
+    /// already has that kind.
+    /// </summary>
+    public static bool SetKind(TodoWidgetState widget, Guid itemId, TodoItemKind kind)
+    {
+        var item = widget.Items.FirstOrDefault(x => x.Id == itemId);
+        if (item is null || item.Kind == kind)
+        {
+            return false;
+        }
+        item.Kind = kind;
+        if (kind == TodoItemKind.Event)
+        {
+            item.IsCompleted = false;
+            StampCompletion(item);
+        }
+        ReorderDay(widget, item);
+        return true;
+    }
+
+    /// <summary>
+    /// Sets an event's optional time of day; null removes it. The calendar day reorders
+    /// so timed events ascend by time ahead of untimed events. Returns false when the
+    /// entry is missing or already holds that time.
+    /// </summary>
+    public static bool SetTime(TodoWidgetState widget, Guid itemId, TimeOnly? time)
+    {
+        var item = widget.Items.FirstOrDefault(x => x.Id == itemId);
+        if (item is null || item.Time == time)
+        {
+            return false;
+        }
+        item.Time = time;
+        ReorderDay(widget, item);
+        return true;
+    }
+
+    private static void ReorderDay(TodoWidgetState widget, TodoItemState item)
+    {
+        if (item.Date is { } date)
+        {
+            OrderCompletedWithinScope(widget, x => x.Date == date, null);
+        }
+    }
+
+    /// <summary>
+    /// Inside one completion group, timed events ascend by time ahead of untimed events,
+    /// untimed events keep their manual order, and to-dos follow in their manual order.
+    /// </summary>
+    private static IEnumerable<TodoItemState> EventsBeforeTodos(List<TodoItemState> items) =>
+        items
+            .Where(x => x.Kind == TodoItemKind.Event)
+            .OrderBy(x => x.Time is null)
+            .ThenBy(x => x.Time)
+            .Concat(items.Where(x => x.Kind != TodoItemKind.Event));
+
+    /// <summary>
+    /// Moves a day's events ahead of its to-dos by reusing that day's order slots, so
+    /// entries on other days keep their positions. Manual reorders and editor saves call
+    /// it right away, so a to-do placed above an event settles back at once.
+    /// Returns whether the day's order changed.
+    /// </summary>
+    public static bool PlaceEventsFirst(TodoWidgetState widget, DateTime date)
+    {
+        var day = ItemsForDate(widget, date);
+        if (!day.Any(x => x.Kind == TodoItemKind.Event))
+        {
+            return false;
+        }
+        var slots = day.Select(x => x.Order).ToList();
+        var arranged = EventsBeforeTodos(day).ToList();
+        if (arranged.SequenceEqual(day))
+        {
+            return false;
+        }
+        for (var i = 0; i < arranged.Count; i++)
+        {
+            arranged[i].Order = slots[i];
+        }
+        widget.Items = widget.Items.OrderBy(x => x.Order).ToList();
+        return true;
     }
 
     /// <summary>
@@ -201,8 +288,8 @@ public static class TodoService
         }
 
         var reorderedScope = new List<TodoItemState>(scopedItems.Count);
-        reorderedScope.AddRange(incomplete);
-        reorderedScope.AddRange(completed);
+        reorderedScope.AddRange(EventsBeforeTodos(incomplete));
+        reorderedScope.AddRange(EventsBeforeTodos(completed));
 
         var changed = false;
         for (var i = 0; i < scopedItems.Count; i++)
@@ -292,6 +379,10 @@ public static class TodoService
 
         (ordered[index].Order, ordered[target].Order) = (ordered[target].Order, ordered[index].Order);
         Normalize(widget);
+        if (ordered[index].Date is { } date)
+        {
+            PlaceEventsFirst(widget, date);
+        }
         return true;
     }
 
@@ -339,6 +430,7 @@ public static class TodoService
         else
         {
             Normalize(widget);
+            PlaceEventsFirst(widget, targetDate);
         }
         return true;
     }
@@ -356,7 +448,8 @@ public static class TodoService
     /// unclaimed entries had something deleted, so it reuses none of them. Surplus
     /// entries are removed, and
     /// blank lines are skipped. A leading "1. "/"1、" numbering prefix is display sugar
-    /// and is stripped, while content like "3D建模" survives untouched.
+    /// and is stripped, while content like "3D建模" survives untouched. Events then
+    /// move ahead of the day's to-dos.
     /// Returns how many entries the day holds afterwards.
     /// </summary>
     public static int SyncDayItems(TodoWidgetState widget, DateTime date, IReadOnlyList<string> lines)
@@ -493,6 +586,7 @@ public static class TodoService
             others[i].Order = i;
         }
         widget.Items = others;
+        PlaceEventsFirst(widget, date);
         return resolved.Length;
     }
 

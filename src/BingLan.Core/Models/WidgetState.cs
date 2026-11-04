@@ -139,11 +139,20 @@ public sealed class TodoWidgetState
     public List<TodoItemState> Items { get; set; } = [];
 }
 
+/// <summary>Whether an entry is a checkable to-do or a calendar event.</summary>
+public enum TodoItemKind
+{
+    Todo = 0,
+    Event = 1
+}
+
 public sealed class TodoItemState : INotifyPropertyChanged
 {
     private string _text = "";
     private bool _isCompleted;
     private DateTime? _date;
+    private TodoItemKind _kind;
+    private TimeOnly? _time;
 
     public Guid Id { get; set; } = Guid.NewGuid();
     public string Text
@@ -186,6 +195,36 @@ public sealed class TodoItemState : INotifyPropertyChanged
         set => _date = value is { } date
             ? DateTime.SpecifyKind(date.Date, DateTimeKind.Unspecified)
             : null;
+    }
+
+    /// <summary>Whether the entry is a checkable to-do or an untickable calendar event.</summary>
+    public TodoItemKind Kind
+    {
+        get => _kind;
+        set
+        {
+            if (_kind == value)
+            {
+                return;
+            }
+            _kind = value;
+            OnPropertyChanged();
+        }
+    }
+
+    /// <summary>The event's optional time of day; to-dos do not use it.</summary>
+    public TimeOnly? Time
+    {
+        get => _time;
+        set
+        {
+            if (_time == value)
+            {
+                return;
+            }
+            _time = value;
+            OnPropertyChanged();
+        }
     }
 
     /// <summary>When the entry was created; null for entries made before dates were tracked.</summary>

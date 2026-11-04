@@ -14,8 +14,10 @@ Run("空白待办在结束输入后删除", TestRemoveBlank);
 Run("待办日期字段、完成时间与周历规则", TestTodoDates);
 Run("界面卡顿判定：超时开始、应答结束、只报一次", TestUiStallDetector);
 Run("按日同步待办行", TestSyncDayItems);
+Run("行程排序、完成与整日替换", TestTodoEvents);
 Run("跨日移动待办", TestMoveToDate);
 Run("待办日期持久化与官方版本兼容", TestTodoDatePersistence);
+Run("行程字段持久化与 v38 迁移", TestTodoEventPersistence);
 if (Environment.GetEnvironmentVariable("BINGLAN_TODO_LEGACY_SAMPLE_PATH") is { Length: > 0 })
 {
     Run("真实待办副本日期迁移", TestLegacyTodoSampleMigration);
@@ -459,6 +461,103 @@ static void TestSyncDayItems()
         "只改文字时应原地保留 Id 与完成状态");
 }
 
+static void TestTodoEvents()
+{
+    var today = DateTime.Today;
+
+    var widget = new TodoWidgetState();
+    var todoA = TodoService.Add(widget, "待办甲");
+    var todoB = TodoService.Add(widget, "待办乙");
+    var timedEvent = TodoService.Add(widget, "看牙", today);
+    var untimedEvent = TodoService.Add(widget, "散步", today);
+    Assert(TodoService.SetKind(widget, timedEvent.Id, TodoItemKind.Event), "应能设为行程");
+    Assert(TodoService.SetKind(widget, untimedEvent.Id, TodoItemKind.Event), "应能设为行程");
+    Assert(TodoService.SetTime(widget, timedEvent.Id, new TimeOnly(14, 0)), "应能设置行程时间");
+    Assert(TodoService.ItemsForDate(widget, today).Select(x => x.Id)
+            .SequenceEqual([timedEvent.Id, untimedEvent.Id, todoA.Id, todoB.Id]),
+        "同日应按行程在前排序，无时间行程排在有时间行程后");
+
+    Assert(TodoService.SetTime(widget, untimedEvent.Id, new TimeOnly(9, 0)), "应能补设行程时间");
+    Assert(TodoService.ItemsForDate(widget, today).Select(x => x.Id)
+            .SequenceEqual([untimedEvent.Id, timedEvent.Id, todoA.Id, todoB.Id]),
+        "补设时间后行程应按时间升序重排");
+
+    Assert(TopBarModuleRules.CountIncompleteTodos([widget]) == 2, "行程不应计入全部未完成待办数");
+    Assert(TopBarModuleRules.CountIncompleteTodosToday([widget]) == 2, "行程不应计入今日未完成待办数");
+    Assert(!TodoService.SetCompleted(widget, timedEvent.Id, true), "行程不应能勾选完成");
+    Assert(!timedEvent.IsCompleted && timedEvent.CompletedDate is null, "行程勾选后不应产生完成状态");
+
+    var converted = TodoService.Add(widget, "转为行程");
+    Assert(TodoService.SetCompleted(widget, converted.Id, true), "转换前应能勾选待办");
+    Assert(TodoService.SetKind(widget, converted.Id, TodoItemKind.Event), "应能转为行程");
+    Assert(converted.Kind == TodoItemKind.Event && !converted.IsCompleted
+        && converted.CompletedDate is null, "转为行程后应清掉完成状态");
+    Assert(TodoService.SetKind(widget, converted.Id, TodoItemKind.Todo), "应能转回待办");
+    Assert(converted.Kind == TodoItemKind.Todo, "转回待办后类型应为待办");
+
+    var monday = new DateTime(2026, 10, 19);
+    var syncWidget = new TodoWidgetState();
+    var keptEvent = TodoService.Add(syncWidget, "周一例会", monday);
+    TodoService.SetKind(syncWidget, keptEvent.Id, TodoItemKind.Event);
+    TodoService.SetTime(syncWidget, keptEvent.Id, new TimeOnly(10, 30));
+    TodoService.SyncDayItems(syncWidget, monday, new[] { "周一例会", "周一新待办" });
+    var dayItems = TodoService.ItemsForDate(syncWidget, monday).ToList();
+    Assert(dayItems.Count == 2 && dayItems[0].Id == keptEvent.Id
+        && dayItems[0].Kind == TodoItemKind.Event
+        && dayItems[0].Time == new TimeOnly(10, 30), "整日替换应保留保留行的行程类型与时间");
+    Assert(dayItems[1].Kind == TodoItemKind.Todo && dayItems[1].Time is null,
+        "整日替换的新行应为无时间待办");
+
+    // 行程移到另一天后，仍排在那一天的待办之前。
+    var moveWidget = new TodoWidgetState();
+    var tuesday = monday.AddDays(1);
+    var tuesdayTodo = TodoService.Add(moveWidget, "周二待办", tuesday);
+    var movingEvent = TodoService.Add(moveWidget, "移动的行程", monday);
+    TodoService.SetKind(moveWidget, movingEvent.Id, TodoItemKind.Event);
+    Assert(TodoService.MoveToDate(moveWidget, movingEvent.Id, tuesday), "行程应能移到另一天");
+    Assert(TodoService.ItemsForDate(moveWidget, tuesday).Select(x => x.Id)
+            .SequenceEqual([movingEvent.Id, tuesdayTodo.Id]),
+        "行程移到另一天后应排在该日待办之前");
+
+    // 手动上移、拖动和整日编辑都不能把待办留在行程上面，其他日期的位置不变。
+    var manualWidget = new TodoWidgetState();
+    var manualEventA = TodoService.Add(manualWidget, "行程甲", monday);
+    var otherDay = TodoService.Add(manualWidget, "周二条目", tuesday);
+    var manualEventB = TodoService.Add(manualWidget, "行程乙", monday);
+    var manualTodo = TodoService.Add(manualWidget, "手动待办", monday);
+    TodoService.SetKind(manualWidget, manualEventA.Id, TodoItemKind.Event);
+    TodoService.SetKind(manualWidget, manualEventB.Id, TodoItemKind.Event);
+    var otherDayOrder = manualWidget.Items.IndexOf(otherDay);
+    TodoService.MoveWithinDate(manualWidget, manualTodo.Id, -1);
+    Assert(TodoService.ItemsForDate(manualWidget, monday).Select(x => x.Id)
+            .SequenceEqual([manualEventA.Id, manualEventB.Id, manualTodo.Id]),
+        "上移待办不应越过行程");
+    Assert(manualWidget.Items.IndexOf(otherDay) == otherDayOrder, "上移后其他日期的位置不应变化");
+    Assert(TodoService.MoveWithinDate(manualWidget, manualEventB.Id, -1)
+            && TodoService.ItemsForDate(manualWidget, monday).Select(x => x.Id)
+                .SequenceEqual([manualEventB.Id, manualEventA.Id, manualTodo.Id]),
+        "无时间的行程之间应能手动调序");
+    (manualTodo.Order, manualEventB.Order) = (manualEventB.Order, manualTodo.Order);
+    Assert(TodoService.PlaceEventsFirst(manualWidget, monday)
+            && TodoService.ItemsForDate(manualWidget, monday)[2].Id == manualTodo.Id,
+        "拖动后应立即把行程排回待办前面");
+    Assert(manualWidget.Items.IndexOf(otherDay) == otherDayOrder, "拖动重排后其他日期的位置不应变化");
+    Assert(!TodoService.PlaceEventsFirst(manualWidget, monday), "已是行程在前时不应报告变化");
+    TodoService.SyncDayItems(manualWidget, monday, new[] { "手动待办", "行程乙", "行程甲" });
+    Assert(TodoService.ItemsForDate(manualWidget, monday).Select(x => x.Id)
+            .SequenceEqual([manualEventB.Id, manualEventA.Id, manualTodo.Id]),
+        "整日编辑保存后行程应排在待办前面，行程之间保留编辑顺序");
+
+    // 未知类型（例如更新版本写入的值）不得在重排时丢失条目。
+    var unknownWidget = new TodoWidgetState();
+    var unknown = TodoService.Add(unknownWidget, "未知类型", monday);
+    unknown.Kind = (TodoItemKind)7;
+    var knownEvent = TodoService.Add(unknownWidget, "已知行程", monday);
+    TodoService.SetKind(unknownWidget, knownEvent.Id, TodoItemKind.Event);
+    Assert(TodoService.ItemsForDate(unknownWidget, monday).Count == 2,
+        "重排时不应丢掉未知类型的条目");
+}
+
 static void TestMoveToDate()
 {
     var widget = new TodoWidgetState();
@@ -591,6 +690,64 @@ static void TestTodoDatePersistence()
         Assert(recoveredBackup.RootElement.GetProperty("SchemaVersion").GetInt32() == AppState.CurrentSchemaVersion
             && store.Load().TodoWidgets.Single().Items.Single(x => x.Id == dated.Id).Date == dated.Date,
             "从 v33 备份恢复后，主文件和有效备份均应升级且保留日期");
+    }
+    finally
+    {
+        Directory.Delete(temp, true);
+    }
+}
+
+static void TestTodoEventPersistence()
+{
+    var temp = Path.Combine(Path.GetTempPath(), $"BingLan-todo-events-{Guid.NewGuid():N}");
+    Directory.CreateDirectory(temp);
+    try
+    {
+        var store = new LocalStateStore(temp);
+
+        // v38 文件不含 Kind/Time 字段：加载后为无时间待办，既有字段保持不变。
+        File.WriteAllText(
+            store.StatePath,
+            """
+            {
+              "SchemaVersion": 38,
+              "TodoWidgets": [
+                {
+                  "Title": "旧版待办",
+                  "Items": [
+                    {
+                      "Id": "11111111-2222-3333-4444-555555555555",
+                      "Text": "旧版待办项",
+                      "IsCompleted": true,
+                      "Order": 0,
+                      "Date": "2026-10-20T00:00:00",
+                      "CreatedDate": "2026-10-19T08:00:00+08:00"
+                    }
+                  ]
+                }
+              ]
+            }
+            """);
+        var state = store.Load();
+        Assert(state.SchemaVersion == AppState.CurrentSchemaVersion, "v38 状态加载后应推进到当前版本");
+        var migrated = state.TodoWidgets.Single().Items.Single();
+        Assert(migrated.Kind == TodoItemKind.Todo && migrated.Time is null,
+            "缺少 Kind/Time 字段应默认为无时间待办");
+        Assert(
+            migrated.Text == "旧版待办项" && migrated.IsCompleted
+                && migrated.Date == new DateTime(2026, 10, 20)
+                && migrated.CreatedDate == new DateTimeOffset(2026, 10, 19, 8, 0, 0, TimeSpan.FromHours(8)),
+            "v38 迁移不应改动既有字段");
+
+        var widget = state.TodoWidgets.Single();
+        var item = TodoService.Add(widget, "带时间行程");
+        Assert(TodoService.SetKind(widget, item.Id, TodoItemKind.Event), "应能设为行程");
+        Assert(TodoService.SetTime(widget, item.Id, new TimeOnly(14, 5)), "应能设置行程时间");
+        store.Save(state);
+
+        var reloaded = store.Load().TodoWidgets.Single().Items.Single(x => x.Text == "带时间行程");
+        Assert(reloaded.Kind == TodoItemKind.Event && reloaded.Time == new TimeOnly(14, 5),
+            "Kind 与 Time 保存后再加载应保持一致");
     }
     finally
     {

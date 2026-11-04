@@ -15,6 +15,52 @@
                         FontFamily="{DynamicResource TodoContentFont}"
                         Foreground="{DynamicResource PrimaryTextBrush}">
     <local:WidgetWindowBase.Resources>
+        <!-- Events have no completion box; a dot and the optional time take its place. -->
+        <Style x:Key="TodoKindCheckBox" TargetType="CheckBox" BasedOn="{StaticResource {x:Type CheckBox}}">
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding Kind}" Value="Event">
+                    <Setter Property="Visibility" Value="Collapsed"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="EventMarker" TargetType="StackPanel">
+            <Setter Property="Orientation" Value="Horizontal"/>
+            <Setter Property="Visibility" Value="Collapsed"/>
+            <Setter Property="AutomationProperties.Name" Value="行程"/>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding Kind}" Value="Event">
+                    <Setter Property="Visibility" Value="Visible"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="EventTimeText" TargetType="TextBlock">
+            <Setter Property="Margin" Value="4,0,0,0"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Text" Value="{Binding Time, StringFormat={}{0:HH:mm}}"/>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding Time}" Value="{x:Null}">
+                    <Setter Property="Visibility" Value="Collapsed"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="KindMenuItem" TargetType="MenuItem" BasedOn="{StaticResource {x:Type MenuItem}}">
+            <Setter Property="Header" Value="设为行程"/>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding Kind}" Value="Event">
+                    <Setter Property="Header" Value="设为待办"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="TimeMenuItem" TargetType="MenuItem" BasedOn="{StaticResource {x:Type MenuItem}}">
+            <Setter Property="Header" Value="设置时间…"/>
+            <Setter Property="Visibility" Value="Collapsed"/>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding Kind}" Value="Event">
+                    <Setter Property="Visibility" Value="Visible"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
         <!-- Full entry row for the day peek popup: dwell 300 ms to lift and drag to
              reorder, double-click the text to edit in place, right-click for move-to-day. -->
         <DataTemplate x:Key="DayPeekItemTemplate">
@@ -29,6 +75,9 @@
                     <ContextMenu DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}">
                         <MenuItem Header="上移" Click="MoveUp_Click"/>
                         <MenuItem Header="下移" Click="MoveDown_Click"/>
+                        <Separator/>
+                        <MenuItem Style="{StaticResource KindMenuItem}" Click="ToggleKind_Click"/>
+                        <MenuItem Style="{StaticResource TimeMenuItem}" Click="SetTime_Click"/>
                         <Separator/>
                         <MenuItem Header="删除" Click="DeleteTodo_Click"/>
                     </ContextMenu>
@@ -54,6 +103,7 @@
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
                     <CheckBox Grid.Column="0"
+                              Style="{StaticResource TodoKindCheckBox}"
                               Width="12"
                               Height="12"
                               VerticalAlignment="Top"
@@ -62,6 +112,15 @@
                               IsChecked="{Binding IsCompleted, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                               Checked="Completion_Changed"
                               Unchecked="Completion_Changed"/>
+                    <StackPanel Grid.Column="0"
+                                Style="{StaticResource EventMarker}"
+                                VerticalAlignment="Top"
+                                Margin="2,1,5,0">
+                        <Ellipse Width="6" Height="6" VerticalAlignment="Center" Fill="#FF3E77B5"/>
+                        <TextBlock Style="{StaticResource EventTimeText}"
+                                   FontSize="{DynamicResource TodoFont.PeekItem}"
+                                   Foreground="#FF3E77B5"/>
+                    </StackPanel>
                     <TextBox x:Name="PeekText"
                              Grid.Column="1"
                              AutomationProperties.Name="待办内容"
@@ -134,6 +193,9 @@
                         <MenuItem Header="上移" Click="MoveUp_Click"/>
                         <MenuItem Header="下移" Click="MoveDown_Click"/>
                         <Separator/>
+                        <MenuItem Style="{StaticResource KindMenuItem}" Click="ToggleKind_Click"/>
+                        <MenuItem Style="{StaticResource TimeMenuItem}" Click="SetTime_Click"/>
+                        <Separator/>
                         <MenuItem Header="删除" Click="DeleteTodo_Click"/>
                     </ContextMenu>
                 </Border.ContextMenu>
@@ -156,7 +218,8 @@
                         <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="*"/>
                     </Grid.ColumnDefinitions>
-                    <CheckBox Width="12"
+                    <CheckBox Style="{StaticResource TodoKindCheckBox}"
+                              Width="12"
                               Height="12"
                               VerticalAlignment="Top"
                               Margin="0,2,5,0"
@@ -164,6 +227,15 @@
                               IsChecked="{Binding IsCompleted, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                               Checked="Completion_Changed"
                               Unchecked="Completion_Changed"/>
+                    <StackPanel Style="{StaticResource EventMarker}"
+                                VerticalAlignment="Top"
+                                Margin="1,1,4,0">
+                        <Ellipse Width="5" Height="5" VerticalAlignment="Center" Fill="#FF3E77B5"/>
+                        <TextBlock Style="{StaticResource EventTimeText}"
+                                   Margin="3,0,0,0"
+                                   FontSize="{DynamicResource TodoFont.CellItem}"
+                                   Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
+                    </StackPanel>
                     <TextBlock Grid.Column="1"
                                AutomationProperties.Name="{Binding Text}"
                                VerticalAlignment="Top"
@@ -310,20 +382,32 @@
                                         <MenuItem Header="上移" Click="MoveUp_Click"/>
                                         <MenuItem Header="下移" Click="MoveDown_Click"/>
                                         <Separator/>
+                                        <MenuItem Style="{StaticResource KindMenuItem}" Click="ToggleKind_Click"/>
+                                        <MenuItem Style="{StaticResource TimeMenuItem}" Click="SetTime_Click"/>
+                                        <Separator/>
                                         <MenuItem Header="删除" Click="DeleteTodo_Click"/>
                                     </ContextMenu>
                                 </Border.ContextMenu>
                                 <Grid>
                                     <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="27"/>
+                                        <ColumnDefinition Width="Auto" MinWidth="27"/>
                                         <ColumnDefinition Width="*"/>
                                         <ColumnDefinition Width="Auto"/>
                                     </Grid.ColumnDefinitions>
                                     <CheckBox VerticalAlignment="Center"
+                                              Style="{StaticResource TodoKindCheckBox}"
                                               AutomationProperties.Name="切换待办完成状态"
                                               IsChecked="{Binding IsCompleted, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                               Checked="Completion_Changed"
                                               Unchecked="Completion_Changed"/>
+                                    <StackPanel Style="{StaticResource EventMarker}"
+                                                VerticalAlignment="Center"
+                                                Margin="4,0,6,0">
+                                        <Ellipse Width="7" Height="7" VerticalAlignment="Center" Fill="#FF3E77B5"/>
+                                        <TextBlock Style="{StaticResource EventTimeText}"
+                                                   FontSize="{DynamicResource TodoFont.ListItem}"
+                                                   Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
+                                    </StackPanel>
                                     <TextBox Grid.Column="1"
                                              AutomationProperties.Name="待办内容"
                                              MinHeight="24"
