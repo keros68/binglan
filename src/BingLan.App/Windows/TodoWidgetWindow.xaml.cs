@@ -2141,6 +2141,28 @@ public partial class TodoWidgetWindow : WidgetWindowBase
             _ => "周日"
         };
 
+    private void TodoText_ContextMenuOpening(object sender, ContextMenuEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.TextBox { ContextMenu: { } menu } editor) return;
+
+        // The text and row share entry actions; text editing remains available in a submenu.
+        var editing = menu.Items.OfType<System.Windows.Controls.MenuItem>().FirstOrDefault(item => Equals(item.Tag, "TodoTextEditing"));
+        if (editing is null)
+        {
+            editing = new System.Windows.Controls.MenuItem { Header = "编辑文本", Tag = "TodoTextEditing" };
+            foreach (var (header, command) in new[]
+                     {
+                         ("剪切", ApplicationCommands.Cut), ("复制", ApplicationCommands.Copy),
+                         ("粘贴", ApplicationCommands.Paste), ("全选", ApplicationCommands.SelectAll)
+                     })
+            {
+                editing.Items.Add(new System.Windows.Controls.MenuItem { Header = header, Command = command, CommandTarget = editor });
+            }
+            menu.Items.Add(new Separator());
+            menu.Items.Add(editing);
+        }
+    }
+
     private void PeekRow_ContextMenuOpening(object sender, ContextMenuEventArgs e)
     {
         // A right-click menu is a different intent: kill any pending dwell

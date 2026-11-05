@@ -140,6 +140,7 @@ internal static class Program
         Run("行程行不显示勾选框并显示时间", TestTodoEventRow, failures);
         Run("倒数日行不显示勾选框并显示剩余天数", TestTodoCountdownRow, failures);
         Run("待办截止时间设置、取消与分钟刷新", TestTodoDeadlineEditor, failures);
+        Run("待办正文右键可设置截止时间与倒数日", TestTodoTextContextMenu, failures);
         Run("今日待办字号缩放覆盖列表、周历、当日浮层与编辑窗", TestTodoFontScale, failures);
         Run("今日待办字体覆盖列表、周历、当日浮层与编辑窗", TestTodoFontFamily, failures);
         Run("今日待办字号缩放与字体跟随设置页", TestTodoFontScaleFollowsSetting, failures);
@@ -538,6 +539,85 @@ internal static class Program
             Assert(!TodoWidgetWindow.TryParseTargetDate("13月40日", out _, today), "非法日期不应提交");
             Assert(TodoWidgetWindow.TryParseTargetDate("2月29日", out parsed, today)
                 && parsed == new DateTime(2028, 2, 29), "月日缩写应找到下一个有效闰日");
+        }
+        finally
+        {
+            Close(window);
+        }
+    }
+
+    private static void TestTodoTextContextMenu()
+    {
+        var state = new TodoWidgetState();
+        var item = TodoService.Add(state, "正文菜单测试");
+        var window = new TodoWidgetWindow(state);
+        ShowAndPump(window);
+        try
+        {
+            var text = FindVisualChildren<TextBox>(Require<ItemsControl>(window, "TodoList"))
+                .Single(box => ReferenceEquals(box.DataContext, item));
+            var menu = text.ContextMenu;
+            Assert(menu is not null, "事项正文必须有事项菜单，不能回退到文本框默认编辑菜单");
+            var handle = new WindowInteropHelper(window).Handle;
+            TopBarWindowTests.ForceForeground(handle);
+            text.Focus();
+            PumpUntil(() => text.IsKeyboardFocused && DockNativeMethods.GetForegroundWindow() == handle,
+                "正文菜单测试需要前台窗口和输入焦点");
+            Assert(ShellSurfaceNativeMethods.SendChord(Array.Empty<ushort>(), 0x5D), "系统应接受菜单键");
+            PumpUntil(() => menu!.IsOpen, "正文菜单键应打开事项菜单");
+            Assert(ReferenceEquals(menu!.DataContext, item), "菜单必须操作当前事项");
+            var deadline = menu.Items.OfType<MenuItem>().Single(x => Equals(x.Header, "设置截止时间…"));
+            var countdown = menu.Items.OfType<MenuItem>().Single(x => Equals(x.Header, "设为倒数日"));
+            Assert(deadline.IsVisible && countdown.IsVisible, "正文菜单应显示截止时间与倒数日入口");
+            var editing = menu.Items.OfType<MenuItem>().Single(x => Equals(x.Header, "编辑文本"));
+            Assert(editing.Items.OfType<MenuItem>().Select(x => x.Command)
+                .SequenceEqual(new RoutedCommand[] { ApplicationCommands.Cut, ApplicationCommands.Copy,
+                    ApplicationCommands.Paste, ApplicationCommands.SelectAll })
+                && editing.Items.OfType<MenuItem>().All(x => ReferenceEquals(x.CommandTarget, text)),
+                "正文菜单应保留四项文本编辑命令并指向当前文本框");
+            menu.IsOpen = false;
+            deadline.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+            Pump();
+            Assert(window.DeadlinePopup?.IsOpen == true, "菜单入口应实际打开截止时间设置");
+            FindVisualChildren<Button>(window.DeadlinePopup!.Child).Single(x => Equals(x.Content, "取消"))
+                .RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            Pump();
+            Assert(item.DeadlineDate is null && item.Kind == TodoItemKind.Todo, "取消应保留原事项");
+            menu.PlacementTarget = text;
+            menu.IsOpen = true;
+            Pump();
+            menu.IsOpen = false;
+            countdown.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+            Pump();
+            Assert(window.DeadlinePopup?.IsOpen == true, "倒数日菜单应打开目标时间设置");
+            FindVisualChildren<Button>(window.DeadlinePopup!.Child).Single(x => Equals(x.Content, "取消"))
+                .RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            Pump();
+            Assert(item.Kind == TodoItemKind.Todo, "取消倒数日设置不能转换事项类型");
+
+            Require<Button>(window, "ViewModeButton").RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            Pump();
+            var cell = Require<ItemsControl>(window, "WeekRows").Items.OfType<WeekRowView>()
+                .SelectMany(row => row.Days).Single(day => day.Date == DateTime.Today);
+            var calendarRow = FindVisualChildren<Border>(window).First(x => ReferenceEquals(x.DataContext, item)
+                && x.ContextMenu is not null && x.IsVisible);
+            calendarRow.ContextMenu!.PlacementTarget = calendarRow;
+            calendarRow.ContextMenu.IsOpen = true;
+            Pump();
+            Assert(calendarRow.ContextMenu.Items.OfType<MenuItem>().Any(x => x.IsVisible
+                && Equals(x.Header, "设置截止时间…")), "周历事项菜单也应保留截止时间入口");
+            calendarRow.ContextMenu.IsOpen = false;
+            Pump();
+            typeof(TodoWidgetWindow).GetMethod("OpenDayPeek",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+                .Invoke(window, [cell, null]);
+            Pump();
+            var peekText = FindVisualChildren<TextBox>(window).Single(x => x.Name == "PeekText"
+                && ReferenceEquals(x.DataContext, item));
+            var peekRow = FindVisualChildren<Border>(window).Single(x => x.Name == "PeekRowBorder"
+                && ReferenceEquals(x.DataContext, item));
+            Assert(peekText.ContextMenu is not null && ReferenceEquals(peekText.ContextMenu, peekRow.ContextMenu),
+                "当日详情正文也应复用事项菜单");
         }
         finally
         {

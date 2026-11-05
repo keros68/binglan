@@ -3,10 +3,10 @@
 ## 构建
 
 ```powershell
-pwsh -NoProfile -File .\installer\build.ps1 -Version 0.2.53
+pwsh -NoProfile -File .\installer\build.ps1 -Version 0.2.54
 ```
 
-输出 `installer\bin\BingLan-Setup-0.2.53.exe`（约 56.5 MB）和免安装包 `installer\bin\BingLan-0.2.53-portable.zip`。脚本先把应用发布为 win-x64 自包含程序（附带 .NET 运行时，只保留中文和英文资源），再用 Inno Setup 打包为按用户安装的安装程序，并把同一份发布输出压成免安装 zip。构建还需要 .NET 10 SDK、PowerShell 7、Visual Studio 2022 C++ x64 工具链和 Windows SDK；自有任务栏 DLL 随发布输出进入安装包，细节见 [任务栏 XAML 适配](TASKBAR-XAML.md)。需要 Inno Setup 6：`winget install JRSoftware.InnoSetup --scope user`。注意 winget 安装的 Inno Setup 不带简体中文语言文件（非官方翻译），脚本引用的 `Languages\ChineseSimplified.isl` 需从 [istrans 页面](https://jrsoftware.org/files/istrans/) 下载后放入 Inno Setup 安装目录的 `Languages\` 下。
+输出 `installer\bin\BingLan-Setup-0.2.54.exe`（约 56.5 MB）和免安装包 `installer\bin\BingLan-0.2.54-portable.zip`。脚本先把应用发布为 win-x64 自包含程序（附带 .NET 运行时，只保留中文和英文资源），再用 Inno Setup 打包为按用户安装的安装程序，并把同一份发布输出压成免安装 zip。构建还需要 .NET 10 SDK、PowerShell 7、Visual Studio 2022 C++ x64 工具链和 Windows SDK；自有任务栏 DLL 随发布输出进入安装包，细节见 [任务栏 XAML 适配](TASKBAR-XAML.md)。需要 Inno Setup 6：`winget install JRSoftware.InnoSetup --scope user`。注意 winget 安装的 Inno Setup 不带简体中文语言文件（非官方翻译），脚本引用的 `Languages\ChineseSimplified.isl` 需从 [istrans 页面](https://jrsoftware.org/files/istrans/) 下载后放入 Inno Setup 安装目录的 `Languages\` 下。
 
 ## 免安装包
 
@@ -65,6 +65,8 @@ zip 版内容与安装后的程序目录一致（程序文件、`使用说明.md
 本机覆盖安装退出码为 0，无需重启；安装前后个人配置哈希一致。在正常 Windows 桌面上下文启动后，透明模式的共享状态确认 1 个背景生效、错误码为 0，截图确认任务栏透出背景。最终设置除任务栏模式外与安装前逐项一致。新原生组件的卸载场景尚未执行。真机透明与恢复结果见 [任务栏验证](TASKBAR-QA.md)。
 
 ## 验证状态
+
+v0.2.54 在 Windows 11 Build 26300、175% 缩放下通过 Release 构建、核心烟雾测试与完整 WPF UI 烟雾测试。正文菜单检查使用真实键盘菜单键打开，覆盖截止时间与倒数日入口、取消保留状态、文本编辑命令、周历菜单和当日详情正文菜单。安装日志确认覆盖安装成功且无需重启，设置页显示 0.2.54；既有待办内容、完成状态、便签和启动项保持，旧格式配置迁移到 Schema v41。免安装包中 262 个程序文件与发布输出逐文件 SHA-256 一致。此轮未重做卸载、Windows 10 真机、多显示器与混合 DPI 验证。
 
 v0.2.53 在 Windows 11 Build 26300、单屏 3840×2160、175% 缩放下通过核心、便签、信息组件、Dock 与完整 WPF UI 五套测试。新增检查覆盖待办截止日期与分钟时间、到期与跨午夜计算、完成后停止倒计时、清除后保存重载、v39/v40 数据兼容、日期下拉保持打开、非法日期与时间的拒绝和修正、取消与 Esc 保留状态、窄卡片倒计时排版，以及顶栏完成联动与同一分钟反复开关。日期设置窗口与最小宽度列表已渲染核对。本轮未重做覆盖安装、卸载、Windows 10 真机、多显示器与混合 DPI 验证。
 

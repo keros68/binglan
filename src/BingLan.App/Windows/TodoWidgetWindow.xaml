@@ -186,6 +186,8 @@
                         <Ellipse Width="6" Height="6" VerticalAlignment="Center" Fill="#FF3E77B5"/>
                     </StackPanel>
                     <TextBox x:Name="PeekText"
+                             ContextMenu="{Binding ContextMenu, RelativeSource={RelativeSource AncestorType=Border}}"
+                             ContextMenuOpening="TodoText_ContextMenuOpening"
                              Grid.Column="1"
                              AutomationProperties.Name="待办内容"
                              FontFamily="{DynamicResource TodoContentFont}"
@@ -493,6 +495,8 @@
                         <Ellipse Width="6" Height="6" VerticalAlignment="Center" Fill="#FF3E77B5"/>
                     </StackPanel>
                                     <TextBox Grid.Column="1"
+                                             ContextMenu="{Binding ContextMenu, RelativeSource={RelativeSource AncestorType=Border}}"
+                                             ContextMenuOpening="TodoText_ContextMenuOpening"
                                              AutomationProperties.Name="待办内容"
                                              MinHeight="24"
                                              VerticalContentAlignment="Center"
