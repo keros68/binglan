@@ -111,6 +111,7 @@ internal sealed class DesktopSurfaceWatcher : IDisposable
     /// </summary>
     private void Evaluate()
     {
+        using var _ = UiDiagnostics.Measure("桌面状态评估");
         var progman = NativeMethods.FindWindowW("Progman", null);
         var found = progman != 0;
         var blockers = 0;

@@ -35,6 +35,7 @@ internal static class UiDiagnostics
 {
     private const long StallThresholdMs = 2000;
     private const int ProbeIntervalMs = 250;
+    private const long SpanThresholdMs = 150;
     private const long WindowMs = 10_000;
     private const long FloodPerWindow = 3000;
     private const long FloodLogIntervalMs = 60_000;
@@ -63,6 +64,31 @@ internal static class UiDiagnostics
         Interlocked.Increment(ref Counts[(int)activity]);
         Volatile.Write(ref _lastActivity, (int)activity);
     }
+
+    /// <summary>
+    /// A slow-span timer for named stretches of UI-thread work. The stall watchdog can
+    /// only name the dispatcher operation it caught, not the code inside it, so
+    /// suspicious spans (dock row rebuild, window enumeration, glass sync) time
+    /// themselves and anything past the threshold lands in the same stall.log.
+    /// </summary>
+    internal static void RecordSpan(string name, double elapsedMs)
+    {
+        if (elapsedMs >= SpanThresholdMs)
+        {
+            Write($"慢段 {name} {elapsedMs:0} 毫秒");
+        }
+    }
+
+    internal readonly struct Span(string name) : IDisposable
+    {
+        private readonly long _startedAt = Environment.TickCount64;
+        private readonly string _name = name;
+
+        public void Dispose() =>
+            RecordSpan(_name, Environment.TickCount64 - _startedAt);
+    }
+
+    internal static Span Measure(string name) => new(name);
 
     /// <summary>Starts the watchdog once; a later call only moves the log to that directory.</summary>
     internal static void Start(Dispatcher dispatcher, string dataDirectory)

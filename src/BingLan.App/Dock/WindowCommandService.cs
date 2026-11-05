@@ -14,7 +14,7 @@ internal sealed record WindowCommandResult(bool Succeeded, string Message);
 
 internal static class WindowCommandService
 {
-    internal static WindowCommandResult Toggle(WindowGroup group)
+    internal static WindowCommandResult Toggle(WindowGroup group, DockToggleCooldown cooldown)
     {
         if (group.Windows.Count == 0)
         {
@@ -26,15 +26,25 @@ internal static class WindowCommandService
         var target = group.Windows.FirstOrDefault(
                 window => !DockNativeMethods.IsIconic(window.Handle))
             ?? group.Windows[0];
+        // A minimized foreground is either stale (the pointer has not moved on yet) or
+        // an already-minimized window the system still names; both mean "restore".
+        var foregroundIsMinimized = foregroundInGroup is { } active
+            && (DockNativeMethods.IsIconic(active.Handle) || cooldown.RecentlyMinimized(active.Handle));
         var action = WindowActionPolicy.Decide(
             foregroundInGroup is not null,
+            foregroundIsMinimized,
             DockNativeMethods.IsIconic(target.Handle));
         if (action == DockClickAction.MinimizeForeground)
         {
             DockNativeMethods.ShowWindowAsync(foregroundInGroup!.Handle, DockNativeMethods.SwMinimize);
+            cooldown.MarkMinimized(foregroundInGroup.Handle);
             return new WindowCommandResult(true, $"已最小化 {group.DisplayName}");
         }
 
+        if (foregroundInGroup is { } restored)
+        {
+            cooldown.Clear(restored.Handle);
+        }
         return Focus(target, action == DockClickAction.RestoreAndActivate, group.DisplayName);
     }
 

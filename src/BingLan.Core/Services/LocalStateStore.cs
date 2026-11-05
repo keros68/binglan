@@ -584,6 +584,13 @@ public sealed class LocalStateStore
             }
             state.SchemaVersion = 41;
         }
+        if (state.SchemaVersion < 42)
+        {
+            // New field with its default; spelled out so the schema bump stays explicit.
+            state.Dock ??= new DockState();
+            state.Dock.AutoIconSize = true;
+            state.SchemaVersion = 42;
+        }
         state.Updates ??= new UpdateState();
         state.QuickPlaces = QuickPlaceRules.Normalize(state.QuickPlaces);
         state.DismissedDesktopCategories = (state.DismissedDesktopCategories ?? [])

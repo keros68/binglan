@@ -107,6 +107,7 @@ internal sealed class DockGlassSurface : IDisposable
         if (_disposed || _syncing) return;
         UiDiagnostics.Hit(UiActivity.GlassSync);
         _syncing = true;
+        var startedAt = Environment.TickCount64;
         try
         {
             var fill = _surface.GetValue(FillProperty) as SolidColorBrush;
@@ -152,7 +153,11 @@ internal sealed class DockGlassSurface : IDisposable
             Debug.WriteLine($"Dock glass unavailable: {error}");
             Release();
         }
-        finally { _syncing = false; }
+        finally
+        {
+            UiDiagnostics.RecordSpan("Dock 玻璃同步", Environment.TickCount64 - startedAt);
+            _syncing = false;
+        }
     }
 
     private void Release()

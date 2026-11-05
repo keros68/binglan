@@ -10,6 +10,7 @@ using System.Windows.Media.Effects;
 using System.Windows.Threading;
 using BingLan.App.Dock;
 using BingLan.App.Interop;
+using BingLan.App.Services;
 using BingLan.App.TopBar;
 using BingLan.App.Taskbar;
 using BingLan.Core.Dock;
@@ -356,7 +357,7 @@ public sealed partial class TopBarWindow : Window
 
         var changed = (int)wParam switch
         {
-            HshellFlash => _attention.Flashed(lParam),
+            HshellFlash => MarkFlashed(lParam),
             HshellWindowActivated or HshellRudeAppActivated or HshellWindowDestroyed => _attention.Cleared(lParam),
             _ => false
         };
@@ -365,6 +366,14 @@ public sealed partial class TopBarWindow : Window
             RefreshAttention();
         }
         return 0;
+    }
+
+    private bool MarkFlashed(nint window)
+    {
+        // A flash often names a hidden message window; the process lets the bar show
+        // the app's name and lets marks survive on its visible windows.
+        DockNativeMethods.GetWindowThreadProcessId(window, out var processId);
+        return _attention.Flashed(window, processId);
     }
 
     private void OnClosing(object? sender, System.ComponentModel.CancelEventArgs e)
@@ -2938,72 +2947,83 @@ public sealed partial class TopBarWindow : Window
             return;
         }
 
-        var running = _catalog.Capture();
-        _attention.Retain(running.Select(window => window.Handle));
-        // Names of windows that have since closed would survive handle reuse, so they go.
-        var alive = running.Select(window => window.Handle).ToHashSet();
-        foreach (var stale in _attentionNames.Keys.Where(handle => !alive.Contains(handle)).ToList())
+        using (UiDiagnostics.Measure("顶栏注意刷新"))
         {
-            _attentionNames.Remove(stale);
-        }
-        var groups = WindowGrouping.Group(running);
-        var (shown, overflow) = TopBarAttentionQueue.ResolveDisplay(
-            _attention.OrderedWindows,
-            TopBarState.MaximumAttentionApps);
-
-        _attentionPanel.Children.Clear();
-        foreach (var window in shown)
-        {
-            if (!_attentionNames.TryGetValue(window, out var name))
+            var running = _catalog.Capture();
+            // Only truly destroyed windows lose their notice: flashes often name hidden
+            // message windows that an enumeration never sees.
+            _attention.RemoveRange(_attention.OrderedWindows
+                .Where(handle => !DockNativeMethods.IsWindow(handle))
+                .ToArray());
+            foreach (var stale in _attentionNames.Keys
+                .Where(handle => !DockNativeMethods.IsWindow(handle))
+                .ToList())
             {
-                name = ResolveAttentionName(running, groups, window);
-                _attentionNames[window] = name;
+                _attentionNames.Remove(stale);
             }
+            var groups = WindowGrouping.Group(running);
+            var (shown, overflow) = TopBarAttentionQueue.ResolveDisplay(
+                _attention.OrderedWindows,
+                TopBarState.MaximumAttentionApps);
 
-            var button = new Button
+            _attentionPanel.Children.Clear();
+            foreach (var window in shown)
             {
-                Style = (Style)Resources["ModuleButton"],
-                Content = new TextBlock
+                if (!_attentionNames.TryGetValue(window, out var name))
                 {
-                    Text = name,
-                    Foreground = Brushes.Orange,
-                    TextTrimming = TextTrimming.CharacterEllipsis,
-                    MaxWidth = 120,
-                    Effect = CreateTextShadow()
-                },
-                Focusable = true,
-                Tag = window
-            };
-            System.Windows.Automation.AutomationProperties.SetName(button, $"{name}有新消息");
-            button.Click += (_, _) =>
-            {
-                if (button.Tag is nint handle)
-                {
-                    _environment.ActivateWindow(handle);
+                    name = ResolveAttentionName(running, groups, window, _attention.ProcessOf(window));
+                    _attentionNames[window] = name;
                 }
-            };
-            _attentionPanel.Children.Add(button);
-        }
-        if (overflow > 0)
-        {
-            _attentionPanel.Children.Add(new TextBlock
+
+                var button = new Button
+                {
+                    Style = (Style)Resources["ModuleButton"],
+                    Content = new TextBlock
+                    {
+                        Text = name,
+                        Foreground = Brushes.Orange,
+                        TextTrimming = TextTrimming.CharacterEllipsis,
+                        MaxWidth = 120,
+                        Effect = CreateTextShadow()
+                    },
+                    Focusable = true,
+                    Tag = window
+                };
+                System.Windows.Automation.AutomationProperties.SetName(button, $"{name}有新消息");
+                button.Click += (_, _) =>
+                {
+                    if (button.Tag is nint handle)
+                    {
+                        _environment.ActivateWindow(handle);
+                    }
+                };
+                _attentionPanel.Children.Add(button);
+            }
+            if (overflow > 0)
             {
-                Text = $"+{overflow}",
-                Foreground = Brushes.Orange,
-                VerticalAlignment = VerticalAlignment.Center,
-                Margin = new Thickness(4, 0, 8, 0),
-                Effect = CreateTextShadow()
-            });
+                _attentionPanel.Children.Add(new TextBlock
+                {
+                    Text = $"+{overflow}",
+                    Foreground = Brushes.Orange,
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Margin = new Thickness(4, 0, 8, 0),
+                    Effect = CreateTextShadow()
+                });
+            }
         }
     }
 
     private static string ResolveAttentionName(
         IReadOnlyList<TrackedWindow> running,
         IReadOnlyList<WindowGroup> groups,
-        nint window)
+        nint window,
+        uint processId)
     {
         var group = groups.FirstOrDefault(candidate =>
-            candidate.Windows.Any(item => item.Handle == window));
+            candidate.Windows.Any(item => item.Handle == window))
+            // A flash often names a hidden message window; its process names the app.
+            ?? groups.FirstOrDefault(candidate =>
+                processId != 0 && candidate.Windows.Any(item => item.ProcessId == processId));
         if (group is not null && !string.IsNullOrWhiteSpace(group.DisplayName))
         {
             return group.DisplayName;

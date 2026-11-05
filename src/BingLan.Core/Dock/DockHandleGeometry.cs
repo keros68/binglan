@@ -71,8 +71,9 @@ public static class DockHandleGeometry
             return handle;
         }
 
-        // The expanded row keeps the dock's own extent cap so it cannot span the screen.
-        var maxLength = Math.Max(1, (int)Math.Round(workArea.Width * DockLayoutMetrics.MaxExtentFraction));
+        // The expanded row grows from the handle and may cross the screen, so it keeps
+        // the stricter cap instead of the dock's wider bottom-edge limit.
+        var maxLength = Math.Max(1, (int)Math.Round(workArea.Width * DockLayoutMetrics.HandleMaxExtentFraction));
         var length = Math.Clamp(contentLengthPixels, 1, maxLength);
         var thickness = Math.Max(1, dockThicknessPixels);
         var bottom = Math.Min(handle.Bottom, workArea.Bottom);

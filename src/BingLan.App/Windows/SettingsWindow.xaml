@@ -1207,6 +1207,13 @@
                                     <TextBlock x:Name="DockIconSizeText" Style="{StaticResource ValueTextStyle}"/>
                                 </StackPanel>
                             </local:SettingsRow>
+                            <local:SettingsRow Glyph="&#xE9D9;" GlyphBrush="{DynamicResource SettingsIconOrangeBrush}" Header="自动缩小图标" Description="应用较多放不下时自动缩小图标（最小 28），都放不下时可在 Dock 上滚动查看">
+                                <CheckBox x:Name="DockAutoIconSizeCheckBox"
+                                          IsChecked="True"
+                                          AutomationProperties.Name="Dock 自动缩小图标"
+                                          Checked="DockAutoIconSize_Changed"
+                                          Unchecked="DockAutoIconSize_Changed"/>
+                            </local:SettingsRow>
                             <local:SettingsRow Glyph="&#xE945;" GlyphBrush="{DynamicResource SettingsIconPurpleBrush}" Header="动效" Description="图标放大和弹出的动画">
                                 <ComboBox x:Name="MotionSelector"
                                           Width="160"

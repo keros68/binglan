@@ -76,6 +76,10 @@ public partial class IceBlueDockWindow : Window
     private ContextMenu? _openMenu;
     private DateTimeOffset _lastReservationAttempt;
     private readonly DockAttention _attention = new();
+    private readonly DockToggleCooldown _toggleCooldown = new(() => Environment.TickCount64);
+    // The icon size the row is built with: the chosen size, shrunk while auto-fitting.
+    private double _effectiveIconSize = DockState.DefaultIconSize;
+    private bool _dockOverflowing;
     private uint _shellHookMessage;
     private DateTimeOffset _attentionRevealUntil;
     private static readonly TimeSpan AttentionReveal = TimeSpan.FromSeconds(4);
@@ -118,7 +122,20 @@ public partial class IceBlueDockWindow : Window
         Closing += OnClosing;
         DockSurface.DragOver += OnDragOver;
         DockSurface.Drop += OnDropOnSurface;
+        // When the row overflows, the wheel scrolls it sideways instead of doing nothing.
+        ItemScroller.PreviewMouseWheel += (sender, e) =>
+        {
+            if (ItemScroller.ScrollableWidth <= 0)
+            {
+                return;
+            }
+            ItemScroller.ScrollToHorizontalOffset(
+                ItemScroller.HorizontalOffset - Math.Sign(e.Delta) * ItemCellStep());
+            e.Handled = true;
+        };
     }
+
+    private double ItemCellStep() => DockLayoutMetrics.ItemCell(_effectiveIconSize);
 
     internal event Action? DockStateChanged;
 
@@ -135,6 +152,8 @@ public partial class IceBlueDockWindow : Window
         {
             return;
         }
+
+        using var _ = UiDiagnostics.Measure("Dock 状态应用");
 
         var monitors = MonitorCatalog.GetAll();
         var monitor = monitors.FirstOrDefault(candidate => string.Equals(
@@ -153,6 +172,7 @@ public partial class IceBlueDockWindow : Window
         var reserveWorkArea = _state.VisibilityMode == DockVisibilityMode.ReserveWorkArea
             && !_vacatedForMaximized;
         _lastReservationAttempt = DateTimeOffset.UtcNow;
+        UpdateEffectiveIconSize(monitor, _items);
         _appBar.Apply(
             monitor,
             reserveWorkArea,
@@ -192,18 +212,6 @@ public partial class IceBlueDockWindow : Window
             // Items or the monitor changed while expanded; keep the row beside the handle.
             ApplyHandleExpansion(_appBar.Monitor, handle.CurrentRect);
         }
-    }
-
-    private double ContentLengthDip()
-    {
-        var hasApps = _items.Count > 0;
-        var hasStartEntry = _state.ShowStartMenuButton;
-        var dividerCount = (hasStartEntry && hasApps ? 1 : 0)
-            + (_items.Any(item => item.IsPinned) && _items.Any(item => !item.IsPinned) ? 1 : 0);
-        return DockLayoutMetrics.ContentLengthForItems(
-                   _items.Count + (hasStartEntry ? 1 : 0),
-                   _state.IconSize)
-               + (dividerCount * DockLayoutMetrics.DividerDip);
     }
 
     // A reserved dock whose AppBar registration failed would float over windows, so it
@@ -291,7 +299,7 @@ public partial class IceBlueDockWindow : Window
 
         var changed = (int)wParam switch
         {
-            HshellFlash => _attention.Flashed(lParam),
+            HshellFlash => MarkFlashed(lParam),
             HshellWindowActivated or HshellRudeAppActivated or HshellWindowDestroyed => _attention.Cleared(lParam),
             _ => false
         };
@@ -307,6 +315,14 @@ public partial class IceBlueDockWindow : Window
             RefreshWindows();
         }
         return 0;
+    }
+
+    private bool MarkFlashed(nint window)
+    {
+        // Apps like chat clients flash through hidden message windows; remembering the
+        // process lets the mark survive on the app's visible windows in the dock.
+        DockNativeMethods.GetWindowThreadProcessId(window, out var processId);
+        return _attention.Flashed(window, processId);
     }
 
     private void OnClosing(object? sender, CancelEventArgs e)
@@ -339,10 +355,16 @@ public partial class IceBlueDockWindow : Window
                 var pinned = _state.PinnedApps.ToArray();
                 var hidden = _state.HiddenApps.ToArray();
                 var snapshot = await Task.Run(_catalog.Capture);
-                var groups = WindowGrouping.OrderByFirstSeen(WindowGrouping.Group(snapshot), _groupOrder);
-                _groupOrder = groups.Select(group => group.Key).ToArray();
-                var items = DockItemComposer.Compose(pinned, groups, hidden);
-                _attention.Retain(groups.SelectMany(group => group.Windows).Select(window => window.Handle));
+                IReadOnlyList<DockItem> items;
+                using (UiDiagnostics.Measure("Dock 窗口分组"))
+                {
+                    var groups = WindowGrouping.OrderByFirstSeen(WindowGrouping.Group(snapshot), _groupOrder);
+                    _groupOrder = groups.Select(group => group.Key).ToArray();
+                    items = DockItemComposer.Compose(pinned, groups, hidden);
+                    _attention.RemoveRange(_attention.MarkedWindows
+                        .Where(handle => !DockNativeMethods.IsWindow(handle))
+                        .ToArray());
+                }
                 foreach (var stale in _visuals.Keys.Except(items.Select(item => item.Key)).ToArray())
                 {
                     _visuals.Remove(stale);
@@ -379,7 +401,13 @@ public partial class IceBlueDockWindow : Window
 
     private void ApplyItems(IReadOnlyList<DockItem> items)
     {
-        var signature = $"{_state.IconSize}|{_state.ShowStartMenuButton}|{BuildSignature(items)}|{string.Join(",", items.Select(item => _attention.Wants(item.Group) ? 1 : 0))}";
+        using var _ = UiDiagnostics.Measure("Dock 应用行");
+        if (_appBar?.Monitor is { } monitor)
+        {
+            // The row is built from the fitted size; the reserved length follows it.
+            UpdateEffectiveIconSize(monitor, items);
+        }
+        var signature = $"{_effectiveIconSize}|{_state.ShowStartMenuButton}|{_dockOverflowing}|{BuildSignature(items)}|{string.Join(",", items.Select(item => _attention.Wants(item.Group) ? 1 : 0))}";
         if (string.Equals(signature, _lastSignature, StringComparison.Ordinal))
         {
             return;
@@ -410,18 +438,67 @@ public partial class IceBlueDockWindow : Window
             ItemPanel.Children.Add(BuildItem(items[index]));
         }
 
+        if (_dockOverflowing)
+        {
+            // Too many apps even at the minimum icon: the row scrolls, and this menu
+            // keeps every app reachable without hunting for the scroll position.
+            ItemPanel.Children.Add(BuildOverflowButton(items));
+        }
+
         if (countChanged)
         {
             ApplyState();
         }
     }
 
+    private Button BuildOverflowButton(IReadOnlyList<DockItem> items)
+    {
+        var glyph = new TextBlock
+        {
+            Text = "\uE712",
+            FontFamily = new System.Windows.Media.FontFamily("Segoe Fluent Icons"),
+            FontSize = Math.Max(10, _effectiveIconSize * 0.5),
+            Foreground = System.Windows.Media.Brushes.White,
+            HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        var button = new Button
+        {
+            Content = glyph,
+            Width = _effectiveIconSize + 16,
+            Height = _effectiveIconSize + 16,
+            Style = (Style)Resources["DockItemButtonStyle"],
+            ToolTip = "应用较多，点击查看全部应用；也可用滚轮横向滚动",
+            Focusable = true
+        };
+        AutomationProperties.SetName(button, "查看全部应用");
+        button.Click += (_, _) =>
+        {
+            var menu = CreateMenu();
+            foreach (var item in items)
+            {
+                var entry = new MenuItem { Header = DisplayNameOf(item) };
+                if (_visuals.TryGetValue(item.Key, out var visual) && visual.Icon is { } icon)
+                {
+                    entry.Icon = new Image { Source = icon, Width = 16, Height = 16 };
+                }
+                var captured = item;
+                entry.Click += (_, _) => Invoke(captured);
+                menu.Items.Add(entry);
+            }
+            menu.PlacementTarget = button;
+            menu.Placement = System.Windows.Controls.Primitives.PlacementMode.Top;
+            menu.IsOpen = true;
+        };
+        return button;
+    }
+
     private Button BuildStartMenuButton()
     {
         var glyph = new Grid
         {
-            Width = _state.IconSize,
-            Height = _state.IconSize,
+            Width = _effectiveIconSize,
+            Height = _effectiveIconSize,
             HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center
         };
@@ -436,7 +513,7 @@ public partial class IceBlueDockWindow : Window
                 var tile = new Border
                 {
                     Margin = new Thickness(1.5),
-                    CornerRadius = new CornerRadius(Math.Max(1, _state.IconSize * 0.04))
+                    CornerRadius = new CornerRadius(Math.Max(1, _effectiveIconSize * 0.04))
                 };
                 tile.SetResourceReference(Border.BackgroundProperty, "DockRunningDotBrush");
                 Grid.SetRow(tile, row);
@@ -459,8 +536,8 @@ public partial class IceBlueDockWindow : Window
         var button = new Button
         {
             Content = content,
-            Width = _state.IconSize + 16,
-            Height = _state.IconSize + 16,
+            Width = _effectiveIconSize + 16,
+            Height = _effectiveIconSize + 16,
             Style = (Style)Resources["DockItemButtonStyle"],
             ToolTip = "打开 Windows 开始菜单；右键打开系统快捷菜单",
             Focusable = true
@@ -516,7 +593,7 @@ public partial class IceBlueDockWindow : Window
         var divider = new Border
         {
             Width = 1,
-            Height = _state.IconSize * 0.8,
+            Height = _effectiveIconSize * 0.8,
             Margin = new Thickness(6, 0, 6, 0),
             VerticalAlignment = System.Windows.VerticalAlignment.Center
         };
@@ -530,8 +607,8 @@ public partial class IceBlueDockWindow : Window
         var content = new StackPanel { Orientation = Orientation.Vertical };
         var icon = new Image
         {
-            Width = _state.IconSize,
-            Height = _state.IconSize,
+            Width = _effectiveIconSize,
+            Height = _effectiveIconSize,
             HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
             Source = _visuals.TryGetValue(item.Key, out var visual) ? visual.Icon : null
         };
@@ -581,8 +658,8 @@ public partial class IceBlueDockWindow : Window
         var button = new Button
         {
             Content = content,
-            Width = _state.IconSize + 16,
-            Height = _state.IconSize + 16,
+            Width = _effectiveIconSize + 16,
+            Height = _effectiveIconSize + 16,
             Style = (Style)Resources["DockItemButtonStyle"],
             ToolTip = BuildToolTip(item, name),
             Tag = item,
@@ -646,7 +723,7 @@ public partial class IceBlueDockWindow : Window
     {
         if (item.Group is not null)
         {
-            Report(WindowCommandService.Toggle(item.Group));
+            Report(WindowCommandService.Toggle(item.Group, _toggleCooldown));
             return;
         }
 
@@ -1014,6 +1091,44 @@ public partial class IceBlueDockWindow : Window
         RefreshWindows();
     }
 
+    private double ContentLengthDip()
+    {
+        var hasApps = _items.Count > 0;
+        var hasStartEntry = _state.ShowStartMenuButton;
+        var dividerCount = (hasStartEntry && hasApps ? 1 : 0)
+            + (_items.Any(item => item.IsPinned) && _items.Any(item => !item.IsPinned) ? 1 : 0);
+        var extraCells = _dockOverflowing ? 1 : 0;
+        return DockLayoutMetrics.ContentLengthForItems(
+                   _items.Count + (hasStartEntry ? 1 : 0) + extraCells,
+                   _effectiveIconSize)
+               + (dividerCount * DockLayoutMetrics.DividerDip);
+    }
+
+    private void UpdateEffectiveIconSize(MonitorSnapshot monitor, IReadOnlyList<DockItem> items)
+    {
+        var hasApps = items.Count > 0;
+        var hasStartEntry = _state.ShowStartMenuButton;
+        var dividerCount = (hasStartEntry && hasApps ? 1 : 0)
+            + (items.Any(item => item.IsPinned) && items.Any(item => !item.IsPinned) ? 1 : 0);
+        // The reserved strip spans the monitor, so the row takes up to its fraction of
+        // the work-area width without taking space from any window.
+        var availableDip = monitor.WorkingArea.Width * 96d / monitor.Dpi * DockLayoutMetrics.MaxExtentFraction;
+        var cellCount = items.Count + (hasStartEntry ? 1 : 0);
+        var dividersDip = dividerCount * DockLayoutMetrics.DividerDip;
+        var preferred = _state.AutoIconSize
+            ? DockLayoutMetrics.FitIconSize(cellCount, dividersDip, availableDip, _state.IconSize)
+            : _state.IconSize;
+        // Even at the minimum icon size not everything fits: the row keeps the overflow
+        // button and scrolls horizontally instead of hiding apps for good.
+        _dockOverflowing = DockLayoutMetrics.ContentLengthForItems(cellCount, DockLayoutMetrics.MinIconDip) + dividersDip
+            > availableDip;
+        if (_effectiveIconSize != preferred)
+        {
+            _effectiveIconSize = preferred;
+            _lastSignature = string.Empty;
+        }
+    }
+
     private void UpdateForForeground()
     {
         UiDiagnostics.Hit(UiActivity.ForegroundCheck);
@@ -1021,6 +1136,8 @@ public partial class IceBlueDockWindow : Window
         {
             return;
         }
+
+        using var _ = UiDiagnostics.Measure("Dock 前台判定");
 
         // Native menus own this interaction. The taskbar foreground window has no
         // useful menu bounds, so overlap detection alone would reveal the Dock over it.

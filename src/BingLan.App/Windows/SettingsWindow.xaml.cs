@@ -1730,6 +1730,7 @@ public partial class SettingsWindow : Window
             DockSmartHideRadio.IsChecked =
                 _dockState.VisibilityMode == DockVisibilityMode.SmartHide;
             DockIconSizeSlider.Value = _dockState.IconSize;
+            DockAutoIconSizeCheckBox.IsChecked = _dockState.AutoIconSize;
             QuietTaskbarFlashCheckBox.IsChecked = !BingLan.App.Services.TaskbarFlashingSetting.IsEnabled();
             LoadDockLook();
             DockIconSizeText.Text = $"{_dockState.IconSize:0}";
@@ -2397,6 +2398,20 @@ public partial class SettingsWindow : Window
         _dockState.IconSize = e.NewValue;
         DockIconSizeText.Text = $"{e.NewValue:0}";
         ApplyDockChange("已调整图标大小");
+    }
+
+    private void DockAutoIconSize_Changed(object sender, RoutedEventArgs e)
+    {
+        // DockStatusText parses after this row; a null means XAML loading is still
+        // running and the checked state is the initial one, not a user action.
+        if (_loadingDock || DockAutoIconSizeCheckBox is null || DockStatusText is null)
+        {
+            return;
+        }
+
+        _dockState.AutoIconSize = DockAutoIconSizeCheckBox.IsChecked == true;
+        ApplyDockChange(
+            _dockState.AutoIconSize ? "已开启自动缩小图标" : "已关闭自动缩小图标");
     }
 
     private void DockBottomGap_Changed(object sender, RoutedPropertyChangedEventArgs<double> e)

@@ -169,11 +169,11 @@ public static class TopBarTests
     private static void TestAttentionQueue()
     {
         var queue = new TopBarAttentionQueue();
-        Assert(queue.Flashed(101), "首次闪烁入队");
-        Assert(!queue.Flashed(101), "重复闪烁不重复入队");
-        Assert(!queue.Flashed(0), "空句柄忽略");
+        Assert(queue.Flashed(101, 1), "首次闪烁入队");
+        Assert(!queue.Flashed(101, 1), "重复闪烁不重复入队");
+        Assert(!queue.Flashed(0, 1), "空句柄忽略");
         Assert(
-            queue.Flashed(202) && queue.Flashed(303) && queue.Flashed(404) && queue.Flashed(505),
+            queue.Flashed(202, 2) && queue.Flashed(303, 3) && queue.Flashed(404, 4) && queue.Flashed(505, 5),
             "多个窗口依次入队");
         Assert(
             queue.OrderedWindows.SequenceEqual([101, 202, 303, 404, 505]),
@@ -181,20 +181,22 @@ public static class TopBarTests
 
         Assert(queue.Cleared(303), "激活清除");
         Assert(!queue.Cleared(999), "未入队清除返回假");
-        queue.Flashed(303);
+        Assert(queue.ProcessOf(101) == 1, "闪烁时记下进程供名字回退");
+        queue.Flashed(303, 3);
         Assert(
             queue.OrderedWindows.SequenceEqual([101, 202, 404, 505, 303]),
             "再次闪烁排到队尾");
 
-        queue.Retain([101, 505, 303]);
+        // 只清真正销毁的句柄；隐藏消息窗不在任何枚举里，也不能被顺手删掉。
+        queue.RemoveRange([202, 404]);
         Assert(
             queue.OrderedWindows.SequenceEqual([101, 505, 303]),
-            "保留仍在运行的窗口");
+            "只移除已销毁的窗口");
 
         var (shown, overflow) = TopBarAttentionQueue.ResolveDisplay(queue.OrderedWindows, 3);
         Assert(shown.Count == 3 && overflow == 0, "刚好上限时全部显示");
-        queue.Flashed(606);
-        queue.Flashed(707);
+        queue.Flashed(606, 6);
+        queue.Flashed(707, 7);
         (shown, overflow) = TopBarAttentionQueue.ResolveDisplay(queue.OrderedWindows, 3);
         Assert(shown.SequenceEqual([101, 505, 303]), "显示前三个");
         Assert(overflow == 2, "剩余折叠计数");

@@ -14,6 +14,7 @@ Run("同应用多窗口稳定分组", TestStableGrouping);
 Run("空标题窗口显示名回退", TestUntitledWindowDisplayName);
 Run("运行应用按首次出现顺序保持稳定", TestFirstSeenOrder);
 Run("Dock 点击动作决策", TestWindowActionPolicy);
+Run("Dock 刚最小化应用的再次点击冷却", TestDockToggleCooldown);
 Run("托盘驻留应用的唤回快捷键", TestTrayAppRevealRules);
 Run("Dock 内容尺寸边界", TestContentLengthBounds);
 Run("Dock 图标大小决定按钮与高度并被钳制", TestDockIconSize);
@@ -122,15 +123,25 @@ static void TestDockAttention()
     var browser = new WindowGroup("exe:browser", "浏览器", [Window(202, 2, "网页", null, @"C:\Apps\Browser.exe")]);
     var attention = new DockAttention();
     Assert(!attention.Wants(chat), "初始不应有提醒");
-    Assert(attention.Flashed(101), "闪烁应记录提醒");
-    Assert(!attention.Flashed(101), "重复闪烁不应重复记录");
+    Assert(attention.Flashed(101, 1), "闪烁应记录提醒");
+    Assert(!attention.Flashed(101, 1), "重复闪烁不应重复记录");
     Assert(attention.Wants(chat) && !attention.Wants(browser), "只有闪烁窗口所属的应用有提醒");
-    Assert(!attention.Flashed(0), "空窗口句柄不应记录");
+    Assert(!attention.Flashed(0, 1), "空窗口句柄不应记录");
     Assert(attention.Cleared(101) && !attention.Wants(chat), "激活窗口后提醒应清除");
-    attention.Flashed(101);
-    attention.Flashed(202);
-    attention.Retain([202]);
-    Assert(!attention.Wants(chat) && attention.Wants(browser), "已关闭的窗口不应保留提醒");
+    attention.Flashed(101, 1);
+    attention.Flashed(202, 2);
+    attention.RemoveRange([101]);
+    Assert(!attention.Wants(chat) && attention.Wants(browser), "已销毁的窗口不应保留提醒");
+
+    // 聊天应用常从隐藏消息窗口发起闪烁：句柄不在枚举里，同进程的可见窗口也要亮标记。
+    var hidden = new WindowGroup("exe:hidden", "聊天", [Window(301, 7, "聊天", null, @"C:\Apps\Chat.exe")]);
+    attention.Flashed(999, 7);
+    Assert(attention.Wants(hidden), "同进程的窗口应命中闪烁标记");
+    Assert(
+        attention.MarkedWindows.Contains(999),
+        "不在枚举里的闪烁句柄应保留标记");
+    attention.RemoveRange([999]);
+    Assert(!attention.Wants(hidden), "隐藏闪烁窗口销毁后标记清除");
 }
 
 static void TestDockIconSize()
@@ -521,16 +532,39 @@ static void TestWindowActionPolicy()
 {
     AssertEqual(
         DockClickAction.MinimizeForeground,
-        WindowActionPolicy.Decide(groupContainsForeground: true, targetIsMinimized: false),
+        WindowActionPolicy.Decide(groupContainsForeground: true, foregroundIsMinimized: false, targetIsMinimized: false),
         "点击当前前台应用应最小化");
     AssertEqual(
         DockClickAction.Activate,
-        WindowActionPolicy.Decide(groupContainsForeground: false, targetIsMinimized: false),
+        WindowActionPolicy.Decide(groupContainsForeground: false, foregroundIsMinimized: false, targetIsMinimized: false),
         "点击后台可见应用应激活");
     AssertEqual(
         DockClickAction.RestoreAndActivate,
-        WindowActionPolicy.Decide(groupContainsForeground: false, targetIsMinimized: true),
+        WindowActionPolicy.Decide(groupContainsForeground: false, foregroundIsMinimized: false, targetIsMinimized: true),
         "点击最小化应用应恢复并激活");
+    AssertEqual(
+        DockClickAction.RestoreAndActivate,
+        WindowActionPolicy.Decide(groupContainsForeground: true, foregroundIsMinimized: true, targetIsMinimized: true),
+        "前台指针还指着刚最小化的窗口时应恢复而不是再最小化");
+}
+
+static void TestDockToggleCooldown()
+{
+    var now = 0L;
+    var cooldown = new DockToggleCooldown(() => now);
+    Assert(!cooldown.RecentlyMinimized(101), "未记录过窗口不应命中冷却");
+
+    cooldown.MarkMinimized(101);
+    Assert(cooldown.RecentlyMinimized(101), "刚最小化的窗口应命中冷却");
+    Assert(!cooldown.RecentlyMinimized(202), "其他窗口不应命中冷却");
+
+    now = DockToggleCooldown.RetentionMs;
+    Assert(!cooldown.RecentlyMinimized(101), "超过保留窗口后不应命中冷却");
+
+    cooldown.MarkMinimized(101);
+    now = 100;
+    cooldown.Clear(101);
+    Assert(!cooldown.RecentlyMinimized(101), "恢复后再点应允许最小化（冷却已清）");
 }
 
 static void TestTrayAppRevealRules()
@@ -572,6 +606,32 @@ static void TestContentLengthBounds()
     Assert(
         DockLayoutMetrics.ContentLengthForItems(12) > DockLayoutMetrics.ContentLengthForItems(3),
         "项目越多内容长度应越大");
+
+    // Fitting: the preferred size stays while it fits, shrinks proportionally when it
+    // does not, and never goes below the minimum.
+    var preferred = 48d;
+    var fewAvailable = DockLayoutMetrics.ContentLengthForItems(4, preferred);
+    AssertEqual(
+        preferred,
+        DockLayoutMetrics.FitIconSize(4, 0, fewAvailable, preferred),
+        "放得下时应保持首选图标大小");
+    var many = 30;
+    var shrinkAvailable = 1700d;
+    var fitted = DockLayoutMetrics.FitIconSize(many, 0, shrinkAvailable, preferred);
+    Assert(
+        DockLayoutMetrics.MinIconDip <= fitted && fitted < preferred,
+        "放不下时应按比例缩小且不低于下限");
+    Assert(
+        DockLayoutMetrics.ContentLengthForItems(many, fitted) <= shrinkAvailable,
+        "缩小后的整行应放得下");
+    AssertEqual(
+        DockLayoutMetrics.MinIconDip,
+        DockLayoutMetrics.FitIconSize(many, 0, 300d, preferred),
+        "再挤也不能低于最小图标");
+    AssertEqual(
+        preferred,
+        DockLayoutMetrics.FitIconSize(0, 0, 300d, preferred),
+        "没有应用时保持首选大小");
 
     var capped = FloatingDockGeometry.ClampExtent(
         (int)DockLayoutMetrics.ContentLengthForItems(500),

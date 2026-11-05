@@ -9,11 +9,12 @@ namespace BingLan.Core.TopBar;
 public sealed class TopBarAttentionQueue
 {
     private readonly List<nint> _windows = [];
+    private readonly Dictionary<nint, uint> _processes = [];
 
     public IReadOnlyList<nint> OrderedWindows => _windows;
 
-    /// <summary>Records a flash request; false when the window had already asked.</summary>
-    public bool Flashed(nint window)
+    /// <summary>Records a flash request with its process; false when the window had already asked.</summary>
+    public bool Flashed(nint window, uint processId)
     {
         if (window == 0 || _windows.Contains(window))
         {
@@ -21,17 +22,34 @@ public sealed class TopBarAttentionQueue
         }
 
         _windows.Add(window);
+        _processes[window] = processId;
         return true;
     }
 
-    /// <summary>The window was activated or closed; false when it was not in the queue.</summary>
-    public bool Cleared(nint window) => _windows.Remove(window);
+    /// <summary>The process the window belonged to when it flashed, for name lookups.</summary>
+    public uint ProcessOf(nint window) =>
+        _processes.TryGetValue(window, out var processId) ? processId : 0;
 
-    /// <summary>Drops windows that no longer exist among the running ones.</summary>
-    public void Retain(IEnumerable<nint> running)
+    /// <summary>The window was activated or closed; false when it was not in the queue.</summary>
+    public bool Cleared(nint window)
     {
-        var alive = running.ToHashSet();
-        _windows.RemoveAll(window => !alive.Contains(window));
+        _processes.Remove(window);
+        return _windows.Remove(window);
+    }
+
+    /// <summary>
+    /// Drops only the windows the caller verified as destroyed. An enumeration
+    /// snapshot must not be used here: a flash often names a hidden message window
+    /// that never appears in it, and the queue would drop the notice at once.
+    /// </summary>
+    public void RemoveRange(IEnumerable<nint> windows)
+    {
+        var dead = windows.ToHashSet();
+        _windows.RemoveAll(window => dead.Contains(window));
+        foreach (var window in dead)
+        {
+            _processes.Remove(window);
+        }
     }
 
     /// <summary>

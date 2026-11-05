@@ -71,6 +71,13 @@ public sealed class DockState
     /// <summary>Icon edge length in DIPs; the dock grows with it.</summary>
     public double IconSize { get; set; } = DefaultIconSize;
 
+    /// <summary>
+    /// Whether many open apps may shrink the icons below the chosen size so every app
+    /// stays on the dock, down to the layout minimum; off keeps the chosen size and
+    /// lets the row overflow into the scroll fallback.
+    /// </summary>
+    public bool AutoIconSize { get; set; } = true;
+
     /// <summary>Gap between the dock's bottom edge and the work-area bottom, in DIPs.</summary>
     public double BottomGapDip { get; set; } = DefaultBottomGapDip;
 
