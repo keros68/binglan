@@ -320,9 +320,12 @@ public partial class IceBlueDockWindow : Window
     private bool MarkFlashed(nint window)
     {
         // Apps like chat clients flash through hidden message windows; remembering the
-        // process lets the mark survive on the app's visible windows in the dock.
+        // process lets the mark survive on the app's visible windows in the dock, and a
+        // count published in the flashed title ("微信(3)") becomes the badge number.
         DockNativeMethods.GetWindowThreadProcessId(window, out var processId);
-        return _attention.Flashed(window, processId);
+        var title = new StringBuilder(256);
+        DockNativeMethods.GetWindowTextW(window, title, title.Capacity);
+        return _attention.Flashed(window, processId, UnreadBadgeRules.ParseCount(title.ToString()));
     }
 
     private void OnClosing(object? sender, CancelEventArgs e)
@@ -407,7 +410,7 @@ public partial class IceBlueDockWindow : Window
             // The row is built from the fitted size; the reserved length follows it.
             UpdateEffectiveIconSize(monitor, items);
         }
-        var signature = $"{_effectiveIconSize}|{_state.ShowStartMenuButton}|{_dockOverflowing}|{BuildSignature(items)}|{string.Join(",", items.Select(item => _attention.Wants(item.Group) ? 1 : 0))}";
+        var signature = $"{_effectiveIconSize}|{_state.ShowStartMenuButton}|{_dockOverflowing}|{BuildSignature(items)}|{string.Join(",", items.Select(item => _attention.UnreadCount(item.Group)))}";
         if (string.Equals(signature, _lastSignature, StringComparison.Ordinal))
         {
             return;
@@ -615,7 +618,36 @@ public partial class IceBlueDockWindow : Window
         RenderOptions.SetBitmapScalingMode(icon, BitmapScalingMode.HighQuality);
         var iconHost = new Grid();
         iconHost.Children.Add(icon);
-        if (wantsAttention)
+        var unread = _attention.UnreadCount(item.Group);
+        if (wantsAttention && unread > 0)
+        {
+            // A count the app published becomes a red pill; like macOS, "99+" past the cap.
+            var pill = new Border
+            {
+                MinWidth = 16,
+                Height = 16,
+                CornerRadius = new CornerRadius(8),
+                Padding = new Thickness(4, 0, 4, 0),
+                Margin = new Thickness(0, -4, -4, 0),
+                HorizontalAlignment = System.Windows.HorizontalAlignment.Right,
+                VerticalAlignment = System.Windows.VerticalAlignment.Top,
+                Background = new SolidColorBrush(System.Windows.Media.Color.FromRgb(0xFF, 0x3B, 0x30)),
+                BorderBrush = System.Windows.Media.Brushes.White,
+                BorderThickness = new Thickness(1)
+            };
+            pill.Child = new TextBlock
+            {
+                Text = UnreadBadgeRules.BadgeText(unread),
+                Foreground = System.Windows.Media.Brushes.White,
+                FontSize = Math.Max(9, _effectiveIconSize * 0.28),
+                FontFamily = new System.Windows.Media.FontFamily("Segoe UI"),
+                FontWeight = System.Windows.FontWeights.SemiBold,
+                HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            iconHost.Children.Add(pill);
+        }
+        else if (wantsAttention)
         {
             // An orange badge at the top-right corner, like an unread count.
             iconHost.Children.Add(new Border

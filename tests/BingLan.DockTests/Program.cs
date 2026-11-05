@@ -15,6 +15,7 @@ Run("空标题窗口显示名回退", TestUntitledWindowDisplayName);
 Run("运行应用按首次出现顺序保持稳定", TestFirstSeenOrder);
 Run("Dock 点击动作决策", TestWindowActionPolicy);
 Run("Dock 刚最小化应用的再次点击冷却", TestDockToggleCooldown);
+Run("未读数字角标的标题解析与上限", TestUnreadBadgeRules);
 Run("托盘驻留应用的唤回快捷键", TestTrayAppRevealRules);
 Run("Dock 内容尺寸边界", TestContentLengthBounds);
 Run("Dock 图标大小决定按钮与高度并被钳制", TestDockIconSize);
@@ -565,6 +566,29 @@ static void TestDockToggleCooldown()
     now = 100;
     cooldown.Clear(101);
     Assert(!cooldown.RecentlyMinimized(101), "恢复后再点应允许最小化（冷却已清）");
+}
+
+static void TestUnreadBadgeRules()
+{
+    AssertEqual(3, UnreadBadgeRules.ParseCount("微信(3)"), "半角括号末尾计数应解析");
+    AssertEqual(12, UnreadBadgeRules.ParseCount("微信（12）"), "全角括号计数应解析");
+    AssertEqual(5, UnreadBadgeRules.ParseCount("App [5]"), "方括号计数应解析");
+    AssertEqual< int?>(null, UnreadBadgeRules.ParseCount("记事本 (2) - 记事本"), "多实例副本标题不是未读");
+    AssertEqual<int?>(null, UnreadBadgeRules.ParseCount("Chrome (64 位)"), "括号内非纯数字不是未读");
+    AssertEqual<int?>(null, UnreadBadgeRules.ParseCount("微信"), "无括号标题无计数");
+    AssertEqual<int?>(null, UnreadBadgeRules.ParseCount(""), "空标题无计数");
+    AssertEqual<int?>(null, UnreadBadgeRules.ParseCount(null), "空引用无计数");
+    AssertEqual<int?>(null, UnreadBadgeRules.ParseCount("微信(0)"), "零不计入未读");
+    AssertEqual("99+", UnreadBadgeRules.BadgeText(100), "超过上限显示 99+");
+    AssertEqual("7", UnreadBadgeRules.BadgeText(7), "上限内显示原数字");
+
+    var chat = new WindowGroup("exe:chat", "聊天", [Window(501, 9, "聊天", null, @"C:\Apps\Chat.exe")]);
+    var attention = new DockAttention();
+    attention.Flashed(999, 9, UnreadBadgeRules.ParseCount("聊天(6)"));
+    AssertEqual(6, attention.UnreadCount(chat), "同进程闪烁窗口发布的计数应显示");
+    Assert(attention.UnreadCount(chat) > 0 && attention.Wants(chat), "有计数时同样命中注意标记");
+    attention.Cleared(999);
+    AssertEqual(0, attention.UnreadCount(chat), "闪烁清除后计数归零");
 }
 
 static void TestTrayAppRevealRules()
