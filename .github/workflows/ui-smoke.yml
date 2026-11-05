@@ -1,0 +1,28 @@
+# UiSmokeTests 创建真实 WPF 窗口并做命中测试与输入注入，在无交互 runner 上可能
+# 环境性失败，所以只手动触发、不设为合并门槛。观察到稳定后再考虑定时或进 CI。
+name: UI 烟雾测试
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ui-smoke:
+    runs-on: windows-2025
+    timeout-minutes: 25
+    steps:
+      - name: 检出
+        uses: actions/checkout@v4
+
+      - name: 安装 .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: 构建（Release）
+        run: dotnet build BingLan.slnx -c Release
+
+      - name: WPF UI 烟雾测试
+        run: dotnet run --project tests/BingLan.UiSmokeTests -c Release --no-build

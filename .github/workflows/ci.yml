@@ -1,0 +1,41 @@
+# 守护检查：产品 Release 构建（覆盖测试未引用的 XAML/项目配置）加四套离线测试。
+# 只检查、不发布：安装包与 GitHub Release 仍由本地 build.ps1 与手动 gh release 出。
+# UiSmokeTests 需要真实桌面交互，单独在 ui-smoke.yml 里手动触发，不进本工作流。
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: windows-2025
+    timeout-minutes: 30
+    steps:
+      - name: 检出
+        uses: actions/checkout@v4
+
+      - name: 安装 .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: 构建（Release）
+        run: dotnet build BingLan.slnx -c Release
+
+      - name: 核心烟雾测试
+        run: dotnet run --project tests/BingLan.SmokeTests -c Release --no-build
+
+      - name: Dock 测试
+        run: dotnet run --project tests/BingLan.DockTests -c Release --no-build
+
+      - name: 便签测试
+        run: dotnet run --project tests/BingLan.NoteTests -c Release --no-build
+
+      - name: 信息组件测试
+        run: dotnet run --project tests/BingLan.InformationTests -c Release --no-build
