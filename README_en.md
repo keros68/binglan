@@ -19,7 +19,7 @@ BingLan Desktop (冰蓝桌面) is a Windows 11 desktop companion built with .NET
 ## Features
 
 - **Desktop info**: time and date, greeting, weather, and CPU / RAM / network are separate cards, each with its own font, size, colour, and position. A thin line that fades at both ends can be shown under the time.
-- **To-dos and notes**: switch between today's list and a 1–5-week calendar with lunar dates; open a day's details, edit multiple lines in a dialog, reorder tasks by dragging, and move tasks between days with undo. Right-click an entry to mark it as an event with an optional time: events have no checkbox, are not counted as open to-dos, and stay above that day's to-dos, sorted by time. New cards start empty. Edits are saved when the dialog or app closes. Plain notes support multiline text and typography.
+- **To-dos and notes**: switch between today's list and a 1–5-week calendar with lunar dates; open a day's details, edit multiple lines in a dialog, reorder tasks by dragging, and move tasks between days with undo. Right-click an entry to mark it as an event with an optional time: events have no checkbox, are not counted as open to-dos, and stay above that day's to-dos, sorted by time. To-dos can have an optional deadline date and time while keeping their completion checkbox; unfinished tasks with deadlines remain on today’s list. Standalone countdowns have a required target date and optional time, remain on today’s list until removed, and are not counted as open to-dos. Remaining or elapsed days, hours and minutes appear below the entry text. New cards start empty. Edits are saved when the dialog or app closes. Plain notes support multiline text and typography.
 - **File groups**: map desktop files, folders, and apps into boxes, sort them by type automatically (which also clears entries whose original file was deleted), fold a box down to its title bar, and show items as large icons or a compact list. Turn on "file-box automation" on the Layout settings page (off by default) and new files landing on the desktop join their existing box on their own, while entries whose original file was deleted disappear from the box. Entries on unplugged drives or offline shares stay, marked as invalid, and can be relinked. Boxes record paths only; original files stay where they are. To delete originals from a box, turn on "Allow deleting original files from file boxes" on the Layout page (off by default); then right-click → "Delete to Recycle Bin…" or press Delete. Every deletion asks first and goes to the Recycle Bin; USB drives, network locations, drive roots, and system folders are refused.
 - **Cleaner title bars**: optionally show the to-do and file-box title-bar buttons only when the pointer is over the card, so arranged cards show just their titles.
 - **Pinned to the desktop**: cards always stay below other app windows, even while you click, edit, or drag them, so they never cover the window you are using.
@@ -41,7 +41,7 @@ The interface is in Simplified Chinese.
 
 ## Get started
 
-Stable version: [v0.2.52](https://github.com/keros68/binglan/releases/tag/v0.2.52) · [Installer](https://github.com/keros68/binglan/releases/download/v0.2.52/BingLan-Setup-0.2.52.exe) · [Portable](https://github.com/keros68/binglan/releases/download/v0.2.52/BingLan-0.2.52-portable.zip). A standalone [compatibility tool](https://github.com/keros68/binglan/releases/download/v0.2.52/BingLan-0.2.52-tray-preview.zip) is also available; see the [guide (Chinese)](docs/TRAY-PREVIEW.md).
+Stable version: [v0.2.53](https://github.com/keros68/binglan/releases/tag/v0.2.53) · [Installer](https://github.com/keros68/binglan/releases/download/v0.2.53/BingLan-Setup-0.2.53.exe) · [Portable](https://github.com/keros68/binglan/releases/download/v0.2.53/BingLan-0.2.53-portable.zip). A standalone [compatibility tool](https://github.com/keros68/binglan/releases/download/v0.2.52/BingLan-0.2.52-tray-preview.zip) is also available; see the [guide (Chinese)](docs/TRAY-PREVIEW.md).
 
 1. Open [Releases](https://github.com/keros68/binglan/releases/latest) and download `BingLan-Setup-*.exe` (installer) or `BingLan-*-portable.zip` (portable).
 2. Installer: run it — it installs for the current user and needs no administrator rights. Portable: unzip anywhere and run `BingLan.exe` inside. Both include the .NET runtime and are not code-signed yet, so Windows asks for confirmation on first run.
@@ -65,7 +65,7 @@ Requires the .NET 10 SDK and PowerShell 7. Building the installer also needs Inn
 ```powershell
 dotnet build .\BingLan.slnx -c Release
 dotnet run --project .\tests\BingLan.SmokeTests\BingLan.SmokeTests.csproj -c Release
-pwsh -NoProfile -File .\installer\build.ps1 -Version 0.2.52
+pwsh -NoProfile -File .\installer\build.ps1 -Version 0.2.53
 ```
 
 Full test commands, the technical design, and the current implementation are in the [development notes (Chinese)](docs/DEVELOPMENT.md); installer details are in [docs/INSTALLER.md](docs/INSTALLER.md).

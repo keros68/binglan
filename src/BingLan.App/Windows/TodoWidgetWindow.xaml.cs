@@ -49,6 +49,7 @@ public partial class TodoWidgetWindow : WidgetWindowBase
     private DispatcherTimer? _moveToastTimer;
     private DispatcherTimer? _peekDwellTimer;
     private DispatcherTimer? _todayRefreshTimer;
+    internal System.Windows.Controls.Primitives.Popup? DeadlinePopup { get; private set; }
     private DateTime _todayScopeDate = DateTime.Today;
     private System.Windows.Point _peekDwellAnchor;
     private System.Windows.Point _peekArmPoint;
@@ -378,14 +379,28 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         NotifyStateChanged();
     }
 
-    private void ToggleKind_Click(object sender, RoutedEventArgs e)
+    private void SetKindToEvent_Click(object sender, RoutedEventArgs e) =>
+        SetItemKind(sender, TodoItemKind.Event);
+
+    private void SetKindToTodo_Click(object sender, RoutedEventArgs e) =>
+        SetItemKind(sender, TodoItemKind.Todo);
+
+    private void SetKindToCountdown_Click(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not TodoItemState item)
+        {
+            return;
+        }
+        OpenDeadlineEditor(item, convertToCountdown: true);
+    }
+
+    private void SetItemKind(object sender, TodoItemKind kind)
     {
         if ((sender as FrameworkElement)?.DataContext is not TodoItemState item)
         {
             return;
         }
         CaptureState();
-        var kind = item.Kind == TodoItemKind.Event ? TodoItemKind.Todo : TodoItemKind.Event;
         if (TodoService.SetKind(State, item.Id, kind))
         {
             RefreshAfterKindOrTimeChange(item);
@@ -477,6 +492,262 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         {
             time = parsed;
             return true;
+        }
+        return false;
+    }
+
+    private void SetTargetDate_Click(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not TodoItemState item)
+        {
+            return;
+        }
+        OpenDeadlineEditor(item);
+    }
+
+    internal void OpenDeadlineEditor(TodoItemState item, bool convertToCountdown = false)
+    {
+        if (DeadlinePopup is { } previous) previous.IsOpen = false;
+        var isCountdown = convertToCountdown || item.Kind == TodoItemKind.Countdown;
+        var datePicker = new DatePicker
+        {
+            Language = System.Windows.Markup.XmlLanguage.GetLanguage("zh-CN"),
+            SelectedDate = item.DeadlineDate ?? item.Date ?? DateTime.Today,
+            SelectedDateFormat = DatePickerFormat.Short,
+            Margin = new Thickness(0, 6, 0, 8)
+        };
+        System.Windows.Automation.AutomationProperties.SetName(datePicker, isCountdown ? "目标日期" : "截止日期");
+        var invalidDateInput = false;
+        datePicker.DateValidationError += (_, args) =>
+        {
+            args.ThrowException = false;
+            invalidDateInput = true;
+        };
+        datePicker.GotKeyboardFocus += (_, _) => invalidDateInput = false;
+        datePicker.SelectedDateChanged += (_, _) => invalidDateInput = false;
+        datePicker.CalendarOpened += (_, _) => invalidDateInput = false;
+        datePicker.PreviewTextInput += (_, _) => invalidDateInput = false;
+        datePicker.PreviewKeyDown += (_, args) =>
+        {
+            if (args.Key is Key.Back or Key.Delete) invalidDateInput = false;
+        };
+        var useTime = new System.Windows.Controls.CheckBox
+        {
+            Content = "指定时间", IsChecked = item.DeadlineTime is not null,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        var timeBox = new System.Windows.Controls.TextBox
+        {
+            Width = 68, MaxLength = 5, Margin = new Thickness(12, 0, 0, 0),
+            Padding = new Thickness(4, 2, 4, 2), BorderThickness = new Thickness(1),
+            Background = (System.Windows.Media.Brush)FindResource("SettingsInputBrush"),
+            BorderBrush = (System.Windows.Media.Brush)FindResource("SettingsInputBorderBrush"),
+            Text = item.DeadlineTime?.ToString("HH:mm") ?? "09:00",
+            IsEnabled = useTime.IsChecked == true,
+            ToolTip = "24 小时制，如 14:30"
+        };
+        System.Windows.Automation.AutomationProperties.SetName(timeBox, isCountdown ? "目标时间" : "截止时间");
+        useTime.Checked += (_, _) => timeBox.IsEnabled = true;
+        useTime.Unchecked += (_, _) => timeBox.IsEnabled = false;
+        var timeRow = new System.Windows.Controls.StackPanel { Orientation = System.Windows.Controls.Orientation.Horizontal };
+        timeRow.Children.Add(useTime);
+        timeRow.Children.Add(timeBox);
+        var error = new System.Windows.Controls.TextBlock
+        {
+            Foreground = System.Windows.Media.Brushes.Firebrick, TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 6, 0, 0), Visibility = Visibility.Collapsed
+        };
+        var panel = new System.Windows.Controls.StackPanel { Width = 240 };
+        panel.Resources["PrimaryTextBrush"] = FindResource("IceInkBrush");
+        panel.Resources["SecondaryTextBrush"] = FindResource("IceMutedInkBrush");
+        panel.Resources["WidgetCaretBrush"] = FindResource("IceInkBrush");
+        panel.Resources["WidgetDefaultButtonBrush"] = FindResource("SettingsButtonBrush");
+        panel.Resources["WidgetDefaultButtonBorderBrush"] = FindResource("SettingsButtonBorderBrush");
+        panel.Resources["WidgetButtonHoverBrush"] = FindResource("SettingsControlHoverBrush");
+        panel.Resources["WidgetButtonPressedBrush"] = FindResource("SettingsPreviewBrush");
+        timeBox.TextChanged += (_, _) => error.Visibility = Visibility.Collapsed;
+        panel.Children.Add(new System.Windows.Controls.TextBlock
+        {
+            Text = isCountdown ? "倒数日目标" : "待办截止时间", FontWeight = FontWeights.SemiBold
+        });
+        panel.Children.Add(datePicker);
+        panel.Children.Add(timeRow);
+        panel.Children.Add(new System.Windows.Controls.TextBlock
+        {
+            Text = "不指定时间时按天计算；时间使用本机时区。",
+            FontSize = 11, Margin = new Thickness(0, 8, 0, 0), TextWrapping = TextWrapping.Wrap
+        });
+        panel.Children.Add(error);
+        var actions = new System.Windows.Controls.StackPanel
+        {
+            Orientation = System.Windows.Controls.Orientation.Horizontal,
+            HorizontalAlignment = System.Windows.HorizontalAlignment.Right, Margin = new Thickness(0, 10, 0, 0)
+        };
+        panel.Children.Add(actions);
+        var accent = new System.Windows.Media.SolidColorBrush(
+            System.Windows.Media.Color.FromRgb(0x3E, 0x77, 0xB5));
+        var popup = new System.Windows.Controls.Primitives.Popup
+        {
+            Child = new Border
+            {
+                Padding = new Thickness(12),
+                CornerRadius = new CornerRadius(8),
+                Background = (System.Windows.Media.Brush)FindResource("IcePageBrush"),
+                BorderBrush = accent,
+                BorderThickness = new Thickness(1),
+                Child = panel
+            },
+            Placement = System.Windows.Controls.Primitives.PlacementMode.MousePoint,
+            StaysOpen = false,
+            AllowsTransparency = true,
+            PlacementTarget = this
+        };
+        System.Windows.Documents.TextElement.SetForeground(panel,
+            (System.Windows.Media.Brush)FindResource("IceInkBrush"));
+        DeadlinePopup = popup;
+        popup.Closed += (_, _) =>
+        {
+            if (ReferenceEquals(DeadlinePopup, popup)) DeadlinePopup = null;
+        };
+        void ShowError(string text)
+        {
+            error.Text = text;
+            error.Visibility = Visibility.Visible;
+        }
+        void Apply()
+        {
+            if (invalidDateInput)
+            {
+                ShowError("请选择有效日期，如 2026-12-31。");
+                return;
+            }
+            var input = FindVisualChild<System.Windows.Controls.Primitives.DatePickerTextBox>(datePicker)?.Text ?? datePicker.Text;
+            if (!TryParseTargetDate(input, out var date))
+            {
+                // Let the native picker parse its own culture-specific display format.
+                datePicker.SetCurrentValue(DatePicker.TextProperty, input);
+                date = invalidDateInput ? null : datePicker.SelectedDate;
+            }
+            if (date is null)
+            {
+                ShowError("请选择有效日期，如 2026-12-31。");
+                return;
+            }
+            TimeOnly? time = null;
+            if (useTime.IsChecked == true && (!TryParseEventTime(timeBox.Text, out time) || time is null))
+            {
+                ShowError("请输入有效时间，如 14:30。");
+                return;
+            }
+            CaptureState();
+            if (!State.Items.Contains(item)) { popup.IsOpen = false; return; }
+            var oldDate = item.Date;
+            if (convertToCountdown) TodoService.SetKind(State, item.Id, TodoItemKind.Countdown);
+            TodoService.SetDeadline(State, item.Id, date, time);
+            popup.IsOpen = false;
+            RefreshAfterDeadlineChange(item, oldDate);
+        }
+        void AddAction(string text, Action click)
+        {
+            var button = new System.Windows.Controls.Button
+            {
+                Content = text, MinWidth = 52, Margin = new Thickness(4, 0, 0, 0), Padding = new Thickness(6, 3, 6, 3)
+            };
+            button.Click += (_, _) => click();
+            actions.Children.Add(button);
+        }
+        if (!isCountdown)
+        {
+            AddAction("清除", () =>
+            {
+                CaptureState();
+                TodoService.SetDeadline(State, item.Id, null);
+                popup.IsOpen = false;
+                RefreshAfterDeadlineChange(item, item.Date);
+            });
+        }
+        AddAction("取消", () => popup.IsOpen = false);
+        AddAction("确定", Apply);
+        panel.PreviewKeyDown += (_, args) =>
+        {
+            if (args.Key == Key.Escape && !datePicker.IsDropDownOpen)
+            {
+                args.Handled = true;
+                popup.IsOpen = false;
+            }
+            else if (args.Key == Key.Enter && !datePicker.IsDropDownOpen && Keyboard.FocusedElement is not System.Windows.Controls.Button)
+            {
+                args.Handled = true;
+                Apply();
+            }
+        };
+        popup.Opened += (_, _) => Dispatcher.BeginInvoke(() =>
+        {
+            datePicker.Focus();
+        }, DispatcherPriority.Input);
+        // Open after the context menu has closed and released capture; opening during the
+        // menu click lets the closing menu dismiss a StaysOpen=false popup at once.
+        Dispatcher.BeginInvoke(() =>
+        {
+            if (ReferenceEquals(DeadlinePopup, popup) && IsLoaded) popup.IsOpen = true;
+        }, DispatcherPriority.Input);
+    }
+
+    private void RefreshAfterDeadlineChange(TodoItemState item, DateTime? previousDate)
+    {
+        TodoService.NormalizeTodayCompletionOrder(State, DateTime.Today);
+        RefreshAfterKindOrTimeChange(item);
+        // The target day moved: the day it left must also drop the entry.
+        if (previousDate is { } old && old != item.Date && _cellsByDate.TryGetValue(old, out var oldCell))
+        {
+            ResortCell(oldCell);
+        }
+    }
+
+    /// <summary>
+    /// Parses a countdown target day. Accepts a year ("2026-12-31", "2026/12/31",
+    /// "2026.12.31", "2026年12月31日") and bare month-days ("12-31", "12/31", "12.31",
+    /// "12月31日"), which mean this year, rolling to the next year once the day has
+    /// passed. An empty input clears the target day.
+    /// </summary>
+    internal static bool TryParseTargetDate(string text, out DateTime? date, DateTime? today = null)
+    {
+        date = null;
+        var now = (today ?? DateTime.Today).Date;
+        var trimmed = text.Trim()
+            .Replace('－', '-')
+            .Replace('／', '/')
+            .Replace('．', '.')
+            .Replace('。', '.');
+        if (trimmed.Length == 0)
+        {
+            return true;
+        }
+        if (DateTime.TryParseExact(trimmed, ["yyyy-M-d", "yyyy/M/d", "yyyy.M.d", "yyyy年M月d日"],
+                System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.None, out var parsed))
+        {
+            // "24-12-31" is a typo for 2024, not the year 24.
+            if (parsed.Year < 1990)
+            {
+                return false;
+            }
+            date = parsed.Date;
+            return true;
+        }
+        // A fixed leap year makes bare February 29 independent of the machine's current year.
+        if (DateTime.TryParseExact("2000-" + trimmed, ["yyyy-M-d", "yyyy-M/d", "yyyy-M.d", "yyyy-M月d日"],
+                System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.None, out parsed))
+        {
+            for (var year = now.Year; year <= Math.Min(9999, now.Year + 8); year++)
+            {
+                if (parsed.Day > DateTime.DaysInMonth(year, parsed.Month)) continue;
+                var candidate = new DateTime(year, parsed.Month, parsed.Day);
+                if (candidate < now) continue;
+                date = candidate;
+                return true;
+            }
         }
         return false;
     }
@@ -616,6 +887,7 @@ public partial class TodoWidgetWindow : WidgetWindowBase
             // 先回到收起前的高度，再由 ApplyViewMode 抬到当前视图的最小值。
             Height = Math.Max(ListMinimumHeight, State.ExpandedHeight > 0 ? State.ExpandedHeight : Height);
             ApplyViewMode();
+            foreach (var item in _items.Where(x => x.DeadlineDate is not null)) item.RefreshCountdownLabel();
         }
         CollapseButton.Content = collapsed ? "\uE70D" : "\uE70E";
         CollapseButton.ToolTip = collapsed ? "展开待办卡片" : "收起成标题条";
@@ -1071,10 +1343,13 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         {
             TodayRefreshTimer_Tick(this, EventArgs.Empty);
         }
+        foreach (var item in _items.Where(x => x.DeadlineDate is not null)) item.RefreshCountdownLabel();
     }
 
     protected override void OnClosed(EventArgs e)
     {
+        if (DeadlinePopup is { } deadlinePopup) deadlinePopup.IsOpen = false;
+        DeadlinePopup = null;
         _peekDwellTimer?.Stop();
         _todayRefreshTimer?.Stop();
         _peekDwellSource = null;
@@ -2148,7 +2423,8 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         _todayRefreshTimer ??= new DispatcherTimer();
         _todayRefreshTimer.Tick -= TodayRefreshTimer_Tick;
         _todayRefreshTimer.Tick += TodayRefreshTimer_Tick;
-        _todayRefreshTimer.Interval = DateTime.Today.AddDays(1).AddSeconds(1) - DateTime.Now;
+        var now = DateTime.Now;
+        _todayRefreshTimer.Interval = TimeSpan.FromMinutes(1) - TimeSpan.FromTicks(now.Ticks % TimeSpan.TicksPerMinute);
         _todayRefreshTimer.Start();
     }
 
@@ -2171,6 +2447,10 @@ public partial class TodoWidgetWindow : WidgetWindowBase
             {
                 NotifyStateChanged();
             }
+        }
+        if (IsVisible && !State.IsCollapsed)
+        {
+            foreach (var item in _items.Where(x => x.DeadlineDate is not null)) item.RefreshCountdownLabel();
         }
         ScheduleTodayRefresh();
     }
@@ -2260,13 +2540,18 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         ClearCompletedButton.IsEnabled = _items.Any(x => x.IsCompleted && TodoService.BelongsToTodayList(x, today));
     }
 
-    // Events cannot be completed, so the done/total count covers to-dos only.
+    // Events and countdowns cannot be completed, so the done/total count covers to-dos only.
     internal static string CompletionSummary(IReadOnlyCollection<TodoItemState> entries)
     {
         var todos = entries.Where(x => x.Kind == TodoItemKind.Todo).ToList();
-        return todos.Count == 0
-            ? $"{entries.Count} 项行程"
-            : $"{todos.Count(x => x.IsCompleted)}/{todos.Count} 已完成";
+        if (todos.Count > 0)
+        {
+            return $"{todos.Count(x => x.IsCompleted)}/{todos.Count} 已完成";
+        }
+        var events = entries.Count(x => x.Kind == TodoItemKind.Event);
+        var countdowns = entries.Count(x => x.Kind == TodoItemKind.Countdown);
+        var markers = new[] { (events, "行程"), (countdowns, "倒数日") };
+        return string.Join("、", markers.Where(x => x.Item1 > 0).Select(x => $"{x.Item1} 项{x.Item2}"));
     }
 
     private static DateTime MondayOf(DateTime date) =>

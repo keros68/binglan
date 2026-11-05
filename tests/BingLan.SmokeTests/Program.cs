@@ -18,6 +18,9 @@ Run("行程排序、完成与整日替换", TestTodoEvents);
 Run("跨日移动待办", TestMoveToDate);
 Run("待办日期持久化与官方版本兼容", TestTodoDatePersistence);
 Run("行程字段持久化与 v38 迁移", TestTodoEventPersistence);
+Run("倒数日排序、标签与今日列表归属", TestTodoCountdown);
+Run("倒数日字段持久化与 v39 迁移", TestTodoCountdownPersistence);
+Run("待办截止时间与分钟倒计时", TestTodoDeadlines);
 if (Environment.GetEnvironmentVariable("BINGLAN_TODO_LEGACY_SAMPLE_PATH") is { Length: > 0 })
 {
     Run("真实待办副本日期迁移", TestLegacyTodoSampleMigration);
@@ -752,6 +755,170 @@ static void TestTodoEventPersistence()
     finally
     {
         Directory.Delete(temp, true);
+    }
+}
+
+static void TestTodoCountdown()
+{
+    var today = DateTime.Today;
+    var widget = new TodoWidgetState();
+    var todoA = TodoService.Add(widget, "待办甲");
+    var countdown = TodoService.Add(widget, "交签证材料");
+    var timedEvent = TodoService.Add(widget, "看牙", today);
+    TodoService.SetKind(widget, timedEvent.Id, TodoItemKind.Event);
+    TodoService.SetTime(widget, timedEvent.Id, new TimeOnly(9, 0));
+
+    // 先勾选再转换：转倒数日应清掉完成状态，且之后不可勾选。
+    Assert(TodoService.SetCompleted(widget, countdown.Id, true), "转换前应能勾选待办");
+    Assert(TodoService.SetKind(widget, countdown.Id, TodoItemKind.Countdown), "应能设为倒数日");
+    Assert(!countdown.IsCompleted && countdown.CompletedDate is null, "转为倒数日后应清掉完成状态");
+    Assert(!TodoService.SetCompleted(widget, countdown.Id, true), "倒数日不应能勾选完成");
+
+    Assert(TodoService.SetDeadline(widget, countdown.Id, today.AddDays(10)), "应能设置目标日期");
+    Assert(countdown.Date == today.AddDays(10), "目标日期应写入条目日期");
+    Assert(TodoService.CountdownLabel(countdown, today) == "还剩 10 天", "未来目标日应显示剩余天数");
+    Assert(!TodoService.SetDeadline(widget, countdown.Id, today.AddDays(10)), "目标日未变时不应报告变化");
+    Assert(TodoService.CountdownLabel(countdown, today.AddDays(10)) == "今天", "目标日当天应显示今天");
+    Assert(TodoService.CountdownLabel(countdown, today.AddDays(12)) == "已过 2 天", "过期目标日应显示已过天数");
+    Assert(TodoService.CountdownLabel(todoA, today) is null, "待办不应有倒数日标签");
+
+    // 今日列表归属：倒数日无论目标日在哪一天都留在今日列表。
+    Assert(TodoService.BelongsToTodayList(countdown, today), "未来目标日的倒数日应在今日列表");
+    Assert(TodoService.BelongsToTodayList(countdown, today.AddDays(-30)), "过去目标日的倒数日也应在今日列表");
+
+    // 顶栏计数排除倒数日。
+    Assert(TopBarModuleRules.CountIncompleteTodos([widget]) == 1, "倒数日不应计入全部未完成待办数");
+    Assert(TopBarModuleRules.CountIncompleteTodosToday([widget]) == 1, "倒数日不应计入今日未完成待办数");
+
+    // 今日列表排序：行程 → 倒数日 → 待办。
+    TodoService.NormalizeTodayCompletionOrder(widget, today);
+    Assert(widget.Items.OrderBy(x => x.Order).Where(x => TodoService.BelongsToTodayList(x, today))
+            .Select(x => x.Id)
+            .SequenceEqual([timedEvent.Id, countdown.Id, todoA.Id]),
+        "今日列表应按行程、倒数日、待办排序");
+
+    Assert(!TodoService.SetDeadline(widget, countdown.Id, null), "独立倒数日必须保留目标日期");
+    Assert(countdown.DeadlineDate == today.AddDays(10), "拒绝清空时应保留目标日期");
+
+    Assert(TodoService.SetKind(widget, countdown.Id, TodoItemKind.Todo), "应能转回待办");
+    Assert(countdown.Kind == TodoItemKind.Todo, "转回后类型应为待办");
+
+    // 模型计算属性应与规则一致，并随目标日变化刷新。
+    countdown.Kind = TodoItemKind.Countdown;
+    countdown.DeadlineDate = today.AddDays(3);
+    Assert(countdown.CountdownLabel == "还剩 3 天", "CountdownLabel 属性应与规则一致");
+    countdown.DeadlineDate = today;
+    Assert(countdown.CountdownLabel == "今天", "目标日变化后属性应同步刷新");
+}
+
+static void TestTodoCountdownPersistence()
+{
+    var temp = Path.Combine(Path.GetTempPath(), $"BingLan-todo-countdown-{Guid.NewGuid():N}");
+    Directory.CreateDirectory(temp);
+    try
+    {
+        var store = new LocalStateStore(temp);
+
+        // v39 文件不含倒数日类型：加载后既有条目保持待办不变。
+        File.WriteAllText(
+            store.StatePath,
+            """
+            {
+              "SchemaVersion": 39,
+              "TodoWidgets": [
+                {
+                  "Title": "旧版待办",
+                  "Items": [
+                    {
+                      "Id": "11111111-2222-3333-4444-555555555555",
+                      "Text": "旧版待办项",
+                      "IsCompleted": true,
+                      "Order": 0,
+                      "Date": "2026-10-20T00:00:00",
+                      "CreatedDate": "2026-10-19T08:00:00+08:00"
+                    }
+                  ]
+                }
+              ]
+            }
+            """);
+        var state = store.Load();
+        Assert(state.SchemaVersion == AppState.CurrentSchemaVersion, "v39 状态加载后应推进到当前版本");
+        var migrated = state.TodoWidgets.Single().Items.Single();
+        Assert(migrated.Kind == TodoItemKind.Todo, "缺少倒数日类型的条目应保持待办");
+        Assert(
+            migrated.IsCompleted && migrated.Date == new DateTime(2026, 10, 20)
+                && migrated.CreatedDate == new DateTimeOffset(2026, 10, 19, 8, 0, 0, TimeSpan.FromHours(8)),
+            "v39 迁移不应改动既有字段");
+
+        var widget = state.TodoWidgets.Single();
+        var item = TodoService.Add(widget, "交房租");
+        Assert(TodoService.SetKind(widget, item.Id, TodoItemKind.Countdown), "应能设为倒数日");
+        Assert(TodoService.SetDeadline(widget, item.Id, new DateTime(2026, 12, 31)), "应能设置目标日期");
+        store.Save(state);
+
+        var reloaded = store.Load().TodoWidgets.Single().Items.Single(x => x.Text == "交房租");
+        Assert(reloaded.Kind == TodoItemKind.Countdown && reloaded.Date == new DateTime(2026, 12, 31),
+            "倒数日类型与目标日期保存后再加载应保持一致");
+        Assert(TodoService.CountdownLabel(reloaded, new DateTime(2026, 12, 1)) == "还剩 30 天",
+            "重载后应能按目标日期计算剩余天数");
+    }
+    finally
+    {
+        Directory.Delete(temp, true);
+    }
+}
+
+static void TestTodoDeadlines()
+{
+    var now = new DateTime(2026, 11, 5, 10, 20, 0);
+    var widget = new TodoWidgetState();
+    var item = TodoService.Add(widget, "提交报告", now.Date.AddDays(-1));
+    var placedOn = item.Date;
+    Assert(TodoService.SetDeadline(widget, item.Id, now.Date.AddDays(2), new TimeOnly(13, 35)), "待办应能设置截止日期和时间");
+    Assert(item.Kind == TodoItemKind.Todo && item.Date == placedOn, "截止时间应独立于类型和日历日期");
+    Assert(TodoService.CountdownLabel(item, now) == "还剩 2 天 3 小时 15 分钟", "应按天、小时、分钟显示剩余时间");
+    Assert(TodoService.BelongsToTodayList(item, now.Date.AddDays(5)), "有截止日期的未完成待办应持续留在今日列表");
+    TodoService.SetDeadline(widget, item.Id, now.Date, new TimeOnly(10, 21));
+    Assert(TodoService.CountdownLabel(item, now.AddSeconds(30)) == "不足 1 分钟", "不足一分钟不应提前显示到期");
+    Assert(TodoService.CountdownLabel(item, now.AddMinutes(1)) == "已到期", "截止时刻应显示到期");
+    Assert(TodoService.CountdownLabel(item, now.AddMinutes(2)) == "已过 1 分钟", "到期后应显示经过时间");
+    Assert(TodoService.CountdownLabel(item, now.AddMinutes(-59)) == "还剩 1 小时", "整小时不应显示多余零值");
+    TodoService.SetDeadline(widget, item.Id, now.Date.AddDays(1), new TimeOnly(0, 0));
+    Assert(TodoService.CountdownLabel(item, now.Date.AddHours(23).AddMinutes(59)) == "还剩 1 分钟", "午夜截止应正确跨日");
+    TodoService.SetDeadline(widget, item.Id, now.Date);
+    Assert(TodoService.CountdownLabel(item, now) == "今天", "仅日期的目标应保持按天计算");
+    Assert(TopBarModuleRules.CountIncompleteTodosToday([widget], now) == 1, "跨日截止待办应计入今日未完成数");
+    TodoService.SetCompleted(widget, item.Id, true);
+    Assert(item.CountdownLabel is null, "完成后应隐藏倒计时");
+    Assert(!TodoService.BelongsToTodayList(item, now), "完成的历史截止待办应留在所属日期");
+    TodoService.SetCompleted(widget, item.Id, false);
+    var temp = Path.Combine(Path.GetTempPath(), $"BingLan-deadline-{Guid.NewGuid():N}");
+    try
+    {
+        var store = new LocalStateStore(temp);
+        var state = new AppState { TodoWidgets = [widget] };
+        TodoService.SetDeadline(widget, item.Id, now.Date.AddDays(1), new TimeOnly(16, 45));
+        store.Save(state);
+        var loaded = store.Load().TodoWidgets.Single().Items.Single();
+        Assert(loaded.DeadlineDate == now.Date.AddDays(1) && loaded.DeadlineTime == new TimeOnly(16, 45), "截止日期和分钟应保存重载");
+        TodoService.SetDeadline(widget, item.Id, null);
+        store.Save(state);
+        loaded = store.Load().TodoWidgets.Single().Items.Single();
+        Assert(loaded.DeadlineDate is null && loaded.DeadlineTime is null && loaded.Date == placedOn,
+            "清除截止日期后保存重载应仍为空且不影响日历日期");
+        File.WriteAllText(store.StatePath, """
+            { "SchemaVersion": 40, "TodoWidgets": [{ "Items": [
+              { "Text": "旧倒数日", "Kind": 2, "Date": "2026-12-31T00:00:00" }
+            ] }] }
+            """);
+        loaded = store.Load().TodoWidgets.Single().Items.Single();
+        Assert(loaded.DeadlineDate == new DateTime(2026, 12, 31) && loaded.DeadlineTime is null,
+            "v40 倒数日应迁移为原目标日期且不附加时间");
+    }
+    finally
+    {
+        if (Directory.Exists(temp)) Directory.Delete(temp, true);
     }
 }
 

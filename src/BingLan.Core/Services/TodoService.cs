@@ -110,13 +110,13 @@ public static class TodoService
 
     /// <summary>
     /// Toggles completion by id and records when the entry was completed.
-    /// Returns false when the entry is missing, is an event (events cannot complete),
-    /// or is already in that state.
+    /// Returns false when the entry is missing, is not a checkable to-do (events and
+    /// countdowns cannot complete), or is already in that state.
     /// </summary>
     public static bool SetCompleted(TodoWidgetState widget, Guid itemId, bool completed)
     {
         var item = widget.Items.FirstOrDefault(x => x.Id == itemId);
-        if (item is null || item.Kind == TodoItemKind.Event || item.IsCompleted == completed)
+        if (item is null || item.Kind != TodoItemKind.Todo || item.IsCompleted == completed)
         {
             return false;
         }
@@ -144,10 +144,10 @@ public static class TodoService
     }
 
     /// <summary>
-    /// Sets whether an entry is a checkable to-do or an untickable calendar event.
-    /// Converting to an event clears its completion state; the calendar day reorders
-    /// so events sit ahead of to-dos. Returns false when the entry is missing or
-    /// already has that kind.
+    /// Sets whether an entry is a checkable to-do, an untickable calendar event, or an
+    /// untickable day countdown. Converting to an event or countdown clears its
+    /// completion state; the calendar day reorders so marker entries sit ahead of
+    /// to-dos. Returns false when the entry is missing or already has that kind.
     /// </summary>
     public static bool SetKind(TodoWidgetState widget, Guid itemId, TodoItemKind kind)
     {
@@ -157,10 +157,20 @@ public static class TodoService
             return false;
         }
         item.Kind = kind;
-        if (kind == TodoItemKind.Event)
+        if (kind != TodoItemKind.Todo)
         {
             item.IsCompleted = false;
             StampCompletion(item);
+        }
+        if (kind == TodoItemKind.Countdown)
+        {
+            item.DeadlineDate ??= item.Date ?? DateTime.Today;
+            item.Date = item.DeadlineDate;
+        }
+        else if (kind == TodoItemKind.Event)
+        {
+            item.DeadlineDate = null;
+            item.DeadlineTime = null;
         }
         ReorderDay(widget, item);
         return true;
@@ -183,6 +193,30 @@ public static class TodoService
         return true;
     }
 
+    /// <summary>
+    /// Sets a to-do's optional deadline or a countdown's required target. Calendar
+    /// placement is preserved for to-dos and follows the target for countdowns.
+    /// </summary>
+    public static bool SetDeadline(TodoWidgetState widget, Guid itemId, DateTime? date, TimeOnly? time = null)
+    {
+        var item = widget.Items.FirstOrDefault(x => x.Id == itemId);
+        time = date is null ? null : time;
+        if (item is null || item.Kind == TodoItemKind.Event ||
+            (item.Kind == TodoItemKind.Countdown && date is null) ||
+            (item.DeadlineDate == date?.Date && item.DeadlineTime == time))
+        {
+            return false;
+        }
+        item.DeadlineDate = date;
+        item.DeadlineTime = time;
+        if (item.Kind == TodoItemKind.Countdown)
+        {
+            item.Date = date;
+        }
+        ReorderDay(widget, item);
+        return true;
+    }
+
     private static void ReorderDay(TodoWidgetState widget, TodoItemState item)
     {
         if (item.Date is { } date)
@@ -193,14 +227,16 @@ public static class TodoService
 
     /// <summary>
     /// Inside one completion group, timed events ascend by time ahead of untimed events,
-    /// untimed events keep their manual order, and to-dos follow in their manual order.
+    /// untimed events keep their manual order, countdown entries follow in their manual
+    /// order, and to-dos come last in their manual order.
     /// </summary>
     private static IEnumerable<TodoItemState> EventsBeforeTodos(List<TodoItemState> items) =>
         items
             .Where(x => x.Kind == TodoItemKind.Event)
             .OrderBy(x => x.Time is null)
             .ThenBy(x => x.Time)
-            .Concat(items.Where(x => x.Kind != TodoItemKind.Event));
+            .Concat(items.Where(x => x.Kind == TodoItemKind.Countdown))
+            .Concat(items.Where(x => x.Kind != TodoItemKind.Event && x.Kind != TodoItemKind.Countdown));
 
     /// <summary>
     /// Moves a day's events ahead of its to-dos by reusing that day's order slots, so
@@ -211,7 +247,7 @@ public static class TodoService
     public static bool PlaceEventsFirst(TodoWidgetState widget, DateTime date)
     {
         var day = ItemsForDate(widget, date);
-        if (!day.Any(x => x.Kind == TodoItemKind.Event))
+        if (!day.Any(x => x.Kind is TodoItemKind.Event or TodoItemKind.Countdown))
         {
             return false;
         }
@@ -408,6 +444,10 @@ public static class TodoService
             return false;
         }
         item.Date = targetDate;
+        if (item.Kind == TodoItemKind.Countdown)
+        {
+            item.DeadlineDate = targetDate;
+        }
         if (withinDayIndex is { } targetDayIndex)
         {
             var targetGroup = widget.Items
@@ -616,10 +656,54 @@ public static class TodoService
     }
 
     /// <summary>
-    /// The today list is a projection of the weekly calendar's current day.
+    /// The today list is a projection of the weekly calendar's current day. Countdown
+    /// entries and open to-dos with deadlines also stay visible across calendar days.
     /// </summary>
     public static bool BelongsToTodayList(TodoItemState item, DateTime today) =>
-        item.Date is { } date && date.Date == today.Date;
+        item.Kind == TodoItemKind.Countdown ||
+        (item.Kind == TodoItemKind.Todo && !item.IsCompleted && item.DeadlineDate is not null) ||
+        (item.Date is { } date && date.Date == today.Date);
+
+    /// <summary>
+    /// Calendar-only deadlines count dates. Timed deadlines use local wall-clock time
+    /// to minute precision; future partial minutes round up and overdue minutes round down.
+    /// </summary>
+    public static string? CountdownLabel(TodoItemState item, DateTime now)
+    {
+        if (item.Kind == TodoItemKind.Event || item.DeadlineDate is not { } target ||
+            (item.Kind == TodoItemKind.Todo && item.IsCompleted))
+        {
+            return null;
+        }
+        if (item.DeadlineTime is { } time)
+        {
+            // Deadlines are local civil times, like calendar events. Time-zone changes
+            // keep the chosen clock time; this is not an elapsed-time stopwatch.
+            var remaining = target.Date.Add(time.ToTimeSpan()) - DateTime.SpecifyKind(now, DateTimeKind.Unspecified);
+            if (remaining == TimeSpan.Zero)
+            {
+                return "已到期";
+            }
+            if (remaining.Duration() < TimeSpan.FromMinutes(1))
+            {
+                return remaining > TimeSpan.Zero ? "不足 1 分钟" : "已到期";
+            }
+            var minutes = (long)(remaining > TimeSpan.Zero
+                ? Math.Ceiling(remaining.TotalMinutes) : Math.Floor(-remaining.TotalMinutes));
+            var parts = new List<string>();
+            if (minutes / 1440 > 0) parts.Add($"{minutes / 1440} 天");
+            if (minutes / 60 % 24 > 0) parts.Add($"{minutes / 60 % 24} 小时");
+            if (minutes % 60 > 0) parts.Add($"{minutes % 60} 分钟");
+            return $"{(remaining > TimeSpan.Zero ? "还剩" : "已过")} {string.Join(" ", parts)}";
+        }
+        var days = (target.Date - now.Date).Days;
+        return days switch
+        {
+            0 => "今天",
+            > 0 => $"还剩 {days} 天",
+            _ => $"已过 {-days} 天"
+        };
+    }
 
     public static void Normalize(TodoWidgetState widget)
     {

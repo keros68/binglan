@@ -138,6 +138,8 @@ internal static class Program
 
         Run("待办真实控件编辑与勾选", TestTodoControls, failures);
         Run("行程行不显示勾选框并显示时间", TestTodoEventRow, failures);
+        Run("倒数日行不显示勾选框并显示剩余天数", TestTodoCountdownRow, failures);
+        Run("待办截止时间设置、取消与分钟刷新", TestTodoDeadlineEditor, failures);
         Run("今日待办字号缩放覆盖列表、周历、当日浮层与编辑窗", TestTodoFontScale, failures);
         Run("今日待办字体覆盖列表、周历、当日浮层与编辑窗", TestTodoFontFamily, failures);
         Run("今日待办字号缩放与字体跟随设置页", TestTodoFontScaleFollowsSetting, failures);
@@ -483,6 +485,181 @@ internal static class Program
         finally
         {
             Close(window);
+        }
+    }
+
+    private static void TestTodoCountdownRow()
+    {
+        var state = new TodoWidgetState();
+        var todo = TodoService.Add(state, "普通待办");
+        var deadline = TodoService.Add(state, "交签证材料");
+        TodoService.SetKind(state, deadline.Id, TodoItemKind.Countdown);
+        TodoService.SetDeadline(state, deadline.Id, DateTime.Today.AddDays(15));
+        var meeting = TodoService.Add(state, "看牙");
+        TodoService.SetKind(state, meeting.Id, TodoItemKind.Event);
+        var window = new TodoWidgetWindow(state);
+        ShowAndPump(window);
+        try
+        {
+            var boxes = FindVisualChildren<CheckBox>(window)
+                .Where(x => x.IsVisible)
+                .Select(x => x.DataContext)
+                .ToList();
+            Assert(boxes.Count == 1 && ReferenceEquals(boxes[0], todo),
+                "只有待办应显示勾选框，倒数日与行程不应显示");
+            Assert(FindVisualChildren<TextBlock>(window).Any(x => x.IsVisible && x.Text == "还剩 15 天"),
+                "倒数日行应显示剩余天数");
+            Assert(FindVisualChildren<TextBlock>(window).Any(x => x.IsVisible && x.Text == "0/1 已完成"),
+                "完成计数不应包含倒数日");
+            Assert(TodoWidgetWindow.CompletionSummary([deadline]) == "1 项倒数日",
+                "只有倒数日时应显示倒数日数");
+            Assert(TodoWidgetWindow.CompletionSummary([meeting, deadline]) == "1 项行程、1 项倒数日",
+                "行程与倒数日应分别计数");
+
+            var today = new DateTime(2026, 11, 5);
+            Assert(TodoWidgetWindow.TryParseTargetDate("2026-12-31", out var parsed, today)
+                && parsed == new DateTime(2026, 12, 31), "应接受完整日期");
+            Assert(TodoWidgetWindow.TryParseTargetDate("2026/12/31", out parsed, today)
+                && parsed == new DateTime(2026, 12, 31), "应接受斜杠完整日期");
+            Assert(TodoWidgetWindow.TryParseTargetDate("2026年12月31日", out parsed, today)
+                && parsed == new DateTime(2026, 12, 31), "应接受中文完整日期");
+            Assert(TodoWidgetWindow.TryParseTargetDate("12/31", out parsed, today)
+                && parsed == new DateTime(2026, 12, 31), "应接受月/日缩写");
+            Assert(TodoWidgetWindow.TryParseTargetDate("12月31日", out parsed, today)
+                && parsed == new DateTime(2026, 12, 31), "应接受中文月日");
+            Assert(TodoWidgetWindow.TryParseTargetDate("12／31", out parsed, today)
+                && parsed == new DateTime(2026, 12, 31), "应接受全角分隔符");
+            Assert(TodoWidgetWindow.TryParseTargetDate("1-1", out parsed, today)
+                && parsed == new DateTime(2027, 1, 1), "已过的月日应滚动到明年");
+            Assert(TodoWidgetWindow.TryParseTargetDate("  ", out parsed, today) && parsed is null,
+                "留空应清除目标日期");
+            Assert(!TodoWidgetWindow.TryParseTargetDate("24-12-31", out _, today),
+                "两位年份不应当作公元24年");
+            Assert(!TodoWidgetWindow.TryParseTargetDate("13月40日", out _, today), "非法日期不应提交");
+            Assert(TodoWidgetWindow.TryParseTargetDate("2月29日", out parsed, today)
+                && parsed == new DateTime(2028, 2, 29), "月日缩写应找到下一个有效闰日");
+        }
+        finally
+        {
+            Close(window);
+        }
+    }
+
+    private static void TestTodoDeadlineEditor()
+    {
+        var state = new TodoWidgetState();
+        var item = TodoService.Add(state, "提交报告");
+        TodoService.SetCompleted(state, item.Id, true);
+        var completedAt = item.CompletedDate;
+        var window = new TodoWidgetWindow(state);
+        ShowAndPump(window);
+        try
+        {
+            window.OpenDeadlineEditor(item, convertToCountdown: true);
+            Pump();
+            var popup = window.DeadlinePopup!;
+            Assert(popup.IsOpen, "设置窗口应保持打开");
+            ClickAction(popup, "取消");
+            Assert(item.Kind == TodoItemKind.Todo && item.IsCompleted && item.CompletedDate == completedAt,
+                "取消转换不应改变类型、完成状态和时间戳");
+            window.OpenDeadlineEditor(item, convertToCountdown: true);
+            Pump();
+            popup = window.DeadlinePopup!;
+            FindVisualChildren<DatePicker>(popup.Child).Single().RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(popup.Child)!, 0, Key.Escape)
+            { RoutedEvent = Keyboard.PreviewKeyDownEvent });
+            Assert(!popup.IsOpen && item.Kind == TodoItemKind.Todo && item.IsCompleted, "Esc 应取消且保持原状态");
+
+            TodoService.SetCompleted(state, item.Id, false);
+            Pump();
+            window.OpenDeadlineEditor(item);
+            Pump();
+            popup = window.DeadlinePopup!;
+            var picker = FindVisualChildren<DatePicker>(popup.Child).Single();
+            picker.IsDropDownOpen = true;
+            Pump();
+            Assert(popup.IsOpen && picker.IsDropDownOpen, "打开内嵌日历不应关闭截止时间编辑器");
+            picker.SelectedDate = DateTime.Today.AddDays(2);
+            picker.IsDropDownOpen = false;
+            Pump();
+            Assert(popup.IsOpen, "选择日历日期后编辑器应继续保留");
+            picker.Text = "2026-13-40";
+            ClickAction(popup, "确定");
+            Assert(popup.IsOpen && item.DeadlineDate is null, "非法日期不应回退后悄悄保存旧日期");
+            picker.IsDropDownOpen = true;
+            Pump();
+            picker.SelectedDate = DateTime.Today.AddDays(2);
+            picker.IsDropDownOpen = false;
+            FindVisualChildren<CheckBox>(popup.Child).Single().IsChecked = true;
+            var time = FindVisualChildren<TextBox>(popup.Child).Single(x => System.Windows.Automation.AutomationProperties.GetName(x) == "截止时间");
+            time.Text = "25:61";
+            ClickAction(popup, "确定");
+            Assert(popup.IsOpen && item.DeadlineDate is null, "非法时间应保留编辑且不写入");
+            time.Text = "14：30";
+            Pump();
+            if (Environment.GetEnvironmentVariable("BINGLAN_TODO_CAPTURE") is { Length: > 0 } capture)
+            {
+                CaptureElement((FrameworkElement)popup.Child, Path.Combine(capture, "editor.png"));
+            }
+            ClickAction(popup, "确定");
+            Assert(item.Kind == TodoItemKind.Todo && item.DeadlineDate == DateTime.Today.AddDays(2)
+                && item.DeadlineTime == new TimeOnly(14, 30),
+                $"设置截止时间应保留待办类型并写入分钟，实际 {item.Kind} / {item.DeadlineDate} / {item.DeadlineTime}，日期 {picker.Text}/{picker.SelectedDate}，输入 {string.Join('|', FindVisualChildren<TextBox>(picker).Select(x => x.Text))}，弹窗 {popup.IsOpen}，提示 {string.Join('；', FindVisualChildren<TextBlock>(popup.Child).Select(x => x.Text))}");
+            Assert(FindVisualChildren<CheckBox>(window).Any(x => x.IsVisible && ReferenceEquals(x.DataContext, item)),
+                "有截止时间的待办仍应可以勾选");
+            window.Width = 226;
+            Pump();
+            var label = FindVisualChildren<TextBlock>(window).Single(x => x.IsVisible && ReferenceEquals(x.DataContext, item) && x.Text == item.CountdownLabel);
+            var editor = FindVisualChildren<TextBox>(window).Single(x => x.IsVisible && ReferenceEquals(x.DataContext, item));
+            Assert(label.TranslatePoint(new Point(), window).Y >= editor.TranslatePoint(new Point(), window).Y + editor.ActualHeight - 1,
+                "窄卡片的倒计时应位于事项下方");
+            var notifications = 0;
+            item.PropertyChanged += (_, e) => { if (e.PropertyName == nameof(TodoItemState.CountdownLabel)) notifications++; };
+            typeof(TodoWidgetWindow).GetMethod("TodayRefreshTimer_Tick", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+                .Invoke(window, [null, EventArgs.Empty]);
+            Pump();
+            Assert(notifications > 0, "同一天的分钟刷新也应通知倒计时绑定");
+            if (Environment.GetEnvironmentVariable("BINGLAN_TODO_CAPTURE") is { Length: > 0 } captureList)
+            {
+                CaptureElement(window, Path.Combine(captureList, "list.png"));
+            }
+            window.OpenDeadlineEditor(item);
+            Pump();
+            ClickAction(window.DeadlinePopup!, "清除");
+            Assert(item.DeadlineDate is null && item.DeadlineTime is null, "清除应同时移除截止日期和时间");
+            window.OpenDeadlineEditor(item, convertToCountdown: true);
+            Pump();
+            popup = window.DeadlinePopup!;
+            FindVisualChildren<DatePicker>(popup.Child).Single().SelectedDate = DateTime.Today.AddDays(1);
+            ClickAction(popup, "确定");
+            Assert(item.Kind == TodoItemKind.Countdown && item.Date == item.DeadlineDate, "确认后才转换类型并移动到目标日");
+            window.OpenDeadlineEditor(item);
+            Pump();
+            var pendingPopup = window.DeadlinePopup!;
+            Close(window);
+            Assert(!pendingPopup.IsOpen, "关闭卡片应关闭日期设置窗口");
+        }
+        finally
+        {
+            if (window.IsLoaded) Close(window);
+        }
+
+        static void ClickAction(Popup popup, string caption)
+        {
+            var button = FindVisualChildren<Button>(popup.Child).Single(x => Equals(x.Content, caption));
+            button.Focus();
+            Pump();
+            button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Pump();
+        }
+        static void CaptureElement(FrameworkElement element, string path)
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
+            var bitmap = new RenderTargetBitmap((int)Math.Ceiling(element.ActualWidth), (int)Math.Ceiling(element.ActualHeight), 96, 96, PixelFormats.Pbgra32);
+            bitmap.Render(element);
+            var encoder = new PngBitmapEncoder();
+            encoder.Frames.Add(BitmapFrame.Create(bitmap));
+            using var stream = File.Create(path);
+            encoder.Save(stream);
         }
     }
 

@@ -568,6 +568,22 @@ public sealed class LocalStateStore
             // Entries without a kind stay untimed to-dos; dates, completion and timestamps stay intact.
             state.SchemaVersion = 39;
         }
+        if (state.SchemaVersion < 40)
+        {
+            // The countdown kind only appears in v40+ files; entries without it stay as they were.
+            state.SchemaVersion = 40;
+        }
+        if (state.SchemaVersion < 41)
+        {
+            foreach (var widget in state.TodoWidgets)
+            {
+                foreach (var item in (widget.Items ?? []).Where(x => x.Kind == TodoItemKind.Countdown))
+                {
+                    item.DeadlineDate = item.Date ?? item.CreatedDate?.Date ?? DateTime.Today;
+                }
+            }
+            state.SchemaVersion = 41;
+        }
         state.Updates ??= new UpdateState();
         state.QuickPlaces = QuickPlaceRules.Normalize(state.QuickPlaces);
         state.DismissedDesktopCategories = (state.DismissedDesktopCategories ?? [])

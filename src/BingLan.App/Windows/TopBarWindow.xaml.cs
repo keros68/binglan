@@ -106,6 +106,7 @@ public sealed partial class TopBarWindow : Window
     private static readonly TimeSpan SmartHideCheckInterval = TimeSpan.FromMilliseconds(150);
     private static readonly TimeSpan FullScreenCheckInterval = TimeSpan.FromMilliseconds(500);
     private const int SystemInfoTickDivisor = 5;
+    private long _lastCountdownMinute = -1;
 
     private readonly TopBarState _state;
     private readonly DesktopStyleState _style;
@@ -1200,7 +1201,7 @@ public sealed partial class TopBarWindow : Window
         }
 
         var glyphStyle = new Style(typeof(TextBlock));
-        glyphStyle.Setters.Add(new Setter(TextBlock.TextProperty, "○"));
+        glyphStyle.Setters.Add(new Setter(TextBlock.TextProperty, item.Kind == TodoItemKind.Countdown ? "•" : "○"));
         glyphStyle.Triggers.Add(TodoCompletedTrigger(
             new Setter(TextBlock.TextProperty, "✓"),
             new Setter(TextBlock.OpacityProperty, 0.9)));
@@ -1220,17 +1221,38 @@ public sealed partial class TopBarWindow : Window
             new Setter(TextBlock.OpacityProperty, 0.55)));
         text.Style = textStyle;
 
-        var row = new StackPanel
+        var content = new StackPanel();
+        content.Children.Add(text);
+        var deadline = new TextBlock
         {
-            Orientation = System.Windows.Controls.Orientation.Horizontal,
+            TextWrapping = TextWrapping.Wrap, Foreground = Brushes.White, Opacity = 0.7, FontSize = 11,
+            Margin = new Thickness(0, 2, 0, 0)
+        };
+        deadline.SetBinding(TextBlock.TextProperty, new System.Windows.Data.Binding(nameof(TodoItemState.CountdownLabel)));
+        deadline.SetBinding(ToolTipProperty, new System.Windows.Data.Binding(nameof(TodoItemState.DeadlineDescription)));
+        var deadlineStyle = new Style(typeof(TextBlock));
+        deadlineStyle.Triggers.Add(new DataTrigger
+        {
+            Binding = new System.Windows.Data.Binding(nameof(TodoItemState.CountdownLabel)), Value = null,
+            Setters = { new Setter(VisibilityProperty, Visibility.Collapsed) }
+        });
+        deadline.Style = deadlineStyle;
+        content.Children.Add(deadline);
+        var row = new Grid
+        {
+            Width = 270,
             Margin = new Thickness(0, 3, 0, 3),
-            Cursor = System.Windows.Input.Cursors.Hand,
+            Cursor = item.Kind == TodoItemKind.Todo ? Cursors.Hand : Cursors.Arrow,
             DataContext = item
         };
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(18) });
+        row.ColumnDefinitions.Add(new ColumnDefinition());
         row.Children.Add(glyph);
-        row.Children.Add(text);
+        Grid.SetColumn(content, 1);
+        row.Children.Add(content);
         row.MouseLeftButtonUp += (_, _) =>
         {
+            if (item.Kind != TodoItemKind.Todo) return;
             // One behaviour, like the card's checkbox: the row toggles completion.
             item.IsCompleted = !item.IsCompleted;
             TodoService.StampCompletion(item);
@@ -2760,6 +2782,16 @@ public sealed partial class TopBarWindow : Window
         }
 
         _tick++;
+        var minute = DateTime.Now.Ticks / TimeSpan.TicksPerMinute;
+        if (_todoFlyout?.IsOpen == true && minute != _lastCountdownMinute)
+        {
+            _lastCountdownMinute = minute;
+            // Reuse the shared sampling cadence; no timer is owned by individual rows.
+            foreach (var item in _environment.ReadTodoList()?.Items ?? [])
+            {
+                if (item.DeadlineDate is not null) item.RefreshCountdownLabel();
+            }
+        }
         if (ModuleText(TopBarModuleKind.Clock) is { } clock)
         {
             clock.Text = FormatClock(_environment.Use24HourClock);

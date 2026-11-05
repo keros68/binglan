@@ -1859,11 +1859,18 @@ internal static class TopBarWindowTests
         state.VisibilityMode = TopBarVisibilityMode.SmartHide;
         using var sampler = new WindowsPerformanceSamplingService();
         var first = new TodoItemState { Text = "测试顶端信息条" };
+        first.DeadlineDate = DateTime.Today.AddDays(2);
+        first.DeadlineTime = new TimeOnly(14, 30);
         var second = new TodoItemState { Text = "已完成的一条", IsCompleted = true };
+        var countdown = new TodoItemState
+        {
+            Text = "考试", Kind = TodoItemKind.Countdown,
+            DeadlineDate = DateTime.Today.AddDays(10)
+        };
         var environment = new FakeEnvironment
         {
             Todos = 2,
-            TodoList = new TopBarTodoList("今日待办", [first, second])
+            TodoList = new TopBarTodoList("今日待办", [first, second, countdown])
         };
         var bar = new TopBarWindow(state, new DesktopStyleState(), environment, sampler);
         show(bar);
@@ -1881,13 +1888,20 @@ internal static class TopBarWindowTests
             Assert(texts.Contains("今日待办"), "待办信息栏应显示列表标题");
             Assert(texts.Contains("测试顶端信息条"), "待办信息栏应显示未完成项");
             Assert(texts.Contains("已完成的一条"), "待办信息栏应显示已完成项");
+            Assert(texts.Contains(first.CountdownLabel!) && texts.Contains(countdown.CountdownLabel!),
+                "顶栏应显示待办截止倒计时和独立倒数日");
+            var countdownRow = DescendantElements(flyout.Child).OfType<Grid>()
+                .First(row => ReferenceEquals(row.DataContext, countdown));
+            countdownRow.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, 0, MouseButton.Left)
+            { RoutedEvent = UIElement.MouseLeftButtonUpEvent });
+            Assert(!countdown.IsCompleted && environment.Toggles == 0, "独立倒数日不应响应完成切换");
             Assert(environment.ComponentRequested is null,
                 "点击待办模块不应跳转待办组件设置");
 
             // A row click toggles that item, like the card's checkbox, and the flyout
             // follows the live state.
             DescendantElements(flyout.Child)
-                .OfType<StackPanel>()
+                .OfType<Grid>()
                 .First(panel => panel.DataContext == first)
                 .RaiseEvent(new System.Windows.Input.MouseButtonEventArgs(
                     System.Windows.Input.Mouse.PrimaryDevice,
@@ -1899,6 +1913,9 @@ internal static class TopBarWindowTests
             pump();
             Assert(first.IsCompleted, "点击信息栏条目应切换完成状态");
             Assert(environment.Toggles == 1, "切换后应通知宿主保存");
+            Assert(DescendantTextBlocks(flyout.Child).Where(text => ReferenceEquals(text.DataContext, first))
+                .All(text => text.Text != first.DeadlineDescription && !text.Text.StartsWith("还剩")),
+                "顶栏完成待办后应停止显示倒计时");
             var glyphs = DescendantTextBlocks(flyout.Child)
                 .Where(text => text.Text is "✓" or "○")
                 .ToList();
@@ -1908,6 +1925,11 @@ internal static class TopBarWindowTests
             Invoke(todo);
             pump();
             Assert(bar.TodoFlyout is null, "再次点击待办模块应收起信息栏");
+            Invoke(todo);
+            pump();
+            Invoke(todo);
+            pump();
+            Assert(bar.TodoFlyout is null, "同一分钟内反复开关待办信息栏也应正常关闭");
         }
         finally
         {

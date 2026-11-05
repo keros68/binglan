@@ -15,10 +15,13 @@
                         FontFamily="{DynamicResource TodoContentFont}"
                         Foreground="{DynamicResource PrimaryTextBrush}">
     <local:WidgetWindowBase.Resources>
-        <!-- Events have no completion box; a dot and the optional time take its place. -->
+        <!-- Events and standalone countdowns use a marker instead of a completion box. -->
         <Style x:Key="TodoKindCheckBox" TargetType="CheckBox" BasedOn="{StaticResource {x:Type CheckBox}}">
             <Style.Triggers>
                 <DataTrigger Binding="{Binding Kind}" Value="Event">
+                    <Setter Property="Visibility" Value="Collapsed"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding Kind}" Value="Countdown">
                     <Setter Property="Visibility" Value="Collapsed"/>
                 </DataTrigger>
             </Style.Triggers>
@@ -29,6 +32,16 @@
             <Setter Property="AutomationProperties.Name" Value="行程"/>
             <Style.Triggers>
                 <DataTrigger Binding="{Binding Kind}" Value="Event">
+                    <Setter Property="Visibility" Value="Visible"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="CountdownMarker" TargetType="StackPanel">
+            <Setter Property="Orientation" Value="Horizontal"/>
+            <Setter Property="Visibility" Value="Collapsed"/>
+            <Setter Property="AutomationProperties.Name" Value="倒数日"/>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding Kind}" Value="Countdown">
                     <Setter Property="Visibility" Value="Visible"/>
                 </DataTrigger>
             </Style.Triggers>
@@ -44,11 +57,39 @@
                 </DataTrigger>
             </Style.Triggers>
         </Style>
-        <Style x:Key="KindMenuItem" TargetType="MenuItem" BasedOn="{StaticResource {x:Type MenuItem}}">
+        <Style x:Key="CountdownLabelText" TargetType="TextBlock">
+            <Setter Property="Margin" Value="4,0,0,2"/>
+            <Setter Property="TextWrapping" Value="Wrap"/>
+            <Setter Property="ToolTip" Value="{Binding DeadlineDescription}"/>
+            <Setter Property="Text" Value="{Binding CountdownLabel}"/>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding CountdownLabel}" Value="{x:Null}">
+                    <Setter Property="Visibility" Value="Collapsed"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+        <!-- Kind actions offer only the conversions that change something. -->
+        <Style x:Key="ToEventMenuItem" TargetType="MenuItem" BasedOn="{StaticResource {x:Type MenuItem}}">
             <Setter Property="Header" Value="设为行程"/>
             <Style.Triggers>
                 <DataTrigger Binding="{Binding Kind}" Value="Event">
-                    <Setter Property="Header" Value="设为待办"/>
+                    <Setter Property="Visibility" Value="Collapsed"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="ToCountdownMenuItem" TargetType="MenuItem" BasedOn="{StaticResource {x:Type MenuItem}}">
+            <Setter Property="Header" Value="设为倒数日"/>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding Kind}" Value="Countdown">
+                    <Setter Property="Visibility" Value="Collapsed"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="ToTodoMenuItem" TargetType="MenuItem" BasedOn="{StaticResource {x:Type MenuItem}}">
+            <Setter Property="Header" Value="设为待办"/>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding Kind}" Value="Todo">
+                    <Setter Property="Visibility" Value="Collapsed"/>
                 </DataTrigger>
             </Style.Triggers>
         </Style>
@@ -57,6 +98,19 @@
             <Setter Property="Visibility" Value="Collapsed"/>
             <Style.Triggers>
                 <DataTrigger Binding="{Binding Kind}" Value="Event">
+                    <Setter Property="Visibility" Value="Visible"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="TargetDateMenuItem" TargetType="MenuItem" BasedOn="{StaticResource {x:Type MenuItem}}">
+            <Setter Property="Header" Value="设置截止时间…"/>
+            <Setter Property="Visibility" Value="Collapsed"/>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding Kind}" Value="Todo">
+                    <Setter Property="Visibility" Value="Visible"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding Kind}" Value="Countdown">
+                    <Setter Property="Header" Value="设置目标时间…"/>
                     <Setter Property="Visibility" Value="Visible"/>
                 </DataTrigger>
             </Style.Triggers>
@@ -76,8 +130,11 @@
                         <MenuItem Header="上移" Click="MoveUp_Click"/>
                         <MenuItem Header="下移" Click="MoveDown_Click"/>
                         <Separator/>
-                        <MenuItem Style="{StaticResource KindMenuItem}" Click="ToggleKind_Click"/>
+                        <MenuItem Style="{StaticResource ToEventMenuItem}" Click="SetKindToEvent_Click"/>
+                        <MenuItem Style="{StaticResource ToCountdownMenuItem}" Click="SetKindToCountdown_Click"/>
+                        <MenuItem Style="{StaticResource ToTodoMenuItem}" Click="SetKindToTodo_Click"/>
                         <MenuItem Style="{StaticResource TimeMenuItem}" Click="SetTime_Click"/>
+                        <MenuItem Style="{StaticResource TargetDateMenuItem}" Click="SetTargetDate_Click"/>
                         <Separator/>
                         <MenuItem Header="删除" Click="DeleteTodo_Click"/>
                     </ContextMenu>
@@ -97,6 +154,7 @@
                     </Style>
                 </Border.Style>
                 <Grid>
+                    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="*"/>
@@ -120,6 +178,12 @@
                         <TextBlock Style="{StaticResource EventTimeText}"
                                    FontSize="{DynamicResource TodoFont.PeekItem}"
                                    Foreground="#FF3E77B5"/>
+                    </StackPanel>
+                    <StackPanel Grid.Column="0"
+                                Style="{StaticResource CountdownMarker}"
+                                VerticalAlignment="Top"
+                                Margin="2,1,5,0">
+                        <Ellipse Width="6" Height="6" VerticalAlignment="Center" Fill="#FF3E77B5"/>
                     </StackPanel>
                     <TextBox x:Name="PeekText"
                              Grid.Column="1"
@@ -150,6 +214,7 @@
                             </Style>
                         </TextBox.Style>
                     </TextBox>
+                    <TextBlock Grid.Row="1" Grid.Column="1" Style="{StaticResource CountdownLabelText}" FontSize="{DynamicResource TodoFont.PeekItem}" Foreground="#FF3E77B5"/>
                     <Button Grid.Column="2"
                             AutomationProperties.Name="删除待办"
                             Width="18"
@@ -193,8 +258,11 @@
                         <MenuItem Header="上移" Click="MoveUp_Click"/>
                         <MenuItem Header="下移" Click="MoveDown_Click"/>
                         <Separator/>
-                        <MenuItem Style="{StaticResource KindMenuItem}" Click="ToggleKind_Click"/>
+                        <MenuItem Style="{StaticResource ToEventMenuItem}" Click="SetKindToEvent_Click"/>
+                        <MenuItem Style="{StaticResource ToCountdownMenuItem}" Click="SetKindToCountdown_Click"/>
+                        <MenuItem Style="{StaticResource ToTodoMenuItem}" Click="SetKindToTodo_Click"/>
                         <MenuItem Style="{StaticResource TimeMenuItem}" Click="SetTime_Click"/>
+                        <MenuItem Style="{StaticResource TargetDateMenuItem}" Click="SetTargetDate_Click"/>
                         <Separator/>
                         <MenuItem Header="删除" Click="DeleteTodo_Click"/>
                     </ContextMenu>
@@ -214,6 +282,7 @@
                     </Style>
                 </Border.Style>
                 <Grid>
+                    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="*"/>
@@ -235,6 +304,11 @@
                                    Margin="3,0,0,0"
                                    FontSize="{DynamicResource TodoFont.CellItem}"
                                    Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
+                    </StackPanel>
+                    <StackPanel Style="{StaticResource CountdownMarker}"
+                                VerticalAlignment="Top"
+                                Margin="1,1,4,0">
+                        <Ellipse Width="6" Height="6" VerticalAlignment="Center" Fill="#FF3E77B5"/>
                     </StackPanel>
                     <TextBlock Grid.Column="1"
                                AutomationProperties.Name="{Binding Text}"
@@ -263,6 +337,7 @@
                             </Style>
                         </TextBlock.Style>
                     </TextBlock>
+                    <TextBlock Grid.Row="1" Grid.Column="1" Style="{StaticResource CountdownLabelText}" FontSize="{DynamicResource TodoFont.CellItem}" Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
                 </Grid>
             </Border>
         </DataTemplate>
@@ -382,14 +457,18 @@
                                         <MenuItem Header="上移" Click="MoveUp_Click"/>
                                         <MenuItem Header="下移" Click="MoveDown_Click"/>
                                         <Separator/>
-                                        <MenuItem Style="{StaticResource KindMenuItem}" Click="ToggleKind_Click"/>
+                                        <MenuItem Style="{StaticResource ToEventMenuItem}" Click="SetKindToEvent_Click"/>
+                                        <MenuItem Style="{StaticResource ToCountdownMenuItem}" Click="SetKindToCountdown_Click"/>
+                                        <MenuItem Style="{StaticResource ToTodoMenuItem}" Click="SetKindToTodo_Click"/>
                                         <MenuItem Style="{StaticResource TimeMenuItem}" Click="SetTime_Click"/>
+                                        <MenuItem Style="{StaticResource TargetDateMenuItem}" Click="SetTargetDate_Click"/>
                                         <Separator/>
                                         <MenuItem Header="删除" Click="DeleteTodo_Click"/>
                                     </ContextMenu>
                                 </Border.ContextMenu>
                                 <Grid>
-                                    <Grid.ColumnDefinitions>
+                                    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                    <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="Auto" MinWidth="27"/>
                                         <ColumnDefinition Width="*"/>
                                         <ColumnDefinition Width="Auto"/>
@@ -408,6 +487,11 @@
                                                    FontSize="{DynamicResource TodoFont.ListItem}"
                                                    Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
                                     </StackPanel>
+                                    <StackPanel Style="{StaticResource CountdownMarker}"
+                                                VerticalAlignment="Center"
+                                                Margin="4,0,6,0">
+                        <Ellipse Width="6" Height="6" VerticalAlignment="Center" Fill="#FF3E77B5"/>
+                    </StackPanel>
                                     <TextBox Grid.Column="1"
                                              AutomationProperties.Name="待办内容"
                                              MinHeight="24"
@@ -434,6 +518,7 @@
                                             </Style>
                                         </TextBox.Style>
                                     </TextBox>
+                                    <TextBlock Grid.Row="1" Grid.Column="1" Style="{StaticResource CountdownLabelText}" FontSize="{DynamicResource TodoFont.ListItem}" Foreground="{Binding WidgetSecondaryTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
                                     <TextBlock Grid.Column="1"
                                                Margin="4,0,0,0"
                                                VerticalAlignment="Center"

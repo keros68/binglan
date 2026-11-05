@@ -1,5 +1,7 @@
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
+using System.Text.Json.Serialization;
+using BingLan.Core.Services;
 
 namespace BingLan.Core.Models;
 
@@ -139,11 +141,12 @@ public sealed class TodoWidgetState
     public List<TodoItemState> Items { get; set; } = [];
 }
 
-/// <summary>Whether an entry is a checkable to-do or a calendar event.</summary>
+/// <summary>Whether an entry is a checkable to-do, a calendar event, or a countdown.</summary>
 public enum TodoItemKind
 {
     Todo = 0,
-    Event = 1
+    Event = 1,
+    Countdown = 2
 }
 
 public sealed class TodoItemState : INotifyPropertyChanged
@@ -179,6 +182,7 @@ public sealed class TodoItemState : INotifyPropertyChanged
             }
             _isCompleted = value;
             OnPropertyChanged();
+            OnPropertyChanged(nameof(CountdownLabel));
         }
     }
     public int Order { get; set; }
@@ -192,12 +196,57 @@ public sealed class TodoItemState : INotifyPropertyChanged
     public DateTime? Date
     {
         get => _date;
-        set => _date = value is { } date
-            ? DateTime.SpecifyKind(date.Date, DateTimeKind.Unspecified)
-            : null;
+        set
+        {
+            _date = value is { } date
+                ? DateTime.SpecifyKind(date.Date, DateTimeKind.Unspecified)
+                : null;
+            OnPropertyChanged(nameof(CountdownLabel));
+        }
     }
 
-    /// <summary>Whether the entry is a checkable to-do or an untickable calendar event.</summary>
+    /// <summary>
+    /// Remaining time for an open to-do with a deadline or a standalone countdown.
+    /// </summary>
+    [JsonIgnore]
+    public string? CountdownLabel => TodoService.CountdownLabel(this, DateTime.Now);
+
+    private DateTime? _deadlineDate;
+    private TimeOnly? _deadlineTime;
+
+    /// <summary>Optional local calendar deadline, independent of the entry's calendar placement.</summary>
+    public DateTime? DeadlineDate
+    {
+        get => _deadlineDate;
+        set
+        {
+            _deadlineDate = value is { } date
+                ? DateTime.SpecifyKind(date.Date, DateTimeKind.Unspecified) : null;
+            RefreshCountdownLabel();
+        }
+    }
+
+    /// <summary>Optional local time of the deadline; null means a calendar-day countdown.</summary>
+    public TimeOnly? DeadlineTime
+    {
+        get => _deadlineTime;
+        set
+        {
+            _deadlineTime = value is { } time ? new TimeOnly(time.Hour, time.Minute) : null;
+            RefreshCountdownLabel();
+        }
+    }
+
+    [JsonIgnore]
+    public string? DeadlineDescription => DeadlineDate is { } date
+        ? $"{(Kind == TodoItemKind.Countdown ? "目标" : "截止")}：{date:yyyy-MM-dd}" +
+            (DeadlineTime is { } time ? $" {time:HH:mm}（本机时间）" : "")
+        : null;
+
+    /// <summary>
+    /// Whether the entry is a checkable to-do, an untickable calendar event, or an
+    /// untickable day countdown.
+    /// </summary>
     public TodoItemKind Kind
     {
         get => _kind;
@@ -209,6 +258,7 @@ public sealed class TodoItemState : INotifyPropertyChanged
             }
             _kind = value;
             OnPropertyChanged();
+            RefreshCountdownLabel();
         }
     }
 
@@ -232,6 +282,15 @@ public sealed class TodoItemState : INotifyPropertyChanged
 
     /// <summary>When the entry was last marked complete; null while it is open.</summary>
     public DateTimeOffset? CompletedDate { get; set; }
+
+    /// <summary>
+    /// Refreshes clock-derived bindings without changing persisted state.
+    /// </summary>
+    public void RefreshCountdownLabel()
+    {
+        OnPropertyChanged(nameof(CountdownLabel));
+        OnPropertyChanged(nameof(DeadlineDescription));
+    }
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
