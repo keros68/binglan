@@ -77,6 +77,9 @@
         <SolidColorBrush x:Key="WidgetInputTextBrush" Color="#243146"/>
         <SolidColorBrush x:Key="WidgetTileHoverBrush" Color="#24FFFFFF"/>
         <SolidColorBrush x:Key="WidgetTileFocusBrush" Color="#3DFFFFFF"/>
+        <!-- Selected file-box tiles sit one step above focus so a multi-selection reads
+             at rest, not only while hovered or focused. -->
+        <SolidColorBrush x:Key="WidgetTileSelectedBrush" Color="#4DFFFFFF"/>
         <Thickness x:Key="WidgetTileBorderThickness">0</Thickness>
         <SolidColorBrush x:Key="WidgetButtonHoverBrush" Color="#32FFFFFF"/>
         <SolidColorBrush x:Key="WidgetButtonPressedBrush" Color="#48FFFFFF"/>

@@ -288,7 +288,7 @@ public sealed class WidgetCoordinator : IDisposable
                 _trayIcon.ShowBalloonTip(
                     5000,
                     "清爽桌面",
-                    "上次隐藏的桌面图标未能自动恢复，可在桌面右键菜单“查看”中重新显示。",
+                    "上次隐藏的桌面图标未能自动恢复，可在设置的“桌面”页点“重新恢复”再试。",
                     Forms.ToolTipIcon.Warning);
             }
         }
@@ -1142,7 +1142,8 @@ public sealed class WidgetCoordinator : IDisposable
                     ScheduleSave();
                 },
                 CleanDesktopNotice = CleanDesktopNotice,
-                RetryCleanDesktopRestore = RetryCleanDesktopRestoreAsync,
+                CleanDesktopIconsOrphaned = CleanDesktopIconsOrphanedAsync,
+                RestoreCleanDesktopIcons = RestoreCleanDesktopIconsAsync,
                 Style = _state.Style,
                 ApplyStyle = ApplyStyle,
                 AddWidget = kind =>
@@ -1357,18 +1358,45 @@ public sealed class WidgetCoordinator : IDisposable
 
     private string CleanDesktopNotice() =>
         _cleanDesktopRestoreFailed
-            ? "上次隐藏的桌面图标未能自动恢复。可点“重新恢复”再试，或在桌面右键菜单“查看”中勾选“显示桌面图标”。"
+            ? "上次隐藏的桌面图标未能自动恢复。可点“重新恢复”再试。"
             : !_cleanDesktopRecovered
-                ? "无法确认开启清爽桌面前的图标状态。请先在桌面右键菜单“查看”中显示桌面图标，再开启清爽桌面。"
+                ? "无法确认开启清爽桌面前的图标状态。可点“重新恢复”显示桌面图标，再开启清爽桌面。"
                 : string.Empty;
 
-    private async Task<string> RetryCleanDesktopRestoreAsync()
+    /// <summary>
+    /// Whether the desktop icons are hidden while clean desktop is off — the orphaned
+    /// leftover of a lost checkpoint, which the settings page offers to restore.
+    /// </summary>
+    private async Task<bool> CleanDesktopIconsOrphanedAsync() =>
+        !_cleanDesktop.IsActive && await _cleanDesktop.AreIconsHiddenNowAsync();
+
+    /// <summary>
+    /// Shows the desktop icons again from the settings page: a leftover checkpoint is
+    /// honoured first and the icons are shown even without one, so a stuck hidden
+    /// desktop is fixed from inside the app instead of the desktop context menu.
+    /// </summary>
+    private async Task<string> RestoreCleanDesktopIconsAsync()
     {
-        var path = CleanDesktopCheckpointPath(_store.DataDirectory);
-        var restored = await Task.Run(() => CleanDesktopAdapter.RecoverNow(path));
-        _cleanDesktopRestoreFailed = !restored;
-        _cleanDesktopRecovered = restored && CleanDesktopAdapter.IsOriginalStateKnown(path);
-        return restored ? "桌面图标已恢复" : "仍未能恢复，请在桌面右键菜单“查看”中勾选“显示桌面图标”";
+        await _cleanDesktopGate.WaitAsync();
+        try
+        {
+            if (_isExiting)
+            {
+                return string.Empty;
+            }
+
+            var restored = await _cleanDesktop.RestoreIconsFromSettingsAsync();
+            _cleanDesktopRestoreFailed = !restored;
+            // The icons are verified visible again, so the state before the mode is
+            // known once more; the restore clears an unreadable record's marker.
+            _cleanDesktopRecovered = restored
+                && CleanDesktopAdapter.IsOriginalStateKnown(CleanDesktopCheckpointPath(_store.DataDirectory));
+            return restored ? "桌面图标已恢复" : "仍未能恢复，可稍后再试";
+        }
+        finally
+        {
+            _cleanDesktopGate.Release();
+        }
     }
 
     /// <summary>
@@ -1393,7 +1421,7 @@ public sealed class WidgetCoordinator : IDisposable
                 ScheduleSave();
                 return await _cleanDesktop.DisableAsync()
                     ? "桌面图标已恢复"
-                    : "桌面图标未能恢复，可在桌面右键菜单“查看”中勾选“显示桌面图标”";
+                    : "桌面图标未能恢复，可点“重新恢复”再试";
             }
 
             // This PC, the Recycle Bin and the other places stay one click away in the row

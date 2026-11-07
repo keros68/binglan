@@ -170,6 +170,8 @@ internal static class Program
         Run("分组盒自动刷新开关默认关闭并按需写回", TestFileBoxAutomationToggle, failures);
         Run("桌面分组盒显示名称与盒间转移", TestFileBoxRenameAndTransfer, failures);
         Run("分组盒删除原文件：默认关闭、确认后移到回收站", TestFileBoxDeleteOriginal, failures);
+        Run("分组盒 Ctrl/Shift 多选与选中保持", TestFileBoxMultiSelect, failures);
+        Run("分组盒多选批量移除、转移与删除到回收站", TestFileBoxBatchOperations, failures);
         Run("标题栏按钮可设为仅悬停或选中时显示", TestHeaderToolsOnHover, failures);
         Run("桌面分组盒图标与列表视图切换", TestFileBoxViewModeSwitch, failures);
         Run("卡片图标取高分辨率帧而非 32px 拉伸", TestIconProviderReturnsHighResolutionFrames, failures);
@@ -199,6 +201,7 @@ internal static class Program
         Run("组件恢复默认位置", TestResetComponentPlacement, failures);
         Run("被占用屏幕边缘推开的卡片不改写保存位置，边缘空出后回到原位", TestReservedEdgeDisplacementReturns, failures);
         Run("清爽桌面开关", TestCleanDesktopToggle, failures);
+        Run("清爽桌面孤儿隐藏态恢复按钮", TestCleanDesktopOrphanRestore, failures);
         Run("设置行分隔线对齐标题", TestSettingsRowDividersAlignWithTitles, failures);
         Run("待办周历周数设置面板", TestTodoWeekCountSettingPanel, failures);
         Run("待办日期编辑在保存与父窗口关闭时提交", TestTodoDayEditorPersistence, failures);
@@ -2890,6 +2893,278 @@ internal static class Program
         }
     }
 
+    private static void TestFileBoxMultiSelect()
+    {
+        var temp = Path.Combine(Path.GetTempPath(), $"BingLan-multi-select-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(temp);
+        var paths = Enumerable.Range(1, 4)
+            .Select(index => Path.Combine(temp, $"文件{index}.txt"))
+            .ToArray();
+        foreach (var path in paths)
+        {
+            File.WriteAllText(path, "冰蓝桌面");
+        }
+
+        var state = new FileBoxState();
+        FileMappingService.AddExisting(state, paths);
+        var window = new FileBoxWindow(state);
+        var list = Require<ItemsControl>(window, "FileList");
+        ShowAndPump(window);
+        try
+        {
+            PumpUntil(
+                () => list.ItemContainerGenerator.ContainerFromIndex(0) is ContentPresenter,
+                "文件项容器未生成");
+            FileBoxWindow.FileTile Tile(string path) =>
+                list.Items.OfType<FileBoxWindow.FileTile>().Single(tile => tile.Path == path);
+
+            // 选择语义：无修饰单击只选一项，Ctrl 切换加选，Shift 从锚点取范围。
+            window.HandleTilePointerSelect(Tile(paths[0]), ModifierKeys.None);
+            Assert(Tile(paths[0]).IsSelected && !Tile(paths[1]).IsSelected, "无修饰点击应只选中点击项");
+            window.HandleTilePointerSelect(Tile(paths[1]), ModifierKeys.Control);
+            Assert(Tile(paths[0]).IsSelected && Tile(paths[1]).IsSelected, "Ctrl 点击应加选");
+            window.HandleTilePointerSelect(Tile(paths[1]), ModifierKeys.Control);
+            Assert(Tile(paths[0]).IsSelected && !Tile(paths[1]).IsSelected, "再次 Ctrl 点击应取消该项");
+            window.HandleTilePointerSelect(Tile(paths[3]), ModifierKeys.Shift);
+            Assert(
+                !Tile(paths[0]).IsSelected && Tile(paths[1]).IsSelected
+                && Tile(paths[2]).IsSelected && Tile(paths[3]).IsSelected,
+                "Shift 应选中锚点到目标的连续范围（Ctrl 后锚点已随点击移动）");
+
+            // 选中高亮要真实落在瓦片上，而不是只改了数据。
+            Pump();
+            var selectedButton = TileButton(list, Tile(paths[1]));
+            var highlight = FindVisualChildren<Border>(selectedButton)
+                .Single(border => border.Name == "SelectionHighlight");
+            Assert(
+                highlight.Visibility == Visibility.Visible,
+                "选中瓦片应显示选中高亮层");
+
+            // 无锚点时 Shift 只选点击项。
+            window.ClearSelection();
+            window.HandleTilePointerSelect(Tile(paths[2]), ModifierKeys.Shift);
+            Assert(
+                !Tile(paths[0]).IsSelected && Tile(paths[2]).IsSelected && !Tile(paths[3]).IsSelected,
+                "无锚点 Shift 应只选中点击项");
+
+            // Esc 与空白处单击清空选中。
+            window.HandleTilePointerSelect(Tile(paths[0]), ModifierKeys.None);
+            window.RaiseEvent(new KeyEventArgs(
+                Keyboard.PrimaryDevice, PresentationSource.FromVisual(window)!, 0, Key.Escape)
+            {
+                RoutedEvent = Keyboard.PreviewKeyDownEvent
+            });
+            Pump();
+            Assert(window.SelectedTiles().Count == 0, "Esc 应清空选中");
+            window.HandleTilePointerSelect(Tile(paths[1]), ModifierKeys.Control);
+            window.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, 0, MouseButton.Left)
+            {
+                RoutedEvent = UIElement.PreviewMouseLeftButtonDownEvent
+            });
+            Pump();
+            Assert(window.SelectedTiles().Count == 0, "点击空白处应清空选中");
+
+            // 右键多选项换批量菜单，右键未选中项保持单项菜单。
+            window.HandleTilePointerSelect(Tile(paths[0]), ModifierKeys.None);
+            window.HandleTilePointerSelect(Tile(paths[2]), ModifierKeys.Control);
+            selectedButton = TileButton(list, Tile(paths[0]));
+            selectedButton.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, 0, MouseButton.Right)
+            {
+                RoutedEvent = UIElement.PreviewMouseRightButtonDownEvent
+            });
+            Assert(
+                Equals(selectedButton.ContextMenu, window.TryFindResource("FileTileBatchContextMenu")),
+                "右键多选中的瓦片应使用批量菜单");
+            var unselectedButton = TileButton(list, Tile(paths[1]));
+            unselectedButton.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, 0, MouseButton.Right)
+            {
+                RoutedEvent = UIElement.PreviewMouseRightButtonDownEvent
+            });
+            Assert(
+                Equals(unselectedButton.ContextMenu, window.TryFindResource("FileTileContextMenu")),
+                "右键未选中的瓦片应保持单项菜单");
+
+            // 列表重建（失效清扫）与视图切换都不得丢失选中。
+            window.HandleTilePointerSelect(Tile(paths[0]), ModifierKeys.None);
+            window.HandleTilePointerSelect(Tile(paths[1]), ModifierKeys.Control);
+            File.Delete(paths[3]);
+            var goneId = state.Items.Single(item => item.Path == paths[3]).Id;
+            window.RemoveGoneMappings(new HashSet<Guid> { goneId });
+            Pump();
+            Assert(
+                Tile(paths[0]).IsSelected && Tile(paths[1]).IsSelected && list.Items.Count == 3,
+                "失效清扫重建列表后选中应保留");
+            window.SetViewMode(FileBoxViewMode.List);
+            Pump();
+            Assert(
+                Tile(paths[0]).IsSelected && Tile(paths[1]).IsSelected,
+                "切换视图后选中应保留");
+        }
+        finally
+        {
+            Close(window);
+            Directory.Delete(temp, true);
+        }
+    }
+
+    private static void TestFileBoxBatchOperations()
+    {
+        var temp = Path.Combine(Path.GetTempPath(), $"BingLan-batch-ops-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(temp);
+        var paths = Enumerable.Range(1, 3)
+            .Select(index => Path.Combine(temp, $"批量{index}.txt"))
+            .ToArray();
+        foreach (var path in paths)
+        {
+            File.WriteAllText(path, "冰蓝桌面");
+        }
+
+        var state = new FileBoxState();
+        FileMappingService.AddExisting(state, paths);
+        FileMappingService.AddSystemEntry(state, "shell:MyComputerFolder", "此电脑");
+        var enabled = false;
+        var confirmations = 0;
+        var recycled = new List<string>();
+        var window = new FileBoxWindow(state)
+        {
+            IsDeleteOriginalsEnabled = () => enabled,
+            ConfirmDeleteOriginals = tiles =>
+            {
+                confirmations++;
+                return tiles.Count > 0;
+            },
+            RecycleOriginal = (path, _) =>
+            {
+                recycled.Add(path);
+                return Task.FromResult(RecycleResult.Recycled);
+            }
+        };
+        var target = new FileBoxWindow(new FileBoxState
+        {
+            Title = "归档",
+            Placement = new WindowPlacement { Left = 860, Top = 92, Width = 366, Height = 306 }
+        });
+        window.OtherBoxes = () => [target];
+        var list = Require<ItemsControl>(window, "FileList");
+        var targetList = Require<ItemsControl>(target, "FileList");
+        ShowAndPump(window);
+        ShowAndPump(target);
+        try
+        {
+            PumpUntil(
+                () => list.ItemContainerGenerator.ContainerFromIndex(0) is ContentPresenter,
+                "文件项容器未生成");
+            FileBoxWindow.FileTile Tile(string path) =>
+                list.Items.OfType<FileBoxWindow.FileTile>().Single(tile => tile.Path == path);
+
+            var batchMenu = (ContextMenu)window.FindResource("FileTileBatchContextMenu");
+
+            // 批量菜单标出数量；Shell 入口计入移除但绝不计入回收。
+            window.HandleTilePointerSelect(Tile(paths[0]), ModifierKeys.None);
+            window.HandleTilePointerSelect(Tile(paths[1]), ModifierKeys.Control);
+            window.HandleTilePointerSelect(Tile("shell:MyComputerFolder"), ModifierKeys.Control);
+            InvokeBatchContextMenuOpened(window, batchMenu);
+            var removeItem = batchMenu.Items.OfType<MenuItem>().Single(item => Equals(item.Tag, "BatchRemove"));
+            var transferItem = batchMenu.Items.OfType<MenuItem>().Single(item => Equals(item.Tag, "BatchTransfer"));
+            var deleteItem = batchMenu.Items.OfType<MenuItem>().Single(item => Equals(item.Tag, "DeleteOriginal"));
+            Assert(Equals(removeItem.Header, "移除 3 项映射"), "批量移除应按全部选中计数");
+            Assert(deleteItem.Visibility == Visibility.Collapsed, "未开启删除原文件时不应出现批量删除项");
+            enabled = true;
+            InvokeBatchContextMenuOpened(window, batchMenu);
+            Assert(
+                deleteItem.Visibility == Visibility.Visible && Equals(deleteItem.Header, "删除 2 项到回收站…"),
+                "开启后批量删除项应排除 Shell 入口并带数量显示");
+            Assert(
+                Equals(transferItem.Items.OfType<MenuItem>().Single().Header, "归档"),
+                "批量转移应列出其他分组盒");
+
+            // 批量移除只删映射，不动原文件。
+            window.HandleTilePointerSelect(Tile("shell:MyComputerFolder"), ModifierKeys.Control);
+            removeItem.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+            Pump();
+            Assert(
+                state.Items.Count == 2 && list.Items.Count == 2 && window.SelectedTiles().Count == 0,
+                "批量移除应删除选中映射并清空选中");
+            Assert(
+                File.Exists(paths[0]) && File.Exists(paths[1]),
+                "批量移除映射不得删除原文件");
+
+            // 批量转移：全部移到目标盒；目标已有的项被跳过并说明。
+            window.HandleTilePointerSelect(Tile(paths[2]), ModifierKeys.None);
+            window.HandleTilePointerSelect(Tile("shell:MyComputerFolder"), ModifierKeys.Control);
+            InvokeBatchContextMenuOpened(window, batchMenu);
+            transferItem.Items.OfType<MenuItem>().Single()
+                .RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+            Pump();
+            Assert(
+                list.Items.Count == 0 && state.Items.Count == 0 && targetList.Items.Count == 2,
+                "批量转移应把选中映射移到目标盒");
+            Assert(
+                File.Exists(paths[2]),
+                "批量转移不得移动原文件");
+
+            Wait(window.AddMappingsAsync([paths[0], paths[2]]));
+            Pump();
+            window.HandleTilePointerSelect(Tile(paths[0]), ModifierKeys.None);
+            window.HandleTilePointerSelect(Tile(paths[2]), ModifierKeys.Control);
+            InvokeBatchContextMenuOpened(window, batchMenu);
+            transferItem.Items.OfType<MenuItem>().Single()
+                .RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+            Pump();
+            Assert(
+                list.Items.Count == 1 && list.Items.OfType<FileBoxWindow.FileTile>().Single().Path == paths[2],
+                "目标盒已有的项应留在源盒");
+            var status = Require<TextBlock>(window, "StatusText");
+            Assert(
+                status.Text.Contains("已存在于", StringComparison.Ordinal),
+                "跳过的转移应说明目标盒已有该项目");
+
+            // Delete 键在多选时走批量删除：一次确认，逐项回收。
+            Wait(window.AddMappingsAsync([paths[1]]));
+            Pump();
+            window.HandleTilePointerSelect(Tile(paths[2]), ModifierKeys.None);
+            window.HandleTilePointerSelect(Tile(paths[1]), ModifierKeys.Control);
+            TileButton(list, Tile(paths[2])).Focus();
+            Pump();
+            window.RaiseEvent(new KeyEventArgs(
+                Keyboard.PrimaryDevice, PresentationSource.FromVisual(window)!, 0, Key.Delete)
+            {
+                RoutedEvent = Keyboard.PreviewKeyDownEvent
+            });
+            PumpUntil(() => recycled.Count == 2, "Delete 键批量删除没有完成");
+            Assert(confirmations == 1, "批量删除应只确认一次");
+            Assert(
+                recycled.All(path => paths.Contains(path)),
+                "批量删除只应回收真实文件");
+            Assert(
+                state.Items.Count == 0 && list.Items.Count == 0 && File.Exists(paths[0]) && File.Exists(paths[1]),
+                "stub 回收后映射应移除且磁盘原文件保持原状");
+        }
+        finally
+        {
+            Close(window);
+            Close(target);
+            Directory.Delete(temp, true);
+        }
+    }
+
+    private static Button TileButton(ItemsControl list, FileBoxWindow.FileTile tile)
+    {
+        var presenter = (ContentPresenter?)list.ItemContainerGenerator.ContainerFromItem(tile)
+            ?? throw new InvalidOperationException("找不到文件项容器");
+        return FindVisualChildren<Button>(presenter)
+            .Single(candidate => candidate.DataContext is FileBoxWindow.FileTile);
+    }
+
+    private static void InvokeBatchContextMenuOpened(FileBoxWindow window, ContextMenu menu)
+    {
+        var method = typeof(FileBoxWindow).GetMethod(
+            "FileTileBatchContextMenu_Opened",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
+            ?? throw new InvalidOperationException("找不到批量菜单打开处理方法");
+        method.Invoke(window, [menu, new RoutedEventArgs()]);
+    }
+
     private static void TestHeaderToolsOnHover()
     {
         var window = new FileBoxWindow(new FileBoxState
@@ -5067,6 +5342,48 @@ internal static class Program
         }
     }
 
+    private static void TestCleanDesktopOrphanRestore()
+    {
+        var orphaned = true;
+        var restores = 0;
+        var window = new SettingsWindow(
+            new CityLookupService(),
+            new InformationWidgetState(),
+            DesktopExperienceRules.CreateDefault(),
+            (_, _) => { },
+            _ => { },
+            _ => { },
+            maintenance: new SettingsMaintenance
+            {
+                IsCleanDesktopEnabled = () => false,
+                CleanDesktopIconsOrphaned = () => Task.FromResult(orphaned),
+                RestoreCleanDesktopIcons = () =>
+                {
+                    restores++;
+                    orphaned = false;
+                    return Task.FromResult("桌面图标已恢复");
+                }
+            });
+        ShowAndPump(window);
+        try
+        {
+            var retry = Require<Button>(window, "CleanDesktopRetryButton");
+            PumpUntil(
+                () => retry.Visibility == Visibility.Visible && (string)retry.Content == "恢复显示"
+                    && Require<TextBlock>(window, "CleanDesktopStatusText").Text == "桌面图标当前处于隐藏状态。",
+                "孤儿隐藏态应显示状态并提供恢复显示");
+            retry.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            PumpUntil(
+                () => restores == 1 && retry.Visibility == Visibility.Collapsed
+                    && Require<TextBlock>(window, "CleanDesktopStatusText").Text == "桌面图标已恢复",
+                "恢复显示成功后应隐藏按钮并显示结果");
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
     private static void TestAppearancePanelSizeAppliesOnItsOwn()
     {
         var note = new NoteWidgetWindow(new NoteWidgetState
@@ -5125,7 +5442,7 @@ internal static class Program
                 Style = style,
                 ApplyStyle = () => applied++,
                 CleanDesktopNotice = () => notice,
-                RetryCleanDesktopRestore = () =>
+                RestoreCleanDesktopIcons = () =>
                 {
                     retried++;
                     notice = string.Empty;

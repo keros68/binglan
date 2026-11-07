@@ -71,6 +71,7 @@ Run("更新安装包大小与 SHA-256 校验", UpdateServiceTests.TestVerifiedDo
 Run("更新设置 v20 迁移与保存", UpdateServiceTests.TestStateMigration);
 Run("清爽桌面识别用户接管", CleanDesktopTests.TestTakeoverDetection);
 Run("清爽桌面无记录时关闭仍恢复显示", CleanDesktopTests.TestTurnOffWithoutRecordPlan);
+Run("清爽桌面接手无记录的隐藏图标", CleanDesktopTests.TestAdoptionOfOrphanedHiddenIcons);
 Run("清爽桌面检查点往返与拒绝", CleanDesktopTests.TestCheckpointRoundTripAndRejection);
 Run("清爽桌面设置迁移", CleanDesktopTests.TestSettingMigration);
 Run("空状态文件从备份恢复且不覆盖备份", CleanDesktopTests.TestEmptyStateFallsBackToBackup);
@@ -1772,6 +1773,8 @@ static void TestTaskbarCompatibility()
     Assert(TaskbarCompatibility.Assess(TaskbarMode.Transparent, ready).IsSupported, "Windows 11 应支持透明");
     Assert(TaskbarCompatibility.Assess(TaskbarMode.SmartHide, ready).IsSupported, "Windows 11 应支持自动隐藏");
     Assert(TaskbarCompatibility.Assess(TaskbarMode.Blur, ready).IsSupported, "Windows 11 应支持模糊");
+    Assert(TaskbarCompatibility.Assess(TaskbarMode.Transparent, ready with { WindowsBuild = 26300 }).IsSupported,
+        "已验证的 26300 应支持透明");
     Assert(!TaskbarCompatibility.Assess(TaskbarMode.Transparent, ready with { WindowsBuild = 26100 }).IsSupported,
         "未验证的旧 XAML 结构不应启用透明");
     Assert(!TaskbarCompatibility.Assess(TaskbarMode.Transparent, ready with { WindowsBuild = 30000 }).IsSupported,
@@ -1779,8 +1782,8 @@ static void TestTaskbarCompatibility()
     Assert(TaskbarCompatibility.Assess(TaskbarMode.SmartHide, ready with { WindowsBuild = 30000 }).IsSupported,
         "透明适配的版本限制不应阻断系统自动隐藏");
     Assert(
-        !TaskbarCompatibility.Assess(TaskbarMode.Blur, ready with { IsSystemTransparencyEnabled = false }).IsSupported,
-        "系统透明效果关闭时不应模糊");
+        TaskbarCompatibility.Assess(TaskbarMode.Blur, ready with { IsSystemTransparencyEnabled = false }).IsSupported,
+        "系统透明效果关闭时模糊由适配层自行开启，不再拒绝");
     Assert(
         TaskbarCompatibility.Assess(TaskbarMode.SystemDefault, ready with { WindowsBuild = 19045 }).IsSupported,
         "系统默认在任何环境都可用");
@@ -1797,8 +1800,8 @@ static void TestTaskbarCompatibility()
         !TaskbarCompatibility.Assess(TaskbarMode.Transparent, ready with { IsRemoteSession = true }).IsSupported,
         "远程桌面中不应透明");
     Assert(
-        !TaskbarCompatibility.Assess(TaskbarMode.Transparent, ready with { IsSystemTransparencyEnabled = false }).IsSupported,
-        "系统透明效果关闭时不应透明");
+        TaskbarCompatibility.Assess(TaskbarMode.Transparent, ready with { IsSystemTransparencyEnabled = false }).IsSupported,
+        "系统透明效果关闭时透明由适配层自行开启，不再拒绝");
     var competing = TaskbarCompatibility.Assess(
         TaskbarMode.SmartHide,
         ready with { CompetingCustomizer = "TranslucentTB" });
@@ -1823,6 +1826,20 @@ static void TestTaskbarRecovery()
     var plan = TaskbarRecovery.Plan(transparent, currentAutoHide: false);
     Assert(plan.ResetTransparency && plan.SetAutoHide is null, "透明检查点只恢复外观");
 
+    var ownedTransparency = new TaskbarCheckpoint
+    {
+        TransparencyApplied = true,
+        OriginalSystemTransparency = false
+    };
+    var ownedRoundTrip = TaskbarCheckpoint.Parse(ownedTransparency.Serialize());
+    Assert(ownedRoundTrip?.OriginalSystemTransparency == false, "自行开启的透明效果应记录原值");
+    Assert(
+        TaskbarRecovery.Plan(ownedRoundTrip!, currentAutoHide: false) is { ResetSystemTransparency: true },
+        "由本程序开启的系统透明效果应被关回");
+    Assert(
+        TaskbarRecovery.Plan(transparent, currentAutoHide: false) is { ResetSystemTransparency: false },
+        "本来就开启的系统透明效果不应被改动");
+
     var autoHide = new TaskbarCheckpoint { AutoHideApplied = true, OriginalAutoHide = false };
     Assert(
         TaskbarRecovery.Plan(autoHide, currentAutoHide: true).SetAutoHide == false,
@@ -1831,7 +1848,8 @@ static void TestTaskbarRecovery()
         TaskbarRecovery.Plan(autoHide, currentAutoHide: false).SetAutoHide is null,
         "用户已自行关闭自动隐藏时不应再改动");
     Assert(
-        TaskbarRecovery.Plan(new TaskbarCheckpoint(), currentAutoHide: true) is { ResetTransparency: false, SetAutoHide: null },
+        TaskbarRecovery.Plan(new TaskbarCheckpoint(), currentAutoHide: true)
+            is { ResetTransparency: false, SetAutoHide: null, ResetSystemTransparency: false },
         "空检查点不应改动任务栏");
 }
 

@@ -17,6 +17,8 @@ internal static class TaskbarNativeMethods
     internal const int WmThemeChanged = 0x031A;
     internal const int WmDwmColorizationColorChanged = 0x0320;
     internal const int WmDisplayChange = 0x007E;
+    internal static readonly nint HwndBroadcast = new(0xFFFF);
+    internal const uint SmtoAbortIfHung = 0x0002;
     internal const uint EventSystemForeground = 0x0003;
     internal const uint EventObjectShow = 0x8002;
     internal const uint EventObjectHide = 0x8003;
@@ -128,6 +130,21 @@ internal static class TaskbarNativeMethods
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     internal static extern nint FindWindowW(string? className, string? windowName);
+
+    /// <summary>
+    /// Broadcasts a WM_SETTINGCHANGE-style notification with a string parameter, the
+    /// way the personalization settings page tells the shell a value changed.
+    /// </summary>
+    [DllImport("user32.dll", EntryPoint = "SendMessageTimeoutW", CharSet = CharSet.Unicode)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool SendMessageTimeoutString(
+        nint window,
+        uint message,
+        nint wParam,
+        string lParam,
+        uint flags,
+        uint timeout,
+        out nint result);
 
     [DllImport("user32.dll")]
     internal static extern nint SetWinEventHook(

@@ -162,6 +162,7 @@ internal static class AccessibilityThemeManager
         Set(resources, "WidgetInputTextBrush", SystemColors.WindowTextBrush);
         Set(resources, "WidgetTileHoverBrush", SystemColors.ControlBrush);
         Set(resources, "WidgetTileFocusBrush", SystemColors.HighlightBrush);
+        Set(resources, "WidgetTileSelectedBrush", SystemColors.HighlightBrush);
         Set(resources, "WidgetTileBorderThickness", new Thickness(1));
         Set(resources, "WidgetButtonHoverBrush", SystemColors.HighlightBrush);
         Set(resources, "WidgetButtonPressedBrush", SystemColors.HighlightBrush);
@@ -252,6 +253,7 @@ internal static class AccessibilityThemeManager
         Set(resources, "WidgetInputTextBrush", Brush("#243146"));
         Set(resources, "WidgetTileHoverBrush", Brush("#24FFFFFF"));
         Set(resources, "WidgetTileFocusBrush", Brush("#3DFFFFFF"));
+        Set(resources, "WidgetTileSelectedBrush", Brush("#4DFFFFFF"));
         Set(resources, "WidgetTileBorderThickness", new Thickness(0));
         Set(resources, "WidgetButtonHoverBrush", Brush("#32FFFFFF"));
         Set(resources, "WidgetButtonPressedBrush", Brush("#48FFFFFF"));

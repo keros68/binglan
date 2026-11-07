@@ -17,6 +17,13 @@ public static class TaskbarCompatibility
 {
     public const int MinimumWindows11Build = 22000;
 
+    /// <summary>
+    /// Windows 11 builds the XAML taskbar background was verified on, live, for the
+    /// visual effect, a clean exit, a host crash and an Explorer restart. Other builds
+    /// keep the system default rather than trusting an unverified structure.
+    /// </summary>
+    public static readonly IReadOnlySet<int> VerifiedTransparentBuilds = new HashSet<int> { 26200, 26300 };
+
     public static TaskbarCompatibilityResult Assess(TaskbarMode mode, TaskbarEnvironment environment)
     {
         ArgumentNullException.ThrowIfNull(environment);
@@ -50,15 +57,15 @@ public static class TaskbarCompatibility
             return new(false, "对比度主题开启时保持系统默认外观");
         }
 
-        if (mode == TaskbarMode.Transparent && environment.WindowsBuild != 26200)
+        if (mode == TaskbarMode.Transparent && !VerifiedTransparentBuilds.Contains(environment.WindowsBuild))
         {
             return new(false, "此 Windows 版本尚未验证任务栏透明，保持系统默认");
         }
 
-        // Transparent and blur both depend on the system transparency effects.
-        return environment.IsSystemTransparencyEnabled
-            ? new(true, string.Empty)
-            : new(false, "Windows 透明效果已关闭（设置 > 个性化 > 颜色）");
+        // Transparent and blur need the system transparency effects; the adapter turns
+        // them on itself when they are off, so a disabled effect is no longer a reason
+        // to refuse here.
+        return new(true, string.Empty);
     }
 }
 
@@ -68,7 +75,7 @@ public static class TaskbarCompatibility
 /// </summary>
 public sealed class TaskbarCheckpoint
 {
-    public const int CurrentSchemaVersion = 2;
+    public const int CurrentSchemaVersion = 3;
 
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
 
@@ -77,6 +84,13 @@ public sealed class TaskbarCheckpoint
     public bool AutoHideApplied { get; set; }
     public bool OriginalAutoHide { get; set; }
     public string? XamlSessionName { get; set; }
+
+    /// <summary>
+    /// The system transparency effects before the app turned them on for transparent
+    /// or blur. Null when they were already on and the app changed nothing, so a
+    /// restore leaves the user's own value alone.
+    /// </summary>
+    public bool? OriginalSystemTransparency { get; set; }
 
     public string Serialize() => JsonSerializer.Serialize(this, JsonOptions);
 
@@ -94,13 +108,15 @@ public sealed class TaskbarCheckpoint
     }
 }
 
-public sealed record TaskbarRestorePlan(bool ResetTransparency, bool? SetAutoHide);
+public sealed record TaskbarRestorePlan(bool ResetTransparency, bool? SetAutoHide, bool ResetSystemTransparency);
 
 public static class TaskbarRecovery
 {
     /// <summary>
     /// Restores only what the app changed. Auto-hide goes back to the recorded value
-    /// unless the user has already changed it again themselves.
+    /// unless the user has already changed it again themselves; the system
+    /// transparency effects go back to off only when the app is the one that turned
+    /// them on.
     /// </summary>
     public static TaskbarRestorePlan Plan(TaskbarCheckpoint checkpoint, bool currentAutoHide)
     {
@@ -110,7 +126,10 @@ public static class TaskbarRecovery
             && !checkpoint.OriginalAutoHide
                 ? false
                 : null;
-        return new TaskbarRestorePlan(checkpoint.TransparencyApplied, autoHide);
+        return new TaskbarRestorePlan(
+            checkpoint.TransparencyApplied,
+            autoHide,
+            checkpoint.OriginalSystemTransparency == false);
     }
 }
 

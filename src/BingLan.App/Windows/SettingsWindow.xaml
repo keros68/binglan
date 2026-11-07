@@ -1626,7 +1626,7 @@
                                     <Border Height="10" VerticalAlignment="Bottom" BorderBrush="#FFEAF3FB" BorderThickness="0,1,0,0"/>
                                 </Border>
                                 <TextBlock FontWeight="SemiBold" Text="透明"/>
-                                <TextBlock Margin="0,2,0,0" Style="{StaticResource CaptionStyle}" Text="露出后方背景，需开启 Windows 透明效果"/>
+                                <TextBlock Margin="0,2,0,0" Style="{StaticResource CaptionStyle}" Text="露出后方背景；Windows 透明效果关闭时自动开启，退出还原"/>
                             </StackPanel>
                         </RadioButton>
                         <RadioButton x:Name="TaskbarBlurRadio"

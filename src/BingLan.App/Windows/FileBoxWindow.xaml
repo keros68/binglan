@@ -25,6 +25,40 @@
             <StackPanel Orientation="Vertical"/>
         </ItemsPanelTemplate>
 
+        <!-- Shared by every tile; the menu targets whichever tile right-clicked it, and a
+             right click inside a multi-selection swaps in the batch menu instead. -->
+        <ContextMenu x:Key="FileTileContextMenu"
+                     DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}"
+                     Opened="FileTileContextMenu_Opened">
+            <MenuItem Header="打开" Click="OpenFile_Click"/>
+            <MenuItem Header="打开所在位置" Click="OpenFileLocation_Click"/>
+            <MenuItem Header="刷新图标" Click="RefreshIcon_Click"/>
+            <Separator/>
+            <MenuItem Header="上移" Click="MoveMappingUp_Click"/>
+            <MenuItem Header="下移" Click="MoveMappingDown_Click"/>
+            <Separator/>
+            <MenuItem Header="修改显示名称…" Click="RenameMapping_Click"/>
+            <MenuItem Header="转移到其他分组盒"/>
+            <MenuItem Header="重新定位…">
+                <MenuItem Header="选择文件…" Click="RelinkFile_Click"/>
+                <MenuItem Header="选择文件夹…" Click="RelinkFolder_Click"/>
+            </MenuItem>
+            <MenuItem Header="移除映射" Click="RemoveMapping_Click"/>
+            <Separator Tag="DeleteOriginal"/>
+            <MenuItem Header="删除到回收站…" Tag="DeleteOriginal" Click="DeleteOriginal_Click"/>
+        </ContextMenu>
+
+        <!-- Acts on the whole selection; headers are filled in when the menu opens. -->
+        <ContextMenu x:Key="FileTileBatchContextMenu"
+                     Opened="FileTileBatchContextMenu_Opened">
+            <MenuItem Header="移除映射" Tag="BatchRemove" Click="BatchRemoveMappings_Click"/>
+            <MenuItem Header="转移到其他分组盒" Tag="BatchTransfer"/>
+            <Separator Tag="DeleteOriginal"/>
+            <MenuItem Header="删除到回收站…" Tag="DeleteOriginal" Click="BatchDeleteOriginals_Click"/>
+            <Separator/>
+            <MenuItem Header="取消选中" Click="ClearSelection_Click"/>
+        </ContextMenu>
+
         <!-- 图标视图：大图标在上、名称在下，按宽度折行。 -->
         <DataTemplate x:Key="FileTileTemplate">
             <Button Height="92"
@@ -35,8 +69,10 @@
                     Background="Transparent"
                     BorderThickness="0"
                     PreviewMouseLeftButtonDown="FileTile_PreviewMouseLeftButtonDown"
+                    PreviewMouseRightButtonDown="FileTile_PreviewMouseRightButtonDown"
                     PreviewMouseMove="FileTile_PreviewMouseMove"
-                    Click="FileTile_Click">
+                    Click="FileTile_Click"
+                    ContextMenu="{StaticResource FileTileContextMenu}">
                 <Button.Template>
                     <ControlTemplate TargetType="Button">
                         <Border x:Name="TileSurface"
@@ -59,32 +95,20 @@
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Button.Template>
-                <Button.ContextMenu>
-                    <ContextMenu DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}"
-                                 Opened="FileTileContextMenu_Opened">
-                        <MenuItem Header="打开" Click="OpenFile_Click"/>
-                        <MenuItem Header="打开所在位置" Click="OpenFileLocation_Click"/>
-                        <MenuItem Header="刷新图标" Click="RefreshIcon_Click"/>
-                        <Separator/>
-                        <MenuItem Header="上移" Click="MoveMappingUp_Click"/>
-                        <MenuItem Header="下移" Click="MoveMappingDown_Click"/>
-                        <Separator/>
-                        <MenuItem Header="修改显示名称…" Click="RenameMapping_Click"/>
-                        <MenuItem Header="转移到其他分组盒"/>
-                        <MenuItem Header="重新定位…">
-                            <MenuItem Header="选择文件…" Click="RelinkFile_Click"/>
-                            <MenuItem Header="选择文件夹…" Click="RelinkFolder_Click"/>
-                        </MenuItem>
-                        <MenuItem Header="移除映射" Click="RemoveMapping_Click"/>
-                        <Separator Tag="DeleteOriginal"/>
-                        <MenuItem Header="删除到回收站…" Tag="DeleteOriginal" Click="DeleteOriginal_Click"/>
-                    </ContextMenu>
-                </Button.ContextMenu>
                 <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="50"/>
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
+                    <!-- 选中高亮垫在内容之下，与悬停/焦点背景互不争用同一属性。 -->
+                    <Border x:Name="SelectionHighlight"
+                            Grid.RowSpan="2"
+                            Background="{DynamicResource WidgetTileSelectedBrush}"
+                            BorderBrush="#FF7FA8D9"
+                            BorderThickness="1.5"
+                            CornerRadius="{Binding ItemCornerRadius, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
+                            IsHitTestVisible="False"
+                            Visibility="Collapsed"/>
                     <Image x:Name="TileIcon"
                            Width="43"
                            Height="43"
@@ -123,6 +147,9 @@
                     <Setter TargetName="TileIcon" Property="Opacity" Value="0.4"/>
                     <Setter TargetName="InvalidLabel" Property="Visibility" Value="Visible"/>
                 </DataTrigger>
+                <DataTrigger Binding="{Binding IsSelected}" Value="True">
+                    <Setter TargetName="SelectionHighlight" Property="Visibility" Value="Visible"/>
+                </DataTrigger>
             </DataTemplate.Triggers>
         </DataTemplate>
 
@@ -136,8 +163,10 @@
                     Background="Transparent"
                     BorderThickness="0"
                     PreviewMouseLeftButtonDown="FileTile_PreviewMouseLeftButtonDown"
+                    PreviewMouseRightButtonDown="FileTile_PreviewMouseRightButtonDown"
                     PreviewMouseMove="FileTile_PreviewMouseMove"
-                    Click="FileTile_Click">
+                    Click="FileTile_Click"
+                    ContextMenu="{StaticResource FileTileContextMenu}">
                 <Button.Template>
                     <ControlTemplate TargetType="Button">
                         <Border x:Name="RowSurface"
@@ -160,67 +189,59 @@
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Button.Template>
-                <Button.ContextMenu>
-                    <ContextMenu DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}"
-                                 Opened="FileTileContextMenu_Opened">
-                        <MenuItem Header="打开" Click="OpenFile_Click"/>
-                        <MenuItem Header="打开所在位置" Click="OpenFileLocation_Click"/>
-                        <MenuItem Header="刷新图标" Click="RefreshIcon_Click"/>
-                        <Separator/>
-                        <MenuItem Header="上移" Click="MoveMappingUp_Click"/>
-                        <MenuItem Header="下移" Click="MoveMappingDown_Click"/>
-                        <Separator/>
-                        <MenuItem Header="修改显示名称…" Click="RenameMapping_Click"/>
-                        <MenuItem Header="转移到其他分组盒"/>
-                        <MenuItem Header="重新定位…">
-                            <MenuItem Header="选择文件…" Click="RelinkFile_Click"/>
-                            <MenuItem Header="选择文件夹…" Click="RelinkFolder_Click"/>
-                        </MenuItem>
-                        <MenuItem Header="移除映射" Click="RemoveMapping_Click"/>
-                        <Separator Tag="DeleteOriginal"/>
-                        <MenuItem Header="删除到回收站…" Tag="DeleteOriginal" Click="DeleteOriginal_Click"/>
-                    </ContextMenu>
-                </Button.ContextMenu>
-                <DockPanel>
-                    <Image x:Name="RowIcon"
-                           DockPanel.Dock="Left"
-                           Width="20"
-                           Height="20"
-                           Margin="0,0,9,0"
-                           VerticalAlignment="Center"
-                           RenderOptions.BitmapScalingMode="HighQuality"
-                           Source="{Binding Icon}"
-                           Stretch="Uniform"/>
-                    <TextBlock x:Name="RowInvalidLabel"
-                               DockPanel.Dock="Right"
-                               Foreground="{DynamicResource WidgetSecondaryTextBrush}"
-                               FontSize="10"
-                               Text="已失效"
+                <Grid>
+                    <!-- 选中高亮垫在内容之下，与悬停/焦点背景互不争用同一属性。 -->
+                    <Border x:Name="SelectionHighlight"
+                            Background="{DynamicResource WidgetTileSelectedBrush}"
+                            BorderBrush="#FF7FA8D9"
+                            BorderThickness="1.5"
+                            CornerRadius="{Binding ItemCornerRadius, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
+                            IsHitTestVisible="False"
+                            Visibility="Collapsed"/>
+                    <DockPanel>
+                        <Image x:Name="RowIcon"
+                               DockPanel.Dock="Left"
+                               Width="20"
+                               Height="20"
+                               Margin="0,0,9,0"
                                VerticalAlignment="Center"
-                               Margin="8,0,0,0"
-                               Visibility="Collapsed"/>
-                    <TextBlock VerticalAlignment="Center"
-                               Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
-                               FontSize="12.5"
-                               TextTrimming="CharacterEllipsis"
-                               Text="{Binding Name}">
-                        <TextBlock.ToolTip>
-                            <TextBlock>
-                                <TextBlock.Text>
-                                    <MultiBinding StringFormat="{}{0}&#x0a;{1}">
-                                        <Binding Path="Name"/>
-                                        <Binding Path="Path"/>
-                                    </MultiBinding>
-                                </TextBlock.Text>
-                            </TextBlock>
-                        </TextBlock.ToolTip>
-                    </TextBlock>
-                </DockPanel>
+                               RenderOptions.BitmapScalingMode="HighQuality"
+                               Source="{Binding Icon}"
+                               Stretch="Uniform"/>
+                        <TextBlock x:Name="RowInvalidLabel"
+                                   DockPanel.Dock="Right"
+                                   Foreground="{DynamicResource WidgetSecondaryTextBrush}"
+                                   FontSize="10"
+                                   Text="已失效"
+                                   VerticalAlignment="Center"
+                                   Margin="8,0,0,0"
+                                   Visibility="Collapsed"/>
+                        <TextBlock VerticalAlignment="Center"
+                                   Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
+                                   FontSize="12.5"
+                                   TextTrimming="CharacterEllipsis"
+                                   Text="{Binding Name}">
+                            <TextBlock.ToolTip>
+                                <TextBlock>
+                                    <TextBlock.Text>
+                                        <MultiBinding StringFormat="{}{0}&#x0a;{1}">
+                                            <Binding Path="Name"/>
+                                            <Binding Path="Path"/>
+                                        </MultiBinding>
+                                    </TextBlock.Text>
+                                </TextBlock>
+                            </TextBlock.ToolTip>
+                        </TextBlock>
+                    </DockPanel>
+                </Grid>
             </Button>
             <DataTemplate.Triggers>
                 <DataTrigger Binding="{Binding IsMissing}" Value="True">
                     <Setter TargetName="RowIcon" Property="Opacity" Value="0.4"/>
                     <Setter TargetName="RowInvalidLabel" Property="Visibility" Value="Visible"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding IsSelected}" Value="True">
+                    <Setter TargetName="SelectionHighlight" Property="Visibility" Value="Visible"/>
                 </DataTrigger>
             </DataTemplate.Triggers>
         </DataTemplate>

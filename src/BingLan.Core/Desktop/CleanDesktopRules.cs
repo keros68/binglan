@@ -106,4 +106,13 @@ public static class CleanDesktopRules
     /// </summary>
     public static bool TurnOffMustShowIcons(bool hasCheckpoint, uint currentFlags) =>
         !hasCheckpoint && AreIconsHidden(currentFlags);
+
+    /// <summary>
+    /// Whether enabling runs into icons that are already hidden with no checkpoint
+    /// behind them — the leftover of a lost record, or the user's own doing. The mode
+    /// adopts that state by showing the icons itself first, so the turn-off contract
+    /// ("off = icons visible") holds again instead of the mode refusing to start.
+    /// </summary>
+    public static bool NeedsAdoption(bool hasCheckpoint, uint currentFlags) =>
+        !hasCheckpoint && AreIconsHidden(currentFlags);
 }

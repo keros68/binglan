@@ -73,7 +73,15 @@ public sealed class SettingsMaintenance
     public Func<bool, Task<string>> SetCleanDesktop { get; init; } =
         _ => Task.FromResult("清爽桌面不可用");
     public Func<string> CleanDesktopNotice { get; init; } = () => string.Empty;
-    public Func<Task<string>> RetryCleanDesktopRestore { get; init; } = () => Task.FromResult(string.Empty);
+
+    /// <summary>
+    /// Whether the desktop icons are hidden while the mode is off — an orphaned state
+    /// the settings page offers to restore. The Shell query runs off the UI thread.
+    /// </summary>
+    public Func<Task<bool>> CleanDesktopIconsOrphaned { get; init; } = () => Task.FromResult(false);
+
+    /// <summary>Shows the desktop icons again from inside the app; returns a status line.</summary>
+    public Func<Task<string>> RestoreCleanDesktopIcons { get; init; } = () => Task.FromResult(string.Empty);
 
     /// <summary>File-box automation (auto-collect new desktop items, auto-clear gone mappings).</summary>
     public Func<bool> IsFileBoxAutomationEnabled { get; init; } = () => false;

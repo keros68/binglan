@@ -13,8 +13,10 @@ namespace BingLan.App.Services;
 /// on the next start after a crash and from the uninstaller, and changes nothing but the
 /// icon visibility flag: no files, icon positions or Explorer processes are touched.
 /// A hide is only claimed with its checkpoint behind it, and a turn-off never ends in a
-/// reported success with the icons still hidden. All Shell calls run one at a time off
-/// the UI thread.
+/// reported success with the icons still hidden. Icons found already hidden without a
+/// record — the leftover of a lost checkpoint from an earlier version — are adopted:
+/// the mode shows them itself before hiding, and the settings page can always restore
+/// them from inside the app. All Shell calls run one at a time off the UI thread.
 /// </summary>
 internal sealed class CleanDesktopAdapter : IDisposable
 {
@@ -70,6 +72,53 @@ internal sealed class CleanDesktopAdapter : IDisposable
         _takeoverTimer.Stop();
         IsActive = false;
         return await RunShellAsync(() => WithMachineLock(() => ShowIconsForTurnOff(_checkpointPath), false));
+    }
+
+    /// <summary>
+    /// Whether the desktop icons are hidden right now. An Explorer that cannot be
+    /// reached counts as not hidden, so a transient failure never raises the
+    /// settings-page restore prompt.
+    /// </summary>
+    internal async Task<bool> AreIconsHiddenNowAsync()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        return await RunShellAsync(() =>
+        {
+            try
+            {
+                using var view = DesktopShellView.Open();
+                return CleanDesktopRules.AreIconsHidden(view.ReadFolderFlags());
+            }
+            catch (Exception exception) when (IsShellFailure(exception))
+            {
+                // Explorer may be restarting; the hidden state survives that.
+                return false;
+            }
+        });
+    }
+
+    /// <summary>
+    /// Shows the icons for the settings page's restore action: a leftover record is
+    /// honoured first and the icons are shown even without one, so an orphaned hidden
+    /// state (a lost record from an earlier version) can always be cleared from inside
+    /// the app instead of the desktop context menu. Returns false when showing the
+    /// icons could not be verified.
+    /// </summary>
+    internal async Task<bool> RestoreIconsFromSettingsAsync()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        return await RunShellAsync(() => WithMachineLock(() =>
+        {
+            var shown = ShowIconsForTurnOff(_checkpointPath);
+            if (shown)
+            {
+                // The icons are verified visible, so whatever an unreadable record
+                // once said no longer matters; the mode starts from a known state.
+                TryDelete(InvalidCheckpointPath(_checkpointPath));
+                StartupLog.Write("已从设置页恢复桌面图标显示");
+            }
+            return shown;
+        }, false));
     }
 
     /// <summary>
@@ -224,16 +273,16 @@ internal sealed class CleanDesktopAdapter : IDisposable
             }
             if (view.SetIconsHidden(false))
             {
-                StartupLog.Write("桌面图标检查点缺失，关闭清爽桌面时已直接恢复显示");
+                StartupLog.Write("桌面图标无可用检查点，已直接恢复显示");
                 return true;
             }
-            StartupLog.Write("关闭清爽桌面时未能恢复显示：Windows 未接受写入");
+            StartupLog.Write("桌面图标恢复显示失败：Windows 未接受写入");
             return false;
         }
         catch (Exception exception) when (IsShellFailure(exception))
         {
-            Debug.WriteLine($"关闭清爽桌面恢复失败：{exception.Message}");
-            StartupLog.Write($"关闭清爽桌面恢复失败：{exception.Message}");
+            Debug.WriteLine($"桌面图标恢复显示失败：{exception.Message}");
+            StartupLog.Write($"桌面图标恢复显示失败：{exception.Message}");
             return false;
         }
     }
@@ -245,11 +294,30 @@ internal sealed class CleanDesktopAdapter : IDisposable
             using var view = DesktopShellView.Open();
             if (!CleanDesktopRules.NeedsHide(view.ReadFolderFlags()))
             {
-                // Hidden outside this record, whether by the user or after the record
-                // was lost: turning clean desktop off could not bring the icons back,
-                // so the mode refuses instead of claiming a hide it cannot undo.
-                StartupLog.Write("开启清爽桌面被拒：桌面图标当前处于隐藏状态");
-                return "桌面图标当前处于隐藏状态。请先在桌面右键菜单“查看”中勾选“显示桌面图标”，再开启清爽桌面";
+                // Adoption: a leftover record is honoured first (its restore also
+                // clears the file); icons still hidden after that — the leftover of a
+                // lost record from an earlier version, or the user's own hiding — are
+                // shown by this mode itself, the same write the desktop context menu
+                // would do. Turning clean desktop off then brings the icons back
+                // instead of the mode refusing to start.
+                if (File.Exists(checkpointPath))
+                {
+                    RecoverFromCheckpoint(checkpointPath);
+                }
+                if (CleanDesktopRules.NeedsAdoption(File.Exists(checkpointPath), view.ReadFolderFlags()))
+                {
+                    if (!view.SetIconsHidden(false))
+                    {
+                        StartupLog.Write("开启清爽桌面被拒：Windows 未接受恢复显示桌面图标");
+                        return "桌面图标当前处于隐藏状态，Windows 未接受恢复显示；可在设置的“桌面”页点“恢复显示”再试";
+                    }
+                    StartupLog.Write("开启清爽桌面：接手已隐藏的桌面图标，先恢复显示再隐藏");
+                }
+                if (!CleanDesktopRules.NeedsHide(view.ReadFolderFlags()))
+                {
+                    StartupLog.Write("开启清爽桌面被拒：恢复检查点后图标仍为隐藏");
+                    return "开启清爽桌面前需要桌面图标可见，可稍后再试";
+                }
             }
 
             var checkpoint = new CleanDesktopCheckpoint { OriginalIconsHidden = false };

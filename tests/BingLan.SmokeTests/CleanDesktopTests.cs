@@ -54,6 +54,18 @@ internal static class CleanDesktopTests
             "检查点丢失但图标可见时无需写入");
     }
 
+    internal static void TestAdoptionOfOrphanedHiddenIcons()
+    {
+        Check(
+            CleanDesktopRules.NeedsAdoption(false, RealDesktopFlags | CleanDesktopRules.NoIconsFlag),
+            "开启时遇到无记录的隐藏图标应接手：先恢复显示再隐藏");
+        Check(!CleanDesktopRules.NeedsAdoption(false, RealDesktopFlags),
+            "图标可见时无需接手");
+        Check(
+            !CleanDesktopRules.NeedsAdoption(true, RealDesktopFlags | CleanDesktopRules.NoIconsFlag),
+            "有检查点时按检查点恢复，不接手");
+    }
+
     internal static void TestCheckpointRoundTripAndRejection()
     {
         var checkpoint = new CleanDesktopCheckpoint

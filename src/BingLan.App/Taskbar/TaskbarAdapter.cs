@@ -17,8 +17,10 @@ namespace BingLan.App.Taskbar;
 /// Isolated adapter for the native Explorer taskbar. It records what it changes in a
 /// checkpoint before changing it, restores the system default on exit, after a crash
 /// (next start) and on request. Transparent mode leases only Explorer's XAML background.
-/// It only changes the taskbar while no other taskbar tool runs, so the state it found is the system
-/// default, which is what a restore puts back.
+/// Transparent and blur turn the user-level transparency effects on when they are off —
+/// recorded in the same checkpoint and put back on restore — instead of asking the user
+/// to flip the system setting. It only changes the taskbar while no other taskbar tool
+/// runs, so the state it found is the system default, which is what a restore puts back.
 /// </summary>
 internal sealed class TaskbarAdapter : IDisposable
 {
@@ -208,7 +210,20 @@ internal sealed class TaskbarAdapter : IDisposable
         {
             case TaskbarMode.Transparent:
                 _xamlSession = new TaskbarXamlSession(Path.GetDirectoryName(_checkpointPath)!);
-                WriteCheckpoint(new TaskbarCheckpoint { XamlSessionName = _xamlSession.MappingName });
+                // The record says what to undo before the effect itself is turned on;
+                // the effect is only claimed when the app was the one switching it on.
+                var originalTransparency = IsSystemTransparencyEnabled() ? (bool?)null : false;
+                WriteCheckpoint(new TaskbarCheckpoint
+                {
+                    XamlSessionName = _xamlSession.MappingName,
+                    OriginalSystemTransparency = originalTransparency
+                });
+                if (originalTransparency == false && !TryWriteSystemTransparency(true))
+                {
+                    await RestoreActiveAsync();
+                    SetStatus(TaskbarMode.SystemDefault, "未能开启 Windows 透明效果，保持系统默认");
+                    return;
+                }
                 await _xamlSession.StartAsync(FindTaskbars().Count, cancellationToken);
                 cancellationToken.ThrowIfCancellationRequested();
                 EnsureMessageWindow();
@@ -255,7 +270,18 @@ internal sealed class TaskbarAdapter : IDisposable
 
     private void ApplyBlur()
     {
-        WriteCheckpoint(new TaskbarCheckpoint { TransparencyApplied = true });
+        var originalTransparency = IsSystemTransparencyEnabled() ? (bool?)null : false;
+        WriteCheckpoint(new TaskbarCheckpoint
+        {
+            TransparencyApplied = true,
+            OriginalSystemTransparency = originalTransparency
+        });
+        if (originalTransparency == false && !TryWriteSystemTransparency(true))
+        {
+            TryDelete(_checkpointPath);
+            SetStatus(TaskbarMode.SystemDefault, "未能开启 Windows 透明效果，保持系统默认");
+            return;
+        }
         _taskbars = FindTaskbars();
         if (TrySetAccent(_taskbars, TaskbarNativeMethods.AccentEnableBlurBehind, out var error))
         {
@@ -324,6 +350,12 @@ internal sealed class TaskbarAdapter : IDisposable
         if (plan.ResetTransparency)
         {
             restored &= TrySetAccent(FindTaskbars(), TaskbarNativeMethods.AccentDisabled, out _);
+        }
+        if (plan.ResetSystemTransparency && IsSystemTransparencyEnabled())
+        {
+            // Only when the effect is still on: if the user turned it off themselves,
+            // the value to restore to is already in place.
+            restored &= TryWriteSystemTransparency(false);
         }
         if (plan.SetAutoHide is { } autoHide)
         {
@@ -420,6 +452,17 @@ internal sealed class TaskbarAdapter : IDisposable
         if (ActiveMode == TaskbarMode.Transparent)
         {
             var environment = ReadEnvironment(lookForCompetitors: false);
+            if (!environment.IsSystemTransparencyEnabled)
+            {
+                // The user turned the transparency effects off while we held the mode.
+                // Step aside; the restore leaves the off value alone and only clears
+                // what the app itself switched on.
+                RestoreActive();
+                SetStatus(TaskbarMode.SystemDefault,
+                    "Windows 透明效果已被关闭，已恢复系统默认；重新选择“透明”会自动重新开启");
+                return;
+            }
+
             var compatibility = TaskbarCompatibility.Assess(TaskbarMode.Transparent, environment);
             if (!compatibility.IsSupported)
             {
@@ -696,5 +739,35 @@ internal sealed class TaskbarAdapter : IDisposable
         using var key = Registry.CurrentUser.OpenSubKey(
             @"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize");
         return key?.GetValue("EnableTransparency") is not int value || value != 0;
+    }
+
+    /// <summary>
+    /// Writes the user-level transparency effects — the same value the personalization
+    /// page writes, so no elevation is needed — and broadcasts the change so it takes
+    /// effect without signing out. False when Windows did not accept the value.
+    /// </summary>
+    private static bool TryWriteSystemTransparency(bool enabled)
+    {
+        try
+        {
+            using var key = Registry.CurrentUser.CreateSubKey(
+                @"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize", writable: true);
+            key?.SetValue("EnableTransparency", enabled ? 1 : 0, RegistryValueKind.DWord);
+            TaskbarNativeMethods.SendMessageTimeoutString(
+                TaskbarNativeMethods.HwndBroadcast,
+                (uint)TaskbarNativeMethods.WmSettingChange,
+                0,
+                "ImmersiveColorSet",
+                TaskbarNativeMethods.SmtoAbortIfHung,
+                2000,
+                out _);
+            return IsSystemTransparencyEnabled() == enabled;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
+            or System.Security.SecurityException)
+        {
+            Debug.WriteLine($"写入系统透明效果失败：{exception.Message}");
+            return false;
+        }
     }
 }

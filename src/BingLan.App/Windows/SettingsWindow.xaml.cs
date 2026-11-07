@@ -60,6 +60,7 @@ public partial class SettingsWindow : Window
     private bool _loadingDesktopMode;
     private bool _loadingStartup;
     private bool _loadingCleanDesktop;
+    private int _cleanDesktopRefreshVersion;
     private bool _loadingFileBoxAutomation;
     private bool _loadingStyle;
     private bool _loadingTopBar;
@@ -1117,11 +1118,33 @@ public partial class SettingsWindow : Window
 
         // A restore that did not complete stays visible here until it is resolved.
         var notice = _maintenance.CleanDesktopNotice();
-        CleanDesktopRetryButton.Visibility = notice.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
         if (notice.Length > 0)
         {
             CleanDesktopStatusText.Text = notice;
+            CleanDesktopRetryButton.Content = "重新恢复";
+            CleanDesktopRetryButton.Visibility = Visibility.Visible;
+            return;
         }
+
+        // With nothing to retry, the icons may still be stuck hidden while the mode is
+        // off (a lost record from an earlier version). The Shell query runs off the UI
+        // thread; a newer refresh or a closed window cancels applying what it found.
+        CleanDesktopRetryButton.Visibility = Visibility.Collapsed;
+        var version = ++_cleanDesktopRefreshVersion;
+        _ = RefreshCleanDesktopOrphanStateAsync(version);
+    }
+
+    private async Task RefreshCleanDesktopOrphanStateAsync(int version)
+    {
+        var orphaned = await _maintenance.CleanDesktopIconsOrphaned();
+        if (!orphaned || version != _cleanDesktopRefreshVersion || _isClosed)
+        {
+            return;
+        }
+
+        CleanDesktopStatusText.Text = "桌面图标当前处于隐藏状态。";
+        CleanDesktopRetryButton.Content = "恢复显示";
+        CleanDesktopRetryButton.Visibility = Visibility.Visible;
     }
 
     private async void CleanDesktopRetry_Click(object sender, RoutedEventArgs e)
@@ -1130,7 +1153,7 @@ public partial class SettingsWindow : Window
         CleanDesktopStatusText.Text = "正在恢复桌面图标…";
         try
         {
-            CleanDesktopStatusText.Text = await _maintenance.RetryCleanDesktopRestore();
+            CleanDesktopStatusText.Text = await _maintenance.RestoreCleanDesktopIcons();
         }
         finally
         {
