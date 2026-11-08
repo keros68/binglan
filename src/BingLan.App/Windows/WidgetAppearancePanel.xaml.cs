@@ -5,7 +5,6 @@ using System.Windows.Media;
 using Forms = System.Windows.Forms;
 using DrawingColor = System.Drawing.Color;
 using MediaColor = System.Windows.Media.Color;
-using WpfButton = System.Windows.Controls.Button;
 using WpfKeyEventArgs = System.Windows.Input.KeyEventArgs;
 using WpfUserControl = System.Windows.Controls.UserControl;
 
@@ -45,9 +44,12 @@ public partial class WidgetAppearancePanel : WpfUserControl
     /// <summary>The shared card material, for the light-glass palette and density.</summary>
     internal BingLan.Core.Models.DesktopStyleState SharedStyle { get; set; } = new();
 
-    private void CardLook_Click(object sender, RoutedEventArgs e)
+    // The segmented radios show the current material; custom colours read as the
+    // nearer of light and dark glass when the panel refreshes.
+    private void CardLook_Changed(object sender, RoutedEventArgs e)
     {
-        if (_window is null
+        if (_isRefreshing
+            || _window is null
             || sender is not FrameworkElement { Tag: string tag }
             || !Enum.TryParse<BingLan.Core.Models.GlassMode>(tag, out var mode))
         {
@@ -94,10 +96,14 @@ public partial class WidgetAppearancePanel : WpfUserControl
             TitleFontFamilyPicker.SelectedItem = titleFontFamily;
             TitleFontBoldToggle.IsChecked = _window.WidgetAppearance.TitleFontBold;
             TitleFontItalicToggle.IsChecked = _window.WidgetAppearance.TitleFontItalic;
+            var inferredLook = SettingsWindow.InferLook(_window.WidgetAppearance);
+            CardLookLightRadio.IsChecked = inferredLook == BingLan.Core.Models.GlassMode.Light;
+            CardLookDarkRadio.IsChecked = inferredLook == BingLan.Core.Models.GlassMode.Dark;
+            CardLookClearRadio.IsChecked = inferredLook == BingLan.Core.Models.GlassMode.Clear;
             WidthEditor.Text = $"{_window.ActualWidth:0.#}";
             HeightEditor.Text = $"{_window.ActualHeight:0.#}";
             RefreshLabels();
-            RefreshColorButtons();
+            RefreshColorChips();
         }
         finally
         {
@@ -337,22 +343,32 @@ public partial class WidgetAppearancePanel : WpfUserControl
         CornerRadiusText.Text = $"{CornerRadiusSlider.Value:0.#}";
     }
 
-    private void RefreshColorButtons()
+    private void RefreshColorChips()
     {
-        SetColorButton(BackgroundColorButton, BackgroundColorEditor.Text);
-        SetColorButton(HeaderColorButton, HeaderColorEditor.Text);
-        SetColorButton(TextColorButton, TextColorEditor.Text);
+        SetColorChip(BackgroundColorChip, BackgroundColorEditor.Text);
+        SetColorChip(HeaderColorChip, HeaderColorEditor.Text);
+        SetColorChip(TextColorChip, TextColorEditor.Text);
     }
 
-    private static void SetColorButton(WpfButton button, string value)
+    private static void SetColorChip(Border chip, string? value)
     {
-        var color = ParseMediaColor(value);
-        var brush = new SolidColorBrush(MediaColor.FromRgb(color.R, color.G, color.B));
-        brush.Freeze();
-        button.Background = brush;
-        button.Foreground = RelativeLuminance(color) > 0.6d
-            ? new SolidColorBrush(MediaColor.FromRgb(36, 49, 70))
-            : System.Windows.Media.Brushes.White;
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            chip.Background = null;
+            return;
+        }
+
+        try
+        {
+            var color = ParseMediaColor(value);
+            var brush = new SolidColorBrush(MediaColor.FromRgb(color.R, color.G, color.B));
+            brush.Freeze();
+            chip.Background = brush;
+        }
+        catch (FormatException)
+        {
+            // Keep the last valid swatch while a colour is still being typed.
+        }
     }
 
     private static bool TryChooseColor(string current, out string color)
@@ -376,9 +392,6 @@ public partial class WidgetAppearancePanel : WpfUserControl
 
     private static MediaColor ParseMediaColor(string value) =>
         (MediaColor)System.Windows.Media.ColorConverter.ConvertFromString(value)!;
-
-    private static double RelativeLuminance(MediaColor color) =>
-        (0.2126d * color.R + 0.7152d * color.G + 0.0722d * color.B) / 255d;
 
     private static double ParseSize(
         string value,

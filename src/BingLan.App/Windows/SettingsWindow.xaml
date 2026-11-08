@@ -903,11 +903,31 @@
                                 <TextBlock Style="{StaticResource SectionHeaderStyle}" Text="文字与材质"/>
                                 <local:SettingsGroup>
                                 <local:SettingsRow Header="这张卡片的外观">
-                                    <StackPanel Orientation="Horizontal">
-                                        <Button Content="浅色玻璃" Tag="Light" Click="ComponentLook_Click"/>
-                                        <Button Margin="8,0,0,0" Content="深色玻璃" Tag="Dark" Click="ComponentLook_Click"/>
-                                        <Button Margin="8,0,0,0" Content="无底板" Tag="Clear" Click="ComponentLook_Click"/>
-                                    </StackPanel>
+                                    <Border Style="{StaticResource SegmentHostStyle}">
+                                        <StackPanel Orientation="Horizontal">
+                                            <RadioButton x:Name="ComponentLookLightRadio"
+                                                         GroupName="ComponentLook"
+                                                         Style="{StaticResource SegmentRadioStyle}"
+                                                         Tag="Light"
+                                                         Content="浅色玻璃"
+                                                         AutomationProperties.Name="卡片外观浅色玻璃"
+                                                         Checked="ComponentLook_Changed"/>
+                                            <RadioButton x:Name="ComponentLookDarkRadio"
+                                                         GroupName="ComponentLook"
+                                                         Style="{StaticResource SegmentRadioStyle}"
+                                                         Tag="Dark"
+                                                         Content="深色玻璃"
+                                                         AutomationProperties.Name="卡片外观深色玻璃"
+                                                         Checked="ComponentLook_Changed"/>
+                                            <RadioButton x:Name="ComponentLookClearRadio"
+                                                         GroupName="ComponentLook"
+                                                         Style="{StaticResource SegmentRadioStyle}"
+                                                         Tag="Clear"
+                                                         Content="无底板"
+                                                         AutomationProperties.Name="卡片外观无底板"
+                                                         Checked="ComponentLook_Changed"/>
+                                        </StackPanel>
+                                    </Border>
                                 </local:SettingsRow>
                                 <local:SettingsRow x:Name="SelectedComponentFontRow" Header="字体">
                                     <ComboBox x:Name="SelectedComponentFontPicker"
@@ -935,21 +955,47 @@
                                 </local:SettingsRow>
                                 <local:SettingsRow Header="文字颜色">
                                     <StackPanel Orientation="Horizontal">
+                                        <Border x:Name="SelectedComponentTextColorChip"
+                                                Width="32"
+                                                Height="32"
+                                                VerticalAlignment="Center"
+                                                CornerRadius="6"
+                                                BorderBrush="{DynamicResource SettingsControlBorderBrush}"
+                                                BorderThickness="1"/>
                                         <TextBox x:Name="SelectedComponentTextColorEditor"
-                                                 Width="120"
+                                                 Width="110"
+                                                 Margin="8,0,0,0"
                                                  AutomationProperties.Name="文字颜色"
                                                  TextChanged="ComponentEditor_TextChanged"/>
-                                        <Button Margin="8,0,0,0" Content="白" Tag="#FFFFFF" AutomationProperties.Name="文字颜色设为白色" Click="QuickTextColor_Click"/>
+                                        <Button Margin="8,0,0,0"
+                                                Content="选择颜色…"
+                                                Tag="Text"
+                                                AutomationProperties.Name="选择卡片文字颜色"
+                                                Click="ComponentColorPicker_Click"/>
+                                        <Button Margin="6,0,0,0" Content="白" Tag="#FFFFFF" AutomationProperties.Name="文字颜色设为白色" Click="QuickTextColor_Click"/>
                                         <Button Margin="6,0,0,0" Content="黑" Tag="#000000" AutomationProperties.Name="文字颜色设为黑色" Click="QuickTextColor_Click"/>
                                     </StackPanel>
                                 </local:SettingsRow>
                                 <local:SettingsRow Header="玻璃颜色">
                                     <StackPanel Orientation="Horizontal">
+                                        <Border x:Name="SelectedComponentBackgroundChip"
+                                                Width="32"
+                                                Height="32"
+                                                VerticalAlignment="Center"
+                                                CornerRadius="6"
+                                                BorderBrush="{DynamicResource SettingsControlBorderBrush}"
+                                                BorderThickness="1"/>
                                         <TextBox x:Name="SelectedComponentBackgroundColorEditor"
-                                                 Width="120"
+                                                 Width="110"
+                                                 Margin="8,0,0,0"
                                                  AutomationProperties.Name="玻璃颜色"
                                                  TextChanged="ComponentEditor_TextChanged"/>
-                                        <Button Margin="8,0,0,0" Content="白" Tag="#FFFFFF" AutomationProperties.Name="玻璃颜色设为白色" Click="QuickBackgroundColor_Click"/>
+                                        <Button Margin="8,0,0,0"
+                                                Content="选择颜色…"
+                                                Tag="Background"
+                                                AutomationProperties.Name="选择卡片玻璃颜色"
+                                                Click="ComponentColorPicker_Click"/>
+                                        <Button Margin="6,0,0,0" Content="白" Tag="#FFFFFF" AutomationProperties.Name="玻璃颜色设为白色" Click="QuickBackgroundColor_Click"/>
                                         <Button Margin="6,0,0,0" Content="蓝" Tag="#A0B4E1" AutomationProperties.Name="玻璃颜色设为蓝色" Click="QuickBackgroundColor_Click"/>
                                     </StackPanel>
                                 </local:SettingsRow>
@@ -959,11 +1005,24 @@
                                             Visibility="Collapsed">
                                     <local:SettingsRow Header="标题栏颜色">
                                         <StackPanel Orientation="Horizontal">
+                                            <Border x:Name="SelectedComponentHeaderChip"
+                                                    Width="32"
+                                                    Height="32"
+                                                    VerticalAlignment="Center"
+                                                    CornerRadius="6"
+                                                    BorderBrush="{DynamicResource SettingsControlBorderBrush}"
+                                                    BorderThickness="1"/>
                                             <TextBox x:Name="SelectedComponentHeaderColorEditor"
-                                                     Width="120"
+                                                     Width="110"
+                                                     Margin="8,0,0,0"
                                                      AutomationProperties.Name="标题栏颜色"
                                                      TextChanged="ComponentEditor_TextChanged"/>
-                                            <Button Margin="8,0,0,0" Content="白" Tag="#FFFFFF" AutomationProperties.Name="标题栏颜色设为白色" Click="QuickHeaderColor_Click"/>
+                                            <Button Margin="8,0,0,0"
+                                                    Content="选择颜色…"
+                                                    Tag="Header"
+                                                    AutomationProperties.Name="选择卡片标题栏颜色"
+                                                    Click="ComponentColorPicker_Click"/>
+                                            <Button Margin="6,0,0,0" Content="白" Tag="#FFFFFF" AutomationProperties.Name="标题栏颜色设为白色" Click="QuickHeaderColor_Click"/>
                                             <Button Margin="6,0,0,0" Content="蓝" Tag="#A0B4E1" AutomationProperties.Name="标题栏颜色设为冰蓝" Click="QuickHeaderColor_Click"/>
                                         </StackPanel>
                                     </local:SettingsRow>
@@ -984,11 +1043,11 @@
 
                                 <TextBlock Style="{StaticResource SectionHeaderStyle}" Text="形状与尺寸"/>
                                 <local:SettingsGroup>
-                                <local:SettingsRow Header="玻璃不透明度">
+                                <local:SettingsRow Header="玻璃浓度">
                                     <StackPanel Orientation="Horizontal">
                                         <Slider x:Name="SelectedComponentOpacitySlider"
                                                 Width="190"
-                                                AutomationProperties.Name="玻璃不透明度"
+                                                AutomationProperties.Name="玻璃浓度"
                                                 Minimum="0"
                                                 Maximum="1"
                                                 TickFrequency="0.04"
@@ -1620,7 +1679,10 @@
                             </StackPanel>
                         </local:SettingsGroup>
 
-                        <TextBlock x:Name="TopBarStatusText" Style="{StaticResource ValueTextStyle}"/>
+                        <TextBlock x:Name="TopBarStatusText"
+                                   Margin="2,10,0,0"
+                                   AutomationProperties.LiveSetting="Polite"
+                                   Style="{StaticResource CaptionStyle}"/>
                     </StackPanel>
                 </StackPanel>
             </ScrollViewer>

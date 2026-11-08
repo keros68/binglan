@@ -1,313 +1,229 @@
 <UserControl x:Class="BingLan.App.Windows.WidgetAppearancePanel"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:BingLan.App.Windows"
              FontFamily="{StaticResource UiFont}"
-             Foreground="{DynamicResource AppearanceInkBrush}">
+             Foreground="{DynamicResource IceInkBrush}">
     <UserControl.Resources>
-        <ControlTemplate x:Key="SliderDecreaseTemplate" TargetType="RepeatButton">
-            <Border Height="4"
-                    VerticalAlignment="Center"
-                    Background="{DynamicResource AppearanceTrackBrush}"
-                    CornerRadius="2"/>
-        </ControlTemplate>
-        <ControlTemplate x:Key="SliderIncreaseTemplate" TargetType="RepeatButton">
-            <Border Height="4"
-                    VerticalAlignment="Center"
-                    Background="{DynamicResource AppearanceTrackRemainderBrush}"
-                    CornerRadius="2"/>
-        </ControlTemplate>
-        <ControlTemplate x:Key="SliderThumbTemplate" TargetType="Thumb">
-            <Border Width="17"
-                    Height="17"
-                    Background="{DynamicResource AppearanceThumbBrush}"
-                    BorderBrush="{DynamicResource AppearanceThumbBorderBrush}"
-                    BorderThickness="1"
-                    CornerRadius="9">
-                <Border.Effect>
-                    <DropShadowEffect BlurRadius="3"
-                                      Direction="270"
-                                      Opacity="0.25"
-                                      ShadowDepth="1"/>
-                </Border.Effect>
-            </Border>
-        </ControlTemplate>
-        <Style x:Key="PoggetSliderStyle" TargetType="Slider">
-            <Setter Property="Height" Value="24"/>
-            <Setter Property="Focusable" Value="True"/>
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="Slider">
-                        <Grid>
-                            <Track x:Name="PART_Track"
-                                   Margin="1,0"
-                                   VerticalAlignment="Center">
-                                <Track.DecreaseRepeatButton>
-                                    <RepeatButton Command="{x:Static Slider.DecreaseLarge}"
-                                                  Template="{StaticResource SliderDecreaseTemplate}"/>
-                                </Track.DecreaseRepeatButton>
-                                <Track.Thumb>
-                                    <Thumb Template="{StaticResource SliderThumbTemplate}"/>
-                                </Track.Thumb>
-                                <Track.IncreaseRepeatButton>
-                                    <RepeatButton Command="{x:Static Slider.IncreaseLarge}"
-                                                  Template="{StaticResource SliderIncreaseTemplate}"/>
-                                </Track.IncreaseRepeatButton>
-                            </Track>
-                        </Grid>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-        </Style>
-        <Style x:Key="ColorEditorStyle" TargetType="TextBox">
-            <Setter Property="Foreground" Value="{DynamicResource AppearanceInputTextBrush}"/>
-            <Setter Property="CaretBrush" Value="{DynamicResource AppearanceInputTextBrush}"/>
-            <Setter Property="Background" Value="{DynamicResource AppearanceInputBrush}"/>
-            <Setter Property="BorderBrush" Value="{DynamicResource AppearanceInputBorderBrush}"/>
-            <Setter Property="BorderThickness" Value="1"/>
-            <Setter Property="Padding" Value="8,5"/>
-            <Setter Property="VerticalContentAlignment" Value="Center"/>
-        </Style>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <!-- The panel keeps its own copy so it renders identically outside the
+                     settings window (appearance preview host). -->
+                <ResourceDictionary Source="SettingsTheme.xaml"/>
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
     </UserControl.Resources>
 
     <StackPanel>
-        <TextBlock Margin="0,2,0,3"
-                   FontSize="16"
-                   FontWeight="SemiBold"
+        <TextBlock Margin="6,2,0,7"
+                   Style="{StaticResource SectionHeaderStyle}"
                    Text="外观与尺寸"/>
+        <local:SettingsGroup>
+            <local:SettingsRow Header="快速配色">
+                <WrapPanel x:Name="PaletteSwatchPanel"/>
+            </local:SettingsRow>
+            <local:SettingsRow Header="这张卡片的外观">
+                <Border Style="{StaticResource SegmentHostStyle}">
+                    <StackPanel Orientation="Horizontal">
+                        <RadioButton x:Name="CardLookLightRadio"
+                                     GroupName="CardLook"
+                                     Style="{StaticResource SegmentRadioStyle}"
+                                     Tag="Light"
+                                     Content="浅色玻璃"
+                                     AutomationProperties.Name="卡片外观浅色玻璃"
+                                     Checked="CardLook_Changed"/>
+                        <RadioButton x:Name="CardLookDarkRadio"
+                                     GroupName="CardLook"
+                                     Style="{StaticResource SegmentRadioStyle}"
+                                     Tag="Dark"
+                                     Content="深色玻璃"
+                                     AutomationProperties.Name="卡片外观深色玻璃"
+                                     Checked="CardLook_Changed"/>
+                        <RadioButton x:Name="CardLookClearRadio"
+                                     GroupName="CardLook"
+                                     Style="{StaticResource SegmentRadioStyle}"
+                                     Tag="Clear"
+                                     Content="无底板"
+                                     AutomationProperties.Name="卡片外观无底板"
+                                     Checked="CardLook_Changed"/>
+                    </StackPanel>
+                </Border>
+            </local:SettingsRow>
+            <local:SettingsRow Style="{StaticResource NestedSettingsRowStyle}" Header="主体颜色">
+                <StackPanel Orientation="Horizontal">
+                    <Border x:Name="BackgroundColorChip"
+                            Width="32"
+                            Height="32"
+                            VerticalAlignment="Center"
+                            CornerRadius="6"
+                            BorderBrush="{DynamicResource SettingsControlBorderBrush}"
+                            BorderThickness="1"/>
+                    <TextBox x:Name="BackgroundColorEditor"
+                             Width="110"
+                             Margin="8,0,0,0"
+                             AutomationProperties.Name="主体颜色"
+                             LostFocus="BackgroundColorEditor_LostFocus"
+                             KeyDown="ColorEditor_KeyDown"/>
+                    <Button x:Name="BackgroundColorButton"
+                            Margin="8,0,0,0"
+                            Content="选择颜色…"
+                            AutomationProperties.Name="选择主体颜色"
+                            Click="BackgroundColorButton_Click"/>
+                </StackPanel>
+            </local:SettingsRow>
+            <local:SettingsRow Style="{StaticResource NestedSettingsRowStyle}" Header="标题栏颜色">
+                <StackPanel Orientation="Horizontal">
+                    <Border x:Name="HeaderColorChip"
+                            Width="32"
+                            Height="32"
+                            VerticalAlignment="Center"
+                            CornerRadius="6"
+                            BorderBrush="{DynamicResource SettingsControlBorderBrush}"
+                            BorderThickness="1"/>
+                    <TextBox x:Name="HeaderColorEditor"
+                             Width="110"
+                             Margin="8,0,0,0"
+                             AutomationProperties.Name="标题栏颜色"
+                             LostFocus="HeaderColorEditor_LostFocus"
+                             KeyDown="ColorEditor_KeyDown"/>
+                    <Button x:Name="HeaderColorButton"
+                            Margin="8,0,0,0"
+                            Content="选择颜色…"
+                            AutomationProperties.Name="选择标题栏颜色"
+                            Click="HeaderColorButton_Click"/>
+                </StackPanel>
+            </local:SettingsRow>
+            <local:SettingsRow Style="{StaticResource NestedSettingsRowStyle}" Header="卡片文字">
+                <StackPanel Orientation="Horizontal">
+                    <Border x:Name="TextColorChip"
+                            Width="32"
+                            Height="32"
+                            VerticalAlignment="Center"
+                            CornerRadius="6"
+                            BorderBrush="{DynamicResource SettingsControlBorderBrush}"
+                            BorderThickness="1"/>
+                    <TextBox x:Name="TextColorEditor"
+                             Width="110"
+                             Margin="8,0,0,0"
+                             AutomationProperties.Name="卡片文字颜色"
+                             LostFocus="TextColorEditor_LostFocus"
+                             KeyDown="ColorEditor_KeyDown"/>
+                    <Button x:Name="TextColorButton"
+                            Margin="8,0,0,0"
+                            Content="选择颜色…"
+                            AutomationProperties.Name="选择卡片文字颜色"
+                            Click="TextColorButton_Click"/>
+                    <Button x:Name="WhiteTextColorButton"
+                            Margin="6,0,0,0"
+                            Content="白"
+                            Tag="#FFFFFF"
+                            AutomationProperties.Name="卡片文字颜色设为白色"
+                            Click="QuickTextColorButton_Click"/>
+                    <Button x:Name="BlackTextColorButton"
+                            Margin="6,0,0,0"
+                            Content="黑"
+                            Tag="#000000"
+                            AutomationProperties.Name="卡片文字颜色设为黑色"
+                            Click="QuickTextColorButton_Click"/>
+                </StackPanel>
+            </local:SettingsRow>
+            <local:SettingsRow Style="{StaticResource NestedSettingsRowStyle}" Header="玻璃浓度">
+                <StackPanel Orientation="Horizontal">
+                    <Slider x:Name="BackgroundOpacitySlider"
+                            Width="190"
+                            Minimum="0"
+                            Maximum="1"
+                            SmallChange="0.01"
+                            LargeChange="0.05"
+                            TickFrequency="0.01"
+                            AutomationProperties.Name="玻璃浓度"
+                            ValueChanged="BackgroundOpacitySlider_ValueChanged"/>
+                    <TextBlock x:Name="BackgroundOpacityText" Style="{StaticResource ValueTextStyle}"/>
+                </StackPanel>
+            </local:SettingsRow>
+            <local:SettingsRow Style="{StaticResource NestedSettingsRowStyle}" Header="标题栏不透明度">
+                <StackPanel Orientation="Horizontal">
+                    <Slider x:Name="HeaderOpacitySlider"
+                            Width="190"
+                            Minimum="0"
+                            Maximum="1"
+                            SmallChange="0.01"
+                            LargeChange="0.05"
+                            TickFrequency="0.01"
+                            AutomationProperties.Name="标题栏不透明度"
+                            ValueChanged="HeaderOpacitySlider_ValueChanged"/>
+                    <TextBlock x:Name="HeaderOpacityText" Style="{StaticResource ValueTextStyle}"/>
+                </StackPanel>
+            </local:SettingsRow>
+            <local:SettingsRow Style="{StaticResource NestedSettingsRowStyle}" Header="圆角">
+                <StackPanel Orientation="Horizontal">
+                    <Slider x:Name="CornerRadiusSlider"
+                            Width="190"
+                            Minimum="0"
+                            Maximum="32"
+                            SmallChange="1"
+                            LargeChange="4"
+                            TickFrequency="1"
+                            IsSnapToTickEnabled="True"
+                            AutomationProperties.Name="卡片圆角"
+                            ValueChanged="CornerRadiusSlider_ValueChanged"/>
+                    <TextBlock x:Name="CornerRadiusText" Style="{StaticResource ValueTextStyle}"/>
+                </StackPanel>
+            </local:SettingsRow>
+        </local:SettingsGroup>
 
-        <StackPanel Margin="0,9,0,0" Orientation="Horizontal">
-            <TextBlock Width="92" VerticalAlignment="Center" Text="快速配色"/>
-            <WrapPanel x:Name="PaletteSwatchPanel"/>
-        </StackPanel>
-
-        <StackPanel Margin="0,9,0,0" Orientation="Horizontal">
-            <TextBlock Width="92" VerticalAlignment="Center" Text="这张卡片"/>
-            <Button Padding="10,4" Content="浅色玻璃" Tag="Light" Click="CardLook_Click"/>
-            <Button Margin="6,0,0,0" Padding="10,4" Content="深色玻璃" Tag="Dark" Click="CardLook_Click"/>
-            <Button Margin="6,0,0,0" Padding="10,4" Content="无底板" Tag="Clear" Click="CardLook_Click"/>
-        </StackPanel>
-
-        <Grid Margin="0,9,0,0">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="92"/>
-                <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="52"/>
-            </Grid.ColumnDefinitions>
-            <TextBlock VerticalAlignment="Center" Text="主体颜色"/>
-            <TextBox x:Name="BackgroundColorEditor"
-                     Grid.Column="1"
-                     Height="31"
-                     Style="{StaticResource ColorEditorStyle}"
-                     LostFocus="BackgroundColorEditor_LostFocus"
-                     KeyDown="ColorEditor_KeyDown"/>
-            <Button x:Name="BackgroundColorButton"
-                    Grid.Column="2"
-                    Height="31"
-                    Margin="6,0,0,0"
-                    Padding="2"
-                    Content="选择"
-                    Foreground="{DynamicResource AppearanceInputTextBrush}"
-                    Click="BackgroundColorButton_Click"/>
-        </Grid>
-
-        <Grid Margin="0,9,0,0">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="92"/>
-                <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="52"/>
-            </Grid.ColumnDefinitions>
-            <TextBlock VerticalAlignment="Center" Text="标题栏颜色"/>
-            <TextBox x:Name="HeaderColorEditor"
-                     Grid.Column="1"
-                     Height="31"
-                     Style="{StaticResource ColorEditorStyle}"
-                     LostFocus="HeaderColorEditor_LostFocus"
-                     KeyDown="ColorEditor_KeyDown"/>
-            <Button x:Name="HeaderColorButton"
-                    Grid.Column="2"
-                    Height="31"
-                    Margin="6,0,0,0"
-                    Padding="2"
-                    Content="选择"
-                    Foreground="{DynamicResource AppearanceInputTextBrush}"
-                    Click="HeaderColorButton_Click"/>
-        </Grid>
-
-        <Grid Margin="0,9,0,0">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="92"/>
-                <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="52"/>
-            </Grid.ColumnDefinitions>
-            <TextBlock VerticalAlignment="Center" Text="卡片文字"/>
-            <TextBox x:Name="TextColorEditor"
-                     Grid.Column="1"
-                     Height="31"
-                     Style="{StaticResource ColorEditorStyle}"
-                     LostFocus="TextColorEditor_LostFocus"
-                     KeyDown="ColorEditor_KeyDown"/>
-            <Button x:Name="TextColorButton"
-                    Grid.Column="2"
-                    Height="31"
-                    Margin="6,0,0,0"
-                    Padding="2"
-                    Content="选择"
-                    Foreground="{DynamicResource AppearanceInputTextBrush}"
-                    Click="TextColorButton_Click"/>
-        </Grid>
-
-        <StackPanel Margin="92,6,0,0" Orientation="Horizontal">
-            <Button x:Name="WhiteTextColorButton"
-                    MinWidth="68"
-                    Padding="8,4"
-                    Tag="#FFFFFF"
-                    Content="白色文字"
-                    Foreground="#243146"
-                    Background="#FFFFFFFF"
-                    Click="QuickTextColorButton_Click"/>
-            <Button x:Name="BlackTextColorButton"
-                    MinWidth="68"
-                    Margin="7,0,0,0"
-                    Padding="8,4"
-                    Tag="#000000"
-                    Content="黑色文字"
-                    Foreground="#FFFFFF"
-                    Background="#FF000000"
-                    Click="QuickTextColorButton_Click"/>
-        </StackPanel>
-
-        <Grid Margin="0,14,0,0">
-            <TextBlock Text="背景不透明度"/>
-            <TextBlock x:Name="BackgroundOpacityText"
-                       HorizontalAlignment="Right"
-                       Foreground="{DynamicResource AppearanceMutedInkBrush}"/>
-        </Grid>
-        <Slider x:Name="BackgroundOpacitySlider"
-                Minimum="0"
-                Maximum="1"
-                SmallChange="0.01"
-                LargeChange="0.05"
-                TickFrequency="0.01"
-                Style="{StaticResource PoggetSliderStyle}"
-                ValueChanged="BackgroundOpacitySlider_ValueChanged"/>
-
-        <Grid Margin="0,8,0,0">
-            <TextBlock Text="标题栏不透明度"/>
-            <TextBlock x:Name="HeaderOpacityText"
-                       HorizontalAlignment="Right"
-                       Foreground="{DynamicResource AppearanceMutedInkBrush}"/>
-        </Grid>
-        <Slider x:Name="HeaderOpacitySlider"
-                Minimum="0"
-                Maximum="1"
-                SmallChange="0.01"
-                LargeChange="0.05"
-                TickFrequency="0.01"
-                Style="{StaticResource PoggetSliderStyle}"
-                ValueChanged="HeaderOpacitySlider_ValueChanged"/>
-
-        <Grid Margin="0,8,0,0">
-            <TextBlock Text="窗口圆角大小"/>
-            <TextBlock x:Name="CornerRadiusText"
-                       HorizontalAlignment="Right"
-                       Foreground="{DynamicResource AppearanceMutedInkBrush}"/>
-        </Grid>
-        <Slider x:Name="CornerRadiusSlider"
-                Minimum="0"
-                Maximum="32"
-                SmallChange="1"
-                LargeChange="4"
-                TickFrequency="1"
-                IsSnapToTickEnabled="True"
-                Style="{StaticResource PoggetSliderStyle}"
-                ValueChanged="CornerRadiusSlider_ValueChanged"/>
-
-        <Border Height="1" Margin="0,10,0,12" Background="{DynamicResource AppearanceDividerBrush}"/>
-
-        <TextBlock FontSize="16"
-                   FontWeight="SemiBold"
-                   Text="卡片尺寸"/>
-        <Grid Margin="0,10,0,0">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="48"/>
-                <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="48"/>
-                <ColumnDefinition Width="*"/>
-            </Grid.ColumnDefinitions>
-            <TextBlock VerticalAlignment="Center" Text="宽度"/>
-            <TextBox x:Name="WidthEditor"
-                     Grid.Column="1"
-                     Height="31"
-                     AutomationProperties.Name="卡片宽度"
-                     Style="{StaticResource ColorEditorStyle}"
-                     TextChanged="SizeEditor_TextChanged"
-                     LostFocus="SizeEditor_LostFocus"
-                     KeyDown="SizeEditor_KeyDown"/>
-            <TextBlock Grid.Column="2"
-                       Margin="8,0,0,0"
-                       VerticalAlignment="Center"
-                       Text="高度"/>
-            <TextBox x:Name="HeightEditor"
-                     Grid.Column="3"
-                     Height="31"
-                     AutomationProperties.Name="卡片高度"
-                     Style="{StaticResource ColorEditorStyle}"
-                     TextChanged="SizeEditor_TextChanged"
-                     LostFocus="SizeEditor_LostFocus"
-                     KeyDown="SizeEditor_KeyDown"/>
-        </Grid>
-
-        <Border Height="1" Margin="0,10,0,12" Background="{DynamicResource AppearanceDividerBrush}"/>
-
-        <TextBlock FontSize="16"
-                   FontWeight="SemiBold"
-                   Text="标题字体"/>
-
-        <Grid Margin="0,11,0,0">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="68"/>
-                <ColumnDefinition Width="*"/>
-            </Grid.ColumnDefinitions>
-            <TextBlock VerticalAlignment="Center" Text="本机字体"/>
-            <ComboBox x:Name="TitleFontFamilyPicker"
-                      Grid.Column="1"
-                      Height="32"
-                      Padding="7,3"
-                      VerticalContentAlignment="Center"
-                      Foreground="{DynamicResource AppearanceInkBrush}"
-                      Background="{DynamicResource AppearanceInputBrush}"
-                      BorderBrush="{DynamicResource AppearanceInputBorderBrush}"
-                      IsTextSearchEnabled="True"
-                      MaxDropDownHeight="280"
-                      ScrollViewer.CanContentScroll="True"
-                      ScrollViewer.IsDeferredScrollingEnabled="True"
-                      VirtualizingPanel.IsVirtualizing="True"
-                      VirtualizingPanel.VirtualizationMode="Recycling"
-                      SelectionChanged="TitleFontFamilyPicker_SelectionChanged"/>
-        </Grid>
-
-        <StackPanel Margin="68,10,0,0" Orientation="Horizontal">
-            <CheckBox x:Name="TitleFontBoldToggle"
-                      MinWidth="72"
-                      VerticalContentAlignment="Center"
-                      Content="粗体"
-                      Click="TitleFontStyleToggle_Click"/>
-            <CheckBox x:Name="TitleFontItalicToggle"
-                      MinWidth="72"
-                      Margin="12,0,0,0"
-                      VerticalContentAlignment="Center"
-                      Content="斜体"
-                      Click="TitleFontStyleToggle_Click"/>
-        </StackPanel>
-
-        <Border Height="1" Margin="0,13,0,12" Background="{DynamicResource AppearanceDividerBrush}"/>
-
-        <Button HorizontalAlignment="Left"
-                Padding="10,6"
-                Content="恢复冰蓝默认"
-                Foreground="{DynamicResource AppearanceSecondaryButtonTextBrush}"
-                Background="{DynamicResource AppearanceSecondaryButtonBrush}"
-                BorderBrush="{DynamicResource AppearanceSecondaryButtonBorderBrush}"
-                Click="ResetButton_Click"/>
+        <TextBlock Style="{StaticResource SectionHeaderStyle}" Text="卡片尺寸与标题字体"/>
+        <local:SettingsGroup>
+            <local:SettingsRow Header="卡片尺寸">
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Margin="0,0,6,0" VerticalAlignment="Center" Text="宽"/>
+                    <TextBox x:Name="WidthEditor"
+                             Width="80"
+                             AutomationProperties.Name="卡片宽度"
+                             TextChanged="SizeEditor_TextChanged"
+                             LostFocus="SizeEditor_LostFocus"
+                             KeyDown="SizeEditor_KeyDown"/>
+                    <TextBlock Margin="14,0,6,0" VerticalAlignment="Center" Text="高"/>
+                    <TextBox x:Name="HeightEditor"
+                             Width="80"
+                             AutomationProperties.Name="卡片高度"
+                             TextChanged="SizeEditor_TextChanged"
+                             LostFocus="SizeEditor_LostFocus"
+                             KeyDown="SizeEditor_KeyDown"/>
+                </StackPanel>
+            </local:SettingsRow>
+            <local:SettingsRow Header="标题字体">
+                <ComboBox x:Name="TitleFontFamilyPicker"
+                          Width="240"
+                          AutomationProperties.Name="标题字体"
+                          IsTextSearchEnabled="True"
+                          MaxDropDownHeight="280"
+                          ScrollViewer.CanContentScroll="True"
+                          ScrollViewer.IsDeferredScrollingEnabled="True"
+                          VirtualizingPanel.IsVirtualizing="True"
+                          VirtualizingPanel.VirtualizationMode="Recycling"
+                          SelectionChanged="TitleFontFamilyPicker_SelectionChanged"/>
+            </local:SettingsRow>
+            <local:SettingsRow Style="{StaticResource NestedSettingsRowStyle}" Header="字体样式">
+                <StackPanel Orientation="Horizontal">
+                    <CheckBox x:Name="TitleFontBoldToggle"
+                              Content="粗体"
+                              AutomationProperties.Name="标题字体粗体"
+                              Click="TitleFontStyleToggle_Click"/>
+                    <CheckBox x:Name="TitleFontItalicToggle"
+                              Margin="18,0,0,0"
+                              Content="斜体"
+                              AutomationProperties.Name="标题字体斜体"
+                              Click="TitleFontStyleToggle_Click"/>
+                </StackPanel>
+            </local:SettingsRow>
+            <local:SettingsRow Style="{StaticResource NestedSettingsRowStyle}"
+                               Header="恢复默认外观"
+                               Description="把这张卡片的外观、圆角和尺寸恢复为冰蓝默认">
+                <Button Content="恢复冰蓝默认"
+                        AutomationProperties.Name="恢复冰蓝默认外观"
+                        Click="ResetButton_Click"/>
+            </local:SettingsRow>
+        </local:SettingsGroup>
     </StackPanel>
 </UserControl>

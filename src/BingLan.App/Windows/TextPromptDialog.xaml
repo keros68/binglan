@@ -10,21 +10,13 @@
         Foreground="{DynamicResource IceInkBrush}"
         FontFamily="{StaticResource UiFont}">
     <Window.Resources>
-        <Style TargetType="TextBox">
-            <Setter Property="Foreground" Value="{DynamicResource IceInkBrush}"/>
-            <Setter Property="CaretBrush" Value="{DynamicResource IceInkBrush}"/>
-            <Setter Property="Background" Value="{DynamicResource SettingsInputBrush}"/>
-            <Setter Property="BorderBrush" Value="{DynamicResource SettingsInputBorderBrush}"/>
-            <Setter Property="BorderThickness" Value="1"/>
-            <Setter Property="Padding" Value="10,7"/>
-        </Style>
-        <Style TargetType="Button">
-            <Setter Property="MinHeight" Value="34"/>
-            <Setter Property="Padding" Value="14,6"/>
-            <Setter Property="Foreground" Value="{DynamicResource IceInkBrush}"/>
-            <Setter Property="Background" Value="{DynamicResource SettingsButtonBrush}"/>
-            <Setter Property="BorderBrush" Value="{DynamicResource SettingsButtonBorderBrush}"/>
-        </Style>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <!-- Shares the settings centre's control chrome so dialogs match the
+                     rest of the Fluent surfaces. -->
+                <ResourceDictionary Source="SettingsTheme.xaml"/>
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
     </Window.Resources>
 
     <StackPanel Margin="24">
@@ -40,9 +32,7 @@
             <Button Margin="10,0,0,0"
                     Content="确定"
                     IsDefault="True"
-                    Foreground="{DynamicResource IceActionTextBrush}"
-                    Background="{DynamicResource IceActionBrush}"
-                    BorderBrush="{DynamicResource IceActionBrush}"
+                    Style="{StaticResource AccentButtonStyle}"
                     Click="Confirm_Click"/>
         </StackPanel>
     </StackPanel>

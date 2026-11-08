@@ -360,6 +360,13 @@ public partial class SettingsWindow : Window
                 DesktopInformationDensity.Compact => 2,
                 _ => 1
             };
+            // The segment shows which material this card wears; custom colours read as
+            // the nearer of light and dark glass.
+            var inferredLook = InferLook(component.Appearance);
+            ComponentLookLightRadio.IsChecked = inferredLook == GlassMode.Light;
+            ComponentLookDarkRadio.IsChecked = inferredLook == GlassMode.Dark;
+            ComponentLookClearRadio.IsChecked = inferredLook == GlassMode.Clear;
+            RefreshComponentColorChips();
             UpdateComponentStyleValueText();
             SelectedComponentHeadingText.Text =
                 _selectedComponentEntry?.Name ?? DesktopExperienceRules.GetComponentName(kind);
@@ -395,8 +402,12 @@ public partial class SettingsWindow : Window
         }
     }
 
-    private void ComponentEditor_TextChanged(object sender, TextChangedEventArgs e) =>
+    private void ComponentEditor_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        // The swatches follow the boxes so a typed colour shows before it applies.
+        RefreshComponentColorChips();
         ScheduleComponentApply();
+    }
 
     private const string DefaultFontLabel = "默认（界面字体）";
 
@@ -410,9 +421,12 @@ public partial class SettingsWindow : Window
     }
 
     // One card takes light glass, dark glass or no backing without changing the others.
-    private void ComponentLook_Click(object sender, RoutedEventArgs e)
+    // The segmented radios also show the current material while the editor loads.
+    private void ComponentLook_Changed(object sender, RoutedEventArgs e)
     {
-        if (sender is not Button { Tag: string tag } || !Enum.TryParse<GlassMode>(tag, out var mode))
+        if (_loadingComponentEditor
+            || sender is not FrameworkElement { Tag: string tag }
+            || !Enum.TryParse<GlassMode>(tag, out var mode))
         {
             return;
         }
@@ -439,6 +453,104 @@ public partial class SettingsWindow : Window
             GlassDensity = density,
             TextInk = TextInk.Auto
         });
+    }
+
+    /// <summary>
+    /// Which material a card currently wears, for the segment control's checked state;
+    /// a custom colour reads as whichever of light or dark glass it is closest to.
+    /// </summary>
+    internal static GlassMode InferLook(WidgetAppearanceState look)
+    {
+        if (string.IsNullOrWhiteSpace(look.BackgroundColor) || look.BackgroundOpacity < 0.05d)
+        {
+            return GlassMode.Clear;
+        }
+
+        try
+        {
+            var color = (System.Windows.Media.Color)System.Windows.Media.ColorConverter
+                .ConvertFromString(look.BackgroundColor)!;
+            var luminance = (0.2126d * color.R + 0.7152d * color.G + 0.0722d * color.B) / 255d;
+            return luminance > 0.5d ? GlassMode.Light : GlassMode.Dark;
+        }
+        catch (FormatException)
+        {
+            return GlassMode.Light;
+        }
+    }
+
+    // A colour dialog for one card's own colour field; cancel keeps the typed value.
+    private void ComponentColorPicker_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { Tag: string target })
+        {
+            return;
+        }
+
+        var editor = target switch
+        {
+            "Background" => SelectedComponentBackgroundColorEditor,
+            "Header" => SelectedComponentHeaderColorEditor,
+            _ => SelectedComponentTextColorEditor
+        };
+        var current = System.Windows.Media.Colors.White;
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(editor.Text))
+            {
+                current = (System.Windows.Media.Color)System.Windows.Media.ColorConverter
+                    .ConvertFromString(editor.Text)!;
+            }
+        }
+        catch (FormatException)
+        {
+        }
+
+        using var dialog = new System.Windows.Forms.ColorDialog
+        {
+            Color = System.Drawing.Color.FromArgb(current.R, current.G, current.B),
+            FullOpen = true,
+            AnyColor = true
+        };
+        if (dialog.ShowDialog() != System.Windows.Forms.DialogResult.OK)
+        {
+            return;
+        }
+
+        editor.Text = $"#{dialog.Color.R:X2}{dialog.Color.G:X2}{dialog.Color.B:X2}";
+    }
+
+    private void RefreshComponentColorChips()
+    {
+        if (SelectedComponentTextColorChip is null)
+        {
+            return;
+        }
+
+        SetColorChip(SelectedComponentTextColorChip, SelectedComponentTextColorEditor.Text);
+        SetColorChip(SelectedComponentBackgroundChip, SelectedComponentBackgroundColorEditor.Text);
+        SetColorChip(SelectedComponentHeaderChip, SelectedComponentHeaderColorEditor.Text);
+    }
+
+    private static void SetColorChip(Border chip, string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            chip.Background = null;
+            return;
+        }
+
+        try
+        {
+            var color = (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(value)!;
+            var brush = new System.Windows.Media.SolidColorBrush(color);
+            brush.Freeze();
+            chip.Background = brush;
+        }
+        catch (FormatException)
+        {
+            // Keep the last valid swatch while a colour is still being typed.
+        }
     }
 
     private void ComponentDensity_SelectionChanged(object sender, SelectionChangedEventArgs e)
