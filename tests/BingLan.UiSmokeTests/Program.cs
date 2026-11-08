@@ -168,6 +168,8 @@ internal static class Program
         Run("原文件删除后映射自动从分组盒清除", TestFileMappingWatchClearsDeletedMapping, failures);
         Run("桌面新文件触发自动收纳，非桌面目录不触发", TestFileMappingWatchImportTrigger, failures);
         Run("分组盒自动刷新开关默认关闭并按需写回", TestFileBoxAutomationToggle, failures);
+        Run("网格对齐开关默认关闭并写回整体风格", TestGridSnapToggle, failures);
+        Run("待办关联文件拖放、移除与临期高亮", TestTodoLinkedFilesAndDueSoon, failures);
         Run("桌面分组盒显示名称与盒间转移", TestFileBoxRenameAndTransfer, failures);
         Run("分组盒删除原文件：默认关闭、确认后移到回收站", TestFileBoxDeleteOriginal, failures);
         Run("分组盒 Ctrl/Shift 多选与选中保持", TestFileBoxMultiSelect, failures);
@@ -2717,6 +2719,131 @@ internal static class Program
         {
             window.Close();
         }
+    }
+
+    private static void TestGridSnapToggle()
+    {
+        var style = new BingLan.Core.Models.DesktopStyleState();
+        var applied = 0;
+        var window = new SettingsWindow(
+            new CityLookupService(),
+            new InformationWidgetState(),
+            DesktopExperienceRules.CreateDefault(),
+            (_, _) => { },
+            _ => { },
+            _ => { },
+            maintenance: new SettingsMaintenance
+            {
+                Style = style,
+                ApplyStyle = () => applied++
+            });
+        ShowAndPump(window);
+        try
+        {
+            var toggle = Require<CheckBox>(window, "GridSnapCheckBox");
+            Assert(toggle.IsChecked == false && applied == 0, "网格对齐应默认关闭且加载时不写回");
+            toggle.IsChecked = true;
+            Pump();
+            Assert(style.GridSnap && applied == 1, "勾选后应开启网格对齐并立即应用");
+            toggle.IsChecked = false;
+            Pump();
+            Assert(!style.GridSnap && applied == 2, "取消勾选后应关闭网格对齐");
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    private static void TestTodoLinkedFilesAndDueSoon()
+    {
+        var temp = Path.Combine(Path.GetTempPath(), $"BingLan-todo-links-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(temp);
+        var report = Path.Combine(temp, "季度报告.docx");
+        File.WriteAllText(report, "draft");
+        try
+        {
+            var state = new TodoWidgetState();
+            var item = TodoService.Add(state, "改报告第三节");
+            var window = new TodoWidgetWindow(state);
+            ShowAndPump(window);
+            try
+            {
+                var row = FindVisualChildren<Border>(window)
+                    .First(border => border.DataContext == item && border.Tag as string == "Interactive");
+
+                // Dropping files links them to the row's entry; duplicates and malformed
+                // paths drop out, and the entry's text stays untouched. (DragEventArgs
+                // has no public constructor, so the test drives the same seam the
+                // PreviewDrop handler delegates to.)
+                var data = new DataObject(
+                    System.Windows.DataFormats.FileDrop,
+                    new[] { report, report.ToUpperInvariant(), "C:|bad", temp });
+                window.LinkDroppedPaths(item, data);
+                Pump();
+                Assert(item.Text == "改报告第三节", "拖放不应把路径写进待办文本");
+                Assert(item.LinkedPaths.Count == 2
+                    && item.LinkedPaths.Contains(report) && item.LinkedPaths.Contains(temp),
+                    "拖放应关联文件与文件夹并去掉重复、畸形路径");
+
+                var openButtons = FindVisualChildren<Button>(row)
+                    .Where(button => System.Windows.Automation.AutomationProperties.GetName(button) == "打开关联文件")
+                    .ToList();
+                Assert(openButtons.Count == 2
+                    && openButtons.Any(button => button.Content as string == "季度报告.docx"),
+                    "关联应以文件名显示为可点击标签");
+
+                var reportButton = openButtons.First(button => button.Content as string == "季度报告.docx");
+                var chip = ChipOf(reportButton, report);
+                Assert(chip is not null, "关联标签应带完整路径提示");
+                FindVisualChildren<Button>(chip!)
+                    .First(button => System.Windows.Automation.AutomationProperties.GetName(button) == "移除关联文件")
+                    .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                Pump();
+                Assert(!item.LinkedPaths.Contains(report) && item.LinkedPaths.Contains(temp),
+                    "点 ✕ 应只移除对应关联");
+
+                // A deadline inside the due-soon window tints the row through the theme brush.
+                var dueBrush = new SolidColorBrush(Colors.Orange);
+                dueBrush.Freeze();
+                window.Resources["TodoDueSoonBrush"] = dueBrush;
+                item.DeadlineDate = DateTime.Today;
+                item.DeadlineTime = new TimeOnly(23, 59);
+                item.RefreshCountdownLabel();
+                Pump();
+                Assert(ReferenceEquals(row.Background, dueBrush), "临期待办行应换成临期底色");
+                item.DeadlineDate = DateTime.Today.AddDays(3);
+                item.DeadlineTime = null;
+                item.RefreshCountdownLabel();
+                Pump();
+                Assert(!ReferenceEquals(row.Background, dueBrush), "远离截止后应恢复普通底色");
+            }
+            finally
+            {
+                window.CanClose = true;
+                window.Close();
+            }
+        }
+        finally
+        {
+            Directory.Delete(temp, true);
+        }
+    }
+
+    private static Border? ChipOf(Button chipButton, string path)
+    {
+        var current = (DependencyObject?)chipButton;
+        while (current is not null)
+        {
+            if (current is Border { ToolTip: string tip } border && tip == path)
+            {
+                return border;
+            }
+            current = current is System.Windows.Media.Visual
+                ? System.Windows.Media.VisualTreeHelper.GetParent(current)
+                : LogicalTreeHelper.GetParent(current);
+        }
+        return null;
     }
 
     private static void TestFileMappingWatchImportTrigger()

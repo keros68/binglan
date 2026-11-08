@@ -591,6 +591,25 @@ public sealed class LocalStateStore
             state.Dock.AutoIconSize = true;
             state.SchemaVersion = 42;
         }
+        if (state.SchemaVersion < 43)
+        {
+            // New field with its default; spelled out so the schema bump stays explicit.
+            state.Style ??= new DesktopStyleState();
+            state.Style.GridSnap = false;
+            state.SchemaVersion = 43;
+        }
+        if (state.SchemaVersion < 44)
+        {
+            // New field with its default; spelled out so the schema bump stays explicit.
+            foreach (var widget in state.TodoWidgets)
+            {
+                foreach (var item in widget.Items ?? [])
+                {
+                    item.LinkedPaths ??= [];
+                }
+            }
+            state.SchemaVersion = 44;
+        }
         state.Updates ??= new UpdateState();
         state.QuickPlaces = QuickPlaceRules.Normalize(state.QuickPlaces);
         state.DismissedDesktopCategories = (state.DismissedDesktopCategories ?? [])

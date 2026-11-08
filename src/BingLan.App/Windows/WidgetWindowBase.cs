@@ -45,6 +45,12 @@ public class WidgetWindowBase : Window
     /// <summary>The gap snapped cards keep between each other; part of the desktop style.</summary>
     internal static double CardSpacingDip { get; set; } = DesktopStyleRules.DefaultCardSpacing;
 
+    /// <summary>
+    /// Whether drags align to the desktop grid instead of to nearby cards; the grid is
+    /// drawn while dragging. Off by default.
+    /// </summary>
+    internal static bool GridSnapEnabled { get; set; }
+
     private MoveSession? _moveSession;
     private DragState? _drag;
 
@@ -459,6 +465,10 @@ public class WidgetWindowBase : Window
 
     public void ApplyWidgetLock(bool isLocked)
     {
+        if (IsWidgetLocked == isLocked)
+        {
+            return;
+        }
         IsWidgetLocked = isLocked;
         OnLockChanged(isLocked);
         if (IsLoaded)
@@ -1540,17 +1550,19 @@ public class WidgetWindowBase : Window
             _moveSession = null;
             TaskbarEdgeGuard.EndMove();
             SnapGuideOverlay.HideGuides();
+            SnapGridOverlay.HideGrid();
             EnsureTaskbarSafeBounds();
         }
     }
 
     // Snaps a proposed position to nearby cards and the work area and shows the matching
-    // guides. Holding Alt moves freely.
+    // guides, or to the desktop grid while grid alignment is on. Holding Alt moves freely.
     private BingLan.Core.Dock.PixelRect Snap(BingLan.Core.Dock.PixelRect moving)
     {
         if ((Keyboard.Modifiers & ModifierKeys.Alt) != 0)
         {
             SnapGuideOverlay.HideGuides();
+            SnapGridOverlay.HideGrid();
             return moving;
         }
 
@@ -1568,6 +1580,13 @@ public class WidgetWindowBase : Window
         }
 
         var scale = monitor.Dpi / 96d;
+        if (GridSnapEnabled)
+        {
+            var cell = (int)Math.Round(DesktopStyleRules.GridCellDip * scale);
+            SnapGridOverlay.ShowGrid(monitor, cell);
+            return SnapRules.SnapToGrid(moving, monitor.WorkingArea.Left, monitor.WorkingArea.Top, cell);
+        }
+
         var result = SnapRules.Snap(
             moving,
             session.Others,

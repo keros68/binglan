@@ -52,6 +52,7 @@ public static class ThemeRules
         {
             CardShadow = state.Style.CardShadow,
             CardSpacing = state.Style.CardSpacing,
+            GridSnap = state.Style.GridSnap,
             Motion = state.Style.Motion,
             TaskbarMaterial = state.Taskbar.Mode switch
             {
@@ -149,6 +150,7 @@ public static class ThemeRules
 
         style.CardShadow = tokens.CardShadow;
         style.CardSpacing = tokens.CardSpacing;
+        style.GridSnap = tokens.GridSnap;
         style.Motion = tokens.Motion;
         if (taskbar.Mode != TaskbarMode.SmartHide)
         {

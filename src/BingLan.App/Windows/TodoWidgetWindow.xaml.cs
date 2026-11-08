@@ -798,6 +798,107 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         NotifyStateChanged();
     }
 
+    // ------------------------------------------------------------------
+    // Linked documents: files or folders an entry keeps one click away.
+
+    // Handled on the row so the text box below never pastes a dropped path into the
+    // entry's text.
+    private void TodoRow_PreviewDragOver(object sender, System.Windows.DragEventArgs e)
+    {
+        if (e.Data.GetDataPresent(System.Windows.DataFormats.FileDrop)
+            && (sender as FrameworkElement)?.DataContext is TodoItemState)
+        {
+            e.Effects = System.Windows.DragDropEffects.Copy;
+            e.Handled = true;
+            return;
+        }
+        e.Effects = System.Windows.DragDropEffects.None;
+    }
+
+    private void TodoRow_PreviewDrop(object sender, System.Windows.DragEventArgs e)
+    {
+        if (!e.Data.GetDataPresent(System.Windows.DataFormats.FileDrop)
+            || (sender as FrameworkElement)?.DataContext is not TodoItemState item)
+        {
+            return;
+        }
+        e.Handled = true;
+        LinkDroppedPaths(item, e.Data);
+    }
+
+    /// <summary>Links the files of one drop to an entry; the seam the drop handler uses.</summary>
+    internal void LinkDroppedPaths(TodoItemState item, System.Windows.IDataObject data)
+    {
+        if (data.GetData(System.Windows.DataFormats.FileDrop) is string[] paths
+            && TodoService.AddLinkedPaths(item, paths) > 0)
+        {
+            NotifyStateChanged();
+        }
+    }
+
+    private void LinkFiles_Click(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not TodoItemState item)
+        {
+            return;
+        }
+        var dialog = new Microsoft.Win32.OpenFileDialog
+        {
+            Title = "关联文件",
+            Multiselect = true,
+            CheckFileExists = true
+        };
+        if (dialog.ShowDialog(this) == true && TodoService.AddLinkedPaths(item, dialog.FileNames) > 0)
+        {
+            NotifyStateChanged();
+        }
+    }
+
+    private void LinkedPath_Click(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is string path)
+        {
+            _ = OpenLinkedPathAsync(path);
+        }
+    }
+
+    // A missing target fails quietly: the entry keeps the link, so the user can drop
+    // the moved file again instead of losing anything.
+    private static async System.Threading.Tasks.Task OpenLinkedPathAsync(string path) =>
+        await Services.ShellLauncher.StartAsync(new System.Diagnostics.ProcessStartInfo(path)
+        {
+            UseShellExecute = true
+        });
+
+    private void RemoveLinkedPath_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement element || element.DataContext is not string path)
+        {
+            return;
+        }
+        if (OwningItem(element) is { } item && TodoService.RemoveLinkedPath(item, path))
+        {
+            NotifyStateChanged();
+        }
+    }
+
+    // Walks up from a chip control to the row that carries the entry.
+    private static TodoItemState? OwningItem(FrameworkElement element)
+    {
+        var current = (System.Windows.DependencyObject?)element;
+        while (current is not null)
+        {
+            if (current is FrameworkElement { DataContext: TodoItemState item })
+            {
+                return item;
+            }
+            current = current is System.Windows.Media.Visual
+                ? System.Windows.Media.VisualTreeHelper.GetParent(current)
+                : System.Windows.LogicalTreeHelper.GetParent(current);
+        }
+        return null;
+    }
+
     private void ToggleCompletedVisibility_Click(object sender, RoutedEventArgs e)
     {
         State.HideCompleted = !State.HideCompleted;
@@ -2473,6 +2574,11 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         if (IsVisible && !State.IsCollapsed)
         {
             foreach (var item in _items.Where(x => x.DeadlineDate is not null)) item.RefreshCountdownLabel();
+        }
+        // An entry whose deadline just entered the due-soon window rises in the list.
+        if (NormalizeTodayList())
+        {
+            NotifyStateChanged();
         }
         ScheduleTodayRefresh();
     }

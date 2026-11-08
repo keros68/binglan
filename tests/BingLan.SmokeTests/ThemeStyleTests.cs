@@ -216,13 +216,20 @@ internal static class ThemeStyleTests
                 && upgraded.Style is { CardShadow: CardShadow.None, Motion: MotionLevel.Standard }
                 && upgraded.Style.CardSpacing == DesktopStyleRules.DefaultCardSpacing,
                 "升级后整体风格应为默认值");
+            Check(!upgraded.Style.GridSnap, "网格对齐应默认关闭");
+
+            File.WriteAllText(store.StatePath, """{ "SchemaVersion": 42 }""");
+            var v42 = store.Load();
+            Check(v42.SchemaVersion == AppState.CurrentSchemaVersion && !v42.Style.GridSnap,
+                "v42 状态迁移后网格对齐应为默认关闭");
 
             upgraded.Style.CardShadow = CardShadow.Strong;
             upgraded.Style.CardSpacing = 24;
             upgraded.Style.Motion = MotionLevel.Off;
+            upgraded.Style.GridSnap = true;
             store.Save(upgraded);
             var reloaded = store.Load();
-            Check(reloaded.Style is { CardShadow: CardShadow.Strong, CardSpacing: 24, Motion: MotionLevel.Off },
+            Check(reloaded.Style is { CardShadow: CardShadow.Strong, CardSpacing: 24, Motion: MotionLevel.Off, GridSnap: true },
                 "整体风格应保存");
         }
         finally
@@ -247,6 +254,7 @@ internal static class ThemeStyleTests
         var state = LocalStateStore.CreateDefault();
         state.Style.CardShadow = CardShadow.Soft;
         state.Style.CardSpacing = 8;
+        state.Style.GridSnap = true;
         state.Style.Motion = MotionLevel.Reduced;
         state.Taskbar.Mode = TaskbarMode.Blur;
         state.Dock.PinnedApps.Add(new DockPinnedApp
@@ -271,6 +279,7 @@ internal static class ThemeStyleTests
             {
                 CardShadow: CardShadow.Soft,
                 CardSpacing: 8,
+                GridSnap: true,
                 Motion: MotionLevel.Reduced,
                 TaskbarMaterial: TaskbarMaterial.Blur
             }, "整体风格应往返保存");
@@ -279,7 +288,7 @@ internal static class ThemeStyleTests
         var target = new DesktopStyleState();
         var taskbar = new TaskbarState();
         ThemeRules.ApplyStyle(result.Package, target, taskbar);
-        Check(target is { CardShadow: CardShadow.Soft, CardSpacing: 8, Motion: MotionLevel.Reduced }
+        Check(target is { CardShadow: CardShadow.Soft, CardSpacing: 8, GridSnap: true, Motion: MotionLevel.Reduced }
             && taskbar.Mode == TaskbarMode.Blur, "导入应应用整体风格和任务栏材质");
 
         var hidden = new TaskbarState { Mode = TaskbarMode.SmartHide };

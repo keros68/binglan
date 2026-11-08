@@ -482,6 +482,22 @@ static void TestSnapRules()
         touching,
         SnapRules.Snap(touching, [other], area, threshold: 10, gap: 16, reach: 64).Bounds,
         "卡片不应贴边吸附到另一张卡片");
+
+    // Grid alignment replaces edge snapping: leading edges land on lattice lines anchored
+    // at the work-area corner and the size never changes.
+    AssertEqual(
+        new PixelRect(132, 72, 332, 272),
+        SnapRules.SnapToGrid(new PixelRect(130, 70, 330, 270), originX: 100, originY: 40, cell: 16),
+        "网格吸附应把左上角对齐到最近格点");
+    AssertEqual(
+        new PixelRect(100, 40, 200, 200),
+        SnapRules.SnapToGrid(new PixelRect(105, 44, 205, 204), originX: 100, originY: 40, cell: 16),
+        "离原点不到半格时应吸附到工作区角落的格线");
+    AssertEqual(
+        100,
+        SnapRules.SnapToGrid(new PixelRect(108, 600, 308, 700), originX: 100, originY: 40, cell: 16).Left,
+        "正中半格距离时取偶数条格线");
+    AssertEqual(far, SnapRules.SnapToGrid(far, 0, 0, cell: 0), "无效格距不应改动位置");
 }
 
 static void TestIdentityPriority()

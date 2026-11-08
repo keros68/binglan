@@ -1,3 +1,4 @@
+using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using System.Text.Json.Serialization;
@@ -183,6 +184,7 @@ public sealed class TodoItemState : INotifyPropertyChanged
             _isCompleted = value;
             OnPropertyChanged();
             OnPropertyChanged(nameof(CountdownLabel));
+            OnPropertyChanged(nameof(IsDueSoon));
         }
     }
     public int Order { get; set; }
@@ -284,12 +286,24 @@ public sealed class TodoItemState : INotifyPropertyChanged
     public DateTimeOffset? CompletedDate { get; set; }
 
     /// <summary>
+    /// Files or folders this entry links to, as full local paths, so a long-running
+    /// piece of work keeps its documents one click away. Local only: links are never
+    /// uploaded and never leave the machine in a theme package.
+    /// </summary>
+    public ObservableCollection<string> LinkedPaths { get; set; } = [];
+
+    /// <summary>Whether an open to-do's deadline is close enough to surface in the list.</summary>
+    [JsonIgnore]
+    public bool IsDueSoon => TodoService.IsDueSoon(this, DateTime.Now);
+
+    /// <summary>
     /// Refreshes clock-derived bindings without changing persisted state.
     /// </summary>
     public void RefreshCountdownLabel()
     {
         OnPropertyChanged(nameof(CountdownLabel));
         OnPropertyChanged(nameof(DeadlineDescription));
+        OnPropertyChanged(nameof(IsDueSoon));
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;

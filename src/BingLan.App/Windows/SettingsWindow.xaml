@@ -446,6 +446,16 @@
                             <ComboBoxItem Content="宽松（24）" Tag="24"/>
                         </ComboBox>
                     </local:SettingsRow>
+                    <local:SettingsRow Glyph="&#xE8A9;"
+                                       GlyphBrush="{DynamicResource SettingsIconIndigoBrush}"
+                                       Header="网格对齐"
+                                       Description="拖动卡片时显示网格并对齐到格点，代替就近卡片对齐；按住 Alt 拖动可临时自由移动">
+                        <CheckBox x:Name="GridSnapCheckBox"
+                                  AutomationProperties.Name="网格对齐"
+                                  Style="{StaticResource ToggleSwitchStyle}"
+                                  Checked="GridSnapCheckBox_Changed"
+                                  Unchecked="GridSnapCheckBox_Changed"/>
+                    </local:SettingsRow>
                     <local:SettingsRow Glyph="&#xE8B5;"
                                        GlyphBrush="{DynamicResource SettingsIconGreenBrush}"
                                        Header="从 Rainmeter 皮肤导入"
@@ -943,6 +953,33 @@
                                         <Button Margin="6,0,0,0" Content="蓝" Tag="#A0B4E1" AutomationProperties.Name="玻璃颜色设为蓝色" Click="QuickBackgroundColor_Click"/>
                                     </StackPanel>
                                 </local:SettingsRow>
+                                <!-- 只有待办卡片有标题栏；其余信息卡是裸文字表面，
+                                     隐藏在这里调不出来的选项。 -->
+                                <StackPanel x:Name="SelectedComponentHeaderRows"
+                                            Visibility="Collapsed">
+                                    <local:SettingsRow Header="标题栏颜色">
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBox x:Name="SelectedComponentHeaderColorEditor"
+                                                     Width="120"
+                                                     AutomationProperties.Name="标题栏颜色"
+                                                     TextChanged="ComponentEditor_TextChanged"/>
+                                            <Button Margin="8,0,0,0" Content="白" Tag="#FFFFFF" AutomationProperties.Name="标题栏颜色设为白色" Click="QuickHeaderColor_Click"/>
+                                            <Button Margin="6,0,0,0" Content="蓝" Tag="#A0B4E1" AutomationProperties.Name="标题栏颜色设为冰蓝" Click="QuickHeaderColor_Click"/>
+                                        </StackPanel>
+                                    </local:SettingsRow>
+                                    <local:SettingsRow Header="标题栏不透明度">
+                                        <StackPanel Orientation="Horizontal">
+                                            <Slider x:Name="SelectedComponentHeaderOpacitySlider"
+                                                    Width="190"
+                                                    AutomationProperties.Name="标题栏不透明度"
+                                                    Minimum="0"
+                                                    Maximum="1"
+                                                    TickFrequency="0.04"
+                                                    ValueChanged="ComponentStyleSlider_ValueChanged"/>
+                                            <TextBlock x:Name="SelectedComponentHeaderOpacityValueText" Style="{StaticResource ValueTextStyle}"/>
+                                        </StackPanel>
+                                    </local:SettingsRow>
+                                </StackPanel>
                                 </local:SettingsGroup>
 
                                 <TextBlock Style="{StaticResource SectionHeaderStyle}" Text="形状与尺寸"/>

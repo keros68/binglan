@@ -45,6 +45,10 @@ public sealed class ThemeStyleTokens
 {
     public CardShadow CardShadow { get; set; } = CardShadow.None;
     public double CardSpacing { get; set; } = DesktopStyleRules.DefaultCardSpacing;
+
+    /// <summary>Whether imported layouts align cards to the desktop grid; off in older packages.</summary>
+    public bool GridSnap { get; set; }
+
     public MotionLevel Motion { get; set; } = MotionLevel.Standard;
     public TaskbarMaterial TaskbarMaterial { get; set; } = TaskbarMaterial.SystemDefault;
 }

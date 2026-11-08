@@ -63,6 +63,25 @@ public static class SnapRules
         return new SnapResult(snapped, guides);
     }
 
+    /// <summary>
+    /// Snaps a card being dragged onto the desktop grid: the leading edges land on the
+    /// nearest grid line of a lattice anchored at the work-area corner, and the size is
+    /// untouched. Used instead of <see cref="Snap"/> while the user has grid alignment
+    /// on; guides are replaced by the grid the overlay draws. A non-positive cell keeps
+    /// the position as given.
+    /// </summary>
+    public static PixelRect SnapToGrid(PixelRect moving, int originX, int originY, int cell)
+    {
+        if (cell <= 0)
+        {
+            return moving;
+        }
+
+        var left = originX + (int)Math.Round((moving.Left - originX) / (double)cell) * cell;
+        var top = originY + (int)Math.Round((moving.Top - originY) / (double)cell) * cell;
+        return new PixelRect(left, top, left + (moving.Right - moving.Left), top + (moving.Bottom - moving.Top));
+    }
+
     private static List<(int Target, bool Leading, SnapGuideKind Kind)> Candidates(
         int areaStart,
         int areaEnd,

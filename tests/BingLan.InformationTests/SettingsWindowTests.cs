@@ -175,6 +175,120 @@ internal static class SettingsWindowTests
         }
     }
 
+    public static void ComponentSizeAppliesToShownWindow()
+    {
+        var experience = DesktopExperienceRules.CreateDefault();
+        var todoState = TodoService.CreateDefaultWidget();
+        var todoWindow = new TodoWidgetWindow(todoState);
+        ShowAndPump(todoWindow);
+        try
+        {
+            // 复刻 WidgetCoordinator 的两段关键行为：窗口状态变化会把窗口当前
+            // 尺寸回写进组件 Placement（Wire → OnWindowStateChanged → Capture），
+            // 应用桌面状态期间这段回写被挂起（_isApplyingDesktopExperience）。
+            var applyingExperience = false;
+            todoWindow.WidgetChanged += _ =>
+            {
+                if (applyingExperience)
+                {
+                    return;
+                }
+                todoWindow.CaptureState();
+                experience.GetComponent(DesktopComponentKind.Todo).Placement = todoState.Placement;
+            };
+            var window = new SettingsWindow(
+                new CityLookupService(new CitySearchService(new StubHttpMessageHandler()), CityLibrary.Empty),
+                new InformationWidgetState(),
+                experience,
+                (_, _) => { },
+                _ => { },
+                state =>
+                {
+                    // 与 WidgetCoordinator.ApplyDesktopExperienceCore 的待办分支一致：
+                    // 第一张待办卡跟随组件 Placement，外观跟随组件 Appearance。
+                    applyingExperience = true;
+                    try
+                    {
+                        var todoComponent = state.GetComponent(DesktopComponentKind.Todo);
+                        todoWindow.SetWidgetBackgroundColor(todoComponent.Appearance.BackgroundColor);
+                        todoWindow.SetWidgetBackgroundOpacity(todoComponent.Appearance.BackgroundOpacity);
+                        todoWindow.SetWidgetHeaderColor(todoComponent.Appearance.HeaderColor);
+                        todoWindow.SetWidgetHeaderOpacity(todoComponent.Appearance.HeaderOpacity);
+                        todoWindow.SetWidgetTextColor(todoComponent.Appearance.TextColor);
+                        todoState.Placement = todoComponent.Placement;
+                        todoState.IsLocked = todoComponent.IsLocked;
+                        todoWindow.ApplyPlacement(todoState.Placement, todoState.IsLocked);
+                    }
+                    finally
+                    {
+                        applyingExperience = false;
+                    }
+                },
+                widgetProvider: () => [todoWindow],
+                applyWidgetLock: (target, locked) =>
+                {
+                    // 与 WidgetCoordinator.ApplyWidgetLock 一致：先改窗口，窗口事件
+                    // 随即触发上面的回写。
+                    target.ApplyWidgetLock(locked);
+                    experience.GetComponent(DesktopComponentKind.Todo).IsLocked = locked;
+                });
+            ShowAndPump(window);
+            try
+            {
+                window.ShowWidgetSettings(todoWindow);
+                Pump();
+                Assert(
+                    Require<TextBlock>(window, "SelectedComponentHeadingText").Text.Contains("待办"),
+                    "进入组件页应选中待办卡片");
+
+                Require<TextBox>(window, "SelectedComponentWidthEditor").Text = "410";
+                Require<TextBox>(window, "SelectedComponentHeightEditor").Text = "176";
+                window.CommitPendingChanges();
+                Pump();
+
+                AssertEqual(410d, todoWindow.ActualWidth, "设置宽应用到已显示的待办窗口");
+                AssertEqual(176d, todoWindow.ActualHeight, "设置高应用到已显示的待办窗口");
+
+                // 待办卡片是唯一带标题栏的内置组件：标题栏颜色与不透明度可见，
+                // 且改动随组件状态落到卡片上（与分组盒的标题栏设置对齐）。
+                var headerRows = Require<StackPanel>(window, "SelectedComponentHeaderRows");
+                AssertEqual(Visibility.Visible, headerRows.Visibility, "待办卡片显示标题栏设置");
+                Require<Slider>(window, "SelectedComponentHeaderOpacitySlider").Value = 0.5;
+                Require<TextBox>(window, "SelectedComponentHeaderColorEditor").Text = "#123456";
+                window.CommitPendingChanges();
+                Pump();
+                AssertEqual(0.5,
+                    experience.GetComponent(DesktopComponentKind.Todo).Appearance.HeaderOpacity,
+                    "标题栏不透明度写入组件");
+                AssertEqual("#123456",
+                    experience.GetComponent(DesktopComponentKind.Todo).Appearance.HeaderColor,
+                    "标题栏颜色写入组件");
+                AssertEqual(0.5, todoWindow.WidgetAppearance.HeaderOpacity,
+                    "标题栏不透明度应用到待办窗口");
+                AssertEqual("#123456", todoWindow.WidgetAppearance.HeaderColor,
+                    "标题栏颜色应用到待办窗口");
+
+                // 裸文字信息卡没有标题栏，对应设置行隐藏。
+                window.ShowComponentSettings(DesktopComponentKind.TimeDate);
+                Pump();
+                AssertEqual(Visibility.Collapsed,
+                    Require<StackPanel>(window, "SelectedComponentHeaderRows").Visibility,
+                    "无标题栏组件隐藏标题栏设置");
+            }
+            finally
+            {
+                window.Close();
+                Pump();
+            }
+        }
+        finally
+        {
+            todoWindow.CanClose = true;
+            todoWindow.Close();
+            Pump();
+        }
+    }
+
     private static void Click(Button button)
     {
         button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));

@@ -238,6 +238,130 @@ public static class TodoService
             .Concat(items.Where(x => x.Kind == TodoItemKind.Countdown))
             .Concat(items.Where(x => x.Kind != TodoItemKind.Event && x.Kind != TodoItemKind.Countdown));
 
+    /// <summary>How long before its deadline an open to-do counts as due soon.</summary>
+    public static readonly TimeSpan DueSoonWindow = TimeSpan.FromHours(24);
+
+    /// <summary>The most linked paths one entry keeps; beyond this drops are ignored.</summary>
+    public const int MaximumLinkedPaths = 16;
+
+    /// <summary>
+    /// Whether an open to-do's deadline is within the due-soon window, overdue included:
+    /// a timed deadline compares against the wall clock, a date-only deadline turns due
+    /// soon on the day before it. Events, countdowns and completed entries never are.
+    /// </summary>
+    public static bool IsDueSoon(TodoItemState item, DateTime now)
+    {
+        if (item.Kind != TodoItemKind.Todo || item.IsCompleted || item.DeadlineDate is not { } target)
+        {
+            return false;
+        }
+        return item.DeadlineTime is { } time
+            ? target.Date.Add(time.ToTimeSpan()) <= now + DueSoonWindow
+            : target.Date <= now.Date.AddDays(1);
+    }
+
+    private static DateTime DeadlineMoment(TodoItemState item) =>
+        item.DeadlineTime is { } time
+            ? item.DeadlineDate!.Value.Date.Add(time.ToTimeSpan())
+            : item.DeadlineDate!.Value.Date;
+
+    // The today list's arrangement inside one completion group: timed events first, then
+    // due-soon to-dos closest deadline first, then countdown entries, then the rest.
+    private static Func<List<TodoItemState>, IEnumerable<TodoItemState>> TodayArrangement()
+    {
+        var now = DateTime.Now;
+        return items => items
+            .Where(x => x.Kind == TodoItemKind.Event)
+            .OrderBy(x => x.Time is null)
+            .ThenBy(x => x.Time)
+            .Concat(items.Where(x => IsDueSoon(x, now)).OrderBy(DeadlineMoment))
+            .Concat(items.Where(x => x.Kind == TodoItemKind.Countdown))
+            .Concat(items.Where(x =>
+                x.Kind != TodoItemKind.Event
+                && x.Kind != TodoItemKind.Countdown
+                && !IsDueSoon(x, now)));
+    }
+
+    /// <summary>
+    /// Cleans candidate link paths into unique full paths: blanks and malformed values
+    /// are dropped, duplicates fold case-insensitively, and the count is capped.
+    /// </summary>
+    public static List<string> NormalizeLinkedPathList(IEnumerable<string?>? paths)
+    {
+        var result = new List<string>();
+        if (paths is null)
+        {
+            return result;
+        }
+        foreach (var raw in paths)
+        {
+            if (result.Count >= MaximumLinkedPaths)
+            {
+                break;
+            }
+            var candidate = raw?.Trim();
+            if (string.IsNullOrEmpty(candidate))
+            {
+                continue;
+            }
+            // .NET no longer rejects characters Windows forbids, so check them here.
+            if (candidate.IndexOfAny(System.IO.Path.GetInvalidPathChars()) >= 0)
+            {
+                continue;
+            }
+            string full;
+            try
+            {
+                full = System.IO.Path.GetFullPath(candidate);
+            }
+            catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+            {
+                continue;
+            }
+            if (!result.Contains(full, StringComparer.OrdinalIgnoreCase))
+            {
+                result.Add(full);
+            }
+        }
+        return result;
+    }
+
+    /// <summary>Adds link paths to an entry, skipping blanks, malformed values and duplicates; returns how many were added.</summary>
+    public static int AddLinkedPaths(TodoItemState item, IEnumerable<string?>? paths)
+    {
+        ArgumentNullException.ThrowIfNull(item);
+        var known = new HashSet<string>(item.LinkedPaths, StringComparer.OrdinalIgnoreCase);
+        var added = 0;
+        foreach (var path in NormalizeLinkedPathList(paths))
+        {
+            if (item.LinkedPaths.Count >= MaximumLinkedPaths)
+            {
+                break;
+            }
+            if (known.Add(path))
+            {
+                item.LinkedPaths.Add(path);
+                added++;
+            }
+        }
+        return added;
+    }
+
+    /// <summary>Removes one link path, matched case-insensitively; true when it was there.</summary>
+    public static bool RemoveLinkedPath(TodoItemState item, string path)
+    {
+        ArgumentNullException.ThrowIfNull(item);
+        ArgumentNullException.ThrowIfNull(path);
+        var existing = item.LinkedPaths.FirstOrDefault(candidate =>
+            string.Equals(candidate, path, StringComparison.OrdinalIgnoreCase));
+        if (existing is null)
+        {
+            return false;
+        }
+        item.LinkedPaths.Remove(existing);
+        return true;
+    }
+
     /// <summary>
     /// Moves a day's events ahead of its to-dos by reusing that day's order slots, so
     /// entries on other days keep their positions. Manual reorders and editor saves call
@@ -280,12 +404,17 @@ public static class TodoService
     /// Keeps the current today list's incomplete entries ahead of completed ones when
     /// its membership changes (for example, after midnight or after adding an entry).
     /// The order within each group and all out-of-scope positions remain unchanged.
+    /// Inside the incomplete group the day's events stay ahead, then open to-dos whose
+    /// deadline is due soon (closest first), then countdown entries.
     /// </summary>
     public static bool NormalizeTodayCompletionOrder(TodoWidgetState widget, DateTime today)
-        => OrderCompletedWithinScope(widget, x => BelongsToTodayList(x, today), null);
+        => OrderCompletedWithinScope(widget, x => BelongsToTodayList(x, today), null, TodayArrangement());
 
     private static bool OrderCompletedWithinScope(
-        TodoWidgetState widget, Func<TodoItemState, bool> scope, Guid? toggledItemId)
+        TodoWidgetState widget,
+        Func<TodoItemState, bool> scope,
+        Guid? toggledItemId,
+        Func<List<TodoItemState>, IEnumerable<TodoItemState>>? arrangement = null)
     {
         var ordered = widget.Items.OrderBy(x => x.Order).ToList();
         var scopedIndices = new List<int>();
@@ -324,8 +453,9 @@ public static class TodoService
         }
 
         var reorderedScope = new List<TodoItemState>(scopedItems.Count);
-        reorderedScope.AddRange(EventsBeforeTodos(incomplete));
-        reorderedScope.AddRange(EventsBeforeTodos(completed));
+        var arrange = arrangement ?? EventsBeforeTodos;
+        reorderedScope.AddRange(arrange(incomplete));
+        reorderedScope.AddRange(arrange(completed));
 
         var changed = false;
         for (var i = 0; i < scopedItems.Count; i++)
@@ -715,5 +845,18 @@ public static class TodoService
                 return item;
             })
             .ToList();
+        foreach (var item in widget.Items)
+        {
+            item.LinkedPaths ??= [];
+            var cleaned = NormalizeLinkedPathList(item.LinkedPaths);
+            if (!cleaned.SequenceEqual(item.LinkedPaths, StringComparer.OrdinalIgnoreCase))
+            {
+                item.LinkedPaths.Clear();
+                foreach (var path in cleaned)
+                {
+                    item.LinkedPaths.Add(path);
+                }
+            }
+        }
     }
 }

@@ -20,6 +20,7 @@ Run("待办日期持久化与官方版本兼容", TestTodoDatePersistence);
 Run("行程字段持久化与 v38 迁移", TestTodoEventPersistence);
 Run("倒数日排序、标签与今日列表归属", TestTodoCountdown);
 Run("倒数日字段持久化与 v39 迁移", TestTodoCountdownPersistence);
+Run("待办临期判定、今日排列与关联文件", TestTodoDueSoonAndLinks);
 Run("待办截止时间与分钟倒计时", TestTodoDeadlines);
 if (Environment.GetEnvironmentVariable("BINGLAN_TODO_LEGACY_SAMPLE_PATH") is { Length: > 0 })
 {
@@ -810,6 +811,93 @@ static void TestTodoCountdown()
     Assert(countdown.CountdownLabel == "还剩 3 天", "CountdownLabel 属性应与规则一致");
     countdown.DeadlineDate = today;
     Assert(countdown.CountdownLabel == "今天", "目标日变化后属性应同步刷新");
+}
+
+static void TestTodoDueSoonAndLinks()
+{
+    var now = DateTime.Now;
+
+    bool DueSoon(DateTime? deadline, TimeOnly? time = null, bool completed = false, TodoItemKind kind = TodoItemKind.Todo) =>
+        TodoService.IsDueSoon(
+            new TodoItemState { Kind = kind, IsCompleted = completed, DeadlineDate = deadline, DeadlineTime = time },
+            now);
+
+    Assert(DueSoon(now.Date, new TimeOnly(23, 59)), "当天带时间的截止应算临期");
+    Assert(!DueSoon(now.Date.AddDays(3), new TimeOnly(0, 1)), "三天后的截止不应算临期");
+    Assert(DueSoon(now.Date.AddDays(1)), "仅日期的截止在截止前一天应算临期");
+    Assert(!DueSoon(now.Date.AddDays(2)), "仅日期的截止两天后不应算临期");
+    Assert(DueSoon(now.Date.AddDays(-1)), "已过期的截止仍应算临期");
+    Assert(!DueSoon(now.Date, new TimeOnly(23, 59), completed: true), "已完成条目不算临期");
+    Assert(!DueSoon(now.Date, new TimeOnly(23, 59), kind: TodoItemKind.Event), "行程不算临期");
+    Assert(!DueSoon(now.Date, new TimeOnly(23, 59), kind: TodoItemKind.Countdown), "倒数日不算临期");
+    Assert(!DueSoon(null), "无截止不算临期");
+
+    // 今日列表排列：行程 → 临期待办（近的在前）→ 倒数日 → 其余待办，完成的沉底。
+    var widget = TodoService.CreateDefaultWidget();
+    var plain = TodoService.Add(widget, "普通");
+    var publish = TodoService.Add(widget, "发布");
+    TodoService.SetKind(widget, publish.Id, TodoItemKind.Countdown);
+    var weekly = TodoService.Add(widget, "周报");
+    weekly.DeadlineDate = now.Date;
+    weekly.DeadlineTime = new TimeOnly(23, 59);
+    var firefight = TodoService.Add(widget, "救火");
+    firefight.DeadlineDate = now.Date;
+    firefight.DeadlineTime = new TimeOnly(12, 0);
+    var meeting = TodoService.Add(widget, "评审会");
+    TodoService.SetKind(widget, meeting.Id, TodoItemKind.Event);
+    TodoService.SetTime(widget, meeting.Id, new TimeOnly(14, 0));
+    var finished = TodoService.Add(widget, "已完");
+    TodoService.SetCompleted(widget, finished.Id, true);
+
+    TodoService.NormalizeTodayCompletionOrder(widget, DateTime.Today);
+    Assert(widget.Items.Select(x => x.Text).ToList()
+        .SequenceEqual(["评审会", "救火", "周报", "发布", "普通", "已完"]),
+        $"今日列表应把临期待办排在倒数日前：{string.Join(",", widget.Items.Select(x => x.Text))}");
+
+    var entry = new TodoItemState();
+    Assert(TodoService.AddLinkedPaths(entry,
+        [@"C:\Work\报告.docx", @"c:\work\报告.docx", "", "  ", "C:|bad"]) == 1,
+        "关联应去重并丢弃空值与畸形路径");
+    Assert(entry.LinkedPaths.Single() == @"C:\Work\报告.docx", "关联路径应保留原大小写");
+    var folder = new TodoItemState();
+    Assert(TodoService.AddLinkedPaths(folder, [@"C:\Work\资料", @"C:\Work\报告.docx"]) == 2,
+        "文件与文件夹都应可关联");
+    Assert(TodoService.RemoveLinkedPath(folder, @"c:\work\资料"), "移除关联应不区分大小写");
+    Assert(folder.LinkedPaths.Single().EndsWith("报告.docx"), "移除后应保留其余关联");
+    var capped = new TodoItemState();
+    Assert(TodoService.AddLinkedPaths(capped, Enumerable.Range(0, 20).Select(i => $@"C:\Work\f{i}.txt"))
+        == TodoService.MaximumLinkedPaths, "一次拖入超过上限时只加上限以内的关联");
+    Assert(capped.LinkedPaths.Count == TodoService.MaximumLinkedPaths, "关联数量应封顶");
+
+    var messy = new TodoItemState();
+    messy.LinkedPaths.Add(@"C:\Work\A.txt");
+    messy.LinkedPaths.Add(@"c:\work\a.txt");
+    var messyWidget = new TodoWidgetState();
+    messyWidget.Items.Add(messy);
+    TodoService.Normalize(messyWidget);
+    Assert(messy.LinkedPaths.Count == 1, "Normalize 应合并大小写重复的关联");
+
+    var temp = Path.Combine(Path.GetTempPath(), $"BingLan-todo-links-{Guid.NewGuid():N}");
+    try
+    {
+        var store = new LocalStateStore(temp);
+        Directory.CreateDirectory(temp);
+        File.WriteAllText(store.StatePath,
+            """{ "SchemaVersion": 43, "TodoWidgets": [ { "Title": "t", "Items": [ { "Text": "旧条目" } ] } ] }""");
+        var v43 = store.Load();
+        Assert(v43.SchemaVersion == AppState.CurrentSchemaVersion
+            && v43.TodoWidgets.Single().Items.Single().LinkedPaths is { Count: 0 },
+            "v43 状态迁移后关联列表应为空集合");
+
+        v43.TodoWidgets.Single().Items.Single().LinkedPaths.Add(@"C:\Work\报告.docx");
+        store.Save(v43);
+        Assert(store.Load().TodoWidgets.Single().Items.Single().LinkedPaths.SequenceEqual([@"C:\Work\报告.docx"]),
+            "关联路径应保存并在重载后保持");
+    }
+    finally
+    {
+        Directory.Delete(temp, true);
+    }
 }
 
 static void TestTodoCountdownPersistence()

@@ -737,6 +737,8 @@ public sealed class WidgetCoordinator : IDisposable
     {
         window.SetWidgetBackgroundColor(component.Appearance.BackgroundColor);
         window.SetWidgetBackgroundOpacity(component.Appearance.BackgroundOpacity);
+        window.SetWidgetHeaderColor(component.Appearance.HeaderColor);
+        window.SetWidgetHeaderOpacity(component.Appearance.HeaderOpacity);
         window.SetWidgetTextColor(component.Appearance.TextColor);
         window.SetContentFontScale(component.FontScale);
         window.SetContentFontFamily(component.FontFamily);
@@ -1450,11 +1452,12 @@ public sealed class WidgetCoordinator : IDisposable
         }
     }
 
-    // Card spacing and dock motion are read when a card is dragged or an icon hovered,
-    // so they take effect at once; the card shadow is redrawn on every open card.
+    // Card spacing, grid alignment and dock motion are read when a card is dragged or an
+    // icon hovered, so they take effect at once; the card shadow is redrawn on every open card.
     private void ApplyStyleSettings()
     {
         WidgetWindowBase.CardSpacingDip = _state.Style.CardSpacing;
+        WidgetWindowBase.GridSnapEnabled = _state.Style.GridSnap;
         ApplyItemSurface();
         IceBlueDockWindow.Motion = _state.Style.Motion;
         foreach (var window in _windows)
@@ -1529,6 +1532,8 @@ public sealed class WidgetCoordinator : IDisposable
         resources["DockSurfaceBorderBrush"] = Brush(dock.Border);
         resources["DockRunningDotBrush"] = Brush(dock.RunningDot);
         resources["PerformanceAccentBrush"] = Brush("#F5" + _state.Style.AccentColor.TrimStart('#'));
+        // A whisper of the accent colour behind an entry whose deadline is due soon.
+        resources["TodoDueSoonBrush"] = Brush("#26" + _state.Style.AccentColor.TrimStart('#'));
 
         static System.Windows.Media.SolidColorBrush Brush(string value)
         {

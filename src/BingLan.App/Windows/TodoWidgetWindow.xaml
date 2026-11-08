@@ -15,6 +15,7 @@
                         FontFamily="{DynamicResource TodoContentFont}"
                         Foreground="{DynamicResource PrimaryTextBrush}">
     <local:WidgetWindowBase.Resources>
+        <local:FileNameConverter x:Key="FileNameConverter"/>
         <!-- Events and standalone countdowns use a marker instead of a completion box. -->
         <Style x:Key="TodoKindCheckBox" TargetType="CheckBox" BasedOn="{StaticResource {x:Type CheckBox}}">
             <Style.Triggers>
@@ -452,8 +453,21 @@
                             <Border Tag="Interactive"
                                     Margin="2,2,6,3"
                                     Padding="8,8"
-                                    CornerRadius="{Binding ItemCornerRadius, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
-                                    Background="{DynamicResource WidgetItemSurfaceBrush}">
+                                    AllowDrop="True"
+                                    PreviewDragOver="TodoRow_PreviewDragOver"
+                                    PreviewDrop="TodoRow_PreviewDrop"
+                                    CornerRadius="{Binding ItemCornerRadius, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}">
+                                <Border.Style>
+                                    <Style TargetType="Border">
+                                        <Setter Property="Background" Value="{DynamicResource WidgetItemSurfaceBrush}"/>
+                                        <Style.Triggers>
+                                            <!-- An approaching deadline tints the row so it stands out before it slips. -->
+                                            <DataTrigger Binding="{Binding IsDueSoon}" Value="True">
+                                                <Setter Property="Background" Value="{DynamicResource TodoDueSoonBrush}"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Border.Style>
                                 <Border.ContextMenu>
                                     <ContextMenu DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}">
                                         <MenuItem Header="上移" Click="MoveUp_Click"/>
@@ -465,11 +479,13 @@
                                         <MenuItem Style="{StaticResource TimeMenuItem}" Click="SetTime_Click"/>
                                         <MenuItem Style="{StaticResource TargetDateMenuItem}" Click="SetTargetDate_Click"/>
                                         <Separator/>
+                                        <MenuItem Header="关联文件…" Click="LinkFiles_Click"/>
+                                        <Separator/>
                                         <MenuItem Header="删除" Click="DeleteTodo_Click"/>
                                     </ContextMenu>
                                 </Border.ContextMenu>
                                 <Grid>
-                                    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                                    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="Auto" MinWidth="27"/>
                                         <ColumnDefinition Width="*"/>
@@ -523,6 +539,53 @@
                                         </TextBox.Style>
                                     </TextBox>
                                     <TextBlock Grid.Row="1" Grid.Column="1" Style="{StaticResource CountdownLabelText}" FontSize="{DynamicResource TodoFont.ListItem}" Foreground="{Binding WidgetSecondaryTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
+                                    <!-- Linked documents stay one click away; the chip opens, the ✕ unlinks. -->
+                                    <ItemsControl Grid.Row="2"
+                                                  Grid.Column="1"
+                                                  Margin="0,4,0,0"
+                                                  Focusable="False"
+                                                  IsTabStop="False"
+                                                  ItemsSource="{Binding LinkedPaths}">
+                                        <ItemsControl.ItemsPanel>
+                                            <ItemsPanelTemplate>
+                                                <WrapPanel/>
+                                            </ItemsPanelTemplate>
+                                        </ItemsControl.ItemsPanel>
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Border CornerRadius="8"
+                                                        Margin="0,0,6,3"
+                                                        Padding="8,2"
+                                                        Background="{DynamicResource WidgetSubtleControlBrush}"
+                                                        ToolTip="{Binding}">
+                                                    <StackPanel Orientation="Horizontal">
+                                                        <Button Content="{Binding Converter={StaticResource FileNameConverter}}"
+                                                                Click="LinkedPath_Click"
+                                                                AutomationProperties.Name="打开关联文件"
+                                                                Background="Transparent"
+                                                                BorderThickness="0"
+                                                                Padding="2,0"
+                                                                MinHeight="22"
+                                                                VerticalAlignment="Center"
+                                                                FontSize="{DynamicResource TodoFont.ListItem}"
+                                                                Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
+                                                        <Button Content="✕"
+                                                                Click="RemoveLinkedPath_Click"
+                                                                AutomationProperties.Name="移除关联文件"
+                                                                Background="Transparent"
+                                                                BorderThickness="0"
+                                                                Width="22"
+                                                                Height="22"
+                                                                Padding="0"
+                                                                VerticalAlignment="Center"
+                                                                FontSize="10"
+                                                                ToolTip="移除关联"
+                                                                Foreground="{Binding WidgetSecondaryTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
+                                                    </StackPanel>
+                                                </Border>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
                                     <TextBlock Grid.Column="1"
                                                Margin="4,0,0,0"
                                                VerticalAlignment="Center"

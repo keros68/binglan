@@ -72,6 +72,12 @@ public sealed class DesktopStyleState
         set => _cardSpacing = DesktopStyleRules.CoerceCardSpacing(value);
     }
 
+    /// <summary>
+    /// Whether dragging aligns cards to the desktop grid instead of to nearby cards. Off
+    /// by default, so cards keep moving freely until the user asks for the grid.
+    /// </summary>
+    public bool GridSnap { get; set; }
+
     public MotionLevel Motion { get; set; } = MotionLevel.Standard;
 
     public GlassMode Glass { get; set; } = GlassMode.Light;
@@ -128,6 +134,9 @@ public static class DesktopStyleRules
     public const double DefaultCardSpacing = 16d;
     public const double MinimumCardSpacing = 0d;
     public const double MaximumCardSpacing = 40d;
+
+    /// <summary>The cell of the optional snap grid, in DIP; part of the desktop style.</summary>
+    public const double GridCellDip = 16d;
     public const double MinimumGlassDensity = 0.05d;
     public const double MaximumGlassDensity = 0.96d;
     public const double DefaultGlassDensity = WidgetAppearanceRules.DefaultBackgroundOpacity;

@@ -344,6 +344,13 @@ public partial class SettingsWindow : Window
             SelectedComponentBackgroundColorEditor.Text =
                 component.Appearance.BackgroundColor;
             SelectedComponentOpacitySlider.Value = component.Appearance.BackgroundOpacity;
+            // 标题栏设置只在有标题栏的组件（待办卡片）上显示；裸文字信息卡没有
+            // 这一层，隐藏不等于不可调。
+            SelectedComponentHeaderRows.Visibility = kind == DesktopComponentKind.Todo
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+            SelectedComponentHeaderColorEditor.Text = component.Appearance.HeaderColor;
+            SelectedComponentHeaderOpacitySlider.Value = component.Appearance.HeaderOpacity;
             SelectedComponentCornerRadiusSlider.Value = component.CornerRadius;
             SelectedComponentWidthEditor.Text = $"{component.Placement.Width:0.#}";
             SelectedComponentHeightEditor.Text = $"{component.Placement.Height:0.#}";
@@ -706,6 +713,8 @@ public partial class SettingsWindow : Window
             SelectedComponentFontScaleValueText is not null &&
             SelectedComponentOpacitySlider is not null &&
             SelectedComponentOpacityValueText is not null &&
+            SelectedComponentHeaderOpacitySlider is not null &&
+            SelectedComponentHeaderOpacityValueText is not null &&
             SelectedComponentCornerRadiusSlider is not null &&
             SelectedComponentCornerRadiusValueText is not null)
         {
@@ -720,6 +729,8 @@ public partial class SettingsWindow : Window
             $"{SelectedComponentFontScaleSlider.Value * 100:0}%";
         SelectedComponentOpacityValueText.Text =
             $"{SelectedComponentOpacitySlider.Value * 100:0}%";
+        SelectedComponentHeaderOpacityValueText.Text =
+            $"{SelectedComponentHeaderOpacitySlider.Value * 100:0}%";
         SelectedComponentCornerRadiusValueText.Text =
             $"{SelectedComponentCornerRadiusSlider.Value:0}px";
     }
@@ -737,6 +748,14 @@ public partial class SettingsWindow : Window
         if (sender is Button { Tag: string color })
         {
             SelectedComponentBackgroundColorEditor.Text = color;
+        }
+    }
+
+    private void QuickHeaderColor_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { Tag: string color })
+        {
+            SelectedComponentHeaderColorEditor.Text = color;
         }
     }
 
@@ -760,6 +779,11 @@ public partial class SettingsWindow : Window
         component.Appearance.BackgroundOpacity =
             WidgetAppearanceRules.CoerceBackgroundOpacity(
                 SelectedComponentOpacitySlider.Value);
+        component.Appearance.HeaderColor = WidgetAppearanceRules.CoerceHeaderColor(
+            SelectedComponentHeaderColorEditor.Text);
+        component.Appearance.HeaderOpacity =
+            WidgetAppearanceRules.CoerceHeaderOpacity(
+                SelectedComponentHeaderOpacitySlider.Value);
         component.CornerRadius = SelectedComponentCornerRadiusSlider.Value;
         var (minimumWidth, minimumHeight) = GetMinimumComponentSize(kind);
         component.Placement.Width = ParseSize(
@@ -780,6 +804,11 @@ public partial class SettingsWindow : Window
         };
         if (_selectedComponentEntry.Window is { } targetWindow)
         {
+            // 先应用组件状态、再应用锁定：ApplyWidgetLock 会触发窗口状态回写，
+            // 把窗口当前尺寸写回组件 Placement。放在后面时窗口已拿到上面写入的
+            // 新尺寸，回写与设置一致；放在前面则会用旧尺寸覆盖，卡片尺寸设置
+            // 永远不生效。
+            _applyDesktopExperience(_desktopExperience);
             _applyWidgetLock(
                 targetWindow,
                 SelectedComponentLockedCheckBox.IsChecked == true);
@@ -787,8 +816,8 @@ public partial class SettingsWindow : Window
         else
         {
             component.IsLocked = SelectedComponentLockedCheckBox.IsChecked == true;
+            _applyDesktopExperience(_desktopExperience);
         }
-        _applyDesktopExperience(_desktopExperience);
         ComponentSettingsStatusText.Text = $"已保存“{_selectedComponentEntry.Name}”设置";
         if (refreshList)
         {
@@ -1175,6 +1204,7 @@ public partial class SettingsWindow : Window
                 .First();
             CardSpacingSelector.SelectedItem = spacing;
             var style = _maintenance.Style;
+            GridSnapCheckBox.IsChecked = style.GridSnap;
             GlassLightRadio.IsChecked = style.Glass == GlassMode.Light;
             GlassDarkRadio.IsChecked = style.Glass == GlassMode.Dark;
             GlassClearRadio.IsChecked = style.Glass == GlassMode.Clear;
@@ -1355,6 +1385,17 @@ public partial class SettingsWindow : Window
         _maintenance.Style.CardShadow = Enum.Parse<CardShadow>(shadowTag);
         _maintenance.Style.CardSpacing = double.Parse(spacingTag, System.Globalization.CultureInfo.InvariantCulture);
         _maintenance.Style.Motion = Enum.Parse<MotionLevel>(motionTag);
+        _maintenance.ApplyStyle();
+    }
+
+    private void GridSnapCheckBox_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_loadingStyle || GridSnapCheckBox is null)
+        {
+            return;
+        }
+
+        _maintenance.Style.GridSnap = GridSnapCheckBox.IsChecked == true;
         _maintenance.ApplyStyle();
     }
 
