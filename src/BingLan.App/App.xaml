@@ -7,47 +7,47 @@
         <SolidColorBrush x:Key="PrimaryTextBrush" Color="#F7FBFF"/>
         <SolidColorBrush x:Key="SecondaryTextBrush" Color="#B8D4E7"/>
         <SolidColorBrush x:Key="AccentBrush" Color="#A6B8FF"/>
-        <SolidColorBrush x:Key="IcePageBrush" Color="#EEF7FD"/>
-        <SolidColorBrush x:Key="IcePanelBrush" Color="#E8FFFFFF"/>
-        <SolidColorBrush x:Key="IcePanelStrokeBrush" Color="#7292A9BD"/>
-        <SolidColorBrush x:Key="IceInkBrush" Color="#203047"/>
-        <SolidColorBrush x:Key="IceMutedInkBrush" Color="#667A8E"/>
-        <SolidColorBrush x:Key="IceActionBrush" Color="#1677E8"/>
+        <SolidColorBrush x:Key="IcePageBrush" Color="#F3F6FA"/>
+        <SolidColorBrush x:Key="IcePanelBrush" Color="#FFFFFF"/>
+        <SolidColorBrush x:Key="IcePanelStrokeBrush" Color="#E2E8F0"/>
+        <SolidColorBrush x:Key="IceInkBrush" Color="#1F2937"/>
+        <SolidColorBrush x:Key="IceMutedInkBrush" Color="#66768A"/>
+        <SolidColorBrush x:Key="IceActionBrush" Color="#2478C9"/>
         <SolidColorBrush x:Key="IceActionTextBrush" Color="#FFFFFF"/>
-        <SolidColorBrush x:Key="SettingsInputBrush" Color="#F8FFFFFF"/>
-        <SolidColorBrush x:Key="SettingsInputBorderBrush" Color="#8EA9BBCB"/>
-        <SolidColorBrush x:Key="SettingsButtonBrush" Color="#D8E7F3FC"/>
-        <SolidColorBrush x:Key="SettingsButtonBorderBrush" Color="#7292A9BD"/>
-        <SolidColorBrush x:Key="SettingsNavigationBrush" Color="#BFEAF5FC"/>
-        <SolidColorBrush x:Key="SettingsStrokeBrush" Color="#72AFC6D8"/>
-        <SolidColorBrush x:Key="SettingsPreviewBrush" Color="#CEE4F2FA"/>
-        <SolidColorBrush x:Key="SettingsCardBrush" Color="#B7FFFFFF"/>
-        <SolidColorBrush x:Key="SettingsPanelBorderBrush" Color="#8FFFFFFF"/>
-        <SolidColorBrush x:Key="SettingsCardBorderBrush" Color="#6FABC2D3"/>
-        <SolidColorBrush x:Key="SettingsCardHoverBrush" Color="#DBFFFFFF"/>
-        <SolidColorBrush x:Key="SettingsCardSelectedBrush" Color="#D7DFF0FF"/>
-        <SolidColorBrush x:Key="SettingsCardSelectedTextBrush" Color="#203047"/>
-        <SolidColorBrush x:Key="SettingsCardSelectedBorderBrush" Color="#A06C91C9"/>
-        <SolidColorBrush x:Key="SettingsPreviewBorderBrush" Color="#7597B0C4"/>
-        <SolidColorBrush x:Key="SettingsComponentNavigationBrush" Color="#CDEAF5FC"/>
-        <SolidColorBrush x:Key="SettingsComponentBorderBrush" Color="#7FAFC6D8"/>
-        <SolidColorBrush x:Key="SettingsBadgeBrush" Color="#63D9E8F4"/>
-        <SolidColorBrush x:Key="SettingsBadgeTextBrush" Color="#516A82"/>
-        <SolidColorBrush x:Key="SettingsResultBrush" Color="#AFFFFFFF"/>
-        <SolidColorBrush x:Key="SettingsResultBorderBrush" Color="#7892A9BD"/>
-        <SolidColorBrush x:Key="SettingsCoordinateTextBrush" Color="#718497"/>
-        <SolidColorBrush x:Key="SettingsSurfaceBrush" Color="#C7FFFFFF"/>
-        <SolidColorBrush x:Key="SettingsSurfaceHoverBrush" Color="#E6FFFFFF"/>
-        <SolidColorBrush x:Key="SettingsSurfaceBorderBrush" Color="#2230455C"/>
+        <SolidColorBrush x:Key="SettingsInputBrush" Color="#FFFFFF"/>
+        <SolidColorBrush x:Key="SettingsInputBorderBrush" Color="#D6DEE8"/>
+        <SolidColorBrush x:Key="SettingsButtonBrush" Color="#FFFFFF"/>
+        <SolidColorBrush x:Key="SettingsButtonBorderBrush" Color="#D6DEE8"/>
+        <SolidColorBrush x:Key="SettingsNavigationBrush" Color="#F8FAFD"/>
+        <SolidColorBrush x:Key="SettingsStrokeBrush" Color="#E2E8F0"/>
+        <SolidColorBrush x:Key="SettingsPreviewBrush" Color="#E7EEF5"/>
+        <SolidColorBrush x:Key="SettingsCardBrush" Color="#FFFFFF"/>
+        <SolidColorBrush x:Key="SettingsPanelBorderBrush" Color="#E2E8F0"/>
+        <SolidColorBrush x:Key="SettingsCardBorderBrush" Color="#E2E8F0"/>
+        <SolidColorBrush x:Key="SettingsCardHoverBrush" Color="#F8FAFD"/>
+        <SolidColorBrush x:Key="SettingsCardSelectedBrush" Color="#E7F1FC"/>
+        <SolidColorBrush x:Key="SettingsCardSelectedTextBrush" Color="#2478C9"/>
+        <SolidColorBrush x:Key="SettingsCardSelectedBorderBrush" Color="#2478C9"/>
+        <SolidColorBrush x:Key="SettingsPreviewBorderBrush" Color="#D6DEE8"/>
+        <SolidColorBrush x:Key="SettingsComponentNavigationBrush" Color="#F8FAFD"/>
+        <SolidColorBrush x:Key="SettingsComponentBorderBrush" Color="#E2E8F0"/>
+        <SolidColorBrush x:Key="SettingsBadgeBrush" Color="#E7F1FC"/>
+        <SolidColorBrush x:Key="SettingsBadgeTextBrush" Color="#52667B"/>
+        <SolidColorBrush x:Key="SettingsResultBrush" Color="#FFFFFF"/>
+        <SolidColorBrush x:Key="SettingsResultBorderBrush" Color="#D6DEE8"/>
+        <SolidColorBrush x:Key="SettingsCoordinateTextBrush" Color="#66768A"/>
+        <SolidColorBrush x:Key="SettingsSurfaceBrush" Color="#FFFFFF"/>
+        <SolidColorBrush x:Key="SettingsSurfaceHoverBrush" Color="#F8FAFD"/>
+        <SolidColorBrush x:Key="SettingsSurfaceBorderBrush" Color="#E2E8F0"/>
         <SolidColorBrush x:Key="SettingsControlBrush" Color="#FFFFFF"/>
-        <SolidColorBrush x:Key="SettingsControlHoverBrush" Color="#F1F6FB"/>
-        <SolidColorBrush x:Key="SettingsControlBorderBrush" Color="#3A30455C"/>
-        <SolidColorBrush x:Key="SettingsToggleOffBrush" Color="#5F7387"/>
-        <SolidColorBrush x:Key="SettingsTrackBrush" Color="#3330455C"/>
-        <SolidColorBrush x:Key="SettingsSegmentTrackBrush" Color="#1C30455C"/>
-        <SolidColorBrush x:Key="SettingsNavSelectedBrush" Color="#2E1677E8"/>
-        <SolidColorBrush x:Key="SettingsNavSelectedTextBrush" Color="#16283D"/>
-        <SolidColorBrush x:Key="SettingsChoiceSelectedBrush" Color="#E6F2F8FF"/>
+        <SolidColorBrush x:Key="SettingsControlHoverBrush" Color="#F8FAFD"/>
+        <SolidColorBrush x:Key="SettingsControlBorderBrush" Color="#D6DEE8"/>
+        <SolidColorBrush x:Key="SettingsToggleOffBrush" Color="#64748B"/>
+        <SolidColorBrush x:Key="SettingsTrackBrush" Color="#DCE4ED"/>
+        <SolidColorBrush x:Key="SettingsSegmentTrackBrush" Color="#EEF2F7"/>
+        <SolidColorBrush x:Key="SettingsNavSelectedBrush" Color="#E7F1FC"/>
+        <SolidColorBrush x:Key="SettingsNavSelectedTextBrush" Color="#2478C9"/>
+        <SolidColorBrush x:Key="SettingsChoiceSelectedBrush" Color="#FFFFFF"/>
         <SolidColorBrush x:Key="SettingsIconBlueBrush" Color="#2F7CF6"/>
         <SolidColorBrush x:Key="SettingsIconIndigoBrush" Color="#5B5FE8"/>
         <SolidColorBrush x:Key="SettingsIconPurpleBrush" Color="#9A5BE0"/>

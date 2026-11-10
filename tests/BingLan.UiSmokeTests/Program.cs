@@ -1068,11 +1068,11 @@ internal static class Program
                     "退出高对比度后的待办标题材质");
                 AssertBrushColor(
                     settings.Background,
-                    settings.IsBackdropActive ? Colors.Transparent : Color.FromRgb(238, 247, 253),
+                    settings.IsBackdropActive ? Colors.Transparent : Color.FromRgb(243, 246, 250),
                     "退出高对比度后的设置背景（Mica 时透明，否则为冰蓝页面色）");
                 AssertResourceBrushColor(
                     "SettingsPanelBorderBrush",
-                    Color.FromArgb(143, 255, 255, 255));
+                    Color.FromRgb(226, 232, 240));
                 AssertResourceBrushColor(
                     "AppearanceInputTextBrush",
                     Color.FromRgb(36, 49, 70));
@@ -1193,6 +1193,8 @@ internal static class Program
         try
         {
             var navigation = Require<ListBox>(window, "SettingsNavigationList");
+            Require<RadioButton>(window, "LayoutAppearanceTab").IsChecked = true;
+            Pump();
             AssertAccessibleControls(window, "设置-布局页");
             var layoutNavigationItem = navigation.ItemContainerGenerator.ContainerFromIndex(0) as ListBoxItem ??
                 throw new InvalidOperationException("布局导航项没有生成");

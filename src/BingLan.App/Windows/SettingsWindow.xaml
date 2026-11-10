@@ -62,111 +62,137 @@
                 <GradientStop Offset="1" Color="#33FFFFFF"/>
             </LinearGradientBrush>
             <Style x:Key="ModePreviewStyle" TargetType="Border">
-                <Setter Property="Height" Value="78"/>
-                <Setter Property="Margin" Value="0,0,0,10"/>
-                <Setter Property="CornerRadius" Value="6"/>
+                <Setter Property="Height" Value="112"/>
+                <Setter Property="Margin" Value="0,0,0,12"/>
+                <Setter Property="CornerRadius" Value="8"/>
                 <Setter Property="ClipToBounds" Value="True"/>
                 <Setter Property="Background" Value="{StaticResource ModePreviewWallpaperBrush}"/>
             </Style>
             <Style x:Key="ModePreviewDockStyle" TargetType="Border">
-                <Setter Property="Width" Value="74"/>
-                <Setter Property="Height" Value="14"/>
-                <Setter Property="Margin" Value="0,0,0,14"/>
+                <Setter Property="Width" Value="94"/>
+                <Setter Property="Height" Value="24"/>
+                <Setter Property="Margin" Value="0,0,0,17"/>
                 <Setter Property="HorizontalAlignment" Value="Center"/>
                 <Setter Property="VerticalAlignment" Value="Bottom"/>
-                <Setter Property="CornerRadius" Value="5"/>
-                <Setter Property="Background" Value="#FFF4F9FD"/>
+                <Setter Property="CornerRadius" Value="12"/>
+                <Setter Property="Background" Value="#E8FFFFFF"/>
             </Style>
         </ResourceDictionary>
     </Window.Resources>
 
     <Grid>
         <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="232"/>
+            <ColumnDefinition Width="220"/>
             <ColumnDefinition Width="*"/>
         </Grid.ColumnDefinitions>
 
-        <DockPanel Margin="12,20,12,16">
-            <StackPanel DockPanel.Dock="Top" Margin="12,0,8,22" Orientation="Horizontal">
-                <Image Width="38"
-                       Height="38"
-                       VerticalAlignment="Center"
-                       RenderOptions.BitmapScalingMode="HighQuality"
-                       Source="/BingLan;component/Assets/Brand/binglan-icon.png"/>
-                <StackPanel Margin="10,0,0,0" VerticalAlignment="Center">
-                    <TextBlock FontSize="15" FontWeight="SemiBold" Text="冰蓝桌面"/>
-                    <TextBlock FontSize="12"
-                               Foreground="{DynamicResource IceMutedInkBrush}"
-                               Text="设置"/>
+        <Border Background="{DynamicResource SettingsNavigationBrush}"
+                BorderBrush="{DynamicResource SettingsSurfaceBorderBrush}"
+                BorderThickness="0,0,1,0">
+            <DockPanel Margin="14,22,14,16">
+                <StackPanel DockPanel.Dock="Top" Margin="10,0,8,30" Orientation="Horizontal">
+                    <Image Width="36"
+                           Height="36"
+                           VerticalAlignment="Center"
+                           RenderOptions.BitmapScalingMode="HighQuality"
+                           Source="/BingLan;component/Assets/Brand/binglan-icon.png"/>
+                    <StackPanel Margin="11,0,0,0" VerticalAlignment="Center">
+                        <TextBlock FontSize="15" FontWeight="SemiBold" Text="冰蓝桌面"/>
+                        <TextBlock FontSize="11"
+                                   Margin="0,2,0,0"
+                                   Foreground="{DynamicResource IceMutedInkBrush}"
+                                   Text="设置中心"/>
+                    </StackPanel>
                 </StackPanel>
-            </StackPanel>
-            <ListBox x:Name="SettingsNavigationList"
-                     AutomationProperties.Name="设置类别"
-                     Padding="0"
-                     BorderThickness="0"
-                     Background="Transparent"
-                     ItemContainerStyle="{StaticResource NavigationItemStyle}"
-                     SelectionChanged="SettingsNavigationList_SelectionChanged"
-                     SelectedIndex="0">
-                <ListBoxItem Tag="Appearance" AutomationProperties.Name="外观">
-                    <StackPanel Orientation="Horizontal">
-                        <Border Style="{StaticResource NavigationTileStyle}" Background="{DynamicResource SettingsIconPurpleBrush}">
-                            <TextBlock Style="{StaticResource NavigationGlyphStyle}" Text="&#xE790;"/>
-                        </Border>
-                        <TextBlock VerticalAlignment="Center" Text="外观"/>
-                    </StackPanel>
-                </ListBoxItem>
-                <ListBoxItem Tag="Components" AutomationProperties.Name="桌面组件">
-                    <StackPanel Orientation="Horizontal">
-                        <Border Style="{StaticResource NavigationTileStyle}" Background="{DynamicResource SettingsIconOrangeBrush}">
-                            <TextBlock Style="{StaticResource NavigationGlyphStyle}" Text="&#xE8A9;"/>
-                        </Border>
-                        <TextBlock VerticalAlignment="Center" Text="桌面组件"/>
-                    </StackPanel>
-                </ListBoxItem>
-                <ListBoxItem Tag="Dock" AutomationProperties.Name="Dock">
-                    <StackPanel Orientation="Horizontal">
-                        <Border Style="{StaticResource NavigationTileStyle}" Background="{DynamicResource SettingsIconBlueBrush}">
-                            <TextBlock Style="{StaticResource NavigationGlyphStyle}" Text="&#xE71D;"/>
-                        </Border>
-                        <TextBlock VerticalAlignment="Center" Text="Dock"/>
-                    </StackPanel>
-                </ListBoxItem>
-                <ListBoxItem x:Name="TopBarNavItem" Tag="TopBar" AutomationProperties.Name="顶端信息条">
-                    <StackPanel Orientation="Horizontal">
-                        <Border Style="{StaticResource NavigationTileStyle}" Background="{DynamicResource SettingsIconTealBrush}">
-                            <TextBlock Style="{StaticResource NavigationGlyphStyle}" Text="&#xE8B7;"/>
-                        </Border>
-                        <TextBlock VerticalAlignment="Center" Text="顶端信息条"/>
-                    </StackPanel>
-                </ListBoxItem>
-                <ListBoxItem Tag="Taskbar" AutomationProperties.Name="任务栏">
-                    <StackPanel Orientation="Horizontal">
-                        <Border Style="{StaticResource NavigationTileStyle}" Background="{DynamicResource SettingsIconIndigoBrush}">
-                            <TextBlock Style="{StaticResource NavigationGlyphStyle}" Text="&#xE7C4;"/>
-                        </Border>
-                        <TextBlock VerticalAlignment="Center" Text="任务栏"/>
-                    </StackPanel>
-                </ListBoxItem>
-                <ListBoxItem Tag="General" AutomationProperties.Name="通用">
-                    <StackPanel Orientation="Horizontal">
-                        <Border Style="{StaticResource NavigationTileStyle}" Background="{DynamicResource SettingsIconGrayBrush}">
-                            <TextBlock Style="{StaticResource NavigationGlyphStyle}" Text="&#xE713;"/>
-                        </Border>
-                        <TextBlock VerticalAlignment="Center" Text="通用"/>
-                    </StackPanel>
-                </ListBoxItem>
-            </ListBox>
-        </DockPanel>
+                <ListBox x:Name="SettingsNavigationList"
+                         AutomationProperties.Name="设置类别"
+                         Padding="0"
+                         BorderThickness="0"
+                         Background="Transparent"
+                         ItemContainerStyle="{StaticResource NavigationItemStyle}"
+                         SelectionChanged="SettingsNavigationList_SelectionChanged"
+                         SelectedIndex="0">
+                    <ListBoxItem Tag="Appearance" AutomationProperties.Name="外观">
+                        <StackPanel Orientation="Horizontal">
+                            <Border Style="{StaticResource NavigationTileStyle}">
+                                <TextBlock Style="{StaticResource NavigationGlyphStyle}" Text="&#xE790;"/>
+                            </Border>
+                            <TextBlock VerticalAlignment="Center" Text="外观"/>
+                        </StackPanel>
+                    </ListBoxItem>
+                    <ListBoxItem Tag="Components" AutomationProperties.Name="桌面组件">
+                        <StackPanel Orientation="Horizontal">
+                            <Border Style="{StaticResource NavigationTileStyle}">
+                                <TextBlock Style="{StaticResource NavigationGlyphStyle}" Text="&#xE8A9;"/>
+                            </Border>
+                            <TextBlock VerticalAlignment="Center" Text="桌面组件"/>
+                        </StackPanel>
+                    </ListBoxItem>
+                    <ListBoxItem Tag="Dock" AutomationProperties.Name="Dock">
+                        <StackPanel Orientation="Horizontal">
+                            <Border Style="{StaticResource NavigationTileStyle}">
+                                <TextBlock Style="{StaticResource NavigationGlyphStyle}" Text="&#xE71D;"/>
+                            </Border>
+                            <TextBlock VerticalAlignment="Center" Text="Dock"/>
+                        </StackPanel>
+                    </ListBoxItem>
+                    <ListBoxItem x:Name="TopBarNavItem" Tag="TopBar" AutomationProperties.Name="顶端信息条">
+                        <StackPanel Orientation="Horizontal">
+                            <Border Style="{StaticResource NavigationTileStyle}">
+                                <TextBlock Style="{StaticResource NavigationGlyphStyle}" Text="&#xE8B7;"/>
+                            </Border>
+                            <TextBlock VerticalAlignment="Center" Text="顶端信息条"/>
+                        </StackPanel>
+                    </ListBoxItem>
+                    <ListBoxItem Tag="Taskbar" AutomationProperties.Name="任务栏">
+                        <StackPanel Orientation="Horizontal">
+                            <Border Style="{StaticResource NavigationTileStyle}">
+                                <TextBlock Style="{StaticResource NavigationGlyphStyle}" Text="&#xE7C4;"/>
+                            </Border>
+                            <TextBlock VerticalAlignment="Center" Text="任务栏"/>
+                        </StackPanel>
+                    </ListBoxItem>
+                    <ListBoxItem Tag="General" AutomationProperties.Name="通用">
+                        <StackPanel Orientation="Horizontal">
+                            <Border Style="{StaticResource NavigationTileStyle}">
+                                <TextBlock Style="{StaticResource NavigationGlyphStyle}" Text="&#xE713;"/>
+                            </Border>
+                            <TextBlock VerticalAlignment="Center" Text="通用"/>
+                        </StackPanel>
+                    </ListBoxItem>
+                </ListBox>
+            </DockPanel>
+        </Border>
 
-        <Grid Grid.Column="1" Margin="12,20,0,0">
+        <Grid Grid.Column="1">
             <!-- 外观 -->
             <ScrollViewer x:Name="AppearancePage" VerticalScrollBarVisibility="Auto">
-                <StackPanel Margin="0,0,28,28">
+                <StackPanel Margin="34,26,34,34" MaxWidth="960">
                     <TextBlock Style="{StaticResource PageTitleStyle}" Text="外观"/>
                     <TextBlock Style="{StaticResource PageSubtitleStyle}"
-                               Text="整套桌面的模式、卡片外观和布局。单张卡片可在“桌面组件”里单独调整。"/>
+                               Text="统一桌面的视觉风格，也可以到“桌面组件”中单独调整每张卡片。"/>
+                    <Border Margin="0,16,0,0" BorderBrush="{DynamicResource SettingsSurfaceBorderBrush}" BorderThickness="0,0,0,1">
+                        <StackPanel Orientation="Horizontal">
+                            <RadioButton x:Name="OverallAppearanceTab"
+                                         GroupName="AppearanceTabs"
+                                         Content="整体风格"
+                                         IsChecked="True"
+                                         Style="{StaticResource AppearanceTabStyle}"
+                                         Checked="AppearanceTab_Changed"/>
+                            <RadioButton x:Name="CardsAppearanceTab"
+                                         GroupName="AppearanceTabs"
+                                         Content="卡片外观"
+                                         Style="{StaticResource AppearanceTabStyle}"
+                                         Checked="AppearanceTab_Changed"/>
+                            <RadioButton x:Name="LayoutAppearanceTab"
+                                         GroupName="AppearanceTabs"
+                                         Content="布局与主题"
+                                         Style="{StaticResource AppearanceTabStyle}"
+                                         Checked="AppearanceTab_Changed"/>
+                        </StackPanel>
+                    </Border>
 
+                    <StackPanel x:Name="AppearanceOverallPanel">
                     <TextBlock Style="{StaticResource SectionHeaderStyle}" Text="桌面模式"/>
                     <UniformGrid Columns="3">
                         <RadioButton x:Name="WindowsNativeModeRadio"
@@ -178,10 +204,19 @@
                                      Checked="DesktopMode_Checked">
                             <StackPanel>
                                 <Border Style="{StaticResource ModePreviewStyle}">
-                                    <Border Height="10" VerticalAlignment="Bottom" Background="#FF22303F"/>
+                                    <Grid>
+                                        <TextBlock Text="11:24" Foreground="White" FontSize="24" FontWeight="Light" Margin="16,12,0,0" HorizontalAlignment="Left" VerticalAlignment="Top"/>
+                                        <Border Height="16" VerticalAlignment="Bottom" Background="#FF22303F">
+                                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                                                <Border Width="8" Height="8" Margin="4" Background="#77B9E8"/>
+                                                <Border Width="8" Height="8" Margin="4" Background="#D8E5EF"/>
+                                                <Border Width="8" Height="8" Margin="4" Background="#D8E5EF"/>
+                                            </StackPanel>
+                                        </Border>
+                                    </Grid>
                                 </Border>
                                 <TextBlock FontWeight="SemiBold" Text="Windows 原生"/>
-                                <TextBlock Margin="0,2,0,0" Style="{StaticResource CaptionStyle}" Text="不显示 Dock，任务栏保持系统默认"/>
+                                <TextBlock Margin="0,2,0,0" Style="{StaticResource CaptionStyle}" Text="保留系统任务栏，不显示 Dock"/>
                             </StackPanel>
                         </RadioButton>
                         <RadioButton x:Name="IceBlueHybridModeRadio"
@@ -194,12 +229,20 @@
                             <StackPanel>
                                 <Border Style="{StaticResource ModePreviewStyle}">
                                     <Grid>
-                                        <Border Style="{StaticResource ModePreviewDockStyle}"/>
+                                        <TextBlock Text="11:24" Foreground="White" FontSize="24" FontWeight="Light" Margin="16,12,0,0" HorizontalAlignment="Left" VerticalAlignment="Top"/>
+                                        <Border Style="{StaticResource ModePreviewDockStyle}">
+                                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                                                <Ellipse Width="9" Height="9" Margin="5" Fill="#5B8FC2"/>
+                                                <Ellipse Width="9" Height="9" Margin="5" Fill="#86A9C9"/>
+                                                <Ellipse Width="9" Height="9" Margin="5" Fill="#ACC3D8"/>
+                                                <Ellipse Width="9" Height="9" Margin="5" Fill="#86A9C9"/>
+                                            </StackPanel>
+                                        </Border>
                                         <Border Height="10" VerticalAlignment="Bottom" Background="{StaticResource ModePreviewGlassBarBrush}"/>
                                     </Grid>
                                 </Border>
                                 <TextBlock FontWeight="SemiBold" Text="冰蓝混合"/>
-                                <TextBlock Margin="0,2,0,0" Style="{StaticResource CaptionStyle}" Text="显示 Dock，任务栏透明或模糊"/>
+                                <TextBlock Margin="0,2,0,0" Style="{StaticResource CaptionStyle}" Text="悬浮 Dock 搭配透明任务栏"/>
                             </StackPanel>
                         </RadioButton>
                         <RadioButton x:Name="AppleStyleModeRadio"
@@ -211,10 +254,21 @@
                                      Checked="DesktopMode_Checked">
                             <StackPanel>
                                 <Border Style="{StaticResource ModePreviewStyle}">
-                                    <Border Style="{StaticResource ModePreviewDockStyle}" Margin="0,0,0,6"/>
+                                    <Grid>
+                                        <Border Height="13" VerticalAlignment="Top" Background="#B52B3440"/>
+                                        <TextBlock Text="11:24" Foreground="White" FontSize="24" FontWeight="Light" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                        <Border Style="{StaticResource ModePreviewDockStyle}" Margin="0,0,0,8">
+                                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                                                <Ellipse Width="9" Height="9" Margin="5" Fill="#5B8FC2"/>
+                                                <Ellipse Width="9" Height="9" Margin="5" Fill="#86A9C9"/>
+                                                <Ellipse Width="9" Height="9" Margin="5" Fill="#ACC3D8"/>
+                                                <Ellipse Width="9" Height="9" Margin="5" Fill="#86A9C9"/>
+                                            </StackPanel>
+                                        </Border>
+                                    </Grid>
                                 </Border>
                                 <TextBlock FontWeight="SemiBold" Text="苹果式"/>
-                                <TextBlock Margin="0,2,0,0" Style="{StaticResource CaptionStyle}" Text="显示 Dock，任务栏自动隐藏"/>
+                                <TextBlock Margin="0,2,0,0" Style="{StaticResource CaptionStyle}" Text="顶部信息条与悬浮 Dock"/>
                             </StackPanel>
                         </RadioButton>
                     </UniformGrid>
@@ -252,7 +306,7 @@
                     <local:SettingsRow Glyph="&#xE7B3;"
                                        GlyphBrush="{DynamicResource SettingsIconIndigoBrush}"
                                        Header="标题栏按钮仅在鼠标移上时显示"
-                                       Description="开启后，待办和分组盒标题栏上的按钮（如 +、排序、收起）平时隐藏，鼠标移到卡片上或用键盘选中卡片时出现；按钮位置保留，标题不会跳动">
+                                       Description="待办和分组盒的按钮在悬停或键盘选中时显示，位置保持不变">
                         <CheckBox x:Name="HeaderToolsOnHoverCheckBox"
                                   AutomationProperties.Name="标题栏按钮仅在鼠标移上时显示"
                                   Style="{StaticResource ToggleSwitchStyle}"
@@ -262,17 +316,21 @@
                     <local:SettingsRow Glyph="&#xE72C;"
                                        GlyphBrush="{DynamicResource SettingsIconGreenBrush}"
                                        Header="分组盒自动刷新"
-                                       Description="桌面新文件自动收纳进已有的分组盒（不新建盒子，没有盒子收纳的项目仍由“自动整理”处理），原文件删除后对应映射自动清除；关闭后只在“自动整理”时处理">
+                                       Description="自动收纳新的桌面项目，只记录路径，不移动原文件">
                         <CheckBox x:Name="FileBoxAutomationCheckBox"
                                   AutomationProperties.Name="分组盒自动刷新"
                                   Style="{StaticResource ToggleSwitchStyle}"
                                   Checked="FileBoxAutomationCheckBox_Changed"
                                   Unchecked="FileBoxAutomationCheckBox_Changed"/>
                     </local:SettingsRow>
+                    </local:SettingsGroup>
+
+                    <TextBlock Style="{StaticResource SectionHeaderStyle}" Text="高级操作"/>
+                    <local:SettingsGroup>
                     <local:SettingsRow Glyph="&#xE74D;"
                                        GlyphBrush="{DynamicResource SettingsIconOrangeBrush}"
                                        Header="允许从分组盒删除原文件"
-                                       Description="开启后可在分组盒右键选择“删除到回收站”，或选中项目按 Delete 键，每次删除前都会确认，可从回收站恢复；U 盘、网络位置、磁盘根目录和系统文件夹不能删除。关闭时分组盒只移除映射，不会动原文件">
+                                       Description="默认关闭；每次删除前确认，并移入回收站">
                         <CheckBox x:Name="FileBoxDeleteOriginalsCheckBox"
                                   AutomationProperties.Name="允许从分组盒删除原文件"
                                   Style="{StaticResource ToggleSwitchStyle}"
@@ -280,7 +338,9 @@
                                   Unchecked="FileBoxDeleteOriginalsCheckBox_Changed"/>
                     </local:SettingsRow>
                     </local:SettingsGroup>
+                    </StackPanel>
 
+                    <StackPanel x:Name="AppearanceCardsPanel" Visibility="Collapsed">
                     <TextBlock Style="{StaticResource SectionHeaderStyle}" Text="卡片外观"/>
                     <local:SettingsGroup>
                     <local:SettingsRow Glyph="&#xE790;" Header="试选外观" Description="先在示例中对比，确认后应用">
@@ -473,7 +533,9 @@
                         </StackPanel>
                     </local:SettingsRow>
                     </local:SettingsGroup>
+                    </StackPanel>
 
+                    <StackPanel x:Name="AppearanceLayoutPanel" Visibility="Collapsed">
                     <TextBlock Style="{StaticResource SectionHeaderStyle}" Text="布局预设"/>
                     <Border Style="{StaticResource SettingsPanelStyle}">
                         <StackPanel>
@@ -577,11 +639,12 @@
                                Margin="2,6,0,0"
                                AutomationProperties.LiveSetting="Polite"
                                Style="{StaticResource CaptionStyle}"/>
+                    </StackPanel>
                 </StackPanel>
             </ScrollViewer>
 
             <!-- 桌面组件 -->
-            <Grid x:Name="ComponentsPage" Margin="0,0,28,20" Visibility="Collapsed">
+            <Grid x:Name="ComponentsPage" Margin="34,26,34,28" Visibility="Collapsed">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="*"/>
@@ -1206,7 +1269,7 @@
             <ScrollViewer x:Name="DockPage"
                           Visibility="Collapsed"
                           VerticalScrollBarVisibility="Auto">
-                <StackPanel Margin="0,0,28,28">
+                <StackPanel Margin="34,26,34,34" MaxWidth="960">
                     <TextBlock Style="{StaticResource PageTitleStyle}" Text="冰蓝 Dock"/>
                     <TextBlock Style="{StaticResource PageSubtitleStyle}"
                                Text="在屏幕底部居中显示固定的应用和正在运行的应用。"/>
@@ -1460,7 +1523,7 @@
             <ScrollViewer x:Name="TopBarPage"
                           Visibility="Collapsed"
                           VerticalScrollBarVisibility="Auto">
-                <StackPanel Margin="0,0,28,28">
+                <StackPanel Margin="34,26,34,34" MaxWidth="960">
                     <TextBlock Style="{StaticResource PageTitleStyle}" Text="顶端信息条"/>
                     <TextBlock Style="{StaticResource PageSubtitleStyle}"
                                Text="在所选显示器顶边显示一条满宽信息条：时间、待办、天气、性能和系统状态，点击模块进入对应设置。"/>
@@ -1691,7 +1754,7 @@
             <ScrollViewer x:Name="TaskbarPage"
                           Visibility="Collapsed"
                           VerticalScrollBarVisibility="Auto">
-                <StackPanel Margin="0,0,28,28">
+                <StackPanel Margin="34,26,34,34" MaxWidth="960">
                     <TextBlock Style="{StaticResource PageTitleStyle}" Text="Windows 任务栏"/>
                     <TextBlock Style="{StaticResource PageSubtitleStyle}"
                                Text="调整任务栏的外观和显示方式，退出冰蓝桌面时恢复系统默认。"/>
@@ -1790,7 +1853,7 @@
             <ScrollViewer x:Name="GeneralPage"
                           Visibility="Collapsed"
                           VerticalScrollBarVisibility="Auto">
-                <StackPanel Margin="0,0,28,28">
+                <StackPanel Margin="34,26,34,34" MaxWidth="960">
                     <TextBlock Style="{StaticResource PageTitleStyle}" Text="通用"/>
 
                     <TextBlock Style="{StaticResource SectionHeaderStyle}" Text="启动"/>

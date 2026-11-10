@@ -31,10 +31,10 @@ BingLan Desktop (冰蓝桌面) is a Windows 11 desktop companion built with .NET
 - **Search**: a centered top-bar field, a movable and resizable separate field, or a top-bar icon. Searches desktop entries, Start-menu apps, and files already indexed by Windows by default. Optional Everything integration falls back to Windows Search when unavailable. If neither index is available, desktop and app search remains usable. BingLan does not change indexing scope, maintain an additional index, or search file contents.
 - **Resource use**: measured on one 1440p Windows 11 PC, BingLan uses about 56–58 MB of memory; Rainmeter, Pogget, Nexus Dock, and TranslucentTB, the tools it replaces, used about 77.5 MB together (Task Manager "Memory" column, single measurement; varies with the machine and number of cards).
 - **Look**: light glass, dark glass, or no backing; preview and compare sample styles before applying them. Custom text and accent colours, bundled open-licence fonts, and four layout presets for landscape and portrait work areas. Fonts and colours can be imported, read-only, from a Rainmeter skin. Themes can be exported and shared without names, cities, to-dos, or file paths.
-- **Settings**: six pages (Appearance, Desktop components, Dock, Top bar, Taskbar, General), with each setting in exactly one place. On Windows 11 the window uses the Mica material, falling back to a solid colour when transparency effects are off or high contrast is on.
+- **Settings**: six pages (Appearance, Desktop components, Dock, Top bar, Taskbar, General), with each setting in exactly one place. Appearance is organized into Overall style, Card appearance, and Layout & theme tabs, with monochrome navigation, ice-blue selection, and clearer control hierarchy. On Windows 11 the window uses the Mica material, falling back to a solid colour when transparency effects are off or high contrast is on.
 
 <p align="center">
-  <img src="docs/images/settings.png" width="760" alt="BingLan settings: desktop modes, clean desktop and card appearance on the Appearance page">
+  <img src="docs/images/settings.png" width="760" alt="BingLan settings: Overall style tab, monochrome navigation, desktop modes and clean desktop">
 </p>
 
 The interface is in Simplified Chinese.

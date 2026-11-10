@@ -1151,6 +1151,27 @@ public partial class SettingsWindow : Window
         _ => page
     };
 
+    private void AppearanceTab_Changed(object sender, RoutedEventArgs e) => ShowAppearanceTab();
+
+    private void ShowAppearanceTab(string? section = null)
+    {
+        if (AppearanceOverallPanel is null || AppearanceCardsPanel is null || AppearanceLayoutPanel is null ||
+            OverallAppearanceTab is null || CardsAppearanceTab is null || LayoutAppearanceTab is null)
+        {
+            return;
+        }
+
+        section ??= CardsAppearanceTab.IsChecked == true
+            ? "Cards"
+            : LayoutAppearanceTab.IsChecked == true ? "Layout" : "Overall";
+        AppearanceOverallPanel.Visibility = section == "Overall" ? Visibility.Visible : Visibility.Collapsed;
+        AppearanceCardsPanel.Visibility = section == "Cards" ? Visibility.Visible : Visibility.Collapsed;
+        AppearanceLayoutPanel.Visibility = section == "Layout" ? Visibility.Visible : Visibility.Collapsed;
+        OverallAppearanceTab.IsChecked = section == "Overall";
+        CardsAppearanceTab.IsChecked = section == "Cards";
+        LayoutAppearanceTab.IsChecked = section == "Layout";
+    }
+
     private void ShowPage(string page)
     {
         if (AppearancePage is null || ComponentsPage is null || DockPage is null || TaskbarPage is null ||
@@ -2738,12 +2759,22 @@ public partial class SettingsWindow : Window
 
     private void SelectNavigationPage(string page)
     {
+        var appearanceSection = page switch
+        {
+            "Layout" or "Theme" => "Layout",
+            "Appearance" => "Overall",
+            _ => null
+        };
         page = PageFor(page);
         foreach (var candidate in SettingsNavigationList.Items.OfType<ListBoxItem>())
         {
             if (Equals(candidate.Tag, page))
             {
                 SettingsNavigationList.SelectedItem = candidate;
+                if (appearanceSection is not null)
+                {
+                    ShowAppearanceTab(appearanceSection);
+                }
                 return;
             }
         }
