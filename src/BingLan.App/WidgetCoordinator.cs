@@ -945,12 +945,12 @@ public sealed class WidgetCoordinator : IDisposable
         ScheduleSave();
     }
 
-    private void AddFileBox()
+    private void AddFileBox(WindowPlacement? placement = null)
     {
         var offset = _state.FileBoxes.Count * 24;
         var state = new FileBoxState
         {
-            Placement = new WindowPlacement
+            Placement = placement ?? new WindowPlacement
             {
                 Left = 432 + offset,
                 Top = 92 + offset,
@@ -963,6 +963,33 @@ public sealed class WidgetCoordinator : IDisposable
         _state.FileBoxes.Add(state);
         ShowFileBox(state);
         ScheduleSave();
+    }
+
+    // 框选新建：托盘发起的瞬态全屏遮罩。用户拖出的矩形就是新分组盒的位置与尺寸；
+    // 遮罩自己负责取消路径（Esc、右键、失焦），这里只接收最终矩形。
+    private void StartMarqueeFileBox()
+    {
+        var overlay = new BoxMarqueeOverlay();
+        overlay.BoxSelected += rect =>
+        {
+            var placement = new WindowPlacement
+            {
+                Left = rect.Left,
+                Top = rect.Top,
+                // 小于分组盒最小可读尺寸的框选按最小值补齐，锚点保持在框选左上角。
+                Width = Math.Max(rect.Width, 226),
+                Height = Math.Max(rect.Height, 166)
+            };
+            if (WidgetWindowBase.GridSnapEnabled)
+            {
+                var cell = DesktopStyleRules.GridCellDip;
+                placement.Left = Math.Round(placement.Left / cell) * cell;
+                placement.Top = Math.Round(placement.Top / cell) * cell;
+            }
+            SanitizePlacement(placement);
+            AddFileBox(placement);
+        };
+        overlay.Show();
     }
 
     // A new card starts in the shared card look, like the cards already on the desktop.
@@ -2347,6 +2374,7 @@ public sealed class WidgetCoordinator : IDisposable
         menu.Items.Add("新建待办便签", null, (_, _) => AddTodo());
         menu.Items.Add("新建普通便签", null, (_, _) => AddNote());
         menu.Items.Add("新建桌面分组盒", null, (_, _) => AddFileBox());
+        menu.Items.Add("框选新建分组盒…", null, (_, _) => StartMarqueeFileBox());
         menu.Items.Add(new Forms.ToolStripSeparator());
         _updateMenuItem = new Forms.ToolStripMenuItem(string.Empty, null, (_, _) => OpenSettings("About"))
         {

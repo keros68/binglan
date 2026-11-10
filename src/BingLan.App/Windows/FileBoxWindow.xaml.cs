@@ -1205,21 +1205,42 @@ public partial class FileBoxWindow : WidgetWindowBase
         NotifyStateChanged();
     }
 
-    private void ReloadItems()
+    private async void ReloadItems()
     {
         var icons = _items.ToDictionary(
             tile => tile.Mapping.Id,
             tile => tile.Icon);
         _items.Clear();
+        var pendingIcons = new List<FileMappingState>();
         foreach (var item in State.Items.OrderBy(x => x.Order))
         {
-            _items.Add(CreateTile(
-                item,
-                icons.TryGetValue(item.Id, out var icon)
-                    ? icon
-                    : ShellIconProvider.GetIcon(item.Path)));
+            icons.TryGetValue(item.Id, out var icon);
+            if (icon is null)
+            {
+                pendingIcons.Add(item);
+            }
+            _items.Add(CreateTile(item, icon));
         }
         RefreshCount();
+        if (pendingIcons.Count == 0)
+        {
+            return;
+        }
+
+        // Icons that are not in memory yet are extracted off the UI thread and patched in
+        // afterwards, like the initial load in FileBoxWindow_Loaded; sorting, moving or
+        // relinking must not block the window on shell icon extraction.
+        var paths = pendingIcons.Select(item => item.Path).ToArray();
+        var loaded = await Task.Run(() => LoadIcons(paths));
+        for (var index = 0; index < _items.Count; index++)
+        {
+            var tile = _items[index];
+            if (tile.Icon is not null || !loaded.TryGetValue(tile.Path, out var icon))
+            {
+                continue;
+            }
+            _items[index] = CreateTile(tile.Mapping, icon);
+        }
     }
 
     // Drop sources can hand over malformed paths; those are skipped instead of failing the drop.

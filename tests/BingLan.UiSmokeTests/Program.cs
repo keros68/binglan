@@ -176,6 +176,8 @@ internal static class Program
         Run("分组盒多选批量移除、转移与删除到回收站", TestFileBoxBatchOperations, failures);
         Run("标题栏按钮可设为仅悬停或选中时显示", TestHeaderToolsOnHover, failures);
         Run("桌面分组盒图标与列表视图切换", TestFileBoxViewModeSwitch, failures);
+        Run("托盘框选新建分组盒，Esc 与误触取消", TestBoxMarqueeCreateFileBox, failures);
+        Run("分组盒重建列表时图标仍走后台提取", TestFileBoxReloadIconsOffUiThread, failures);
         Run("卡片图标取高分辨率帧而非 32px 拉伸", TestIconProviderReturnsHighResolutionFrames, failures);
         Run("旧图标不被 Jumbo 透明占位缩成小点", TestSmallShellIconFrames, failures);
         Run("屏幕阅读器名称、Tab 顺序与实际 DPI 边界", TestAccessibilityAndKeyboardNavigation, failures);
@@ -3972,6 +3974,125 @@ internal static class Program
                 window.CanClose = true;
                 window.Close();
             }
+            Pump();
+            Directory.Delete(temp, true);
+        }
+    }
+
+    // 托盘“框选新建分组盒…”：拖出的矩形就是新盒的位置与尺寸；Esc、右键和小于阈值的
+    // 误触都不建盒，且遮罩在完成或取消后立即关闭。
+    private static void TestBoxMarqueeCreateFileBox()
+    {
+        var temp = Path.Combine(Path.GetTempPath(), $"BingLan-marquee-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(temp);
+        var coordinator = new WidgetCoordinator(interactiveQa: true, dataDirectory: temp);
+        const System.Reflection.BindingFlags Private =
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+        var previousGridSnap = WidgetWindowBase.GridSnapEnabled;
+        WidgetWindowBase.GridSnapEnabled = false;
+        try
+        {
+            coordinator.Start();
+            PumpUntil(
+                () => Application.Current.Windows.OfType<WidgetWindowBase>().Any(window => window.IsLoaded),
+                "启动后应至少打开一张卡片");
+            var appState = (AppState)typeof(WidgetCoordinator).GetField("_state", Private)!.GetValue(coordinator)!;
+            // 首次引导可能已自动创建过一个分组盒，所以这里数增量而不是假设从零开始。
+            var boxesBefore = appState.FileBoxes.Count;
+            var boxWindowsBefore = Application.Current.Windows.OfType<FileBoxWindow>().Count();
+
+            typeof(WidgetCoordinator).GetMethod("StartMarqueeFileBox", Private)!.Invoke(coordinator, []);
+            BoxMarqueeOverlay? overlay = null;
+            PumpUntil(
+                () => (overlay = Application.Current.Windows.OfType<BoxMarqueeOverlay>().SingleOrDefault()) != null,
+                "框选遮罩应随托盘入口打开");
+            var overlayLeft = overlay!.Left;
+            var overlayTop = overlay!.Top;
+
+            overlay.BeginMarquee(new Point(60, 48));
+            overlay.UpdateMarquee(new Point(460, 388));
+            overlay.CompleteMarquee();
+            Pump();
+
+            Assert(appState.FileBoxes.Count == boxesBefore + 1, "框选完成后应新建一个分组盒");
+            var box = appState.FileBoxes[^1];
+            Assert(Math.Abs(box!.Placement.Left - (overlayLeft + 60)) < 0.01, "新分组盒左边缘应取框选位置");
+            Assert(Math.Abs(box.Placement.Top - (overlayTop + 48)) < 0.01, "新分组盒上边缘应取框选位置");
+            Assert(Math.Abs(box.Placement.Width - 400) < 0.01, "新分组盒宽度应取框选宽度");
+            Assert(Math.Abs(box.Placement.Height - 340) < 0.01, "新分组盒高度应取框选高度");
+            Assert(!Application.Current.Windows.OfType<BoxMarqueeOverlay>().Any(), "完成后框选遮罩应关闭");
+            Assert(
+                Application.Current.Windows.OfType<FileBoxWindow>().Count() == boxWindowsBefore + 1,
+                "新建的分组盒窗口应打开");
+
+            // 小于阈值的框选是误触：不建盒，遮罩关闭。
+            typeof(WidgetCoordinator).GetMethod("StartMarqueeFileBox", Private)!.Invoke(coordinator, []);
+            PumpUntil(
+                () => Application.Current.Windows.OfType<BoxMarqueeOverlay>().Any(),
+                "框选遮罩应再次打开");
+            var tiny = Application.Current.Windows.OfType<BoxMarqueeOverlay>().Single();
+            tiny.BeginMarquee(new Point(10, 10));
+            tiny.UpdateMarquee(new Point(30, 28));
+            tiny.CompleteMarquee();
+            Pump();
+            Assert(appState.FileBoxes.Count == boxesBefore + 1, "误触大小的框选不应新建分组盒");
+            Assert(!Application.Current.Windows.OfType<BoxMarqueeOverlay>().Any(), "误触后框选遮罩应关闭");
+
+            // Esc 取消：不建盒，遮罩关闭。
+            typeof(WidgetCoordinator).GetMethod("StartMarqueeFileBox", Private)!.Invoke(coordinator, []);
+            PumpUntil(
+                () => Application.Current.Windows.OfType<BoxMarqueeOverlay>().Any(),
+                "框选遮罩应第三次打开");
+            Application.Current.Windows.OfType<BoxMarqueeOverlay>().Single().Cancel();
+            Pump();
+            Assert(appState.FileBoxes.Count == boxesBefore + 1, "Esc 取消不应新建分组盒");
+            Assert(!Application.Current.Windows.OfType<BoxMarqueeOverlay>().Any(), "取消后遮罩应关闭");
+        }
+        finally
+        {
+            WidgetWindowBase.GridSnapEnabled = previousGridSnap;
+            coordinator.Dispose();
+            foreach (var window in Application.Current.Windows.OfType<WidgetWindowBase>().ToList())
+            {
+                window.CanClose = true;
+                window.Close();
+            }
+            Pump();
+            Directory.Delete(temp, true);
+        }
+    }
+
+    // 初始后台图标加载尚未完成的窗口上触发排序（重建整个列表），图标仍应保持后台
+    // 提取：重建后立刻断言图标为空，之后由后台任务回填。
+    private static void TestFileBoxReloadIconsOffUiThread()
+    {
+        var temp = Path.Combine(Path.GetTempPath(), $"BingLan-reload-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(temp);
+        var file = Path.Combine(temp, "后台图标.txt");
+        File.WriteAllText(file, "冰蓝桌面");
+        var state = new FileBoxState();
+        FileMappingService.AddExisting(state, [file]);
+        var window = new FileBoxWindow(state);
+        var list = Require<ItemsControl>(window, "FileList");
+        const System.Reflection.BindingFlags Private =
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+        try
+        {
+            typeof(FileBoxWindow).GetMethod("ApplySort", Private)!.Invoke(
+                window, [FileMappingSortMode.Name]);
+            Assert(
+                list.Items.Cast<FileBoxWindow.FileTile>().All(tile => tile.Icon is null),
+                "排序重建列表时不应在 UI 线程同步提取图标");
+
+            ShowAndPump(window);
+            PumpUntil(
+                () => list.Items.Cast<FileBoxWindow.FileTile>().All(tile => tile.Icon is not null),
+                "排序重建后图标应由后台任务回填");
+        }
+        finally
+        {
+            window.CanClose = true;
+            window.Close();
             Pump();
             Directory.Delete(temp, true);
         }
