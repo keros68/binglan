@@ -23,6 +23,13 @@ public sealed class DockPinnedApp
     public string? AppUserModelId { get; set; }
 
     /// <summary>
+    /// Full path of a pinned folder or file, or null for an app pin. Only the path is
+    /// recorded; the item itself is never moved, copied or changed. Such pins never match
+    /// running windows and are left out of shared themes.
+    /// </summary>
+    public string? TargetPath { get; set; }
+
+    /// <summary>
     /// Command-line arguments of the source shortcut, verbatim, or null when the
     /// program needs none. Packaged apps (app model ID) never carry arguments.
     /// </summary>

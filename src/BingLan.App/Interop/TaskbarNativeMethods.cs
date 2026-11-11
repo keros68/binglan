@@ -7,6 +7,7 @@ internal static class TaskbarNativeMethods
 {
     internal const int WcaAccentPolicy = 19;
     internal const int AccentDisabled = 0;
+    internal const int AccentEnableTransparentGradient = 2;
     internal const int AccentEnableBlurBehind = 3;
     internal const int AccentEnableAcrylicBlurBehind = 4;
     internal const int SmRemoteSession = 0x1000;

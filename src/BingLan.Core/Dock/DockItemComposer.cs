@@ -98,9 +98,51 @@ public static class DockPinRules
             return $"aumid:{app.AppUserModelId.Trim()}";
         }
 
-        return string.IsNullOrWhiteSpace(app.ExecutablePath)
+        if (!string.IsNullOrWhiteSpace(app.ExecutablePath))
+        {
+            return $"exe:{WindowGrouping.NormalizeExecutablePath(app.ExecutablePath)}";
+        }
+
+        return string.IsNullOrWhiteSpace(app.TargetPath)
             ? string.Empty
-            : $"exe:{WindowGrouping.NormalizeExecutablePath(app.ExecutablePath)}";
+            : $"path:{NormalizeTargetPath(app.TargetPath)}";
+    }
+
+    /// <summary>Whether the pin is a folder or file rather than an app.</summary>
+    public static bool IsPathPin(DockPinnedApp app)
+    {
+        ArgumentNullException.ThrowIfNull(app);
+        return string.IsNullOrWhiteSpace(app.AppUserModelId)
+            && string.IsNullOrWhiteSpace(app.ExecutablePath)
+            && !string.IsNullOrWhiteSpace(app.TargetPath);
+    }
+
+    /// <summary>A pin for a folder or file, named after it, or null for an empty path.</summary>
+    public static DockPinnedApp? CreateFromPath(string path, string? displayName = null)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return null;
+        }
+
+        var normalized = NormalizeTargetPath(path);
+        var name = string.IsNullOrWhiteSpace(displayName) ? Path.GetFileName(normalized) : displayName.Trim();
+        return new DockPinnedApp
+        {
+            DisplayName = string.IsNullOrWhiteSpace(name) ? normalized : name,
+            TargetPath = normalized
+        };
+    }
+
+    // A folder path with or without a trailing separator is the same pin; a drive root
+    // keeps its separator.
+    private static string NormalizeTargetPath(string path)
+    {
+        var full = WindowGrouping.NormalizeExecutablePath(path);
+        var root = Path.GetPathRoot(full);
+        return full.Length > (root?.Length ?? 0)
+            ? full.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+            : full;
     }
 
     public static bool Matches(DockPinnedApp pinned, WindowGroup group)
@@ -318,6 +360,15 @@ public static class DockPinRules
             app.ExecutablePath = string.IsNullOrWhiteSpace(app.ExecutablePath)
                 ? null
                 : WindowGrouping.NormalizeExecutablePath(app.ExecutablePath);
+            app.TargetPath = string.IsNullOrWhiteSpace(app.TargetPath)
+                ? null
+                : NormalizeTargetPath(app.TargetPath);
+            if (IsPathPin(app))
+            {
+                app.Arguments = null;
+                app.WorkingDirectory = null;
+                app.IconFile = null;
+            }
             app.Arguments = string.IsNullOrWhiteSpace(app.Arguments) ? null : app.Arguments.Trim();
             app.WorkingDirectory = string.IsNullOrWhiteSpace(app.WorkingDirectory)
                 ? null
@@ -332,7 +383,11 @@ public static class DockPinRules
             {
                 app.DisplayName = app.ExecutablePath is not null
                     ? Path.GetFileNameWithoutExtension(app.ExecutablePath)
-                    : app.AppUserModelId!;
+                    : app.AppUserModelId ?? Path.GetFileName(app.TargetPath!);
+                if (string.IsNullOrWhiteSpace(app.DisplayName))
+                {
+                    app.DisplayName = app.TargetPath ?? string.Empty;
+                }
             }
             app.DisplayName = app.DisplayName.Trim();
             normalized.Add(app);

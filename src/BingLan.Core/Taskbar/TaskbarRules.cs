@@ -11,11 +11,24 @@ public sealed record TaskbarEnvironment(
     bool IsSystemTransparencyEnabled,
     string? CompetingCustomizer);
 
-public sealed record TaskbarCompatibilityResult(bool IsSupported, string Reason);
+/// <summary>
+/// Whether a mode can be held. <paramref name="Reason"/> is why it cannot, or, when
+/// <paramref name="SubstituteMode"/> is set, why that mode is held instead.
+/// </summary>
+public sealed record TaskbarCompatibilityResult(
+    bool IsSupported,
+    string Reason,
+    TaskbarMode? SubstituteMode = null);
 
 public static class TaskbarCompatibility
 {
     public const int MinimumWindows11Build = 22000;
+
+    /// <summary>
+    /// Windows 10 draws a Win32 taskbar, so blur and transparency are window accents;
+    /// Windows 11 draws a XAML one.
+    /// </summary>
+    public static bool UsesWin32Taskbar(int windowsBuild) => windowsBuild < MinimumWindows11Build;
 
     /// <summary>
     /// Windows 11 builds the XAML taskbar background was verified on, live, for the
@@ -30,11 +43,6 @@ public static class TaskbarCompatibility
         if (mode == TaskbarMode.SystemDefault)
         {
             return new(true, string.Empty);
-        }
-
-        if (environment.WindowsBuild < MinimumWindows11Build)
-        {
-            return new(false, "需要 Windows 11");
         }
 
         if (environment.CompetingCustomizer is { } customizer)
@@ -57,9 +65,11 @@ public static class TaskbarCompatibility
             return new(false, "对比度主题开启时保持系统默认外观");
         }
 
-        if (mode == TaskbarMode.Transparent && !VerifiedTransparentBuilds.Contains(environment.WindowsBuild))
+        if (mode == TaskbarMode.Transparent
+            && !UsesWin32Taskbar(environment.WindowsBuild)
+            && !VerifiedTransparentBuilds.Contains(environment.WindowsBuild))
         {
-            return new(false, "此 Windows 版本尚未验证任务栏透明，保持系统默认");
+            return new(true, "此 Windows 版本暂用模糊代替透明", TaskbarMode.Blur);
         }
 
         // Transparent and blur need the system transparency effects; the adapter turns

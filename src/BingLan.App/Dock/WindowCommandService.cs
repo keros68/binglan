@@ -59,6 +59,11 @@ internal static class WindowCommandService
     // own single-instance logic raise its window properly.
     internal static async Task<WindowCommandResult> LaunchAsync(DockPinnedApp app)
     {
+        if (DockPinRules.IsPathPin(app))
+        {
+            return await OpenPathAsync(app);
+        }
+
         if (app.AppUserModelId is not null)
         {
             var result = await StartAsync(DockAppResolver.AppsFolderPath(app.AppUserModelId), app.DisplayName);
@@ -81,6 +86,21 @@ internal static class WindowCommandService
         return await StartAsync(app.ExecutablePath, app.DisplayName, app.Arguments, workingDirectory);
     }
 
+    // A pinned folder opens in Explorer and a file in its default program.
+    private static async Task<WindowCommandResult> OpenPathAsync(DockPinnedApp item)
+    {
+        var path = item.TargetPath!;
+        if (!Directory.Exists(path) && !File.Exists(path))
+        {
+            return new WindowCommandResult(false, "文件或文件夹已不存在");
+        }
+
+        var failure = await ShellLauncher.StartAsync(new ProcessStartInfo(path) { UseShellExecute = true });
+        return failure is null
+            ? new WindowCommandResult(true, $"已打开 {item.DisplayName}")
+            : new WindowCommandResult(false, $"无法打开 {item.DisplayName}：{failure.Message}");
+    }
+
     // WeChat closed to the tray can be raised through its own global "show window"
     // hotkey (verified with WeChat 4.1.15: the logged-in main window returns, no blank
     // window, no login panel). The hotkey toggles, so it is sent only while the app runs
@@ -88,6 +108,11 @@ internal static class WindowCommandService
     // or disabled hotkey, or no window within the timeout, falls back to Launch.
     internal static async Task<WindowCommandResult> RevealOrLaunchAsync(DockPinnedApp app)
     {
+        if (DockPinRules.IsPathPin(app))
+        {
+            return await OpenPathAsync(app);
+        }
+
         if (TrayAppRevealRules.HotkeyFor(app.ExecutablePath) is not { } hotkey)
         {
             return await LaunchAsync(app);

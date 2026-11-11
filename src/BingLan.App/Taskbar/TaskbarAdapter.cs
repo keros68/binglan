@@ -16,7 +16,8 @@ namespace BingLan.App.Taskbar;
 /// <summary>
 /// Isolated adapter for the native Explorer taskbar. It records what it changes in a
 /// checkpoint before changing it, restores the system default on exit, after a crash
-/// (next start) and on request. Transparent mode leases only Explorer's XAML background.
+/// (next start) and on request. On Windows 11, transparent mode leases only Explorer's XAML
+/// background; on Windows 10 transparent and blur are window accents on the Win32 taskbar.
 /// Transparent and blur turn the user-level transparency effects on when they are off —
 /// recorded in the same checkpoint and put back on restore — instead of asking the user
 /// to flip the system setting. It only changes the taskbar while no other taskbar tool
@@ -51,6 +52,7 @@ internal sealed class TaskbarAdapter : IDisposable
     private TaskbarXamlSession? _xamlSession;
     private int _requestVersion;
     private uint _explorerProcessId;
+    private int _heldAccent;
 
     internal TaskbarAdapter(string checkpointPath)
     {
@@ -206,8 +208,18 @@ internal sealed class TaskbarAdapter : IDisposable
             return;
         }
 
-        switch (mode)
+        var effectiveMode = compatibility.SubstituteMode ?? mode;
+        switch (effectiveMode)
         {
+            case TaskbarMode.Transparent when TaskbarCompatibility.UsesWin32Taskbar(Environment.OSVersion.Version.Build):
+                // Windows 10: the taskbar is a Win32 window, so transparency is a window
+                // accent held and restored the same way as blur. It needs no system setting.
+                ApplyAccent(
+                    TaskbarMode.Transparent,
+                    TaskbarNativeMethods.AccentEnableTransparentGradient,
+                    turnOnSystemTransparency: false,
+                    notice: string.Empty);
+                break;
             case TaskbarMode.Transparent:
                 _xamlSession = new TaskbarXamlSession(Path.GetDirectoryName(_checkpointPath)!);
                 // The record says what to undo before the effect itself is turned on;
@@ -233,7 +245,11 @@ internal sealed class TaskbarAdapter : IDisposable
                 SetStatus(mode, string.Empty);
                 break;
             case TaskbarMode.Blur:
-                ApplyBlur();
+                ApplyAccent(
+                    TaskbarMode.Blur,
+                    TaskbarNativeMethods.AccentEnableBlurBehind,
+                    turnOnSystemTransparency: true,
+                    notice: compatibility.SubstituteMode is null ? string.Empty : compatibility.Reason);
                 break;
             case TaskbarMode.SmartHide:
                 ApplyAutoHide();
@@ -266,11 +282,14 @@ internal sealed class TaskbarAdapter : IDisposable
         _messageWindow = null;
     }
 
-    private bool HoldsAccent => ActiveMode == TaskbarMode.Blur;
+    private bool HoldsAccent => _heldAccent != TaskbarNativeMethods.AccentDisabled;
 
-    private void ApplyBlur()
+    // Holds a window accent on the native taskbars: blur on either Windows, and on
+    // Windows 10 also transparency. The checkpoint's TransparencyApplied restores both,
+    // because a restore always sets the accent back to disabled.
+    private void ApplyAccent(TaskbarMode mode, int accent, bool turnOnSystemTransparency, string notice)
     {
-        var originalTransparency = IsSystemTransparencyEnabled() ? (bool?)null : false;
+        var originalTransparency = turnOnSystemTransparency && !IsSystemTransparencyEnabled() ? (bool?)false : null;
         WriteCheckpoint(new TaskbarCheckpoint
         {
             TransparencyApplied = true,
@@ -283,11 +302,12 @@ internal sealed class TaskbarAdapter : IDisposable
             return;
         }
         _taskbars = FindTaskbars();
-        if (TrySetAccent(_taskbars, TaskbarNativeMethods.AccentEnableBlurBehind, out var error))
+        if (TrySetAccent(_taskbars, accent, out var error))
         {
+            _heldAccent = accent;
             EnsureMessageWindow();
             StartKeepingTransparent();
-            SetStatus(TaskbarMode.Blur, string.Empty);
+            SetStatus(mode, notice);
             return;
         }
 
@@ -382,6 +402,7 @@ internal sealed class TaskbarAdapter : IDisposable
 
     private void StopKeepingTransparent()
     {
+        _heldAccent = TaskbarNativeMethods.AccentDisabled;
         _reapplyTimer.Stop();
         _keepAliveTimer.Stop();
         foreach (var hook in _winEventHooks)
@@ -449,7 +470,7 @@ internal sealed class TaskbarAdapter : IDisposable
             return;
         }
 
-        if (ActiveMode == TaskbarMode.Transparent)
+        if (_xamlSession is not null && ActiveMode == TaskbarMode.Transparent)
         {
             var environment = ReadEnvironment(lookForCompetitors: false);
             if (!environment.IsSystemTransparencyEnabled)
@@ -524,14 +545,14 @@ internal sealed class TaskbarAdapter : IDisposable
             return;
         }
 
-        if (TrySetAccent(_taskbars, TaskbarNativeMethods.AccentEnableBlurBehind, out _))
+        if (TrySetAccent(_taskbars, _heldAccent, out _))
         {
             _breaker.RecordSuccess();
             return;
         }
 
         _taskbars = FindTaskbars();
-        if (TrySetAccent(_taskbars, TaskbarNativeMethods.AccentEnableBlurBehind, out var error))
+        if (TrySetAccent(_taskbars, _heldAccent, out var error))
         {
             _breaker.RecordSuccess();
             return;
@@ -576,7 +597,8 @@ internal sealed class TaskbarAdapter : IDisposable
                 or TaskbarNativeMethods.WmDwmColorizationColorChanged
                 or TaskbarNativeMethods.WmDisplayChange)
         {
-            if (ActiveMode == TaskbarMode.Transparent && (uint)message == _taskbarCreatedMessage)
+            if (_xamlSession is not null && ActiveMode == TaskbarMode.Transparent
+                && (uint)message == _taskbarCreatedMessage)
             {
                 _ = ApplyAsync(TaskbarMode.Transparent);
             }

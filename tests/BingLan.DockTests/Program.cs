@@ -1,6 +1,7 @@
 using BingLan.Core.Dock;
 using BingLan.Core.Models;
 using BingLan.Core.Services;
+using BingLan.Core.Themes;
 
 var failures = new List<string>();
 Run("Dock 四边几何与负坐标", TestDockGeometry);
@@ -55,6 +56,8 @@ Run("Dock 状态保存与加载往返保留顺序与取值", TestDockStateRoundT
 Run("重复固定项保存后应去重", TestDockStateDuplicatePinsDeduped);
 Run("隐藏的应用不出现在 Dock 且可恢复", TestDockHiddenApps);
 Run("搜索会话持有前台时 Dock 评估借用前原窗口", TestDockForegroundRules);
+Run("文件夹与文件固定项：识别、去重、不匹配运行窗口", TestPathPins);
+Run("文件夹与文件固定项保存往返且不进入主题导出", TestPathPinsPersistAndStayOutOfThemes);
 
 if (failures.Count > 0)
 {
@@ -1537,6 +1540,74 @@ static TrackedWindow Window(
     string? executablePath,
     bool isForeground = false) =>
     new((nint)handle, processId, title, appUserModelId, executablePath, isForeground, false);
+
+static void TestPathPins()
+{
+    var folder = DockPinRules.CreateFromPath(@"C:\Work\Reports\");
+    var sameFolder = DockPinRules.CreateFromPath(@"c:/work/reports");
+    var file = DockPinRules.CreateFromPath(@"C:\Work\报告.docx");
+    var root = DockPinRules.CreateFromPath(@"C:\");
+    Assert(folder is not null && sameFolder is not null && file is not null && root is not null, "路径应可创建固定项");
+    AssertEqual(@"C:\Work\Reports", folder!.TargetPath, "文件夹路径应去掉末尾分隔符");
+    AssertEqual("Reports", folder.DisplayName, "文件夹显示名应为文件夹名");
+    AssertEqual("报告.docx", file!.DisplayName, "文件显示名应保留扩展名");
+    AssertEqual(@"C:\", root!.TargetPath, "盘符根目录应保留分隔符");
+    Assert(DockPinRules.IsPathPin(folder) && !DockPinRules.IsPathPin(new DockPinnedApp { ExecutablePath = @"C:\A.exe" }),
+        "应区分路径固定项与应用固定项");
+    Assert(DockPinRules.CreateFromPath("  ") is null, "空路径不应创建固定项");
+
+    var state = new DockState();
+    Assert(DockPinRules.Pin(state, folder), "文件夹应可固定");
+    Assert(!DockPinRules.Pin(state, sameFolder!), "大小写或分隔符不同的同一文件夹应去重");
+    Assert(DockPinRules.Pin(state, file), "文件应可固定");
+    AssertEqual(2, state.PinnedApps.Count, "固定项数量错误");
+    Assert(DockPinRules.Move(state, DockPinRules.IdentityKey(file), 0), "路径固定项应可排序");
+    AssertEqual(0, state.PinnedApps.IndexOf(file), "排序后位置错误");
+
+    // Explorer windows (and the program that opens a file) never attach to path pins.
+    var explorer = Window(1, 10, "Reports", null, @"C:\Windows\explorer.exe");
+    var editor = Window(2, 20, "报告", null, @"C:\Apps\Editor.exe");
+    var groups = WindowGrouping.Group([explorer, editor]);
+    var items = DockItemComposer.Compose(state.PinnedApps, groups);
+    AssertEqual(4, items.Count, "路径固定项不应吸收运行窗口");
+    Assert(items.Take(2).All(item => item.Group is null && item.IsPinned), "路径固定项应保持未运行状态");
+    Assert(groups.All(group => !DockPinRules.Matches(folder, group)), "路径固定项不应匹配任何分组");
+
+    Assert(DockPinRules.Unpin(state, DockPinRules.IdentityKey(folder)), "路径固定项应可移除");
+    AssertEqual(1, state.PinnedApps.Count, "移除后数量错误");
+}
+
+static void TestPathPinsPersistAndStayOutOfThemes()
+{
+    var temp = Path.Combine(Path.GetTempPath(), $"BingLan-dock-pathpin-{Guid.NewGuid():N}");
+    try
+    {
+        var store = new LocalStateStore(temp);
+        var state = LocalStateStore.CreateDefault();
+        state.Dock.PinnedApps.Add(DockPinRules.CreateFromPath(@"C:\Work\Reports")!);
+        state.Dock.PinnedApps.Add(new DockPinnedApp { DisplayName = "记事本", ExecutablePath = @"C:\Windows\System32\notepad.exe" });
+        state.Dock.PinnedApps.Add(DockPinRules.CreateFromPath(@"C:\Work\报告.docx")!);
+        store.Save(state);
+        var loaded = store.Load();
+        AssertEqual(3, loaded.Dock.PinnedApps.Count, "路径固定项未保留");
+        AssertEqual(@"C:\Work\Reports", loaded.Dock.PinnedApps[0].TargetPath, "文件夹路径未保留");
+        Assert(DockPinRules.IsPathPin(loaded.Dock.PinnedApps[2]), "文件固定项未保留");
+        AssertEqual("报告.docx", loaded.Dock.PinnedApps[2].DisplayName, "文件显示名未保留");
+
+        var package = ThemeRules.Export(loaded, "测试", new ThemeArea(0, 0, 1920, 1040), new Version(0, 1, 0));
+        AssertEqual(1, package.Bindings.Apps.Count, "主题只应包含应用固定项");
+        var json = System.Text.Json.JsonSerializer.Serialize(package);
+        Assert(!json.Contains("Reports") && !json.Contains("报告") && !json.Contains("Work"),
+            "主题导出不应含文件夹或文件的名称与路径");
+    }
+    finally
+    {
+        if (Directory.Exists(temp))
+        {
+            Directory.Delete(temp, true);
+        }
+    }
+}
 
 static void TestDockForegroundRules()
 {

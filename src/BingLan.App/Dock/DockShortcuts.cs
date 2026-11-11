@@ -125,6 +125,25 @@ internal static class DockShortcuts
         return app;
     }
 
+    /// <summary>
+    /// A pin for an existing folder or file, or for the folder or file a shortcut points
+    /// at; null when nothing exists there. Only the path is recorded.
+    /// </summary>
+    internal static DockPinnedApp? CreatePathPin(string path)
+    {
+        var isShortcut = Path.GetExtension(path).Equals(".lnk", StringComparison.OrdinalIgnoreCase);
+        var target = isShortcut ? ResolveShortcut(path)?.TargetPath : path;
+        if (string.IsNullOrWhiteSpace(target) || !(Directory.Exists(target) || File.Exists(target)))
+        {
+            return null;
+        }
+
+        // A file keeps its full name ("报告.docx") since the extension tells what it is.
+        return DockPinRules.CreateFromPath(
+            target,
+            isShortcut ? Path.GetFileNameWithoutExtension(path) : null);
+    }
+
     private sealed record ResolvedShortcut(string TargetPath, string Arguments, string WorkingDirectory);
 
     private static ResolvedShortcut? ResolveShortcut(string shortcut)

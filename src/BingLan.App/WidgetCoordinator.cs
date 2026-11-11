@@ -1604,7 +1604,8 @@ public sealed class WidgetCoordinator : IDisposable
     private void OnTaskbarStatusChanged()
     {
         _settingsWindow?.RefreshTaskbarSettings();
-        if (!_isApplyingTaskbar && _taskbar.Problem.Length > 0)
+        if (!_isApplyingTaskbar && _taskbar.Problem.Length > 0
+            && _taskbar.ActiveMode == TaskbarMode.SystemDefault)
         {
             _trayIcon.ShowBalloonTip(
                 3500,
@@ -1848,7 +1849,10 @@ public sealed class WidgetCoordinator : IDisposable
         }
         _state.Dock.IsEnabled = package.Bindings.DockEnabled;
         _state.Dock.VisibilityMode = package.Bindings.DockVisibility;
-        _state.Dock.PinnedApps = bindings.Resolved.ToList();
+        // Pinned folders and files are personal and not part of a theme; they stay.
+        _state.Dock.PinnedApps = bindings.Resolved
+            .Concat(_state.Dock.PinnedApps.Where(DockPinRules.IsPathPin))
+            .ToList();
         _dock.Apply();
         ThemeRules.ApplyTopBar(package, _state.TopBar);
         _topBar.Apply();

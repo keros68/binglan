@@ -851,7 +851,9 @@ public partial class IceBlueDockWindow : Window
                 () => Report(WindowCommandService.Close(group.Windows))));
         }
 
+        var isPathPin = item.Pinned is { } pathPin && DockPinRules.IsPathPin(pathPin);
         var executablePath = item.Pinned?.ExecutablePath
+            ?? item.Pinned?.TargetPath
             ?? item.Group?.Windows
                 .Select(window => window.ExecutablePath)
                 .FirstOrDefault(path => !string.IsNullOrWhiteSpace(path));
@@ -868,7 +870,7 @@ public partial class IceBlueDockWindow : Window
         {
             menu.Items.Add(new Separator());
         }
-        if (item.Pinned is { } iconPin && DockAppResolver.IconStore is { } iconStore)
+        if (!isPathPin && item.Pinned is { } iconPin && DockAppResolver.IconStore is { } iconStore)
         {
             menu.Items.Add(MenuItem("更换图标…", () => ChangeIcon(item, iconPin, iconStore)));
             if (iconPin.IconFile is not null)
@@ -998,11 +1000,14 @@ public partial class IceBlueDockWindow : Window
         }
     }
 
-    // Programs and shortcuts dropped on the dock are pinned; anything else is ignored.
+    // Programs, folders and files dropped on the dock are pinned, as are shortcuts to
+    // them; only their paths are recorded.
     private void PinFiles(IEnumerable<string> paths)
     {
         var pinned = 0;
-        foreach (var app in paths.Select(DockShortcuts.CreatePin).OfType<DockPinnedApp>())
+        foreach (var app in paths
+                     .Select(path => DockShortcuts.CreatePin(path) ?? DockShortcuts.CreatePathPin(path))
+                     .OfType<DockPinnedApp>())
         {
             if (DockPinRules.Pin(_state, app))
             {
@@ -1015,7 +1020,7 @@ public partial class IceBlueDockWindow : Window
         }
         else
         {
-            CommandFailed?.Invoke("只能固定应用程序（.exe）或指向应用程序的快捷方式");
+            CommandFailed?.Invoke("可固定应用、文件和文件夹，或指向它们的快捷方式");
         }
     }
 

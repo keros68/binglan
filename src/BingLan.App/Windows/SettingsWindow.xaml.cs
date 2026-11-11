@@ -1853,7 +1853,7 @@ public partial class SettingsWindow : Window
         RestoreDesktopModeButton.Tag = match.Mode;
         RestoreDesktopModeButton.Visibility = match.IsExact ? Visibility.Collapsed : Visibility.Visible;
         var (activeMode, problem) = _taskbarStatus();
-        DesktopModeStatusText.Text = problem.Length > 0 && activeMode != _taskbarState.Mode
+        DesktopModeStatusText.Text = problem.Length > 0 && activeMode == TaskbarMode.SystemDefault && _taskbarState.Mode != TaskbarMode.SystemDefault
             ? $"任务栏保持系统默认：{problem}"
             : match.IsExact
                 ? "方案会一次设好 Dock、任务栏和顶端信息条；各自页面可以继续微调。"
@@ -1919,15 +1919,18 @@ public partial class SettingsWindow : Window
         }
 
         var (activeMode, problem) = _taskbarStatus();
-        TaskbarStatusText.Text = problem.Length > 0
-            ? $"当前保持系统默认：{problem}"
-            : activeMode switch
-            {
-                TaskbarMode.Transparent => "当前：透明",
-                TaskbarMode.Blur => "当前：模糊",
-                TaskbarMode.SmartHide => "当前：自动隐藏",
-                _ => "当前：系统默认"
-            };
+        var activeName = activeMode switch
+        {
+            TaskbarMode.Transparent => "透明",
+            TaskbarMode.Blur => "模糊",
+            TaskbarMode.SmartHide => "自动隐藏",
+            _ => "系统默认"
+        };
+        TaskbarStatusText.Text = problem.Length == 0
+            ? $"当前：{activeName}"
+            : activeMode == TaskbarMode.SystemDefault
+                ? $"当前保持系统默认：{problem}"
+                : $"当前：{activeName}（{problem}）";
     }
 
     private void RevealOnlyAtCorners_Click(object sender, RoutedEventArgs e)
@@ -3094,7 +3097,7 @@ internal sealed class DockPinnedEntry(DockPinnedApp app)
 {
     public DockPinnedApp App { get; } = app;
     public string DisplayName => App.DisplayName;
-    public string Detail => App.ExecutablePath ?? "Microsoft Store 或网页应用";
+    public string Detail => App.ExecutablePath ?? App.TargetPath ?? "Microsoft Store 或网页应用";
 }
 
 internal sealed class BackupEntry(string path)

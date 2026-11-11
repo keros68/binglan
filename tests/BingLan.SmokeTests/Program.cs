@@ -1863,10 +1863,33 @@ static void TestTaskbarCompatibility()
     Assert(TaskbarCompatibility.Assess(TaskbarMode.Blur, ready).IsSupported, "Windows 11 应支持模糊");
     Assert(TaskbarCompatibility.Assess(TaskbarMode.Transparent, ready with { WindowsBuild = 26300 }).IsSupported,
         "已验证的 26300 应支持透明");
-    Assert(!TaskbarCompatibility.Assess(TaskbarMode.Transparent, ready with { WindowsBuild = 26100 }).IsSupported,
-        "未验证的旧 XAML 结构不应启用透明");
-    Assert(!TaskbarCompatibility.Assess(TaskbarMode.Transparent, ready with { WindowsBuild = 30000 }).IsSupported,
-        "未来 Windows 版本不应自动进入透明适配");
+    foreach (var build in new[] { 22631, 26100, 30000 })
+    {
+        var substituted = TaskbarCompatibility.Assess(TaskbarMode.Transparent, ready with { WindowsBuild = build });
+        Assert(substituted is { IsSupported: true, SubstituteMode: TaskbarMode.Blur } && substituted.Reason.Length > 0,
+            $"未验证的 Windows 11 Build {build} 应以模糊代替透明并说明");
+    }
+    Assert(TaskbarCompatibility.Assess(TaskbarMode.Transparent, ready).SubstituteMode is null,
+        "已验证版本的透明不应被替换");
+    Assert(TaskbarCompatibility.Assess(TaskbarMode.Blur, ready with { WindowsBuild = 26100 }).SubstituteMode is null,
+        "模糊不应被替换");
+    foreach (var mode in new[] { TaskbarMode.Transparent, TaskbarMode.Blur, TaskbarMode.SmartHide })
+    {
+        var windows10 = TaskbarCompatibility.Assess(mode, ready with { WindowsBuild = 19045 });
+        Assert(windows10 is { IsSupported: true, SubstituteMode: null }, $"Windows 10 应支持 {mode}");
+        Assert(!TaskbarCompatibility.Assess(mode, ready with { WindowsBuild = 19045, CompetingCustomizer = "TaskbarX" })
+            .IsSupported, $"Windows 10 上其他任务栏工具运行时 {mode} 应让出");
+    }
+    Assert(!TaskbarCompatibility.Assess(TaskbarMode.Transparent, ready with { WindowsBuild = 19045, IsRemoteSession = true })
+        .IsSupported, "Windows 10 远程桌面中不应透明");
+    Assert(!TaskbarCompatibility.Assess(TaskbarMode.Blur, ready with { WindowsBuild = 19045, IsHighContrast = true })
+        .IsSupported, "Windows 10 对比度主题下不应模糊");
+    Assert(!TaskbarCompatibility.Assess(TaskbarMode.Blur, ready with { WindowsBuild = 26100, IsRemoteSession = true })
+        .IsSupported, "远程桌面中透明替换前仍先拒绝");
+    Assert(!TaskbarCompatibility.Assess(TaskbarMode.Transparent, ready with { WindowsBuild = 26100, IsHighContrast = true })
+        .IsSupported, "对比度主题下未验证版本的透明不应被替换为模糊");
+    Assert(TaskbarCompatibility.UsesWin32Taskbar(19045) && !TaskbarCompatibility.UsesWin32Taskbar(22000),
+        "Build 22000 起为 XAML 任务栏");
     Assert(TaskbarCompatibility.Assess(TaskbarMode.SmartHide, ready with { WindowsBuild = 30000 }).IsSupported,
         "透明适配的版本限制不应阻断系统自动隐藏");
     Assert(
@@ -1875,9 +1898,6 @@ static void TestTaskbarCompatibility()
     Assert(
         TaskbarCompatibility.Assess(TaskbarMode.SystemDefault, ready with { WindowsBuild = 19045 }).IsSupported,
         "系统默认在任何环境都可用");
-    Assert(
-        !TaskbarCompatibility.Assess(TaskbarMode.SmartHide, ready with { WindowsBuild = 19045 }).IsSupported,
-        "Windows 10 不在支持范围");
     Assert(
         !TaskbarCompatibility.Assess(TaskbarMode.Transparent, ready with { IsHighContrast = true }).IsSupported,
         "对比度主题下不应透明");
@@ -1927,6 +1947,11 @@ static void TestTaskbarRecovery()
     Assert(
         TaskbarRecovery.Plan(transparent, currentAutoHide: false) is { ResetSystemTransparency: false },
         "本来就开启的系统透明效果不应被改动");
+
+    var win10Accent = new TaskbarCheckpoint { TransparencyApplied = true };
+    var win10Plan = TaskbarRecovery.Plan(TaskbarCheckpoint.Parse(win10Accent.Serialize())!, currentAutoHide: false);
+    Assert(win10Plan is { ResetTransparency: true, SetAutoHide: null, ResetSystemTransparency: false },
+        "Windows 10 透明（窗口材质）检查点应只把材质恢复为禁用，不动系统透明效果与自动隐藏");
 
     var autoHide = new TaskbarCheckpoint { AutoHideApplied = true, OriginalAutoHide = false };
     Assert(

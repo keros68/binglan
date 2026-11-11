@@ -31,6 +31,11 @@ internal static class DockAppResolver
             return new DockAppVisual(customIcon, null);
         }
 
+        if (item.Pinned is { } pathPin && DockPinRules.IsPathPin(pathPin))
+        {
+            return ResolvePath(pathPin.TargetPath!);
+        }
+
         var appUserModelId = item.Pinned?.AppUserModelId ?? GetGroupAppUserModelId(item.Group);
         if (appUserModelId is not null)
         {
@@ -61,6 +66,22 @@ internal static class DockAppResolver
             window is not null && IsFrameHost(executablePath) && !string.IsNullOrWhiteSpace(window.Title)
                 ? window.Title
                 : null);
+    }
+
+    // The shell's own icon: the folder icon, or the icon of the file's type or its
+    // program. A target that is gone gets the generic folder or document icon.
+    private static DockAppVisual ResolvePath(string path)
+    {
+        if (Directory.Exists(path) || File.Exists(path))
+        {
+            if (IconFromParsingName(path, isPath: true) is { } icon)
+            {
+                return new DockAppVisual(icon, null);
+            }
+        }
+
+        var generic = Path.HasExtension(path) ? Path.GetExtension(path) : "folder";
+        return new DockAppVisual(IconFromParsingName(generic, isPath: false), null);
     }
 
     internal static bool AppsFolderItemExists(string appUserModelId)

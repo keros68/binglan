@@ -87,6 +87,11 @@ public static class ThemeRules
         for (var index = 0; index < state.Dock.PinnedApps.Count; index++)
         {
             var app = state.Dock.PinnedApps[index];
+            // Pinned folders and files are personal paths and never part of a shared theme.
+            if (DockPinRules.IsPathPin(app))
+            {
+                continue;
+            }
             var executableName = app.ExecutablePath is null ? null : Path.GetFileName(app.ExecutablePath);
             package.Bindings.Apps.Add(new ThemeAppBinding
             {
@@ -113,7 +118,8 @@ public static class ThemeRules
         var limit = Math.Min(state.Dock.PinnedApps.Count, MaximumBindings);
         for (var index = 0; index < limit && count < MaximumIcons; index++)
         {
-            if (state.Dock.PinnedApps[index].IconFile is { } iconFile && IsIconFileName(iconFile))
+            if (!DockPinRules.IsPathPin(state.Dock.PinnedApps[index])
+                && state.Dock.PinnedApps[index].IconFile is { } iconFile && IsIconFileName(iconFile))
             {
                 count++;
                 yield return (index, $"icons/{index}.png", iconFile);
