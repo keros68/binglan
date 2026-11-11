@@ -10,10 +10,17 @@ public partial class App : System.Windows.Application
     private const string ProductionInstanceName = "Local\\BingLan.Desktop.Production";
     private const string InteractiveQaInstanceName = "Local\\BingLan.Desktop.InteractiveQa";
     public const string WaitForPreviousInstanceSwitch = "--wait-for-previous";
+    /// <summary>
+    /// Asks the running instance to save and exit the same way as the tray's Exit, then
+    /// starts in its place: switching builds without quitting by hand or ending a process.
+    /// </summary>
+    public const string ReplaceInstanceSwitch = "--replace";
     private static readonly TimeSpan PreviousInstanceTimeout = TimeSpan.FromSeconds(15);
 
     private WidgetCoordinator? _coordinator;
     private SingleInstanceGate? _singleInstanceGate;
+    private EventWaitHandle? _exitSignal;
+    private RegisteredWaitHandle? _exitWait;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -59,15 +66,21 @@ public partial class App : System.Windows.Application
         var instanceName = interactiveQa
             ? InteractiveQaInstanceName
             : ProductionInstanceName;
+        var replace = e.Args.Contains(ReplaceInstanceSwitch, StringComparer.OrdinalIgnoreCase);
+        if (replace)
+        {
+            SignalRunningInstanceToExit(instanceName);
+        }
         if (!TryAcquireInstance(
                 instanceName,
-                e.Args.Contains(WaitForPreviousInstanceSwitch, StringComparer.OrdinalIgnoreCase)))
+                replace || e.Args.Contains(WaitForPreviousInstanceSwitch, StringComparer.OrdinalIgnoreCase)))
         {
             Shutdown();
             return;
         }
         _coordinator = new WidgetCoordinator(interactiveQa, dataDirectory, showOnboarding: true);
         _coordinator.Start();
+        ListenForExitSignal(instanceName);
         // Once running, one failed action (a shell call, a damaged file) is logged and
         // reported instead of closing every card; startup failures still end the process.
         DispatcherUnhandledException += (_, args) =>
@@ -110,8 +123,35 @@ public partial class App : System.Windows.Application
         }
     }
 
+    private static string ExitSignalName(string instanceName) => instanceName + ".Exit";
+
+    private static void SignalRunningInstanceToExit(string instanceName)
+    {
+        if (EventWaitHandle.TryOpenExisting(ExitSignalName(instanceName), out var signal))
+        {
+            using (signal)
+            {
+                signal.Set();
+            }
+        }
+    }
+
+    // The running instance owns the exit signal; a later "--replace" start sets it.
+    private void ListenForExitSignal(string instanceName)
+    {
+        _exitSignal = new EventWaitHandle(false, EventResetMode.AutoReset, ExitSignalName(instanceName));
+        _exitWait = ThreadPool.RegisterWaitForSingleObject(
+            _exitSignal,
+            (_, _) => Dispatcher.BeginInvoke(() => _coordinator?.RequestExit()),
+            null,
+            Timeout.Infinite,
+            executeOnlyOnce: true);
+    }
+
     protected override void OnExit(ExitEventArgs e)
     {
+        _exitWait?.Unregister(null);
+        _exitSignal?.Dispose();
         Services.UiDiagnostics.Stop();
         _coordinator?.Dispose();
         _singleInstanceGate?.Dispose();

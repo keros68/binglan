@@ -1395,7 +1395,9 @@ internal static class Program
         try
         {
             var marker = Path.Combine(directory, "launched.txt");
-            var shortcutPath = Path.Combine(directory, "带参数的程序.lnk");
+            // WScript.Shell saves through the ANSI code page, which cannot hold Chinese on an
+            // English Windows such as the cloud test machine; the name is not under test.
+            var shortcutPath = Path.Combine(directory, "program-with-arguments.lnk");
             var shellType = Type.GetTypeFromProgID("WScript.Shell")!;
             dynamic shell = Activator.CreateInstance(shellType)!;
             var shortcut = shell.CreateShortcut(shortcutPath);

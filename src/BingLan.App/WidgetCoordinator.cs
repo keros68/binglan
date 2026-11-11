@@ -2315,6 +2315,9 @@ public sealed class WidgetCoordinator : IDisposable
         }
     }
 
+    /// <summary>A newer start asked this instance to make way; same path as the tray's Exit.</summary>
+    internal void RequestExit() => Exit();
+
     private async void Exit()
     {
         if (_isExiting || _exitRequested)

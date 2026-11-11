@@ -136,6 +136,8 @@ dotnet run --project .\tests\BingLan.UiSmokeTests\BingLan.UiSmokeTests.csproj -c
 - Dock/任务栏/DPI/Explorer 集成：除自动测试外，记录手工场景、Windows 版本、显示器和缩放条件。
 - 修复缺陷时，优先加入能在修复前失败、修复后通过的回归检查。
 
+UiSmokeTests、InformationTests、NoteTests 会创建真实窗口并抢占前台、注入输入，在用户正在使用的电脑上运行会与用户操作互相干扰。开发与发布时在本机只运行不创建窗口的 SmokeTests 与 DockTests；创建窗口的三套交给 GitHub Actions（`gh workflow run ui-smoke.yml`，或发布时由 `release.yml` 运行），只有用户同意时才在本机运行。给用户试用预览版时，把构建输出复制到 `%LOCALAPPDATA%\BingLan-Preview` 后以 `--replace` 启动，不直接运行 `bin` 下的程序（会锁住构建输出），也不要求用户手动退出或强行结束进程。
+
 不要声称未运行的检查已经通过。UI 自动测试通过也不能替代真实多显示器、全屏和 Explorer 重启测试。
 
 ## 12. 完成标准
