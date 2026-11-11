@@ -23,10 +23,11 @@ jobs:
       - name: 检出
         uses: actions/checkout@v4
 
+      # 与本地相同的 SDK（global.json），安装包自带的 .NET 运行时随之一致。
       - name: 安装 .NET SDK
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: 10.0.x
+          global-json-file: global.json
 
       - name: 确定版本号
         id: version
