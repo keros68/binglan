@@ -1,0 +1,102 @@
+# 发布：推送 v* 标签后在云端构建、跑全部五套测试（含会创建真实窗口的三套）、打安装包与
+# 免安装包、生成 SHA256SUMS.txt，并建立草稿 Release 上传这三个文件。发布说明在草稿里补写，
+# 确认后再转为正式发布。手动触发只打包并把产物作为构建附件保存，不建立 Release，用于试跑。
+name: 发布
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 试跑用的版本号，例如 0.2.64
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-2025
+    timeout-minutes: 60
+    steps:
+      - name: 检出
+        uses: actions/checkout@v4
+
+      - name: 安装 .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: 确定版本号
+        id: version
+        shell: pwsh
+        run: |
+          $version = if ('${{ github.event_name }}' -eq 'push') { '${{ github.ref_name }}'.TrimStart('v') } else { '${{ inputs.version }}' }
+          if ($version -notmatch '^\d+\.\d+\.\d+$') { throw "版本号格式不对：$version" }
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: 构建（Release）
+        run: dotnet build BingLan.slnx -c Release
+
+      - name: 核心烟雾测试
+        run: dotnet run --project tests/BingLan.SmokeTests -c Release --no-build
+
+      - name: Dock 测试
+        run: dotnet run --project tests/BingLan.DockTests -c Release --no-build
+
+      - name: 便签测试
+        run: dotnet run --project tests/BingLan.NoteTests -c Release --no-build
+
+      - name: 信息组件测试
+        run: dotnet run --project tests/BingLan.InformationTests -c Release --no-build
+
+      - name: WPF UI 烟雾测试
+        run: dotnet run --project tests/BingLan.UiSmokeTests -c Release --no-build
+
+      - name: 安装 Inno Setup 与简体中文语言文件
+        shell: pwsh
+        run: |
+          choco install innosetup -y --no-progress
+          $languages = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\Languages'
+          $chinese = Join-Path $languages 'ChineseSimplified.isl'
+          if (-not (Test-Path $chinese)) {
+            Invoke-WebRequest 'https://raw.githubusercontent.com/jrsoftware/issrc/main/Files/Languages/ChineseSimplified.isl' -OutFile $chinese
+          }
+
+      - name: 打包
+        shell: pwsh
+        run: pwsh -NoProfile -File installer/build.ps1 -Version ${{ steps.version.outputs.version }}
+
+      - name: 生成 SHA256SUMS.txt
+        shell: pwsh
+        run: |
+          $version = '${{ steps.version.outputs.version }}'
+          $files = "BingLan-Setup-$version.exe", "BingLan-$version-portable.zip"
+          $lines = $files | ForEach-Object { "$((Get-FileHash (Join-Path installer/bin $_) -Algorithm SHA256).Hash)  $_" }
+          [IO.File]::WriteAllText((Join-Path installer/bin 'SHA256SUMS.txt'), ($lines -join "`n") + "`n")
+          Get-Content installer/bin/SHA256SUMS.txt
+
+      - name: 保存产物（试跑）
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: binglan-${{ steps.version.outputs.version }}
+          path: |
+            installer/bin/BingLan-Setup-${{ steps.version.outputs.version }}.exe
+            installer/bin/BingLan-${{ steps.version.outputs.version }}-portable.zip
+            installer/bin/SHA256SUMS.txt
+          retention-days: 3
+
+      - name: 建立草稿 Release
+        if: github.event_name == 'push'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = '${{ steps.version.outputs.version }}'
+          gh release create "v$version" --draft --title "冰蓝桌面 $version" `
+            --notes "发布说明待补写。" `
+            "installer/bin/BingLan-Setup-$version.exe" `
+            "installer/bin/BingLan-$version-portable.zip" `
+            "installer/bin/SHA256SUMS.txt"

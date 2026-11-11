@@ -1,5 +1,5 @@
 # 守护检查：产品 Release 构建（覆盖测试未引用的 XAML/项目配置）加四套离线测试。
-# 只检查、不发布：安装包与 GitHub Release 仍由本地 build.ps1 与手动 gh release 出。
+# 只检查、不发布：安装包与草稿 Release 由 release.yml 在推送 v* 标签时生成。
 # UiSmokeTests 需要真实桌面交互，单独在 ui-smoke.yml 里手动触发，不进本工作流。
 name: CI
 

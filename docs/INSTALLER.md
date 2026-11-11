@@ -1,5 +1,16 @@
 # 安装包
 
+## 云端发布
+
+推送版本标签后由 GitHub Actions（`.github/workflows/release.yml`）在 Windows 云端机器上构建、运行全部五套测试（含会创建真实窗口的三套）、打包，并建立带三个文件的草稿 Release：
+
+```powershell
+git tag v0.2.64
+git push origin v0.2.64
+```
+
+草稿的发布说明补写后转为正式发布：`gh release edit v0.2.64 --notes-file <说明文件> --draft=false`。在 Actions 页面手动运行“发布”并填写版本号只打包、把产物保存为构建附件，不建立 Release，用于试跑。本地构建仍可用下面的命令。
+
 ## 构建
 
 ```powershell
