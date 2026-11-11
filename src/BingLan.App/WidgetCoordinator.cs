@@ -2582,7 +2582,7 @@ public sealed class WidgetCoordinator : IDisposable
 
         public void OpenTopBarSettings() => owner.OpenSettings("TopBar");
 
-        public async void OpenTrayOverflow()
+        public async void OpenTrayOverflow(PixelRect? anchor)
         {
             if (owner._exitRequested || owner._isExiting || owner._closingTrayOverflow is not null) return;
             try
@@ -2604,7 +2604,7 @@ public sealed class WidgetCoordinator : IDisposable
                     return;
                 }
                 if (controller.EndedWithin(400)) return;
-                var result = await controller.OpenAsync();
+                var result = await controller.OpenAsync(anchor: anchor);
                 if (owner._exitRequested || owner._isExiting) return;
                 if (result == "elevated-foreground") ReportElevatedForeground();
                 else if (result is not ("opened" or "already-open" or "busy")) ReportShellFailure();

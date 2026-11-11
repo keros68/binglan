@@ -1,7 +1,10 @@
 using System.Runtime.InteropServices;
 using System.Windows.Automation;
 using System.Windows.Threading;
+using BingLan.App.Dock;
 using BingLan.App.Interop;
+using BingLan.Core.Dock;
+using BingLan.Core.TopBar;
 
 namespace BingLan.App.Taskbar;
 
@@ -81,7 +84,8 @@ internal sealed class TrayOverflowController : IDisposable
     /// <summary>True while a UIA toggle call has been issued and not yet returned.</summary>
     internal bool IsInvoking => _uiaCall is { IsCompleted: false };
 
-    internal async Task<string> OpenAsync(bool invokeButton = true)
+    /// <param name="anchor">Screen pixels of the button that asked; the panel is moved under it once shown.</param>
+    internal async Task<string> OpenAsync(bool invokeButton = true, PixelRect? anchor = null)
     {
         if (_disposed || _stopping) return "disposed";
         if (IsInvoking) return "pending";
@@ -127,6 +131,7 @@ internal sealed class TrayOverflowController : IDisposable
                     await Task.Delay(100);
                     if (!IsVisible) continue;
                     opened = true;
+                    if (anchor is { } button) MovePanelUnder(button);
                     if (!_stopping) _closeCheck.Start();
                     cancellationToken.ThrowIfCancellationRequested();
                     return "opened";
@@ -148,6 +153,30 @@ internal sealed class TrayOverflowController : IDisposable
             Volatile.Write(ref _opening, 0);
         }
     }
+
+    /// <summary>
+    /// Moves Explorer's panel under the top bar button. Only the position changes; when
+    /// Explorer puts it back or the move fails, the panel stays where Windows opened it.
+    /// </summary>
+    private void MovePanelUnder(PixelRect anchor)
+    {
+        var panel = TaskbarNativeMethods.FindWindowW(PanelClass, null);
+        if (panel == 0 || !DockNativeMethods.GetWindowRect(panel, out var rect)) return;
+        var centerX = anchor.Left + anchor.Width / 2;
+        var centerY = anchor.Top + anchor.Height / 2;
+        var monitor = MonitorCatalog.GetAll().FirstOrDefault(candidate =>
+            centerX >= candidate.Bounds.Left && centerX < candidate.Bounds.Right
+            && centerY >= candidate.Bounds.Top && centerY < candidate.Bounds.Bottom);
+        if (monitor is null) return;
+        var gap = (int)Math.Round(PanelGapDip * monitor.Dpi / 96d);
+        var (left, top) = TrayPanelPlacement.Calculate(
+            anchor, rect.Right - rect.Left, rect.Bottom - rect.Top, monitor.Bounds, gap);
+        var moved = NativeMethods.SetWindowPos(panel, 0, left, top, 0, 0,
+            NativeMethods.SwpNoSize | NativeMethods.SwpNoZOrder | NativeMethods.SwpNoActivate);
+        _log($"OVERFLOW move-under-button moved={moved} to={left},{top}");
+    }
+
+    private const double PanelGapDip = 6;
 
     private bool Claimed
     {

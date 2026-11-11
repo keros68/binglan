@@ -795,6 +795,15 @@ static void TestAppBarPositionGuard()
     guard.Reset();
     Assert(guard.NeedsSubmit(strip), "重新注册后应重新提交位置");
 
+    // 换到另一缩放的显示器后，资源管理器可能仍按旧尺寸保留空间。
+    var check = new AppBarWorkAreaCheck();
+    Assert(!check.NeedsResubmit(strip.Top, strip.Top), "工作区正好止于 Dock 上沿时无需重提");
+    Assert(check.NeedsResubmit(1100, strip.Top), "资源管理器多保留了底部空间时应重提一次");
+    Assert(!check.NeedsResubmit(1100, strip.Top), "同一工作区边界只重提一次，避免与相邻工具栏来回");
+    Assert(check.NeedsResubmit(1400, strip.Top), "资源管理器少保留时同样应重提");
+    Assert(!check.NeedsResubmit(strip.Top, strip.Top), "工作区恢复后不再重提");
+    Assert(check.NeedsResubmit(1100, strip.Top), "再次出现偏差时应重新纠正");
+
     long now = 10_000;
     for (var i = 0; i < AppBarPositionGuard.BurstLimit; i++)
     {

@@ -1811,27 +1811,53 @@ public partial class SettingsWindow : Window
         }
     }
 
+    /// <summary>
+    /// The desktop mode is where Dock, taskbar and top bar settings start from; their own
+    /// pages fine-tune it. Every page names the mode in use and what was changed since,
+    /// with one button back to the mode's defaults.
+    /// </summary>
     private void LoadDesktopMode()
     {
-        var mode = DesktopModeRules.Detect(_dockState, _taskbarState);
+        var match = DesktopModeRules.Match(_dockState, _taskbarState, _topBarState);
         _loadingDesktopMode = true;
         try
         {
-            WindowsNativeModeRadio.IsChecked = mode == DesktopMode.WindowsNative;
-            IceBlueHybridModeRadio.IsChecked = mode == DesktopMode.IceBlueHybrid;
-            AppleStyleModeRadio.IsChecked = mode == DesktopMode.AppleStyle;
+            WindowsNativeModeRadio.IsChecked = match.IsExact && match.Mode == DesktopMode.WindowsNative;
+            IceBlueHybridModeRadio.IsChecked = match.IsExact && match.Mode == DesktopMode.IceBlueHybrid;
+            AppleStyleModeRadio.IsChecked = match.IsExact && match.Mode == DesktopMode.AppleStyle;
         }
         finally
         {
             _loadingDesktopMode = false;
         }
 
+        var name = DesktopModeRules.GetName(match.Mode);
+        var note = match.IsExact
+            ? $"当前桌面方案：{name}。这里的调整会在方案基础上生效，可随时恢复方案默认。"
+            : $"当前桌面方案：在“{name}”基础上自定义（{string.Join("、", match.Differences)}）。";
+        var restore = $"恢复{name}默认";
+        foreach (var (text, button) in new (TextBlock, Button)[]
+        {
+            (DockModeNoteText, DockRestoreModeButton),
+            (TopBarModeNoteText, TopBarRestoreModeButton),
+            (TaskbarModeNoteText, TaskbarRestoreModeButton)
+        })
+        {
+            text.Text = note;
+            button.Content = restore;
+            button.Tag = match.Mode;
+            button.Visibility = match.IsExact ? Visibility.Collapsed : Visibility.Visible;
+        }
+
+        RestoreDesktopModeButton.Content = restore;
+        RestoreDesktopModeButton.Tag = match.Mode;
+        RestoreDesktopModeButton.Visibility = match.IsExact ? Visibility.Collapsed : Visibility.Visible;
         var (activeMode, problem) = _taskbarStatus();
-        DesktopModeStatusText.Text = mode is null
-            ? "当前为自定义组合：可在“Dock”和“任务栏”页分别调整。"
-            : problem.Length > 0 && activeMode != _taskbarState.Mode
-                ? $"任务栏保持系统默认：{problem}"
-                : "Dock 与任务栏也可在各自页面单独调整。";
+        DesktopModeStatusText.Text = problem.Length > 0 && activeMode != _taskbarState.Mode
+            ? $"任务栏保持系统默认：{problem}"
+            : match.IsExact
+                ? "方案会一次设好 Dock、任务栏和顶端信息条；各自页面可以继续微调。"
+                : $"在“{name}”基础上自定义：{string.Join("、", match.Differences)}。";
     }
 
     private void DesktopMode_Checked(object sender, RoutedEventArgs e)
@@ -1843,6 +1869,19 @@ public partial class SettingsWindow : Window
             return;
         }
 
+        ApplyDesktopMode(mode);
+    }
+
+    private void RestoreDesktopMode_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { Tag: DesktopMode mode })
+        {
+            ApplyDesktopMode(mode);
+        }
+    }
+
+    private void ApplyDesktopMode(DesktopMode mode)
+    {
         if (_topBarState is null)
         {
             DesktopModeRules.Apply(mode, _dockState, _taskbarState);

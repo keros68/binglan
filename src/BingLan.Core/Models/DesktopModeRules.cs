@@ -88,10 +88,87 @@ public static class DesktopModeRules
         };
     }
 
+    /// <summary>
+    /// The mode the current settings start from, and what was changed on the Dock,
+    /// taskbar or top bar pages since. The Dock and the top bar shape the desktop and
+    /// weigh twice a taskbar style; the lowest weight wins, ties in the order ice-blue
+    /// hybrid, apple, Windows native. Without a top bar state the top bar is not compared.
+    /// </summary>
+    public static DesktopModeMatch Match(DockState dock, TaskbarState taskbar, TopBarState? topBar)
+    {
+        ArgumentNullException.ThrowIfNull(dock);
+        ArgumentNullException.ThrowIfNull(taskbar);
+
+        DesktopModeMatch? best = null;
+        var bestWeight = int.MaxValue;
+        foreach (var mode in new[] { DesktopMode.IceBlueHybrid, DesktopMode.AppleStyle, DesktopMode.WindowsNative })
+        {
+            var differences = Differences(mode, dock, taskbar, topBar, out var weight);
+            if (weight < bestWeight)
+            {
+                best = new DesktopModeMatch(mode, differences);
+                bestWeight = weight;
+            }
+        }
+
+        return best!;
+    }
+
+    private static List<string> Differences(
+        DesktopMode mode,
+        DockState dock,
+        TaskbarState taskbar,
+        TopBarState? topBar,
+        out int weight)
+    {
+        var differences = new List<string>();
+        weight = 0;
+        var dockOn = mode != DesktopMode.WindowsNative;
+        if (dock.IsEnabled != dockOn)
+        {
+            differences.Add(dock.IsEnabled ? "开启了 Dock" : "关闭了 Dock");
+            weight += 2;
+        }
+
+        var taskbarMatches = mode switch
+        {
+            DesktopMode.IceBlueHybrid => taskbar.Mode is TaskbarMode.Transparent or TaskbarMode.Blur,
+            DesktopMode.AppleStyle => taskbar.Mode == TaskbarMode.SmartHide,
+            _ => taskbar.Mode == TaskbarMode.SystemDefault
+        };
+        if (!taskbarMatches)
+        {
+            differences.Add($"任务栏改为{GetTaskbarName(taskbar.Mode)}");
+            weight += 1;
+        }
+
+        if (topBar is not null && topBar.IsEnabled != (mode == DesktopMode.AppleStyle))
+        {
+            differences.Add(topBar.IsEnabled ? "开启了顶端信息条" : "关闭了顶端信息条");
+            weight += 2;
+        }
+
+        return differences;
+    }
+
+    private static string GetTaskbarName(TaskbarMode mode) => mode switch
+    {
+        TaskbarMode.Transparent => "透明",
+        TaskbarMode.Blur => "模糊",
+        TaskbarMode.SmartHide => "自动隐藏",
+        _ => "系统默认"
+    };
+
     public static string GetName(DesktopMode mode) => mode switch
     {
         DesktopMode.IceBlueHybrid => "冰蓝混合",
         DesktopMode.AppleStyle => "苹果式",
         _ => "Windows 原生"
     };
+}
+
+/// <summary>A desktop mode and the settings changed away from it.</summary>
+public sealed record DesktopModeMatch(DesktopMode Mode, IReadOnlyList<string> Differences)
+{
+    public bool IsExact => Differences.Count == 0;
 }

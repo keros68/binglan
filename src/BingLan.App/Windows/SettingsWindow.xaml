@@ -272,10 +272,18 @@
                             </StackPanel>
                         </RadioButton>
                     </UniformGrid>
-                    <TextBlock x:Name="DesktopModeStatusText"
-                               Margin="2,8,0,4"
-                               AutomationProperties.LiveSetting="Polite"
-                               Style="{StaticResource CaptionStyle}"/>
+                    <Grid Margin="2,8,0,4">
+                        <TextBlock x:Name="DesktopModeStatusText"
+                                   Margin="0,0,150,0"
+                                   VerticalAlignment="Center"
+                                   TextWrapping="Wrap"
+                                   AutomationProperties.LiveSetting="Polite"
+                                   Style="{StaticResource CaptionStyle}"/>
+                        <Button x:Name="RestoreDesktopModeButton"
+                                HorizontalAlignment="Right"
+                                Visibility="Collapsed"
+                                Click="RestoreDesktopMode_Click"/>
+                    </Grid>
 
                     <TextBlock Style="{StaticResource SectionHeaderStyle}" Text="桌面"/>
                     <local:SettingsGroup>
@@ -1273,6 +1281,17 @@
                     <TextBlock Style="{StaticResource PageTitleStyle}" Text="冰蓝 Dock"/>
                     <TextBlock Style="{StaticResource PageSubtitleStyle}"
                                Text="在屏幕底部居中显示固定的应用和正在运行的应用。"/>
+                    <Grid Margin="0,12,0,0">
+                        <TextBlock x:Name="DockModeNoteText"
+                                   Margin="0,0,150,0"
+                                   VerticalAlignment="Center"
+                                   TextWrapping="Wrap"
+                                   Style="{StaticResource CaptionStyle}"/>
+                        <Button x:Name="DockRestoreModeButton"
+                                HorizontalAlignment="Right"
+                                Visibility="Collapsed"
+                                Click="RestoreDesktopMode_Click"/>
+                    </Grid>
 
                     <local:SettingsGroup Margin="0,14,0,4">
                         <local:SettingsRow Glyph="&#xE71D;" Header="显示冰蓝 Dock">
@@ -1340,7 +1359,7 @@
                                           Checked="DockSetting_Changed"
                                           Unchecked="DockSetting_Changed"/>
                             </local:SettingsRow>
-                            <local:SettingsRow Glyph="&#xE70D;" GlyphBrush="{DynamicResource SettingsIconTealBrush}" Header="距底部高度" Description="Dock 底边与任务栏上沿之间的距离">
+                            <local:SettingsRow Glyph="&#xE70D;" GlyphBrush="{DynamicResource SettingsIconTealBrush}" Header="距底部高度" Description="Dock 底边到屏幕底边的距离；任务栏常显时从任务栏上沿算起">
                                 <StackPanel Orientation="Horizontal">
                                     <Slider x:Name="DockBottomGapSlider"
                                             Width="220"
@@ -1527,6 +1546,17 @@
                     <TextBlock Style="{StaticResource PageTitleStyle}" Text="顶端信息条"/>
                     <TextBlock Style="{StaticResource PageSubtitleStyle}"
                                Text="在所选显示器顶边显示一条满宽信息条：时间、待办、天气、性能和系统状态，点击模块进入对应设置。"/>
+                    <Grid Margin="0,12,0,0">
+                        <TextBlock x:Name="TopBarModeNoteText"
+                                   Margin="0,0,150,0"
+                                   VerticalAlignment="Center"
+                                   TextWrapping="Wrap"
+                                   Style="{StaticResource CaptionStyle}"/>
+                        <Button x:Name="TopBarRestoreModeButton"
+                                HorizontalAlignment="Right"
+                                Visibility="Collapsed"
+                                Click="RestoreDesktopMode_Click"/>
+                    </Grid>
 
                     <local:SettingsGroup Margin="0,14,0,4">
                         <local:SettingsRow Glyph="&#xE8B7;" Header="显示顶端信息条">
@@ -1758,6 +1788,17 @@
                     <TextBlock Style="{StaticResource PageTitleStyle}" Text="Windows 任务栏"/>
                     <TextBlock Style="{StaticResource PageSubtitleStyle}"
                                Text="调整任务栏的外观和显示方式，退出冰蓝桌面时恢复系统默认。"/>
+                    <Grid Margin="0,12,0,0">
+                        <TextBlock x:Name="TaskbarModeNoteText"
+                                   Margin="0,0,150,0"
+                                   VerticalAlignment="Center"
+                                   TextWrapping="Wrap"
+                                   Style="{StaticResource CaptionStyle}"/>
+                        <Button x:Name="TaskbarRestoreModeButton"
+                                HorizontalAlignment="Right"
+                                Visibility="Collapsed"
+                                Click="RestoreDesktopMode_Click"/>
+                    </Grid>
 
                     <TextBlock Style="{StaticResource SectionHeaderStyle}" Text="任务栏样式"/>
                     <UniformGrid Columns="4">

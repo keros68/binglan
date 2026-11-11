@@ -25,6 +25,7 @@ internal sealed class TopBarAppBarController : IDisposable
     private readonly uint _callbackMessage;
     private readonly uint _taskbarCreatedMessage;
     private readonly AppBarReservationState _reservation = new();
+    private readonly AppBarWorkAreaCheck _workAreaCheck = new();
     private MonitorSnapshot? _monitor;
     private double _heightDip;
     private bool _reserveWorkArea;
@@ -158,7 +159,11 @@ internal sealed class TopBarAppBarController : IDisposable
                 // change system-wide — screen-capture overlays react to that by
                 // re-laying out. An unchanged strip needs no new broadcast, but a
                 // registration that has not sent its first SETPOS yet must not skip.
-                if (adjusted == Bounds && _setPositionApplied)
+                if (adjusted == Bounds
+                    && _setPositionApplied
+                    && !_workAreaCheck.NeedsResubmit(
+                        DockAppBarController.GetLiveWorkingArea(_monitor).Top,
+                        adjusted.Bottom))
                 {
                     return;
                 }
@@ -234,6 +239,12 @@ internal sealed class TopBarAppBarController : IDisposable
                 break;
             case DockNativeMethods.WmWindowPosChanged when _reservation.IsRegistered && !_positioning:
                 NotifyAppBar(DockNativeMethods.AbmWindowPosChanged, 0);
+                break;
+            // A work-area change can leave Explorer holding a stale strip for the bar,
+            // for example after moving to a monitor with another scale.
+            case NativeMethods.WmSettingChange
+                when wParam == NativeMethods.SpiSetWorkArea && _reservation.IsRegistered:
+                _window.Dispatcher.BeginInvoke(DispatcherPriority.Background, Position);
                 break;
             case DockNativeMethods.WmDisplayChange:
             case DockNativeMethods.WmDpiChanged:

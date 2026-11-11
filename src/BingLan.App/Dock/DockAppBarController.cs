@@ -25,6 +25,7 @@ internal sealed class DockAppBarController : IDisposable
     private readonly uint _taskbarCreatedMessage;
     private readonly AppBarReservationState _reservation = new();
     private readonly AppBarPositionGuard _positionGuard = new();
+    private readonly AppBarWorkAreaCheck _workAreaCheck = new();
     private readonly DispatcherTimer _deferredPosition;
     private PixelRect _reservedStrip;
     private MonitorSnapshot? _monitor;
@@ -189,8 +190,12 @@ internal sealed class DockAppBarController : IDisposable
                     Top = data.Rectangle.Bottom - Math.Min(stripThickness, _monitor.Bounds.Height)
                 };
                 // Explorer already holds an unchanged strip; setting it again would only
-                // notify the other AppBars and invite them to answer in kind.
-                if (_positionGuard.NeedsSubmit(adjusted))
+                // notify the other AppBars and invite them to answer in kind — unless the
+                // work area shows Explorer reserving more than that strip.
+                if (_positionGuard.NeedsSubmit(adjusted)
+                    || _workAreaCheck.NeedsResubmit(
+                        GetLiveWorkingArea(_monitor).Bottom,
+                        adjusted.Top))
                 {
                     data.Rectangle = ToNative(adjusted);
                     DockNativeMethods.SHAppBarMessage(DockNativeMethods.AbmSetPos, ref data);
@@ -285,6 +290,14 @@ internal sealed class DockAppBarController : IDisposable
                 break;
             case DockNativeMethods.WmWindowPosChanged when _reservation.IsRegistered && !_positioning:
                 NotifyAppBar(DockNativeMethods.AbmWindowPosChanged, 0);
+                break;
+            // A work-area change can leave Explorer holding a stale strip for the dock;
+            // Position compares the two once things settle.
+            case NativeMethods.WmSettingChange
+                when wParam == NativeMethods.SpiSetWorkArea
+                    && _reservation.IsRegistered
+                    && !_deferredPosition.IsEnabled:
+                _deferredPosition.Start();
                 break;
             case DockNativeMethods.WmDisplayChange:
             case DockNativeMethods.WmDpiChanged:

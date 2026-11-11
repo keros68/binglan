@@ -11,6 +11,7 @@ using System.Windows.Media;
 using BingLan.App.Interop;
 using BingLan.App.Services;
 using BingLan.App.Windows;
+using BingLan.Core.Dock;
 using BingLan.Core.Models;
 using BingLan.Core.Services;
 using BingLan.Core.TopBar;
@@ -1809,7 +1810,7 @@ internal static class TopBarWindowTests
 
         internal int TrayOverflowRequested { get; private set; }
         internal int TrayOverflowClosed { get; private set; }
-        public void OpenTrayOverflow() => TrayOverflowRequested++;
+        public void OpenTrayOverflow(PixelRect? anchor) => TrayOverflowRequested++;
         public void CloseTrayOverflow() => TrayOverflowClosed++;
 
         public void OpenTaskManagerPerformance() => TaskManagerRequested++;
