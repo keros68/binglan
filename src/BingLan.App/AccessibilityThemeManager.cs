@@ -11,12 +11,49 @@ namespace BingLan.App;
 
 internal static class AccessibilityThemeManager
 {
+    private const string PersonalizeKey = @"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize";
+
     private static ResourceDictionary? _resources;
     private static bool _subscribed;
+    private static bool? _darkModeOverride;
 
     internal static event EventHandler? HighContrastChanged;
 
+    /// <summary>Raised when a test switches the app colour mode; real switches arrive as WM_SETTINGCHANGE.</summary>
+    internal static event EventHandler? DarkModeOverrideChanged;
+
     internal static bool IsHighContrastEnabled { get; private set; }
+
+    /// <summary>
+    /// Whether Windows is set to the dark app mode. Only the settings centre follows it;
+    /// the desktop cards keep the material the user chose.
+    /// </summary>
+    internal static bool IsDarkAppMode
+    {
+        get
+        {
+            if (_darkModeOverride is { } dark)
+            {
+                return dark;
+            }
+            try
+            {
+                using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(PersonalizeKey);
+                return key?.GetValue("AppsUseLightTheme") is int light && light == 0;
+            }
+            catch (Exception exception) when (exception is System.Security.SecurityException
+                or UnauthorizedAccessException or System.IO.IOException)
+            {
+                return false;
+            }
+        }
+    }
+
+    internal static void SetDarkModeForTesting(bool? dark)
+    {
+        _darkModeOverride = dark;
+        DarkModeOverrideChanged?.Invoke(null, EventArgs.Empty);
+    }
 
     internal static void EnsureInitialized()
     {
@@ -80,6 +117,7 @@ internal static class AccessibilityThemeManager
         {
             ApplyIcePalette(resources);
         }
+        SettingsPalette.Apply(resources, highContrast, dark: false, translucent: false, includeShared: false);
 
         if (IsHighContrastEnabled == highContrast)
         {

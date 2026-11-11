@@ -71,6 +71,7 @@ internal static class NativeMethods
     internal const int DwmwaWindowCornerPreference = 33;
     internal const int DwmwaBorderColor = 34;
     internal const int DwmwaSystemBackdropType = 38;
+    internal const int DwmwaUseImmersiveDarkMode = 20;
     internal const int DwmWindowCornerDoNotRound = 1;
     internal const int DwmNcRenderingDisabled = 1;
     internal const int DwmColorNone = unchecked((int)0xFFFFFFFE);

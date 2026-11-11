@@ -98,6 +98,29 @@ internal sealed class DockMorphAnimator
     }
 
     /// <summary>
+    /// A short fade with a slight shrink toward the row's bottom edge, used when the
+    /// dock steps aside for a system surface; <see cref="CollapseCompleted"/> fires at
+    /// the end like a collapse, and an expand reverses it from wherever it reached.
+    /// </summary>
+    internal void BeginYield(Point center, MotionLevel motion)
+    {
+        _active = DockMorphKind.Collapse;
+        ApplyCenter(center);
+        var duration = new Duration(DockMorphMotion.YieldDuration(motion));
+        var flight = ++_flight;
+        var shrink = DockMorphMotion.ReappearScale(motion);
+        var fade = new DoubleAnimation(0d, duration) { EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseIn } };
+        fade.Completed += (_, _) => OnCollapseCompleted(flight);
+        _surface.BeginAnimation(UIElement.OpacityProperty, fade);
+        if (shrink != 1d)
+        {
+            _scale.BeginAnimation(ScaleTransform.ScaleXProperty, new DoubleAnimation(shrink, duration));
+            _scale.BeginAnimation(ScaleTransform.ScaleYProperty, new DoubleAnimation(shrink, duration));
+        }
+        StateChanged?.Invoke();
+    }
+
+    /// <summary>
     /// The reappear-at-strip transition: fade plus a slight grow about the row's own
     /// bottom edge, so it reads as emerging in place instead of popping in. Reduced
     /// keeps a pure fade (scale target 1).

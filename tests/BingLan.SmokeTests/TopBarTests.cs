@@ -28,7 +28,6 @@ public static class TopBarTests
         TestModuleRules();
         TestRevealZoneAndTopEdge();
         TestThemeTopBarFields();
-        TestTrayPanelPlacement();
     }
 
     private static void TestDefaultsAndNormalize()
@@ -62,20 +61,6 @@ public static class TopBarTests
         TopBarRules.SetModule(state.Modules!, TopBarModuleKind.Volume, false);
         Assert(!TopBarRules.IsModuleOn(state.Modules!, TopBarModuleKind.Volume), "模块开关可关闭");
         Assert(TopBarRules.IsModuleOn(state.Modules!, TopBarModuleKind.Clock), "其他模块不受影响");
-    }
-
-    private static void TestTrayPanelPlacement()
-    {
-        var monitor = new PixelRect(0, 0, 3840, 2160);
-        var button = new PixelRect(3372, 0, 3481, 56);
-        var (left, top) = TrayPanelPlacement.Calculate(button, 300, 120, monitor, 10);
-        Assert(left == 3277 && top == 66, "托盘面板应居中在按钮下方");
-        var edge = new PixelRect(3780, 0, 3840, 56);
-        (left, _) = TrayPanelPlacement.Calculate(edge, 300, 120, monitor, 10);
-        Assert(left == 3540, "靠右的按钮不应让面板超出显示器");
-        var second = new PixelRect(3840, 0, 7680, 2160);
-        (left, _) = TrayPanelPlacement.Calculate(new PixelRect(3850, 0, 3900, 56), 300, 120, second, 10);
-        Assert(left == 3840, "副显示器上的面板应留在该显示器内");
     }
 
     private static void TestFrostedScrimRule()
@@ -187,11 +172,19 @@ public static class TopBarTests
         var drifted = DesktopModeRules.Match(dock, taskbar, topBar);
         Assert(drifted.Mode == DesktopMode.AppleStyle && drifted.Differences.SequenceEqual(["任务栏改为透明"]),
             "苹果式下改任务栏应显示为在苹果式基础上自定义，而不是误认成冰蓝混合");
+        Assert(drifted is { TaskbarChanged: true, DockChanged: false, TopBarChanged: false },
+            "方案摘要只把任务栏标为已自定义");
         taskbar.Mode = TaskbarMode.SmartHide;
         topBar.IsEnabled = false;
         drifted = DesktopModeRules.Match(dock, taskbar, topBar);
         Assert(drifted.Mode == DesktopMode.IceBlueHybrid && drifted.Differences.SequenceEqual(["任务栏改为自动隐藏"]),
             "没有顶栏的悬浮 Dock 按冰蓝混合描述，差异只剩任务栏样式");
+        dock.IsEnabled = false;
+        topBar.IsEnabled = true;
+        taskbar.Mode = TaskbarMode.SystemDefault;
+        drifted = DesktopModeRules.Match(dock, taskbar, topBar);
+        Assert(drifted is { Mode: DesktopMode.WindowsNative, TopBarChanged: true, DockChanged: false, TaskbarChanged: false },
+            "只开顶栏时按 Windows 原生描述，摘要只标出顶端信息条");
     }
 
     private static void TestAttentionQueue()

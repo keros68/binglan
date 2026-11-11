@@ -65,6 +65,11 @@ public sealed class DockState
     /// This is a machine-local preference and is never part of a shared theme.
     /// </summary>
     public bool ShowStartMenuButton { get; set; } = true;
+    /// <summary>
+    /// Whether the "show desktop" entry appears at the right edge of the Dock. A missing
+    /// value in older files reads as on. Machine-local, never part of a shared theme.
+    /// </summary>
+    public bool ShowDesktopButton { get; set; } = true;
     public string? MonitorDeviceName { get; set; }
     public DockVisibilityMode VisibilityMode { get; set; } = DockVisibilityMode.ReserveWorkArea;
     public List<DockPinnedApp> PinnedApps { get; set; } = [];

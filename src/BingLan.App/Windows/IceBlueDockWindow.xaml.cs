@@ -48,6 +48,14 @@ public partial class IceBlueDockWindow : Window
     private readonly WindowEventWatcher _watcher;
     private readonly MaximizeStateWatcher _maximizeWatcher;
     private readonly DispatcherTimer _foregroundTimer;
+    // After a system surface closes, waits for the taskbar to slide away before the
+    // dock comes back, mirroring the order in which they swapped when it opened.
+    private readonly DispatcherTimer _yieldReleaseTimer;
+    // Ends the yield fade even when its completion is never raised (no frames rendered).
+    private readonly DispatcherTimer _yieldHideTimer;
+    private long _yieldReleaseDeadline;
+    private static readonly TimeSpan YieldReleaseCheckInterval = TimeSpan.FromMilliseconds(30);
+    private static readonly TimeSpan YieldReleaseLimit = TimeSpan.FromMilliseconds(600);
     private DockAutoHideState _autoHide = new();
     private readonly Dictionary<string, DockAppVisual> _visuals = new(StringComparer.OrdinalIgnoreCase);
     private DockAppBarController? _appBar;
@@ -55,6 +63,7 @@ public partial class IceBlueDockWindow : Window
     private IReadOnlyList<string> _groupOrder = [];
     private string _lastSignature = string.Empty;
     private bool _renderedStartEntry;
+    private bool _renderedDesktopEntry;
     private nint _handle;
     private bool _closing;
     private bool _refreshRunning;
@@ -101,6 +110,12 @@ public partial class IceBlueDockWindow : Window
         _morph.CollapseCompleted += OnCollapseMorphCompleted;
         _watcher = new WindowEventWatcher(Dispatcher);
         _watcher.SnapshotInvalidated += RefreshWindows;
+        // Start, a tray panel or the taskbar taking the foreground is answered at once
+        // instead of on the next poll, so the dock steps aside while the taskbar slides in.
+        _watcher.ForegroundChanged += () =>
+        {
+            if (!_closing) UpdateForForeground();
+        };
         // The poll cannot catch the maximize click itself; the accessibility event
         // can, so the reservation release and the collapse start on the same beat as
         // the window's own maximize animation.
@@ -118,6 +133,18 @@ public partial class IceBlueDockWindow : Window
             (_, _) => UpdateForForeground(),
             Dispatcher);
         _foregroundTimer.Stop();
+        _yieldReleaseTimer = new DispatcherTimer(
+            YieldReleaseCheckInterval,
+            DispatcherPriority.Input,
+            (_, _) => CheckYieldRelease(),
+            Dispatcher);
+        _yieldReleaseTimer.Stop();
+        _yieldHideTimer = new DispatcherTimer(DispatcherPriority.Input, Dispatcher);
+        _yieldHideTimer.Tick += (_, _) =>
+        {
+            _yieldHideTimer.Stop();
+            if (!_closing && _suppressedBySystemMenu && IsVisible) CompleteSmartHideImmediately();
+        };
         SourceInitialized += OnSourceInitialized;
         Closing += OnClosing;
         DockSurface.DragOver += OnDragOver;
@@ -338,6 +365,8 @@ public partial class IceBlueDockWindow : Window
             DockNativeMethods.DeregisterShellHookWindow(_handle);
         }
         _foregroundTimer.Stop();
+        _yieldReleaseTimer.Stop();
+        _yieldHideTimer.Stop();
         _watcher.Dispose();
         _maximizeWatcher.Dispose();
         _appBar?.Dispose();
@@ -410,7 +439,7 @@ public partial class IceBlueDockWindow : Window
             // The row is built from the fitted size; the reserved length follows it.
             UpdateEffectiveIconSize(monitor, items);
         }
-        var signature = $"{_effectiveIconSize}|{_state.ShowStartMenuButton}|{_dockOverflowing}|{BuildSignature(items)}|{string.Join(",", items.Select(item => _attention.UnreadCount(item.Group)))}";
+        var signature = $"{_effectiveIconSize}|{_state.ShowStartMenuButton}|{_state.ShowDesktopButton}|{_dockOverflowing}|{BuildSignature(items)}|{string.Join(",", items.Select(item => _attention.UnreadCount(item.Group)))}";
         if (string.Equals(signature, _lastSignature, StringComparison.Ordinal))
         {
             return;
@@ -418,8 +447,10 @@ public partial class IceBlueDockWindow : Window
 
         var countChanged = items.Count != _items.Count
             || items.Count(item => item.IsPinned) != _items.Count(item => item.IsPinned)
-            || _renderedStartEntry != _state.ShowStartMenuButton;
+            || _renderedStartEntry != _state.ShowStartMenuButton
+            || _renderedDesktopEntry != _state.ShowDesktopButton;
         _renderedStartEntry = _state.ShowStartMenuButton;
+        _renderedDesktopEntry = _state.ShowDesktopButton;
         _lastSignature = signature;
         _items = items;
         ItemPanel.Children.Clear();
@@ -446,6 +477,15 @@ public partial class IceBlueDockWindow : Window
             // Too many apps even at the minimum icon: the row scrolls, and this menu
             // keeps every app reachable without hunting for the scroll position.
             ItemPanel.Children.Add(BuildOverflowButton(items));
+        }
+
+        if (_state.ShowDesktopButton)
+        {
+            if (items.Count > 0 || _state.ShowStartMenuButton)
+            {
+                ItemPanel.Children.Add(BuildDivider());
+            }
+            ItemPanel.Children.Add(BuildShowDesktopButton());
         }
 
         if (countChanged)
@@ -568,6 +608,53 @@ public partial class IceBlueDockWindow : Window
             }
         };
         AddHoverZoom(button, glyph);
+        return button;
+    }
+
+    private Button BuildShowDesktopButton()
+    {
+        var glyph = new TextBlock
+        {
+            Text = "\uE7F4",
+            FontFamily = new System.Windows.Media.FontFamily("Segoe Fluent Icons, Segoe MDL2 Assets"),
+            FontSize = Math.Max(12, _effectiveIconSize * 0.62),
+            HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        glyph.SetResourceReference(TextBlock.ForegroundProperty, "DockRunningDotBrush");
+        var icon = new Grid { Width = _effectiveIconSize, Height = _effectiveIconSize };
+        icon.Children.Add(glyph);
+
+        var content = new StackPanel { Orientation = Orientation.Vertical };
+        content.Children.Add(icon);
+        // Reserve the running-indicator slot so the entry aligns with app icons.
+        content.Children.Add(new Border
+        {
+            Width = 4,
+            Height = 4,
+            Margin = new Thickness(0, 3, 0, 0),
+            Visibility = Visibility.Hidden
+        });
+
+        var button = new Button
+        {
+            Content = content,
+            Width = _effectiveIconSize + 16,
+            Height = _effectiveIconSize + 16,
+            Style = (Style)Resources["DockItemButtonStyle"],
+            ToolTip = "显示桌面；再次点击恢复窗口（快捷键 Win+D）",
+            Focusable = true
+        };
+        AutomationProperties.SetName(button, "显示桌面");
+        AutomationProperties.SetHelpText(button, "最小化所有窗口显示桌面，再次点击恢复；全屏时可按 Win+D");
+        button.Click += async (_, _) =>
+        {
+            if (!await ShellSurfaceService.ToggleDesktopAsync())
+            {
+                CommandFailed?.Invoke("无法显示桌面，请按 Win+D。");
+            }
+        };
+        AddHoverZoom(button, icon);
         return button;
     }
 
@@ -1132,9 +1219,11 @@ public partial class IceBlueDockWindow : Window
     {
         var hasApps = _items.Count > 0;
         var hasStartEntry = _state.ShowStartMenuButton;
+        var hasDesktopEntry = _state.ShowDesktopButton;
         var dividerCount = (hasStartEntry && hasApps ? 1 : 0)
-            + (_items.Any(item => item.IsPinned) && _items.Any(item => !item.IsPinned) ? 1 : 0);
-        var extraCells = _dockOverflowing ? 1 : 0;
+            + (_items.Any(item => item.IsPinned) && _items.Any(item => !item.IsPinned) ? 1 : 0)
+            + (hasDesktopEntry && (hasApps || hasStartEntry) ? 1 : 0);
+        var extraCells = (_dockOverflowing ? 1 : 0) + (hasDesktopEntry ? 1 : 0);
         return DockLayoutMetrics.ContentLengthForItems(
                    _items.Count + (hasStartEntry ? 1 : 0) + extraCells,
                    _effectiveIconSize)
@@ -1145,12 +1234,14 @@ public partial class IceBlueDockWindow : Window
     {
         var hasApps = items.Count > 0;
         var hasStartEntry = _state.ShowStartMenuButton;
+        var hasDesktopEntry = _state.ShowDesktopButton;
         var dividerCount = (hasStartEntry && hasApps ? 1 : 0)
-            + (items.Any(item => item.IsPinned) && items.Any(item => !item.IsPinned) ? 1 : 0);
+            + (items.Any(item => item.IsPinned) && items.Any(item => !item.IsPinned) ? 1 : 0)
+            + (hasDesktopEntry && (hasApps || hasStartEntry) ? 1 : 0);
         // The reserved strip spans the monitor, so the row takes up to its fraction of
         // the work-area width without taking space from any window.
         var availableDip = monitor.WorkingArea.Width * 96d / monitor.Dpi * DockLayoutMetrics.MaxExtentFraction;
-        var cellCount = items.Count + (hasStartEntry ? 1 : 0);
+        var cellCount = items.Count + (hasStartEntry ? 1 : 0) + (hasDesktopEntry ? 1 : 0);
         var dividersDip = dividerCount * DockLayoutMetrics.DividerDip;
         var preferred = _state.AutoIconSize
             ? DockLayoutMetrics.FitIconSize(cellCount, dividersDip, availableDip, _state.IconSize)
@@ -1337,19 +1428,83 @@ public partial class IceBlueDockWindow : Window
     {
         if (active)
         {
+            _yieldReleaseTimer.Stop();
             _suppressedBySystemMenu = true;
             _foregroundTimer.Interval = SmartHideCheckInterval;
-            if (IsVisible) CompleteSmartHideImmediately();
+            if (IsVisible)
+            {
+                if (MorphEnabled && !_handleExpanded && !_morph.IsCollapsing)
+                {
+                    // Fade out in place; OnCollapseMorphCompleted hides the window.
+                    _morph.BeginYield(BottomEdgeCentre(_appBar?.Bounds ?? default), Motion);
+                    _yieldHideTimer.Interval = DockMorphMotion.YieldDuration(Motion) + TimeSpan.FromMilliseconds(80);
+                    _yieldHideTimer.Start();
+                }
+                else
+                {
+                    CompleteSmartHideImmediately();
+                }
+            }
             _handleWindow?.SetVisible(false);
             return true;
         }
-        if (_suppressedBySystemMenu)
+        if (_suppressedBySystemMenu && !_yieldReleaseTimer.IsEnabled)
         {
-            _suppressedBySystemMenu = false;
-            if (!UsesSmartHide || _autoHide.IsShown) ShowDock();
-            SyncHandle();
+            if (TaskbarCoversDock())
+            {
+                _yieldReleaseDeadline = Environment.TickCount64 + (long)YieldReleaseLimit.TotalMilliseconds;
+                _yieldReleaseTimer.Start();
+            }
+            else
+            {
+                ReleaseSystemMenuYield();
+            }
         }
         return false;
+    }
+
+    private void CheckYieldRelease()
+    {
+        if (_closing || !_suppressedBySystemMenu)
+        {
+            _yieldReleaseTimer.Stop();
+            return;
+        }
+        if (ShellSurfaceNativeMethods.IsSystemMenuForeground())
+        {
+            // Reopened before the taskbar left: stay aside.
+            _yieldReleaseTimer.Stop();
+            return;
+        }
+        if (TaskbarCoversDock() && Environment.TickCount64 < _yieldReleaseDeadline)
+        {
+            return;
+        }
+        _yieldReleaseTimer.Stop();
+        ReleaseSystemMenuYield();
+    }
+
+    private void ReleaseSystemMenuYield()
+    {
+        _yieldHideTimer.Stop();
+        _suppressedBySystemMenu = false;
+        if (!UsesSmartHide || _autoHide.IsShown) ShowDock();
+        SyncHandle();
+    }
+
+    // An auto-hidden taskbar still sliding back down overlaps the dock's strip; a
+    // taskbar that is always shown sits beside it and never delays the return.
+    private bool TaskbarCoversDock()
+    {
+        if (_appBar is not { } appBar) return false;
+        var tray = TaskbarNativeMethods.FindWindowW("Shell_TrayWnd", null);
+        if (tray == 0
+            || !DockNativeMethods.IsWindowVisible(tray)
+            || !DockNativeMethods.GetWindowRect(tray, out var rect))
+        {
+            return false;
+        }
+        return new PixelRect(rect.Left, rect.Top, rect.Right, rect.Bottom).Intersects(appBar.Bounds);
     }
 
     private void ShowDock(bool fromHandle = false)
@@ -1474,7 +1629,7 @@ public partial class IceBlueDockWindow : Window
             _appBar?.SetFloatingOverride(null);
         }
         Hide();
-        if (!_trueFullScreenForeground && _handleAllowed)
+        if (!_trueFullScreenForeground && _handleAllowed && !_suppressedBySystemMenu)
         {
             _handleWindow?.Pulse();
         }

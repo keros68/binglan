@@ -103,10 +103,15 @@ public static class DesktopModeRules
         var bestWeight = int.MaxValue;
         foreach (var mode in new[] { DesktopMode.IceBlueHybrid, DesktopMode.AppleStyle, DesktopMode.WindowsNative })
         {
-            var differences = Differences(mode, dock, taskbar, topBar, out var weight);
+            var differences = Differences(mode, dock, taskbar, topBar, out var weight, out var changed);
             if (weight < bestWeight)
             {
-                best = new DesktopModeMatch(mode, differences);
+                best = new DesktopModeMatch(mode, differences)
+                {
+                    DockChanged = changed.Dock,
+                    TaskbarChanged = changed.Taskbar,
+                    TopBarChanged = changed.TopBar
+                };
                 bestWeight = weight;
             }
         }
@@ -119,15 +124,18 @@ public static class DesktopModeRules
         DockState dock,
         TaskbarState taskbar,
         TopBarState? topBar,
-        out int weight)
+        out int weight,
+        out (bool Dock, bool Taskbar, bool TopBar) changed)
     {
         var differences = new List<string>();
         weight = 0;
+        changed = default;
         var dockOn = mode != DesktopMode.WindowsNative;
         if (dock.IsEnabled != dockOn)
         {
             differences.Add(dock.IsEnabled ? "开启了 Dock" : "关闭了 Dock");
             weight += 2;
+            changed.Dock = true;
         }
 
         var taskbarMatches = mode switch
@@ -140,18 +148,20 @@ public static class DesktopModeRules
         {
             differences.Add($"任务栏改为{GetTaskbarName(taskbar.Mode)}");
             weight += 1;
+            changed.Taskbar = true;
         }
 
         if (topBar is not null && topBar.IsEnabled != (mode == DesktopMode.AppleStyle))
         {
             differences.Add(topBar.IsEnabled ? "开启了顶端信息条" : "关闭了顶端信息条");
             weight += 2;
+            changed.TopBar = true;
         }
 
         return differences;
     }
 
-    private static string GetTaskbarName(TaskbarMode mode) => mode switch
+    public static string GetTaskbarName(TaskbarMode mode) => mode switch
     {
         TaskbarMode.Transparent => "透明",
         TaskbarMode.Blur => "模糊",
@@ -171,4 +181,11 @@ public static class DesktopModeRules
 public sealed record DesktopModeMatch(DesktopMode Mode, IReadOnlyList<string> Differences)
 {
     public bool IsExact => Differences.Count == 0;
+
+    /// <summary>Whether the Dock, the taskbar or the top bar differs from the mode's defaults.</summary>
+    public bool DockChanged { get; init; }
+
+    public bool TaskbarChanged { get; init; }
+
+    public bool TopBarChanged { get; init; }
 }

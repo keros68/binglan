@@ -69,6 +69,34 @@ internal static class ThemeStyleTests
             && card.Top + card.Height <= 250), "极小工作区仍应保留可见卡片");
     }
 
+    // 设置中心“未跟随全局的部分”与组件“独立外观”判断依据：内置卡片的颜色是否等于整体材质给它的颜色。
+    internal static void TestComponentLookFollowsSharedMaterial()
+    {
+        const double clearBar = 0.18;
+        var style = new DesktopStyleState();
+        var experience = DesktopExperienceRules.CreateDefault();
+        foreach (var component in experience.Components)
+        {
+            Check(DesktopStyleRules.FollowsSharedLook(component, style, clearBar),
+                $"默认 {component.Kind} 卡片应视为跟随全局外观");
+        }
+
+        var weather = experience.GetComponent(DesktopComponentKind.Weather);
+        weather.Appearance.BackgroundColor = "#A0B4E1";
+        Check(!DesktopStyleRules.FollowsSharedLook(weather, style, clearBar), "单独改过玻璃颜色的卡片应视为独立外观");
+        weather.Appearance.BackgroundColor = "#ffffff";
+        Check(DesktopStyleRules.FollowsSharedLook(weather, style, clearBar), "颜色比较不区分大小写");
+
+        style.Glass = GlassMode.Clear;
+        var time = DesktopStyleRules.ComponentLook(DesktopComponentKind.TimeDate, style, clearBar);
+        var strip = DesktopStyleRules.ComponentLook(DesktopComponentKind.QuickLaunch, style, clearBar);
+        Check(time.BackgroundOpacity == WidgetAppearanceRules.MinimumBackgroundOpacity && time.TextColor == "#FFFFFF",
+            "时间日期始终是壁纸上的裸文字");
+        Check(strip.BackgroundColor == "#FFFFFF" && strip.BackgroundOpacity == clearBar,
+            "无底板时快捷入口保留浅色细条");
+        Check(!DesktopStyleRules.FollowsSharedLook(weather, style, clearBar), "整体材质变化后未重新应用的卡片不再算跟随");
+    }
+
     internal static void TestGlassAndCenterClockPreset()
     {
         var style = new DesktopStyleState();

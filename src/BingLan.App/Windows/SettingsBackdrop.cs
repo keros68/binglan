@@ -11,8 +11,9 @@ namespace BingLan.App.Windows;
 
 /// <summary>
 /// Gives the settings window the Windows 11 Mica material, so the wallpaper tints it the
-/// way it tints the desktop cards. Where Mica is missing — before Windows 11 22H2, with
-/// transparency effects turned off, or in high contrast — the solid page colour stays.
+/// way it tints the desktop cards, and a dark title bar and dark Mica in the dark app mode.
+/// Where Mica is missing — before Windows 11 22H2, with transparency effects turned off,
+/// or in high contrast — the solid page colour stays.
 /// </summary>
 internal static class SettingsBackdrop
 {
@@ -20,12 +21,20 @@ internal static class SettingsBackdrop
     private const int MinimumBuild = 22621;
 
     /// <summary>Applies or removes the material; returns whether Mica is now in use.</summary>
-    internal static bool Apply(Window window)
+    internal static bool Apply(Window window, bool dark)
     {
         if (PresentationSource.FromVisual(window) is not HwndSource source)
         {
             return false;
         }
+
+        // Older builds ignore the attribute and keep the light frame.
+        var darkFrame = dark && !AccessibilityThemeManager.IsHighContrastEnabled ? 1 : 0;
+        _ = NativeMethods.DwmSetWindowAttribute(
+            source.Handle,
+            NativeMethods.DwmwaUseImmersiveDarkMode,
+            ref darkFrame,
+            Marshal.SizeOf<int>());
 
         var wanted = Environment.OSVersion.Version.Build >= MinimumBuild
             && !AccessibilityThemeManager.IsHighContrastEnabled

@@ -246,8 +246,10 @@ internal static class SettingsWindowTests
                 window.CommitPendingChanges();
                 Pump();
 
-                AssertEqual(410d, todoWindow.ActualWidth, "设置宽应用到已显示的待办窗口");
-                AssertEqual(176d, todoWindow.ActualHeight, "设置高应用到已显示的待办窗口");
+                // The window lands on whole device pixels, so at 175% scaling 410 DIP reads
+                // back as 410.29; anything within one pixel is the size that was set.
+                Assert(Math.Abs(todoWindow.ActualWidth - 410d) < 1d, $"设置宽应用到已显示的待办窗口：实际 {todoWindow.ActualWidth}");
+                Assert(Math.Abs(todoWindow.ActualHeight - 176d) < 1d, $"设置高应用到已显示的待办窗口：实际 {todoWindow.ActualHeight}");
 
                 // 待办卡片是唯一带标题栏的内置组件：标题栏颜色与不透明度可见，
                 // 且改动随组件状态落到卡片上（与分组盒的标题栏设置对齐）。
@@ -316,16 +318,19 @@ internal static class SettingsWindowTests
             var tags = navigation.Items.OfType<ListBoxItem>()
                 .Select(item => item.Tag as string)
                 .ToList();
-            Assert(tags.Contains("TopBar"), "导航应包含顶端信息条页");
-            Assert(tags.IndexOf("Dock") < tags.IndexOf("TopBar")
-                && tags.IndexOf("TopBar") < tags.IndexOf("Taskbar"),
-                "顶端信息条应排在 Dock 与任务栏之间");
+            Assert(tags.SequenceEqual(["Scheme", "Appearance", "Components", "Bars", "General"]),
+                "导航应为桌面方案、外观样式、桌面组件、顶栏底栏、通用设置");
 
             navigation.SelectedItem = navigation.Items
                 .OfType<ListBoxItem>()
-                .First(item => (item.Tag as string) == "TopBar");
+                .First(item => (item.Tag as string) == "Bars");
             Pump();
-            Assert(Require<FrameworkElement>(window, "TopBarPage").IsVisible, "选择导航后显示顶端信息条页");
+            Assert(Require<FrameworkElement>(window, "TopBarPage").IsVisible, "顶栏底栏页显示顶端信息条分区");
+            var sections = new[] { "DockSection", "TopBarSection", "TaskbarSection" }
+                .Select(name => Require<FrameworkElement>(window, name).TranslatePoint(new Point(), window).Y)
+                .ToArray();
+            Assert(sections[0] < sections[1] && sections[1] < sections[2],
+                "顶端信息条分区应排在 Dock 与任务栏之间");
 
             var enabled = Require<CheckBox>(window, "TopBarEnabledCheckBox");
             Assert(enabled.IsChecked == false, "顶端信息条默认关闭");

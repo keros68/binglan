@@ -67,6 +67,8 @@ internal static class ShellSurfaceNativeMethods
 
     internal static bool OpenStartMenu() => SendChord(ControlKey, EscapeKey);
 
+    internal static bool ShowDesktop() => SendChord(WindowsKey, 0x44);
+
     /// <summary>
     /// Asks Explorer itself to open Start (WM_SYSCOMMAND/SC_TASKLIST). Unlike injected
     /// keys this is not affected by held modifiers or by UIPI when an elevated window is

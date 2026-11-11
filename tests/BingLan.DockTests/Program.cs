@@ -1393,6 +1393,7 @@ static void TestStartMenuMigration()
         var state = store.Load();
         AssertEqual(AppState.CurrentSchemaVersion, state.SchemaVersion, "应迁移到当前结构");
         Assert(state.Dock.ShowStartMenuButton, "开始菜单入口默认开启");
+        Assert(state.Dock.ShowDesktopButton, "旧版本数据中没有的“显示桌面”按钮默认开启");
         AssertEqual(DockRevealMode.EdgeAndHandle, state.Dock.RevealMode, "旧版本迁移后唤出方式应为底边和把手");
         AssertEqual(48d, state.Dock.IconSize, "图标大小应保留");
         AssertEqual("C:\\Apps\\Example.exe", state.Dock.PinnedApps.Single().ExecutablePath!, "应用绑定应保留");
@@ -1413,6 +1414,7 @@ static void TestDockStateRoundTrip()
         var state = LocalStateStore.CreateDefault();
         state.Dock.IsEnabled = true;
         state.Dock.ShowStartMenuButton = false;
+        state.Dock.ShowDesktopButton = false;
         state.Dock.MonitorDeviceName = @"\\.\DISPLAY1";
         state.Dock.VisibilityMode = DockVisibilityMode.SmartHide;
         state.Dock.BottomGapDip = 52;
@@ -1440,6 +1442,7 @@ static void TestDockStateRoundTrip()
         store.Save(state);
         var loaded = store.Load();
         Assert(!loaded.Dock.ShowStartMenuButton, "关闭开始菜单入口的个人设置应保留");
+        Assert(!loaded.Dock.ShowDesktopButton, "关闭“显示桌面”按钮的个人设置应保留");
 
         Assert(loaded.Dock.IsEnabled, "Dock 启用状态未保留");
         AssertEqual(@"\\.\DISPLAY1", loaded.Dock.MonitorDeviceName, "显示器名称未保留");

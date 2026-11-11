@@ -34,6 +34,9 @@ internal sealed class WindowEventWatcher : IDisposable
 
     internal event Action? SnapshotInvalidated;
 
+    /// <summary>Raised on the next input turn after the foreground window changes, without the snapshot debounce.</summary>
+    internal event Action? ForegroundChanged;
+
     internal int Start()
     {
         Hook(DockNativeMethods.EventSystemForeground, DockNativeMethods.EventSystemForeground);
@@ -99,6 +102,14 @@ internal sealed class WindowEventWatcher : IDisposable
                 || NativeMethods.IsChildWindow(window)))
         {
             return;
+        }
+
+        if (eventType == DockNativeMethods.EventSystemForeground)
+        {
+            _dispatcher.BeginInvoke(DispatcherPriority.Input, () =>
+            {
+                if (!_disposed) ForegroundChanged?.Invoke();
+            });
         }
 
         if (_refreshQueued)

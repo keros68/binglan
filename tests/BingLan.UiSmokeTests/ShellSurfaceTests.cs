@@ -69,8 +69,18 @@ internal static class ShellSurfaceTests
             var flags = BindingFlags.Instance | BindingFlags.NonPublic;
             var yieldToMenu = typeof(IceBlueDockWindow).GetMethod("YieldToSystemMenu", flags)!;
             var showDock = typeof(IceBlueDockWindow).GetMethod("ShowDock", flags)!;
-            Assert((bool)yieldToMenu.Invoke(dock, new object[] { true })! && !dock.IsVisible,
-                "系统菜单打开时 Dock 应立即收起");
+            // With animations on the dock fades out first; with them off it steps aside at once.
+            var motion = IceBlueDockWindow.Motion;
+            IceBlueDockWindow.Motion = BingLan.Core.Models.MotionLevel.Off;
+            try
+            {
+                Assert((bool)yieldToMenu.Invoke(dock, new object[] { true })! && !dock.IsVisible,
+                    "关闭动画时系统菜单打开 Dock 应立即收起");
+            }
+            finally
+            {
+                IceBlueDockWindow.Motion = motion;
+            }
             showDock.Invoke(dock, new object[] { false });
             Assert(!dock.IsVisible, "系统菜单打开时其他显示请求不能覆盖菜单");
             Assert(!(bool)yieldToMenu.Invoke(dock, new object[] { false })! && dock.IsVisible,
@@ -80,6 +90,7 @@ internal static class ShellSurfaceTests
             var panel = (StackPanel)dock.FindName("ItemPanel");
             void Apply(params DockItem[] items) => apply.Invoke(dock, new object[] { items });
 
+            state.ShowDesktopButton = false;
             Apply();
             var button = panel.Children.OfType<Button>().Single();
             Assert(AutomationProperties.GetName(button) == "打开 Windows 开始菜单", "空 Dock 应提供独立开始菜单入口");
@@ -92,6 +103,19 @@ internal static class ShellSurfaceTests
             Apply();
             Assert(panel.Children.Count == 0, "关闭开关后同一应用快照也应移除入口");
             state.ShowStartMenuButton = true;
+
+            state.ShowDesktopButton = true;
+            Apply();
+            var entries = panel.Children.OfType<Button>().ToList();
+            Assert(entries.Count == 2
+                    && AutomationProperties.GetName(entries[^1]) == "显示桌面"
+                    && entries[^1].Tag is null,
+                "“显示桌面”按钮应在 Dock 右端，且不是可拖动应用项");
+            Assert((double)length.Invoke(dock, null)!
+                    == DockLayoutMetrics.ContentLengthForItems(2, state.IconSize) + DockLayoutMetrics.DividerDip,
+                "Dock 宽度应计入“显示桌面”按钮与分隔线");
+            state.ShowDesktopButton = false;
+            Apply();
             Apply();
             Assert(panel.Children.Count == 1, "再次开启后应立即恢复入口");
             var apps = DockItemComposer.Compose(new[] { new DockPinnedApp { DisplayName = "应用", ExecutablePath = @"C:\Apps\Example.exe" } }, []);
@@ -112,6 +136,8 @@ internal static class ShellSurfaceTests
         var theme = ThemeRules.Export(appState, "系统入口验证", new ThemeArea(0, 0, 1920, 1080), new Version(0, 2, 25));
         Assert(!JsonSerializer.Serialize(theme).Contains("ShowStartMenuButton", StringComparison.Ordinal),
             "本机开始菜单开关不能进入主题包");
+        Assert(!JsonSerializer.Serialize(theme).Contains("ShowDesktopButton", StringComparison.Ordinal),
+            "本机“显示桌面”按钮开关不能进入主题包");
     }
 
     private static void TestOverflowChevron()

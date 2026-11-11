@@ -1,14 +1,13 @@
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
-using Brush = System.Windows.Media.Brush;
 
 namespace BingLan.App.Windows;
 
 /// <summary>
-/// One line of the settings window: an optional icon, a title and a short description on
-/// the left, and the control that changes the setting on the right. A control without its
-/// own screen reader name is named after the row title.
+/// One line of the settings window: a title and a short description on the left, and the
+/// control that changes the setting on the right. A control without its own screen
+/// reader name is named after the row title. The settings search indexes rows by title.
 /// </summary>
 public sealed class SettingsRow : ContentControl
 {
@@ -17,12 +16,6 @@ public sealed class SettingsRow : ContentControl
 
     public static readonly DependencyProperty DescriptionProperty = DependencyProperty.Register(
         nameof(Description), typeof(string), typeof(SettingsRow), new PropertyMetadata(string.Empty));
-
-    public static readonly DependencyProperty GlyphProperty = DependencyProperty.Register(
-        nameof(Glyph), typeof(string), typeof(SettingsRow), new PropertyMetadata(string.Empty));
-
-    public static readonly DependencyProperty GlyphBrushProperty = DependencyProperty.Register(
-        nameof(GlyphBrush), typeof(Brush), typeof(SettingsRow), new PropertyMetadata(null));
 
     static SettingsRow()
     {
@@ -42,19 +35,6 @@ public sealed class SettingsRow : ContentControl
         set => SetValue(DescriptionProperty, value);
     }
 
-    public string Glyph
-    {
-        get => (string)GetValue(GlyphProperty);
-        set => SetValue(GlyphProperty, value);
-    }
-
-    /// <summary>Colour of the rounded tile behind the icon.</summary>
-    public Brush? GlyphBrush
-    {
-        get => (Brush?)GetValue(GlyphBrushProperty);
-        set => SetValue(GlyphBrushProperty, value);
-    }
-
     protected override void OnContentChanged(object oldContent, object newContent)
     {
         base.OnContentChanged(oldContent, newContent);
@@ -65,6 +45,19 @@ public sealed class SettingsRow : ContentControl
             AutomationProperties.SetName(element, Header);
         }
     }
+}
+
+/// <summary>
+/// The left edge of a row's padding as a margin, so the line above a row starts where
+/// its title starts, for top-level and indented rows alike.
+/// </summary>
+public sealed class SettingsRowInsetConverter : System.Windows.Data.IValueConverter
+{
+    public object Convert(object value, Type targetType, object parameter, System.Globalization.CultureInfo culture) =>
+        value is Thickness padding ? new Thickness(padding.Left, 0, 0, 0) : new Thickness();
+
+    public object ConvertBack(object value, Type targetType, object parameter, System.Globalization.CultureInfo culture) =>
+        throw new NotSupportedException();
 }
 
 /// <summary>

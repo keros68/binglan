@@ -352,7 +352,9 @@ public partial class FileBoxWindow : WidgetWindowBase
         DragDrop.DoDragDrop(
             button,
             new System.Windows.DataObject(System.Windows.DataFormats.FileDrop, paths),
-            System.Windows.DragDropEffects.Link);
+            // Copy lets a folder or chat window receive the file itself; Move is never
+            // offered, so dragging out cannot take the original away.
+            System.Windows.DragDropEffects.Copy | System.Windows.DragDropEffects.Link);
     }
 
     private void FileTile_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
@@ -555,6 +557,46 @@ public partial class FileBoxWindow : WidgetWindowBase
             return;
         }
         StartShell(new ProcessStartInfo("explorer.exe", $"/select,\"{tile.Path}\"") { UseShellExecute = true });
+    }
+
+    private void CopyFile_Click(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is FileTile tile)
+        {
+            CopyToClipboard([tile]);
+        }
+    }
+
+    private void BatchCopyFiles_Click(object sender, RoutedEventArgs e) => CopyToClipboard(SelectedTiles());
+
+    /// <summary>
+    /// Puts the originals on the clipboard as a file copy, the same as Ctrl+C in Explorer;
+    /// pasting makes a copy and the original stays where it is.
+    /// </summary>
+    private static void CopyToClipboard(IEnumerable<FileTile> tiles)
+    {
+        var paths = new System.Collections.Specialized.StringCollection();
+        foreach (var tile in tiles.Where(tile => !tile.IsShellEntry && !tile.IsMissing))
+        {
+            paths.Add(tile.Path);
+        }
+        if (paths.Count == 0)
+        {
+            return;
+        }
+
+        var data = new System.Windows.DataObject();
+        data.SetFileDropList(paths);
+        // DROPEFFECT_COPY, so Explorer pastes a copy rather than moving the file.
+        data.SetData("Preferred DropEffect", new System.IO.MemoryStream(BitConverter.GetBytes(1)));
+        try
+        {
+            System.Windows.Clipboard.SetDataObject(data, true);
+        }
+        catch (System.Runtime.InteropServices.COMException)
+        {
+            // Another program holds the clipboard; the user can simply try again.
+        }
     }
 
     private async void RefreshIcon_Click(object sender, RoutedEventArgs e)
@@ -849,6 +891,17 @@ public partial class FileBoxWindow : WidgetWindowBase
                 ClearSelection();
                 e.Handled = true;
             }
+            return;
+        }
+
+        if (e.Key == Key.C
+            && Keyboard.Modifiers == ModifierKeys.Control
+            && Keyboard.FocusedElement is FrameworkElement { DataContext: FileTile copyTile } copyFocus
+            && FileList.IsAncestorOf(copyFocus))
+        {
+            e.Handled = true;
+            var selection = SelectedTiles();
+            CopyToClipboard(selection.Count > 1 && _selectedIds.Contains(copyTile.Mapping.Id) ? selection : [copyTile]);
             return;
         }
 

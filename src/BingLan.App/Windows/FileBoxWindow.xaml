@@ -32,6 +32,7 @@
                      Opened="FileTileContextMenu_Opened">
             <MenuItem Header="打开" Click="OpenFile_Click"/>
             <MenuItem Header="打开所在位置" Click="OpenFileLocation_Click"/>
+            <MenuItem Header="复制" InputGestureText="Ctrl+C" Click="CopyFile_Click"/>
             <MenuItem Header="刷新图标" Click="RefreshIcon_Click"/>
             <Separator/>
             <MenuItem Header="上移" Click="MoveMappingUp_Click"/>
@@ -51,6 +52,7 @@
         <!-- Acts on the whole selection; headers are filled in when the menu opens. -->
         <ContextMenu x:Key="FileTileBatchContextMenu"
                      Opened="FileTileBatchContextMenu_Opened">
+            <MenuItem Header="复制" InputGestureText="Ctrl+C" Click="BatchCopyFiles_Click"/>
             <MenuItem Header="移除映射" Tag="BatchRemove" Click="BatchRemoveMappings_Click"/>
             <MenuItem Header="转移到其他分组盒" Tag="BatchTransfer"/>
             <Separator Tag="DeleteOriginal"/>

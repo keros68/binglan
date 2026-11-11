@@ -29,6 +29,15 @@ public static class DockMorphMotion
             ? TimeSpan.FromMilliseconds(100)
             : TimeSpan.FromMilliseconds(360);
 
+    /// <summary>
+    /// Stepping aside for a system surface (the taskbar, Start, a tray panel): quick
+    /// enough to clear before the taskbar finishes sliding in.
+    /// </summary>
+    public static TimeSpan YieldDuration(MotionLevel motion) =>
+        motion == MotionLevel.Reduced
+            ? TimeSpan.FromMilliseconds(80)
+            : TimeSpan.FromMilliseconds(140);
+
     public static TimeSpan ReappearDuration(MotionLevel motion) =>
         motion == MotionLevel.Reduced
             ? TimeSpan.FromMilliseconds(80)

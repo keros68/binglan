@@ -1508,24 +1508,13 @@ public sealed class WidgetCoordinator : IDisposable
         }
 
         var glass = DesktopStyleRules.Appearance(style);
-        var nakedText = DesktopStyleRules.NakedTextColor(style);
         ApplyItemSurface();
         foreach (var component in _state.DesktopExperience.Components)
         {
-            var naked = component.Kind is DesktopComponentKind.TimeDate or DesktopComponentKind.Greeting;
-            component.Appearance.BackgroundColor = glass.BackgroundColor;
-            component.Appearance.BackgroundOpacity = naked
-                ? WidgetAppearanceRules.MinimumBackgroundOpacity
-                : glass.BackgroundOpacity;
-            component.Appearance.TextColor = naked ? nakedText : glass.TextColor;
-            if (component.Kind == DesktopComponentKind.QuickLaunch && style.Glass == GlassMode.Clear)
-            {
-                // Thin line icons on bare wallpaper are hard to see, so the strip keeps a
-                // light frosted bar even without card backings.
-                component.Appearance.BackgroundColor = "#FFFFFF";
-                component.Appearance.BackgroundOpacity = QuickPlacesWindow.ClearBarOpacity;
-                component.Appearance.TextColor = nakedText;
-            }
+            var look = DesktopStyleRules.ComponentLook(component.Kind, style, QuickPlacesWindow.ClearBarOpacity);
+            component.Appearance.BackgroundColor = look.BackgroundColor;
+            component.Appearance.BackgroundOpacity = look.BackgroundOpacity;
+            component.Appearance.TextColor = look.TextColor;
         }
         foreach (var window in _windows.Where(window => window is not InformationWidgetWindow))
         {
@@ -2178,7 +2167,7 @@ public sealed class WidgetCoordinator : IDisposable
             // while that setting is off.
             var hint = _state.CleanDesktopEnabled
                 ? string.Empty
-                : "桌面上的原图标仍会显示；在设置的“外观”页开启“清爽桌面”后可只显示分组盒。";
+                : "桌面上的原图标仍会显示；在设置的“桌面方案”页开启“清爽桌面”后可只显示分组盒。";
             _trayIcon.ShowBalloonTip(
                 6000,
                 "桌面归类完成",
@@ -2586,7 +2575,7 @@ public sealed class WidgetCoordinator : IDisposable
 
         public void OpenTopBarSettings() => owner.OpenSettings("TopBar");
 
-        public async void OpenTrayOverflow(PixelRect? anchor)
+        public async void OpenTrayOverflow()
         {
             if (owner._exitRequested || owner._isExiting || owner._closingTrayOverflow is not null) return;
             try
@@ -2608,7 +2597,7 @@ public sealed class WidgetCoordinator : IDisposable
                     return;
                 }
                 if (controller.EndedWithin(400)) return;
-                var result = await controller.OpenAsync(anchor: anchor);
+                var result = await controller.OpenAsync();
                 if (owner._exitRequested || owner._isExiting) return;
                 if (result == "elevated-foreground") ReportElevatedForeground();
                 else if (result is not ("opened" or "already-open" or "busy")) ReportShellFailure();

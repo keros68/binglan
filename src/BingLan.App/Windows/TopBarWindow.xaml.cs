@@ -62,8 +62,7 @@ internal interface ITopBarEnvironment
 
     void OpenInputMethod();
 
-    /// <param name="anchor">Screen pixels of the tray button, to place the panel under it.</param>
-    void OpenTrayOverflow(PixelRect? anchor);
+    void OpenTrayOverflow();
 
     void CloseTrayOverflow();
 
@@ -554,8 +553,7 @@ public sealed partial class TopBarWindow : Window
         if (TrayOverflowController.IsSupported)
         {
             if (!_state.Modules.TrayOverflow) _environment.CloseTrayOverflow();
-            AddModule(TopBarModuleKind.TrayOverflow, RightModules, "托盘",
-                () => _environment.OpenTrayOverflow(ModuleScreenRect(TopBarModuleKind.TrayOverflow)), "\uE70E");
+            AddModule(TopBarModuleKind.TrayOverflow, RightModules, "托盘", _environment.OpenTrayOverflow, "\uE70E");
             if (ModuleText(TopBarModuleKind.TrayOverflow) is { } trayText) trayText.Text = "托盘";
             if (_modules.TryGetValue(TopBarModuleKind.TrayOverflow, out var trayButton))
                 trayButton.ToolTip = "打开 Windows 隐藏的托盘图标";
@@ -1372,25 +1370,6 @@ public sealed partial class TopBarWindow : Window
         }
 
         flyout.IsOpen = false;
-    }
-
-    /// <summary>A module button's bounds in screen pixels, or null before it is laid out.</summary>
-    private PixelRect? ModuleScreenRect(TopBarModuleKind kind)
-    {
-        if (!_modules.TryGetValue(kind, out var element)
-            || element.ActualWidth <= 0
-            || PresentationSource.FromVisual(element) is null)
-        {
-            return null;
-        }
-
-        var topLeft = element.PointToScreen(new System.Windows.Point(0, 0));
-        var bottomRight = element.PointToScreen(new System.Windows.Point(element.ActualWidth, element.ActualHeight));
-        return new PixelRect(
-            (int)Math.Round(topLeft.X),
-            (int)Math.Round(topLeft.Y),
-            (int)Math.Round(bottomRight.X),
-            (int)Math.Round(bottomRight.Y));
     }
 
     /// <summary>The open to-do flyout, for tests; popups sit outside the visual tree.</summary>

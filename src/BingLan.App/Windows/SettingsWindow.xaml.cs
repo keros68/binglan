@@ -2,6 +2,7 @@ using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Threading;
 using BingLan.App.Dock;
 using BingLan.App.Themes;
@@ -12,6 +13,7 @@ using BingLan.Core.Services;
 using BingLan.Core.TopBar;
 using Button = System.Windows.Controls.Button;
 using CheckBox = System.Windows.Controls.CheckBox;
+using Control = System.Windows.Controls.Control;
 using KeyEventArgs = System.Windows.Input.KeyEventArgs;
 using RadioButton = System.Windows.Controls.RadioButton;
 
@@ -127,9 +129,19 @@ public partial class SettingsWindow : Window
         _probeTopBarSearchHotkey = probeTopBarSearchHotkey;
 
         InitializeComponent();
-        SourceInitialized += (_, _) => IsBackdropActive = SettingsBackdrop.Apply(this);
-        AccessibilityThemeManager.HighContrastChanged += ReapplyBackdrop;
-        Closed += (_, _) => AccessibilityThemeManager.HighContrastChanged -= ReapplyBackdrop;
+        ApplyTheme();
+        SourceInitialized += (_, _) =>
+        {
+            ApplyTheme();
+            HwndSource.FromHwnd(new WindowInteropHelper(this).Handle)?.AddHook(ThemeMessageHook);
+        };
+        AccessibilityThemeManager.HighContrastChanged += ReapplyTheme;
+        AccessibilityThemeManager.DarkModeOverrideChanged += ReapplyTheme;
+        Closed += (_, _) =>
+        {
+            AccessibilityThemeManager.HighContrastChanged -= ReapplyTheme;
+            AccessibilityThemeManager.DarkModeOverrideChanged -= ReapplyTheme;
+        };
         PaletteSwatches.Fill(GlassPaletteSwatches, palette =>
         {
             _maintenance.Style.Palette = palette.Key;
@@ -170,10 +182,12 @@ public partial class SettingsWindow : Window
         LoadDockSettings();
         if (_topBarState is null)
         {
-            // Tests and older call sites construct the window without a top bar; the
-            // page leaves the navigation entirely so their index-based expectations,
-            // and the default page set, stay exactly as they were.
-            SettingsNavigationList.Items.Remove(TopBarNavItem);
+            // Tests and older call sites construct the window without a top bar; every
+            // place that shows or changes it stays out of sight.
+            TopBarSection.Visibility = Visibility.Collapsed;
+            TopBarLookPanel.Visibility = Visibility.Collapsed;
+            ScreenMapTopBarButton.Visibility = Visibility.Collapsed;
+            SchemeTopBarRow.Visibility = Visibility.Collapsed;
         }
         else
         {
@@ -187,9 +201,13 @@ public partial class SettingsWindow : Window
         LoadFileBoxAutomation();
         LoadStyle();
         RefreshBackupList();
-        ShowPage("Appearance");
+        ShowPage("Scheme");
         Closing += (_, _) => CommitPendingChanges();
         Closed += (_, _) => { _isClosed = true; CancelSearch(); };
+        // The index reads the finished pages once, after the window has shown.
+        Loaded += (_, _) => Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, () => _ = SearchIndex);
+        Deactivated += (_, _) => SettingsSearchPopup.IsOpen = false;
+        LocationChanged += (_, _) => SettingsSearchPopup.IsOpen = false;
         SystemParameters.StaticPropertyChanged += SystemParameters_Changed;
         Closed += (_, _) => SystemParameters.StaticPropertyChanged -= SystemParameters_Changed;
         if (_maintenance.Updater is { } updater)
@@ -202,7 +220,41 @@ public partial class SettingsWindow : Window
     /// <summary>Whether the window shows the Mica material instead of the solid page colour.</summary>
     internal bool IsBackdropActive { get; private set; }
 
-    private void ReapplyBackdrop(object? sender, EventArgs e) => IsBackdropActive = SettingsBackdrop.Apply(this);
+    /// <summary>Whether the window uses its dark palette, following the Windows app mode.</summary>
+    internal bool IsDarkTheme { get; private set; }
+
+    private const int WmSettingChange = 0x001A;
+
+    private void ReapplyTheme(object? sender, EventArgs e) => ApplyTheme();
+
+    /// <summary>
+    /// Light or dark with the Windows app mode, translucent over Mica and solid without
+    /// it, and system colours in high contrast. The palette lives in this window's own
+    /// resources, so the cards and other dialogs keep their colours.
+    /// </summary>
+    private void ApplyTheme()
+    {
+        IsDarkTheme = AccessibilityThemeManager.IsDarkAppMode && !AccessibilityThemeManager.IsHighContrastEnabled;
+        IsBackdropActive = SettingsBackdrop.Apply(this, IsDarkTheme);
+        SettingsPalette.Apply(
+            Resources,
+            AccessibilityThemeManager.IsHighContrastEnabled,
+            IsDarkTheme,
+            translucent: IsBackdropActive,
+            includeShared: true);
+    }
+
+    // Switching the app mode or the transparency effects arrives as ImmersiveColorSet.
+    private nint ThemeMessageHook(nint hwnd, int message, nint wParam, nint lParam, ref bool handled)
+    {
+        if (message == WmSettingChange
+            && lParam != 0
+            && System.Runtime.InteropServices.Marshal.PtrToStringUni(lParam) == "ImmersiveColorSet")
+        {
+            Dispatcher.BeginInvoke(ApplyTheme);
+        }
+        return 0;
+    }
 
     private void SystemParameters_Changed(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
@@ -258,6 +310,8 @@ public partial class SettingsWindow : Window
             SelectedWidgetEditorPanel.Visibility = Visibility.Collapsed;
             BuiltInComponentEditorPanel.Visibility = Visibility.Visible;
             LoadSelectedComponentEditor(kind, entry.Window);
+            // A card with its own colours opens its fold, so what was set is in view.
+            ComponentOwnLookFold.IsExpanded = UpdateOwnLookSummary(kind);
             // 待办卡片自身走内置组件分支（DesktopExperience 有 Todo 组件项），
             // 周历设置面板必须在这里点亮；其余内置组件保持隐藏。
             if (kind == DesktopComponentKind.Todo && entry.Window is TodoWidgetWindow todoWindow)
@@ -931,9 +985,58 @@ public partial class SettingsWindow : Window
             _applyDesktopExperience(_desktopExperience);
         }
         ComponentSettingsStatusText.Text = $"已保存“{_selectedComponentEntry.Name}”设置";
+        UpdateOwnLookSummary(kind);
+        RefreshAppearanceOverrides();
         if (refreshList)
         {
             RefreshComponentList(_selectedComponentEntry.Window, kind);
+        }
+    }
+
+    /// <summary>
+    /// Says in the fold header whether the card follows the shared look, and offers the
+    /// way back when it does not. Returns whether the card has its own colours.
+    /// </summary>
+    private bool UpdateOwnLookSummary(DesktopComponentKind kind)
+    {
+        var own = HasOwnLook(kind);
+        ComponentOwnLookSummaryText.Text = own
+            ? "已独立设置颜色，不跟随全局外观"
+            : "跟随全局外观，展开后可为这张卡片独立设置";
+        ComponentFollowSharedLookRow.Visibility = own ? Visibility.Visible : Visibility.Collapsed;
+        return own;
+    }
+
+    private bool HasOwnLook(DesktopComponentKind kind) => !DesktopStyleRules.FollowsSharedLook(
+        _desktopExperience.GetComponent(kind),
+        _maintenance.Style,
+        QuickPlacesWindow.ClearBarOpacity);
+
+    // Gives one card the colours of the shared material again, as applying the global
+    // material would.
+    private void FollowSharedLook(DesktopComponentKind kind)
+    {
+        var component = _desktopExperience.GetComponent(kind);
+        var look = DesktopStyleRules.ComponentLook(kind, _maintenance.Style, QuickPlacesWindow.ClearBarOpacity);
+        component.Appearance.BackgroundColor = look.BackgroundColor;
+        component.Appearance.BackgroundOpacity = look.BackgroundOpacity;
+        component.Appearance.TextColor = look.TextColor;
+        _applyDesktopExperience(_desktopExperience);
+        if (_selectedComponentEntry?.Kind == kind)
+        {
+            _componentApplyTimer.Stop();
+            LoadSelectedComponentEditor(kind, _selectedComponentEntry.Window);
+            UpdateOwnLookSummary(kind);
+        }
+        ComponentSettingsStatusText.Text = $"“{DesktopExperienceRules.GetComponentName(kind)}”已恢复跟随全局外观";
+        RefreshAppearanceOverrides();
+    }
+
+    private void ComponentFollowSharedLook_Click(object sender, RoutedEventArgs e)
+    {
+        if (_selectedComponentEntry?.Kind is { } kind)
+        {
+            FollowSharedLook(kind);
         }
     }
 
@@ -1143,51 +1246,38 @@ public partial class SettingsWindow : Window
         }
     }
 
-    // Older page names still open the page that now holds their settings.
-    private static string PageFor(string page) => page switch
+    /// <summary>
+    /// The page and section a settings link opens. Page names from earlier versions
+    /// ("Dock", "TopBar", "Taskbar", "Layout", "About" …) still lead to the settings
+    /// they used to show.
+    /// </summary>
+    internal static (string Page, string? Section) ResolveSettingsLink(string link) => link switch
     {
-        "Theme" or "Layout" => "Appearance",
-        "Privacy" or "Backup" or "About" => "General",
-        _ => page
+        "Scheme" or "DesktopMode" or "Overall" => ("Scheme", null),
+        "CleanDesktop" => ("Scheme", "CleanDesktop"),
+        "Appearance" or "Cards" => ("Appearance", null),
+        "Layout" or "Theme" => ("Appearance", "Layout"),
+        "Components" => ("Components", null),
+        "Bars" => ("Bars", null),
+        "Dock" or "TopBar" or "Taskbar" => ("Bars", link),
+        "General" or "About" or "Update" => ("General", null),
+        "Privacy" or "Backup" => ("General", link),
+        _ => (link, null)
     };
-
-    private void AppearanceTab_Changed(object sender, RoutedEventArgs e) => ShowAppearanceTab();
-
-    private void ShowAppearanceTab(string? section = null)
-    {
-        if (AppearanceOverallPanel is null || AppearanceCardsPanel is null || AppearanceLayoutPanel is null ||
-            OverallAppearanceTab is null || CardsAppearanceTab is null || LayoutAppearanceTab is null)
-        {
-            return;
-        }
-
-        section ??= CardsAppearanceTab.IsChecked == true
-            ? "Cards"
-            : LayoutAppearanceTab.IsChecked == true ? "Layout" : "Overall";
-        AppearanceOverallPanel.Visibility = section == "Overall" ? Visibility.Visible : Visibility.Collapsed;
-        AppearanceCardsPanel.Visibility = section == "Cards" ? Visibility.Visible : Visibility.Collapsed;
-        AppearanceLayoutPanel.Visibility = section == "Layout" ? Visibility.Visible : Visibility.Collapsed;
-        OverallAppearanceTab.IsChecked = section == "Overall";
-        CardsAppearanceTab.IsChecked = section == "Cards";
-        LayoutAppearanceTab.IsChecked = section == "Layout";
-    }
 
     private void ShowPage(string page)
     {
-        if (AppearancePage is null || ComponentsPage is null || DockPage is null || TaskbarPage is null ||
-            GeneralPage is null || TopBarPage is null)
+        if (SchemePage is null || AppearancePage is null || ComponentsPage is null || BarsPage is null ||
+            GeneralPage is null)
         {
             return;
         }
 
-        page = PageFor(page);
+        SettingsSearchPopup.IsOpen = false;
+        SchemePage.Visibility = page == "Scheme" ? Visibility.Visible : Visibility.Collapsed;
         AppearancePage.Visibility = page == "Appearance" ? Visibility.Visible : Visibility.Collapsed;
         ComponentsPage.Visibility = page == "Components" ? Visibility.Visible : Visibility.Collapsed;
-        DockPage.Visibility = page == "Dock" ? Visibility.Visible : Visibility.Collapsed;
-        TopBarPage.Visibility = page == "TopBar" && _topBarState is not null
-            ? Visibility.Visible
-            : Visibility.Collapsed;
-        TaskbarPage.Visibility = page == "Taskbar" ? Visibility.Visible : Visibility.Collapsed;
+        BarsPage.Visibility = page == "Bars" ? Visibility.Visible : Visibility.Collapsed;
         GeneralPage.Visibility = page == "General" ? Visibility.Visible : Visibility.Collapsed;
         if (page == "Appearance")
         {
@@ -1208,7 +1298,178 @@ public partial class SettingsWindow : Window
 
     internal void ShowSettingsPage(string page) => SelectNavigationPage(page);
 
-    internal void RefreshDesktopExperience() => LoadDesktopExperience();
+    // ---------------------------------------------------------------- 设置搜索
+
+    private List<SettingsSearchEntry>? _searchIndex;
+
+    private (FrameworkElement Page, string Tag, string Title)[] SearchPages =>
+    [
+        (SchemePage, "Scheme", "桌面方案"),
+        (AppearancePage, "Appearance", "外观样式"),
+        (ComponentsPage, "Components", "桌面组件"),
+        (BarsPage, "Bars", "顶栏底栏"),
+        (GeneralPage, "General", "通用设置")
+    ];
+
+    /// <summary>Built once from the pages; see <see cref="SettingsSearch"/>.</summary>
+    internal IReadOnlyList<SettingsSearchEntry> SearchIndex => _searchIndex ??= SettingsSearch.Build(
+        SearchPages.Select(page => (page.Page, page.Title)),
+        (Style)FindResource("SectionHeaderStyle"),
+        (Style)FindResource("ChoiceCardStyle"));
+
+    /// <summary>The results the search box shows for a query, best match first.</summary>
+    internal IReadOnlyList<SettingsSearchEntry> SearchSettings(string query) =>
+        SettingsSearch.Find(SearchIndex, query.Trim(), IsSearchEntryAvailable);
+
+    // A row that is hidden right now (a feature this computer lacks, an option of
+    // another mode) is left out; component rows need a matching card to select.
+    private bool IsSearchEntryAvailable(SettingsSearchEntry entry) => entry.Scope is { } scope
+        ? DesktopComponentList.Items.OfType<DesktopComponentSettingsEntry>().Any(item => MatchesSearchScope(item, scope))
+        : SettingsSearch.IsShown(entry.Target, entry.Page);
+
+    private static bool MatchesSearchScope(DesktopComponentSettingsEntry item, string scope) => scope switch
+    {
+        "Builtin" => item.Kind is not null,
+        "Widget" => item.Kind is null,
+        "FileBox" => item.Window is FileBoxWindow,
+        "Todo" => item.Window is TodoWidgetWindow,
+        _ => scope.StartsWith("Kind:", StringComparison.Ordinal) && item.Kind?.ToString() == scope["Kind:".Length..]
+    };
+
+    /// <summary>
+    /// Goes to a setting: switches page, selects a card the setting belongs to, opens
+    /// the folds around it, then scrolls it into the middle, tints it and focuses it.
+    /// </summary>
+    internal void OpenSearchResult(SettingsSearchEntry entry)
+    {
+        SettingsSearchPopup.IsOpen = false;
+        var tag = SearchPages.First(page => ReferenceEquals(page.Page, entry.Page)).Tag;
+        SelectNavigationPage(tag);
+        if (entry.Scope is { } scope)
+        {
+            SelectSearchScope(scope, entry.Target);
+        }
+        foreach (var fold in entry.Folds)
+        {
+            fold.IsExpanded = true;
+        }
+        if (entry.Target is Expander target)
+        {
+            target.IsExpanded = true;
+        }
+        RevealElement(entry.Target, focus: true);
+    }
+
+    // The current card is kept when it shows the setting; otherwise the first matching
+    // card that shows it is selected.
+    private void SelectSearchScope(string scope, FrameworkElement target)
+    {
+        var candidates = DesktopComponentList.Items.OfType<DesktopComponentSettingsEntry>()
+            .Where(item => MatchesSearchScope(item, scope))
+            .ToList();
+        if (DesktopComponentList.SelectedItem is DesktopComponentSettingsEntry current && candidates.Remove(current))
+        {
+            candidates.Insert(0, current);
+        }
+        foreach (var candidate in candidates)
+        {
+            if (!ReferenceEquals(DesktopComponentList.SelectedItem, candidate))
+            {
+                DesktopComponentList.SelectedItem = candidate;
+            }
+            if (SettingsSearch.IsShown(target, ComponentDetailsScrollViewer))
+            {
+                return;
+            }
+        }
+    }
+
+    private void UpdateSearchResults()
+    {
+        var query = SettingsSearchBox.Text.Trim();
+        if (query.Length == 0)
+        {
+            SettingsSearchPopup.IsOpen = false;
+            return;
+        }
+
+        var hits = SearchSettings(query);
+        SettingsSearchResults.ItemsSource = hits;
+        SettingsSearchResults.SelectedIndex = hits.Count > 0 ? 0 : -1;
+        SettingsSearchResults.Visibility = hits.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        SettingsSearchEmptyText.Text = hits.Count > 0 ? string.Empty : $"没有找到“{query}”。试试 透明、圆角、热键。";
+        SettingsSearchEmptyText.Visibility = hits.Count > 0 ? Visibility.Collapsed : Visibility.Visible;
+        SettingsSearchPopup.IsOpen = SettingsSearchBox.IsKeyboardFocusWithin;
+    }
+
+    private void SettingsSearchBox_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        SettingsSearchPlaceholder.Visibility = SettingsSearchBox.Text.Length == 0
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        UpdateSearchResults();
+    }
+
+    private void SettingsSearchBox_GotKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e) =>
+        UpdateSearchResults();
+
+    private void SettingsSearchBox_LostKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e) =>
+        SettingsSearchPopup.IsOpen = false;
+
+    private void SettingsSearchBox_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        var count = SettingsSearchResults.Items.Count;
+        switch (e.Key)
+        {
+            case Key.Down or Key.Up when count > 0 && SettingsSearchBox.Text.Trim().Length > 0:
+                var step = e.Key == Key.Down ? 1 : -1;
+                SettingsSearchResults.SelectedIndex = (SettingsSearchResults.SelectedIndex + step + count) % count;
+                SettingsSearchResults.ScrollIntoView(SettingsSearchResults.SelectedItem);
+                SettingsSearchPopup.IsOpen = SettingsSearchBox.IsKeyboardFocusWithin;
+                e.Handled = true;
+                break;
+            case Key.Enter when SettingsSearchResults.SelectedItem is SettingsSearchEntry entry:
+                OpenSearchResult(entry);
+                e.Handled = true;
+                break;
+            case Key.Escape when SettingsSearchPopup.IsOpen:
+                SettingsSearchPopup.IsOpen = false;
+                e.Handled = true;
+                break;
+            case Key.Escape when SettingsSearchBox.Text.Length > 0:
+                SettingsSearchBox.Clear();
+                e.Handled = true;
+                break;
+        }
+    }
+
+    private void SettingsSearchResults_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        if (e.OriginalSource is DependencyObject source
+            && ItemsControl.ContainerFromElement(SettingsSearchResults, source) is ListBoxItem { DataContext: SettingsSearchEntry entry })
+        {
+            OpenSearchResult(entry);
+            e.Handled = true;
+        }
+    }
+
+    // Ctrl+F reaches the search from anywhere in the window, except while a hotkey is
+    // being recorded, where the keys belong to the recording.
+    private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.F && Keyboard.Modifiers == ModifierKeys.Control && !_recordingSearchHotkey)
+        {
+            SettingsSearchBox.Focus();
+            SettingsSearchBox.SelectAll();
+            e.Handled = true;
+        }
+    }
+
+    internal void RefreshDesktopExperience()
+    {
+        LoadDesktopExperience();
+        RefreshAppearanceOverrides();
+    }
 
     internal void RefreshDockSettings()
     {
@@ -1362,6 +1623,11 @@ public partial class SettingsWindow : Window
             _loadingStyle = false;
         }
         UpdatePresetPreview(GetSelectedPreset());
+        RefreshAppearanceOverrides();
+        if (_selectedComponentEntry?.Kind is { } kind)
+        {
+            UpdateOwnLookSummary(kind);
+        }
     }
 
     private void AppearancePreview_Click(object sender, RoutedEventArgs e)
@@ -1426,7 +1692,7 @@ public partial class SettingsWindow : Window
         if (look.CornerRadius is { } radius) lines.Add($"圆角：{radius:0}");
         var answer = System.Windows.MessageBox.Show(
             this,
-            $"将按“{name}”调整所有卡片：\n\n{string.Join("\n", lines)}\n\n当前设置会先备份，可在“通用”页的备份中恢复。继续吗？",
+            $"将按“{name}”调整所有卡片：\n\n{string.Join("\n", lines)}\n\n当前设置会先备份，可在“通用设置”页的备份中恢复。继续吗？",
             "从 Rainmeter 皮肤导入外观",
             MessageBoxButton.YesNo,
             MessageBoxImage.Question);
@@ -1606,11 +1872,7 @@ public partial class SettingsWindow : Window
         GoToCleanDesktopButton.Content = enabled ? "清爽桌面已开启" : "前往开启清爽桌面";
     }
 
-    private void GoToCleanDesktop_Click(object sender, RoutedEventArgs e)
-    {
-        SelectNavigationPage("Appearance");
-        CleanDesktopRow.BringIntoView();
-    }
+    private void GoToCleanDesktop_Click(object sender, RoutedEventArgs e) => SelectNavigationPage("CleanDesktop");
 
     private void OpenDataDirectory_Click(object sender, RoutedEventArgs e) =>
         _maintenance.OpenDataDirectory();
@@ -1812,9 +2074,9 @@ public partial class SettingsWindow : Window
     }
 
     /// <summary>
-    /// The desktop mode is where Dock, taskbar and top bar settings start from; their own
-    /// pages fine-tune it. Every page names the mode in use and what was changed since,
-    /// with one button back to the mode's defaults.
+    /// The desktop mode is where Dock, taskbar and top bar settings start from; the bars
+    /// page fine-tunes them. The scheme page and the bars page each name the mode in use
+    /// and what was changed since, with one button back to the mode's defaults.
     /// </summary>
     private void LoadDesktopMode()
     {
@@ -1832,32 +2094,107 @@ public partial class SettingsWindow : Window
         }
 
         var name = DesktopModeRules.GetName(match.Mode);
-        var note = match.IsExact
-            ? $"当前桌面方案：{name}。这里的调整会在方案基础上生效，可随时恢复方案默认。"
-            : $"当前桌面方案：在“{name}”基础上自定义（{string.Join("、", match.Differences)}）。";
+        var changes = string.Join("，", match.Differences);
         var restore = $"恢复{name}默认";
-        foreach (var (text, button) in new (TextBlock, Button)[]
+        foreach (var button in new[] { RestoreDesktopModeButton, BarsRestoreModeButton })
         {
-            (DockModeNoteText, DockRestoreModeButton),
-            (TopBarModeNoteText, TopBarRestoreModeButton),
-            (TaskbarModeNoteText, TaskbarRestoreModeButton)
-        })
-        {
-            text.Text = note;
             button.Content = restore;
             button.Tag = match.Mode;
             button.Visibility = match.IsExact ? Visibility.Collapsed : Visibility.Visible;
         }
+        BarsModeNoteText.Text = match.IsExact
+            ? $"当前桌面方案：{name}。这里的调整在方案基础上生效，可随时恢复方案默认。"
+            : $"当前桌面方案：在{name}基础上自定义（{changes}）。";
 
-        RestoreDesktopModeButton.Content = restore;
-        RestoreDesktopModeButton.Tag = match.Mode;
-        RestoreDesktopModeButton.Visibility = match.IsExact ? Visibility.Collapsed : Visibility.Visible;
         var (activeMode, problem) = _taskbarStatus();
-        DesktopModeStatusText.Text = problem.Length > 0 && activeMode == TaskbarMode.SystemDefault && _taskbarState.Mode != TaskbarMode.SystemDefault
+        var taskbarHeldBack = problem.Length > 0
+            && activeMode == TaskbarMode.SystemDefault
+            && _taskbarState.Mode != TaskbarMode.SystemDefault;
+        DesktopModeStatusText.Text = taskbarHeldBack
             ? $"任务栏保持系统默认：{problem}"
             : match.IsExact
-                ? "方案会一次设好 Dock、任务栏和顶端信息条；各自页面可以继续微调。"
-                : $"在“{name}”基础上自定义：{string.Join("、", match.Differences)}。";
+                ? $"当前桌面方案：{name}。"
+                : $"在{name}基础上自定义：{changes}";
+        DesktopModeDriftPanel.Visibility = taskbarHeldBack || !match.IsExact
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+
+        RefreshSchemeSummary(match, activeMode, problem);
+        RefreshBarsMap();
+    }
+
+    // “当前状态”: what each bar really does now, marked where it left the mode's defaults.
+    private void RefreshSchemeSummary(DesktopModeMatch match, TaskbarMode activeMode, string problem)
+    {
+        SetSummary(
+            SchemeDockDot,
+            SchemeDockStateText,
+            SchemeDockCustomTag,
+            _dockState.IsEnabled,
+            !_dockState.IsEnabled
+                ? "已关闭"
+                : _dockState.VisibilityMode == DockVisibilityMode.SmartHide ? "智能隐藏" : "始终显示，保留底部空间",
+            match.DockChanged);
+        if (_topBarState is { } topBar)
+        {
+            SetSummary(
+                SchemeTopBarDot,
+                SchemeTopBarStateText,
+                SchemeTopBarCustomTag,
+                topBar.IsEnabled,
+                !topBar.IsEnabled
+                    ? "已关闭"
+                    : $"{(topBar.VisibilityMode == TopBarVisibilityMode.SmartHide ? "智能隐藏" : "始终显示")} · {CountTopBarModules(topBar)} 个模块",
+                match.TopBarChanged);
+        }
+        var activeName = DesktopModeRules.GetTaskbarName(activeMode);
+        SetSummary(
+            SchemeTaskbarDot,
+            SchemeTaskbarStateText,
+            SchemeTaskbarCustomTag,
+            activeMode != TaskbarMode.SystemDefault,
+            problem.Length == 0 ? activeName : $"{activeName}（{problem}）",
+            match.TaskbarChanged);
+
+        static void SetSummary(System.Windows.Shapes.Ellipse dot, TextBlock text, Border tag, bool on, string state, bool changed)
+        {
+            dot.SetResourceReference(System.Windows.Shapes.Shape.FillProperty, on ? "SettingsOkBrush" : "SettingsFaintInkBrush");
+            text.Text = state;
+            tag.Visibility = changed ? Visibility.Visible : Visibility.Collapsed;
+        }
+    }
+
+    private static int CountTopBarModules(TopBarState state)
+    {
+        var modules = state.Modules;
+        bool[] shown =
+        [
+            modules.Clock, modules.TodoSummary, modules.Weather, modules.Performance, modules.Attention,
+            modules.InputMethod, modules.Volume, modules.Network, modules.Battery, modules.Search,
+            modules.TrayOverflow && OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000)
+        ];
+        return shown.Count(value => value);
+    }
+
+    // The screen sketch dims bars that are off or hidden, and one line explains how the
+    // Dock and the taskbar share the bottom edge.
+    private void RefreshBarsMap()
+    {
+        const double Dimmed = 0.35;
+        var dock = _dockState.IsEnabled;
+        var topBar = _topBarState?.IsEnabled == true;
+        var taskbar = _taskbarState.Mode;
+        ScreenMapTopBarButton.Opacity = topBar ? 1 : Dimmed;
+        ScreenMapDockButton.Opacity = dock ? 1 : Dimmed;
+        ScreenMapTaskbarButton.Opacity = taskbar == TaskbarMode.SmartHide ? Dimmed : 1;
+        BarsRelationText.Text = (dock, taskbar) switch
+        {
+            (true, TaskbarMode.SmartHide) => "任务栏自动隐藏时，Dock 贴近屏幕底边显示。",
+            (true, TaskbarMode.SystemDefault) => "Dock 与系统任务栏同时显示，Dock 位于任务栏上方。",
+            (true, _) => "Dock 显示在任务栏上方；任务栏样式只改变任务栏本身。",
+            _ when topBar => "顶端信息条在屏幕顶部，底部只用 Windows 任务栏。",
+            _ => "当前只用 Windows 任务栏。开启 Dock 或信息条后，桌面方案会显示为自定义。"
+        };
     }
 
     private void DesktopMode_Checked(object sender, RoutedEventArgs e)
@@ -1912,6 +2249,10 @@ public partial class SettingsWindow : Window
             TaskbarBlurRadio.IsChecked = _taskbarState.Mode == TaskbarMode.Blur;
             TaskbarSmartHideRadio.IsChecked = _taskbarState.Mode == TaskbarMode.SmartHide;
             RevealOnlyAtCornersCheckBox.IsChecked = _taskbarState.RevealOnlyAtCorners;
+            // Both pop-up options only matter while the taskbar hides itself.
+            TaskbarPopupPanel.Visibility = _taskbarState.Mode == TaskbarMode.SmartHide
+                ? Visibility.Visible
+                : Visibility.Collapsed;
         }
         finally
         {
@@ -1978,6 +2319,7 @@ public partial class SettingsWindow : Window
                 .OfType<ComboBoxItem>()
                 .First(item => (string)item.Tag == _dockState.RevealMode.ToString());
             DockStartMenuButtonCheckBox.IsChecked = _dockState.ShowStartMenuButton;
+            DockShowDesktopButtonCheckBox.IsChecked = _dockState.ShowDesktopButton;
             DockBottomGapSlider.Value = _dockState.BottomGapDip;
             DockBottomGapText.Text = $"{_dockState.BottomGapDip:0} DIP";
 
@@ -2058,6 +2400,7 @@ public partial class SettingsWindow : Window
             _dockState.RevealMode = revealMode;
         }
         _dockState.ShowStartMenuButton = DockStartMenuButtonCheckBox.IsChecked == true;
+        _dockState.ShowDesktopButton = DockShowDesktopButtonCheckBox.IsChecked == true;
         if (DockMonitorComboBox.SelectedItem is ComboBoxItem { Tag: string deviceName })
         {
             _dockState.MonitorDeviceName = deviceName;
@@ -2092,6 +2435,85 @@ public partial class SettingsWindow : Window
         finally
         {
             _loadingDockLook = false;
+        }
+        RefreshAppearanceOverrides();
+    }
+
+    /// <summary>
+    /// Lists what does not follow the shared look: the Dock and the top bar in their own
+    /// colours, and built-in cards whose colours were set on their own. Each line opens
+    /// where it was set, or goes back to following the shared look. The bars page says
+    /// the same in one line per bar.
+    /// </summary>
+    private void RefreshAppearanceOverrides()
+    {
+        if (AppearanceOverridesGroup is null)
+        {
+            return;
+        }
+
+        var frosted = _topBarState?.FrostedGlass != false;
+        DockLookSummaryRow.Description = _dockState.FollowCardLook ? "跟随全局外观" : "已独立设置颜色与玻璃浓度";
+        TopBarLookSummaryRow.Description = (_topBarState?.FollowCardLook != false ? "跟随全局外观" : "已独立设置颜色与不透明度")
+            + (frosted ? string.Empty : "；磨砂玻璃已关闭");
+
+        AppearanceOverridesGroup.Items.Clear();
+        if (!_dockState.FollowCardLook)
+        {
+            AddOverride("冰蓝 Dock", "已独立设置颜色与玻璃浓度", () => ShowBarsLook("Dock"), () =>
+            {
+                _dockState.FollowCardLook = true;
+                ApplyDockChange("Dock 跟随卡片外观");
+                LoadDockLook();
+            });
+        }
+        if (_topBarState is { FollowCardLook: false } topBar)
+        {
+            AddOverride("顶端信息条", "已独立设置颜色与不透明度", () => ShowBarsLook("TopBar"), () =>
+            {
+                topBar.FollowCardLook = true;
+                ApplyTopBarChange("信息条跟随卡片外观");
+                LoadTopBarLook();
+            });
+        }
+        foreach (var kind in CurrentComponentKinds.Where(kind =>
+                     _desktopExperience.GetComponent(kind).IsVisible && HasOwnLook(kind)))
+        {
+            AddOverride(DesktopExperienceRules.GetComponentName(kind), "已独立设置颜色", () =>
+            {
+                SelectNavigationPage("Components");
+                RefreshComponentList(null, kind);
+                ComponentOwnLookFold.IsExpanded = true;
+                RevealElement(ComponentOwnLookFold);
+            }, () => FollowSharedLook(kind));
+        }
+        if (AppearanceOverridesGroup.Items.Count == 0)
+        {
+            AppearanceOverridesGroup.Items.Add(new TextBlock
+            {
+                Margin = new Thickness(18, 16, 18, 16),
+                Style = (Style)FindResource("CaptionStyle"),
+                FontSize = 13,
+                Text = "所有部分都跟随全局外观。"
+            });
+        }
+
+        void AddOverride(string name, string what, Action view, Action follow)
+        {
+            var viewButton = new Button
+            {
+                Content = "查看",
+                Style = (Style)FindResource("GhostButtonStyle")
+            };
+            System.Windows.Automation.AutomationProperties.SetName(viewButton, $"查看{name}的外观设置");
+            viewButton.Click += (_, _) => view();
+            var followButton = new Button { Content = "恢复跟随", Margin = new Thickness(8, 0, 0, 0) };
+            System.Windows.Automation.AutomationProperties.SetName(followButton, $"{name}恢复跟随全局外观");
+            followButton.Click += (_, _) => follow();
+            var actions = new StackPanel { Orientation = System.Windows.Controls.Orientation.Horizontal };
+            actions.Children.Add(viewButton);
+            actions.Children.Add(followButton);
+            AppearanceOverridesGroup.Items.Add(new SettingsRow { Header = name, Description = what, Content = actions });
         }
     }
 
@@ -2256,6 +2678,7 @@ public partial class SettingsWindow : Window
             state.MonitorDeviceName = deviceName;
         }
         ApplyTopBarChange(state.IsEnabled ? "已应用" : "顶端信息条已关闭");
+        RefreshAppearanceOverrides();
     }
 
     // ---------------------------------------------------------------- 顶栏搜索热键
@@ -2498,6 +2921,7 @@ public partial class SettingsWindow : Window
         {
             _loadingTopBarLook = false;
         }
+        RefreshAppearanceOverrides();
     }
 
     private void TopBarLook_Changed(object sender, RoutedEventArgs e)
@@ -2728,6 +3152,8 @@ public partial class SettingsWindow : Window
             AppVersionText.Text = updater is null
                 ? "冰蓝桌面"
                 : $"冰蓝桌面 {updater.CurrentVersion.ToString(3)}";
+            var version = updater?.CurrentVersion ?? typeof(SettingsWindow).Assembly.GetName().Version;
+            NavVersionText.Text = version is null ? string.Empty : $"版本 {version.ToString(3)}";
             AutoCheckUpdatesCheckBox.IsChecked = updater?.AutoCheck == true;
             AutoCheckUpdatesCheckBox.IsEnabled = updater is not null;
         }
@@ -2799,27 +3225,146 @@ public partial class SettingsWindow : Window
         DockStatusText.Text = status;
     }
 
-    private void SelectNavigationPage(string page)
+    private void SelectNavigationPage(string link)
     {
-        var appearanceSection = page switch
+        var (page, section) = ResolveSettingsLink(link);
+        if (SettingsNavigationList.Items.OfType<ListBoxItem>().FirstOrDefault(item => Equals(item.Tag, page)) is not { } item)
         {
-            "Layout" or "Theme" => "Layout",
-            "Appearance" => "Overall",
-            _ => null
-        };
-        page = PageFor(page);
-        foreach (var candidate in SettingsNavigationList.Items.OfType<ListBoxItem>())
+            return;
+        }
+
+        SettingsNavigationList.SelectedItem = item;
+        switch (section)
         {
-            if (Equals(candidate.Tag, page))
+            case "Layout":
+                AppearanceLayoutFold.IsExpanded = true;
+                RevealElement(AppearanceLayoutFold);
+                break;
+            case "Dock" or "TopBar" or "Taskbar":
+                RevealBarSection(section);
+                break;
+            case "CleanDesktop":
+                RevealElement(CleanDesktopRow);
+                break;
+            case "Backup":
+                RevealElement(BackupList);
+                break;
+            case "Privacy":
+                RevealElement(DataDirectoryText);
+                break;
+        }
+    }
+
+    private Expander BarSection(string name) => name switch
+    {
+        "Dock" => DockSection,
+        "TopBar" when _topBarState is not null => TopBarSection,
+        _ => TaskbarSection
+    };
+
+    // Opens one of the three bars on its page and brings its header into view.
+    private void RevealBarSection(string name)
+    {
+        var section = BarSection(name);
+        section.IsExpanded = true;
+        RevealElement(section);
+    }
+
+    private void BarsJump_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { Tag: string bar })
+        {
+            SelectNavigationPage(bar);
+        }
+    }
+
+    private void ScreenMap_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { CommandParameter: string bar })
+        {
+            RevealBarSection(bar);
+        }
+    }
+
+    // The Dock and top bar look settings sit with the shared look on the appearance page.
+    private void BarsLookJump_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { Tag: string bar })
+        {
+            ShowBarsLook(bar);
+        }
+    }
+
+    private void ShowBarsLook(string bar)
+    {
+        SelectNavigationPage("Appearance");
+        AppearanceBarsLookFold.IsExpanded = true;
+        RevealElement(bar == "TopBar" ? TopBarLookSettingsRow : DockLookSettingsRow);
+    }
+
+    /// <summary>
+    /// Scrolls a setting to the middle of its page once layout has caught up, tints it
+    /// briefly (a fold only on its header), and optionally moves keyboard focus to its
+    /// first control.
+    /// </summary>
+    private void RevealElement(FrameworkElement target, bool focus = false)
+    {
+        Dispatcher.BeginInvoke(DispatcherPriority.Loaded, () =>
+        {
+            if (_isClosed || !target.IsVisible)
             {
-                SettingsNavigationList.SelectedItem = candidate;
-                if (appearanceSection is not null)
-                {
-                    ShowAppearanceTab(appearanceSection);
-                }
                 return;
             }
+
+            UpdateLayout();
+            var flash = target is Expander fold
+                ? fold.Template?.FindName("HeaderSite", fold) as FrameworkElement
+                : null;
+            if (FindVisualAncestor<ScrollViewer>(target) is { } scroller)
+            {
+                var top = target.TranslatePoint(new System.Windows.Point(), scroller).Y;
+                var centred = Math.Max(0, (scroller.ViewportHeight - target.ActualHeight) / 2);
+                scroller.ScrollToVerticalOffset(Math.Max(0, scroller.VerticalOffset + top - centred));
+                scroller.UpdateLayout();
+            }
+            SettingsSearch.Flash(flash ?? target);
+            if (focus)
+            {
+                FocusFirstControl(target);
+            }
+        });
+    }
+
+    private static T? FindVisualAncestor<T>(DependencyObject element) where T : DependencyObject
+    {
+        for (var node = System.Windows.Media.VisualTreeHelper.GetParent(element);
+             node is not null;
+             node = System.Windows.Media.VisualTreeHelper.GetParent(node))
+        {
+            if (node is T match)
+            {
+                return match;
+            }
         }
+        return null;
+    }
+
+    // Depth first, so the first keyboard stop inside the setting takes focus.
+    private static bool FocusFirstControl(DependencyObject node)
+    {
+        if (node is Control { IsVisible: true, IsEnabled: true, Focusable: true, IsTabStop: true } control)
+        {
+            return control.Focus();
+        }
+        for (var index = 0; index < System.Windows.Media.VisualTreeHelper.GetChildrenCount(node); index++)
+        {
+            var child = System.Windows.Media.VisualTreeHelper.GetChild(node, index);
+            if (child is not UIElement { IsVisible: false } && FocusFirstControl(child))
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     private void RefreshComponentList(

@@ -47,6 +47,9 @@ public sealed record CardPalette(string Key, string Name, string Body, string He
 /// <summary>The dock's colours from the shared material, as #AARRGGBB.</summary>
 public sealed record DockGlass(string Surface, string Border, string RunningDot);
 
+/// <summary>The body and text colours one built-in card gets from the shared material.</summary>
+public sealed record ComponentGlass(string BackgroundColor, double BackgroundOpacity, string TextColor);
+
 /// <summary>The colours one card gets from the shared material.</summary>
 public sealed record GlassAppearance(
     string BackgroundColor,
@@ -326,6 +329,45 @@ public static class DesktopStyleRules
         TextInk.Custom => style.CustomTextColor,
         _ => "#FFFFFF"
     };
+
+    /// <summary>
+    /// The colours the shared material gives one built-in card. Time, date and greeting
+    /// are text straight on the wallpaper; on a clear desktop the quick-launch strip keeps
+    /// a light frosted bar at <paramref name="clearBarOpacity"/> so its line icons stay visible.
+    /// </summary>
+    public static ComponentGlass ComponentLook(
+        DesktopComponentKind kind,
+        DesktopStyleState style,
+        double clearBarOpacity)
+    {
+        ArgumentNullException.ThrowIfNull(style);
+        var glass = Appearance(style);
+        var nakedText = NakedTextColor(style);
+        if (kind == DesktopComponentKind.QuickLaunch && style.Glass == GlassMode.Clear)
+        {
+            return new ComponentGlass("#FFFFFF", clearBarOpacity, nakedText);
+        }
+        return kind is DesktopComponentKind.TimeDate or DesktopComponentKind.Greeting
+            ? new ComponentGlass(glass.BackgroundColor, WidgetAppearanceRules.MinimumBackgroundOpacity, nakedText)
+            : new ComponentGlass(glass.BackgroundColor, glass.BackgroundOpacity, glass.TextColor);
+    }
+
+    /// <summary>
+    /// Whether a built-in card still wears the colours the shared material gives it, as
+    /// opposed to colours set for this card alone.
+    /// </summary>
+    public static bool FollowsSharedLook(
+        DesktopComponentState component,
+        DesktopStyleState style,
+        double clearBarOpacity)
+    {
+        ArgumentNullException.ThrowIfNull(component);
+        var look = ComponentLook(component.Kind, style, clearBarOpacity);
+        var appearance = component.Appearance;
+        return string.Equals(appearance.BackgroundColor, look.BackgroundColor, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(appearance.TextColor, look.TextColor, StringComparison.OrdinalIgnoreCase)
+            && Math.Abs(appearance.BackgroundOpacity - look.BackgroundOpacity) < 0.005d;
+    }
 
     public static double CoerceCardSpacing(double value) =>
         double.IsFinite(value)

@@ -26,6 +26,37 @@ internal static class ShellSurfaceService
     private static int _watchingQuickSettings;
     private static long _quickSettingsClosedAt;
 
+    /// <summary>
+    /// Minimizes every window to show the desktop, or brings them back, the same as the
+    /// taskbar's corner and Win+D. The shell's own command needs no key injection, so it
+    /// also works while an elevated window is in front; Win+D is the fallback.
+    /// </summary>
+    internal static async Task<bool> ToggleDesktopAsync()
+    {
+        try
+        {
+            var type = Type.GetTypeFromProgID("Shell.Application");
+            if (type is not null && Activator.CreateInstance(type) is { } shell)
+            {
+                try
+                {
+                    type.InvokeMember("ToggleDesktop", System.Reflection.BindingFlags.InvokeMethod, null, shell, null);
+                    return true;
+                }
+                finally
+                {
+                    System.Runtime.InteropServices.Marshal.FinalReleaseComObject(shell);
+                }
+            }
+        }
+        catch (Exception exception) when (exception is System.Runtime.InteropServices.COMException
+            or System.Reflection.TargetInvocationException or InvalidCastException)
+        {
+            Debug.WriteLine($"Shell.Application 显示桌面失败，改用 Win+D：{exception.Message}");
+        }
+        return await RunWhenModifiersReleasedAsync(ShellSurfaceNativeMethods.ShowDesktop);
+    }
+
     internal static async Task<bool> OpenStartMenuAsync()
     {
         if (Interlocked.CompareExchange(ref _openingStart, 1, 0) != 0) return true;
