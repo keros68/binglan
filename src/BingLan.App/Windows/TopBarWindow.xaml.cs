@@ -3207,7 +3207,7 @@ public sealed partial class TopBarWindow : Window
 
     private void BuildContextMenu()
     {
-        var menu = new ContextMenu();
+        var menu = new ContextMenu().DismissOnOutsideClick();
         var settings = new MenuItem { Header = "在冰蓝桌面中设置…" };
         settings.Click += (_, _) => _environment.OpenTopBarSettings();
         var exit = new MenuItem { Header = "退出冰蓝桌面" };

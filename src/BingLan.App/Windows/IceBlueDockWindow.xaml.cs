@@ -1008,7 +1008,7 @@ public partial class IceBlueDockWindow : Window
 
     private ContextMenu CreateMenu()
     {
-        var menu = new ContextMenu { Placement = PlacementMode.Mouse };
+        var menu = new ContextMenu { Placement = PlacementMode.Mouse }.DismissOnOutsideClick();
         menu.Opened += (_, _) =>
         {
             _menuOpen = true;
@@ -1809,7 +1809,7 @@ public partial class IceBlueDockWindow : Window
             DockNativeMethods.GetForegroundWindow(),
             searchHolder,
             searchBorrowed);
-        if (window == 0 || window == _handle || DockNativeMethods.IsIconic(window))
+        if (window == 0 || window == _handle || window == _openMenu.PopupHandle() || DockNativeMethods.IsIconic(window))
         {
             return false;
         }
