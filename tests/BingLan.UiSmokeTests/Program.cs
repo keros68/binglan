@@ -183,6 +183,7 @@ internal static class Program
         Run("屏幕阅读器名称、Tab 顺序与实际 DPI 边界", TestAccessibilityAndKeyboardNavigation, failures);
         Run("高对比度系统色切换与冰蓝材质恢复", TestHighContrastThemeSwitch, failures);
         Run("今日列表与周历按日期映射", TestTodoTodayCalendarMapping, failures);
+        Run("今日列表拖拽换序即时更新可见切片", TestTodoTodayListDragReorder, failures);
         Run("待办切换按钮标出当前视图", TestTodoViewButtonShowsCurrentView, failures);
         Run("待办卡片收起成标题条并记住展开高度", TestTodoCollapseFoldsToTitleBar, failures);
         Run("待办切到周历再切回列表恢复原尺寸", TestTodoViewToggleRestoresSize, failures);
@@ -921,8 +922,10 @@ internal static class Program
                 "从周历切回今日列表后应反映周历勾选后的完成排序");
             foreach (var item in new[] { first, second })
             {
-                var row = list.ItemContainerGenerator.ContainerFromItem(item) as FrameworkElement;
-                Assert(row is not null, "今日列表应生成可见任务行");
+                if (list.ItemContainerGenerator.ContainerFromItem(item) is not FrameworkElement row)
+                {
+                    throw new InvalidOperationException("今日列表应生成可见任务行");
+                }
                 var renderedText = FindVisualChildren<TextBox>(row).Single().Text;
                 Assert(renderedText == item.Text,
                     $"今日列表行文本与任务记录不一致：期望 {item.Text}，实际 {renderedText}");
@@ -980,19 +983,60 @@ internal static class Program
                 .Invoke(window, [null, EventArgs.Empty]);
             Pump();
             Assert(TodayOrder().SequenceEqual([tomorrow.Id])
-                    && list.ItemContainerGenerator.ContainerFromItem(first) is UIElement firstRow
-                    && firstRow.Visibility == Visibility.Collapsed
-                    && list.ItemContainerGenerator.ContainerFromItem(added) is UIElement addedRow
-                    && addedRow.Visibility == Visibility.Collapsed
+                    && list.Items.Count == 1
+                    && list.ItemContainerGenerator.ContainerFromItem(first) is null
+                    && list.ItemContainerGenerator.ContainerFromItem(added) is null
                     && list.ItemContainerGenerator.ContainerFromItem(tomorrow) is UIElement tomorrowRow
                     && tomorrowRow.Visibility == Visibility.Visible,
-                "跨天刷新后旧日期行必须折叠，只有新当天日期行显示");
+                "跨天刷新后旧日期行必须移出今日切片，只有新当天日期行显示");
 
             var clear = Require<Button>(window, "ClearCompletedButton");
             clear.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
             Pump();
             Assert(state.Items.Any(x => x.Id == yesterdayCompleted.Id),
                 "清理今日已完成不得删除历史日期的已完成任务");
+        }
+        finally
+        {
+            Close(window);
+        }
+    }
+
+    private static void TestTodoTodayListDragReorder()
+    {
+        var state = new TodoWidgetState();
+        var first = TodoService.Add(state, "第一条普通待办", DateTime.Today);
+        var second = TodoService.Add(state, "第二条普通待办", DateTime.Today);
+        var window = new TodoWidgetWindow(state);
+        try
+        {
+            ShowAndPump(window);
+            var list = Require<ItemsControl>(window, "TodoList");
+            Assert(list.Items.Cast<TodoItemState>().Select(x => x.Id).SequenceEqual([first.Id, second.Id]),
+                "初始今日列表顺序应为第一条在前、第二条在后");
+
+            const System.Reflection.BindingFlags Private =
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+            var secondContainer = (ContentPresenter)list.ItemContainerGenerator.ContainerFromItem(second);
+            typeof(TodoWidgetWindow).GetField("_peekDragList", Private)!.SetValue(window, list);
+            typeof(TodoWidgetWindow).GetField("_peekDragCell", Private)!.SetValue(window, null);
+            typeof(TodoWidgetWindow).GetField("_peekDragItem", Private)!.SetValue(window, second);
+            typeof(TodoWidgetWindow).GetField("_peekDragContainer", Private)!.SetValue(window, secondContainer);
+            typeof(TodoWidgetWindow).GetMethod("ArmPeekDrag", Private)!.Invoke(window, null);
+            var pressPoint = secondContainer.TranslatePoint(new Point(60, 10), list);
+            typeof(TodoWidgetWindow).GetField("_peekPressPoint", Private)!.SetValue(window, pressPoint);
+            var draggingValue = Enum.Parse(
+                typeof(TodoWidgetWindow).GetNestedType("PeekDragPhase", Private)!,
+                "Dragging");
+            typeof(TodoWidgetWindow).GetField("_peekDragPhase", Private)!.SetValue(window, draggingValue);
+            typeof(TodoWidgetWindow).GetMethod("DoPeekDragMove", Private)!
+                .Invoke(window, [new Point(60, 10 - secondContainer.ActualHeight)]);
+            typeof(TodoWidgetWindow).GetMethod("SettlePeekDrag", Private)!.Invoke(window, null);
+            Pump();
+
+            Assert(state.Items.Select(x => x.Id).SequenceEqual([second.Id, first.Id])
+                    && list.Items.Cast<TodoItemState>().Select(x => x.Id).SequenceEqual([second.Id, first.Id]),
+                "普通今日待办拖拽松手后可见列表切片与持久化顺序应立即同步翻转");
         }
         finally
         {
@@ -2564,9 +2608,10 @@ internal static class Program
         try
         {
             PumpUntil(
-                () => list.ItemContainerGenerator.ContainerFromIndex(0) is ContentPresenter &&
+                () => window.InitialProbeCompleted &&
+                    list.ItemContainerGenerator.ContainerFromIndex(0) is ContentPresenter &&
                     list.ItemContainerGenerator.ContainerFromIndex(1) is ContentPresenter,
-                "文件盒列表容器未生成");
+                "文件盒列表容器或初始校验未完成");
 
             var missingPresenter = (ContentPresenter)list.ItemContainerGenerator.ContainerFromIndex(0)!;
             var missingLabel = FindVisualChildren<TextBlock>(missingPresenter)
@@ -3413,14 +3458,10 @@ internal static class Program
             var trayIcon = typeof(WidgetCoordinator)
                 .GetField("_trayIcon", System.Reflection.BindingFlags.Instance |
                     System.Reflection.BindingFlags.NonPublic)
-                ?.GetValue(coordinator) as System.Windows.Forms.NotifyIcon ??
+                ?.GetValue(coordinator) as BingLan.App.Services.TrayIconHost ??
                 throw new InvalidOperationException("托盘图标没有创建");
-            var raiseDoubleClick = typeof(System.Windows.Forms.NotifyIcon)
-                .GetMethod("OnDoubleClick", System.Reflection.BindingFlags.Instance |
-                    System.Reflection.BindingFlags.NonPublic) ??
-                throw new InvalidOperationException("无法触发托盘双击测试");
 
-            raiseDoubleClick.Invoke(trayIcon, [EventArgs.Empty]);
+            trayIcon.InvokeDoubleClick();
             Pump();
             var settings = Application.Current.Windows
                 .OfType<SettingsWindow>()
@@ -3429,7 +3470,7 @@ internal static class Program
 
             settings.WindowState = WindowState.Minimized;
             Pump();
-            raiseDoubleClick.Invoke(trayIcon, [EventArgs.Empty]);
+            trayIcon.InvokeDoubleClick();
             Pump();
             Assert(
                 settings.IsVisible && settings.WindowState == WindowState.Normal,
@@ -4310,10 +4351,9 @@ internal static class Program
             var trayIcon = typeof(WidgetCoordinator)
                 .GetField("_trayIcon", System.Reflection.BindingFlags.Instance |
                     System.Reflection.BindingFlags.NonPublic)
-                ?.GetValue(coordinator) as System.Windows.Forms.NotifyIcon ??
+                ?.GetValue(coordinator) as BingLan.App.Services.TrayIconHost ??
                 throw new InvalidOperationException("托盘图标没有创建");
-            var toggle = trayIcon.ContextMenuStrip!.Items
-                .OfType<System.Windows.Forms.ToolStripMenuItem>()
+            var toggle = trayIcon.Items
                 .Single(item => item.Text == "隐藏桌面组件");
 
             toggle.PerformClick();
@@ -6875,7 +6915,7 @@ internal static class Program
         }
         catch (Exception ex)
         {
-            failures.Add("失败：" + name + " - " + ex.Message + " @ " + (ex.StackTrace ?? string.Empty).Split('\n').FirstOrDefault());
+            failures.Add($"失败：{name} - {ex}");
         }
     }
 

@@ -64,6 +64,17 @@ internal static class CleanDesktopTests
         Check(
             !CleanDesktopRules.NeedsAdoption(true, RealDesktopFlags | CleanDesktopRules.NoIconsFlag),
             "有检查点时按检查点恢复，不接手");
+
+        var resumeCheckpoint = new CleanDesktopCheckpoint { OriginalIconsHidden = false, Phase = CleanDesktopPhase.Applied };
+        Check(
+            CleanDesktopRules.PlanStartupResume(resumeCheckpoint, RealDesktopFlags | CleanDesktopRules.NoIconsFlag)
+                == CleanDesktopStartupPlan.KeepHidden,
+            "开机自启且桌面图标已隐藏时应直接无闪烁接续，不先显示再隐藏");
+        Check(
+            CleanDesktopRules.PlanStartupResume(resumeCheckpoint, RealDesktopFlags)
+                == CleanDesktopStartupPlan.HidePreservingCheckpoint
+                && !resumeCheckpoint.OriginalIconsHidden,
+            "开机恢复隐藏时应保留检查点中记录的原始图标状态");
     }
 
     internal static void TestCheckpointRoundTripAndRejection()

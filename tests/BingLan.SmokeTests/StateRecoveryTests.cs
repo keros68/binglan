@@ -18,15 +18,36 @@ internal static class StateRecoveryTests
             Check(store.ListBackups().Any(path => Path.GetFileName(path).StartsWith("widgets-unreadable-", StringComparison.Ordinal)),
                 "无法读取的状态文件应留在备份里");
 
-            File.WriteAllText(store.StatePath, $"{{\"SchemaVersion\":{AppState.CurrentSchemaVersion + 1}}}");
+            File.WriteAllText(
+                store.StatePath,
+                $$"""{"SchemaVersion":{{AppState.CurrentSchemaVersion + 3}},"FutureFlag":{"Enabled":true},"DesktopExperience":{"Components":[{"Kind":99,"IsVisible":true,"FutureCompFlag":7}]},"QuickPlaces":[{"Icon":"folder","Name":"未来入口","Target":"C:\\Future","FuturePlaceFlag":true}],"NoteWidgets":[{"Title":"未来便签","Content":"不应被清空","FutureNoteFlag":42}]}""");
             File.Delete(store.StatePath + ".bak");
-            store.Load();
-            Check(File.ReadAllText(store.StatePath).Contains($"{AppState.CurrentSchemaVersion + 1}", StringComparison.Ordinal),
+            var futureLoaded = store.Load();
+            Check(File.ReadAllText(store.StatePath).Contains($"{AppState.CurrentSchemaVersion + 3}", StringComparison.Ordinal),
                 "新版本写的状态文件在加载时不应被改写");
+            Check(futureLoaded.NoteWidgets.Count == 1
+                && futureLoaded.NoteWidgets[0].Title == "未来便签"
+                && futureLoaded.NoteWidgets[0].Content == "不应被清空",
+                "新版本状态文件加载时应保留已知用户内容而不是清空回退默认");
+            Check(store.ListBackups().Count(path => Path.GetFileName(path).StartsWith("widgets-newer-schema-", StringComparison.Ordinal)) == 1,
+                "打开高版本状态文件时应留存一份高版本备份快照");
 
             var newer = Path.Combine(temp, "newer.json");
             File.WriteAllText(newer, $"{{\"SchemaVersion\":{AppState.CurrentSchemaVersion + 1}}}");
-            Check(LocalStateStore.DescribeBackup(newer) is null, "新版本写的备份应返回空摘要而不是出错");
+            Check(LocalStateStore.DescribeBackup(newer) is not null, "新版本写的备份应可安全读取摘要");
+
+            store.Save(futureLoaded);
+            var savedRaw = File.ReadAllText(store.StatePath);
+            Check(savedRaw.Contains($"\"SchemaVersion\": {AppState.CurrentSchemaVersion}", StringComparison.Ordinal)
+                && savedRaw.Contains("\"FutureFlag\"", StringComparison.Ordinal)
+                && savedRaw.Contains("\"FutureNoteFlag\": 42", StringComparison.Ordinal)
+                && savedRaw.Contains("\"Kind\": 99", StringComparison.Ordinal)
+                && savedRaw.Contains("\"FutureCompFlag\": 7", StringComparison.Ordinal)
+                && savedRaw.Contains("\"FuturePlaceFlag\": true", StringComparison.Ordinal),
+                "保存高版本状态时应写当前 SchemaVersion 并保留顶层、嵌套及未来未知枚举扩展字段");
+            _ = store.Load();
+            Check(store.ListBackups().Count(path => Path.GetFileName(path).StartsWith("widgets-newer-schema-", StringComparison.Ordinal)) == 1,
+                "回退版保存后再次启动不应重复生成高版本备份冲掉原版快照");
 
             File.WriteAllText(store.StatePath, $"{{\"SchemaVersion\":{AppState.CurrentSchemaVersion},\"TodoWidgets\":null,\"FileBoxes\":null}}");
             var nulls = store.Load();
@@ -95,6 +116,56 @@ internal static class StateRecoveryTests
             store.Save(corrupted);
             Check(store.Load().TodoWidgets.Single().ExpandedHeight == 0,
                 "负的展开高度应被归一化为 0");
+
+            // v44 -> v45：待办组件的字号与字体迁移到每张待办卡片，且多张待办卡各自持久化字号与字体。
+            File.WriteAllText(
+                store.StatePath,
+                """
+                {"SchemaVersion":44,
+                "DesktopExperience":{"Components":[{"Kind":4,"IsVisible":true,"FontScale":1.35,"FontFamily":"Microsoft YaHei"}]},
+                "TodoWidgets":[{"Title":"主待办"},{"Title":"副待办"}]}
+                """);
+            var v45 = store.Load();
+            Check(v45.TodoWidgets.Count == 2
+                && Math.Abs(v45.TodoWidgets[0].FontScale - 1.35) < 1e-6
+                && v45.TodoWidgets[0].FontFamily == "Microsoft YaHei"
+                && Math.Abs(v45.TodoWidgets[1].FontScale - 1.35) < 1e-6,
+                "v44 迁移到 v45 时应将待办组件字号与字体同步到已有待办卡片");
+            v45.TodoWidgets[1].FontScale = 0.9;
+            v45.TodoWidgets[1].FontFamily = "SimSun";
+            store.Save(v45);
+            var reloadedMulti = store.Load();
+            Check(Math.Abs(reloadedMulti.TodoWidgets[0].FontScale - 1.35) < 1e-6
+                && Math.Abs(reloadedMulti.TodoWidgets[1].FontScale - 0.9) < 1e-6
+                && reloadedMulti.TodoWidgets[1].FontFamily == "SimSun",
+                "第二张待办卡片应能独立持久化自己的字号与字体");
+
+            // 自动备份上限裁剪：保留手动备份，自动备份最多保留 MaximumAutomaticBackups 份，且旧状态文件迁移快照不会被误删。
+            var manualBackup = store.CreateBackup(reloadedMulti);
+            for (var i = 0; i < 22; i++)
+            {
+                File.Delete(store.StatePath + ".bak");
+                File.WriteAllText(store.StatePath, "{ invalid json " + i);
+                _ = store.Load();
+            }
+            File.WriteAllText(store.StatePath, """{"SchemaVersion":44,"TodoWidgets":[{"Title":"旧文件待迁移"}]}""");
+            File.SetLastWriteTimeUtc(store.StatePath, DateTime.UtcNow.AddDays(-30));
+            var migratedOldFile = store.Load();
+            store.Save(migratedOldFile);
+
+            var backups = store.ListBackups();
+            var autoCount = backups.Count(path =>
+            {
+                var name = Path.GetFileName(path);
+                return name.StartsWith("widgets-before-migration-", StringComparison.Ordinal)
+                    || name.StartsWith("widgets-unreadable-", StringComparison.Ordinal)
+                    || name.StartsWith("widgets-newer-schema-", StringComparison.Ordinal);
+            });
+            Check(backups.Contains(manualBackup), "自动备份裁剪不得删除用户手动备份");
+            Check(backups.Any(path => Path.GetFileName(path).StartsWith("widgets-before-migration-", StringComparison.Ordinal)),
+                "旧修改时间的状态文件在迁移备份后不应被立即当作旧备份误删");
+            Check(autoCount == LocalStateStore.MaximumAutomaticBackups,
+                $"自动备份数量应严格裁剪为上限 {LocalStateStore.MaximumAutomaticBackups}（实际 {autoCount}）");
         }
         finally
         {

@@ -80,6 +80,7 @@ public partial class App : System.Windows.Application
         }
         _coordinator = new WidgetCoordinator(interactiveQa, dataDirectory, showOnboarding: true);
         _coordinator.Start();
+        SessionEnding += (_, _) => _coordinator?.OnQueryEndSession();
         ListenForExitSignal(instanceName);
         // Once running, one failed action (a shell call, a damaged file) is logged and
         // reported instead of closing every card; startup failures still end the process.

@@ -1,9 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <TargetFramework>net10.0-windows</TargetFramework>
     <UseWPF>true</UseWPF>
-    <UseWindowsForms>true</UseWindowsForms>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AssemblyName>BingLan</AssemblyName>
@@ -24,10 +23,17 @@
     <None Include="../../docs/THIRD-PARTY-NOTICES.md" Link="第三方组件说明.md" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="..\BingLan.Taskbar.Xaml\bin\Release\BingLan.Taskbar.Xaml.dll"
              Link="BingLan.Taskbar.Xaml.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="..\BingLan.Composition\bin\Release\BingLan.Composition.dll"
+             Link="BingLan.Composition.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
   <Target Name="BuildTaskbarXaml" BeforeTargets="PrepareForBuild"
           Inputs="..\BingLan.Taskbar.Xaml\TaskbarXaml.cpp;..\BingLan.Taskbar.Xaml\build.ps1"
           Outputs="..\BingLan.Taskbar.Xaml\bin\Release\BingLan.Taskbar.Xaml.dll">
     <Exec Command="pwsh -NoProfile -File &quot;$(MSBuildProjectDirectory)\..\BingLan.Taskbar.Xaml\build.ps1&quot;" />
+  </Target>
+  <Target Name="BuildComposition" BeforeTargets="PrepareForBuild"
+          Inputs="..\BingLan.Composition\BackdropComposition.cpp;..\BingLan.Composition\build.ps1"
+          Outputs="..\BingLan.Composition\bin\Release\BingLan.Composition.dll">
+    <Exec Command="pwsh -NoProfile -File &quot;$(MSBuildProjectDirectory)\..\BingLan.Composition\build.ps1&quot;" />
   </Target>
 </Project>

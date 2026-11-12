@@ -9,11 +9,22 @@ public sealed record BackupSummary(string PresetName, int CardCount, int DockApp
 
 public sealed class LocalStateStore
 {
+    public const int MaximumAutomaticBackups = 15;
+
+    private static readonly string[] AutomaticBackupPrefixes =
+    [
+        "widgets-before-migration-",
+        "widgets-unreadable-",
+        "widgets-newer-schema-"
+    ];
+
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         WriteIndented = true,
         PropertyNameCaseInsensitive = true
     };
+
+    private readonly object _saveGate = new();
 
     public LocalStateStore(string? dataDirectory = null)
     {
@@ -36,8 +47,18 @@ public sealed class LocalStateStore
             return CreateDefault();
         }
 
-        if (TryLoad(StatePath, out var state, out _) || TryLoad(StatePath + ".bak", out state, out _))
+        if (TryLoad(StatePath, out var state, out var storedVersion))
         {
+            if (storedVersion > AppState.CurrentSchemaVersion)
+            {
+                // Keep an untouched snapshot of the newer file before this older version can save,
+                // while leaving StatePath itself unmodified during Load.
+                lock (_saveGate)
+                {
+                    CopyStateToBackup("widgets-newer-schema", StatePath);
+                }
+                return state;
+            }
             // Persist this one-time migration before the next midnight. Otherwise an
             // unstamped legacy entry could be assigned to a new "today" on each load.
             if (MigrateLegacyTodoDates(state, DateTime.Today) > 0)
@@ -47,10 +68,22 @@ public sealed class LocalStateStore
             return state;
         }
 
-        // Neither copy can be read (damaged, or written by a newer version): the file is
-        // kept among the backups for restoring later, and the app starts from defaults
-        // instead of failing on every start.
-        CopyStateToBackup("widgets-unreadable");
+        if (TryLoad(StatePath + ".bak", out state, out storedVersion))
+        {
+            if (storedVersion <= AppState.CurrentSchemaVersion
+                && MigrateLegacyTodoDates(state, DateTime.Today) > 0)
+            {
+                Save(state);
+            }
+            return state;
+        }
+
+        // Neither copy can be read (damaged JSON): the file is kept among the backups
+        // for restoring later, and the app starts from defaults instead of failing on start.
+        lock (_saveGate)
+        {
+            CopyStateToBackup("widgets-unreadable");
+        }
         return CreateDefault();
     }
 
@@ -81,32 +114,82 @@ public sealed class LocalStateStore
 
     public void Save(AppState state)
     {
-        MigrateAndNormalize(state);
-        MigrateLegacyTodoDates(state, DateTime.Today);
-        Directory.CreateDirectory(DataDirectory);
-        var temporaryPath = StatePath + ".tmp";
-        var json = JsonSerializer.Serialize(state, JsonOptions);
-        File.WriteAllText(temporaryPath, json);
+        lock (_saveGate)
+        {
+            MigrateAndNormalize(state);
+            MigrateLegacyTodoDates(state, DateTime.Today);
+            state.SchemaVersion = AppState.CurrentSchemaVersion;
 
-        // Preserve the previous valid contents in the current format. Keeping both
-        // copies versioned prevents older builds from falling back to an old-schema backup.
-        var previousPath = StatePath;
-        if (!TryLoad(previousPath, out var previous, out var previousVersion))
-        {
-            previousPath += ".bak";
-            TryLoad(previousPath, out previous, out previousVersion);
-        }
-        if (previous is not null)
-        {
-            if (previousVersion < AppState.CurrentSchemaVersion)
+            Directory.CreateDirectory(DataDirectory);
+            var temporaryPath = StatePath + ".tmp";
+            var json = JsonSerializer.Serialize(state, JsonOptions);
+            File.WriteAllText(temporaryPath, json);
+
+            // Preserve the previous valid contents without re-running full migrations on every save.
+            // A damaged primary file (such as "null" or truncated JSON) never overwrites a valid .bak.
+            if (TryReadValidStateHeader(StatePath, out var existingVersion))
             {
-                CopyStateToBackup("widgets-before-migration", previousPath);
+                if (existingVersion >= AppState.CurrentSchemaVersion)
+                {
+                    var temporaryBackupPath = StatePath + ".bak.tmp";
+                    File.Copy(StatePath, temporaryBackupPath, true);
+                    File.Move(temporaryBackupPath, StatePath + ".bak", true);
+                }
+                else if (TryLoad(StatePath, out var previous, out _))
+                {
+                    CopyStateToBackup("widgets-before-migration", StatePath);
+                    var temporaryBackupPath = StatePath + ".bak.tmp";
+                    File.WriteAllText(temporaryBackupPath, JsonSerializer.Serialize(previous, JsonOptions));
+                    File.Move(temporaryBackupPath, StatePath + ".bak", true);
+                }
             }
-            var temporaryBackupPath = StatePath + ".bak.tmp";
-            File.WriteAllText(temporaryBackupPath, JsonSerializer.Serialize(previous, JsonOptions));
-            File.Move(temporaryBackupPath, StatePath + ".bak", true);
+            else if (TryReadValidStateHeader(StatePath + ".bak", out var backupVersion)
+                     && backupVersion < AppState.CurrentSchemaVersion
+                     && TryLoad(StatePath + ".bak", out var previousBackup, out _))
+            {
+                CopyStateToBackup("widgets-before-migration", StatePath + ".bak");
+                var temporaryBackupPath = StatePath + ".bak.tmp";
+                File.WriteAllText(temporaryBackupPath, JsonSerializer.Serialize(previousBackup, JsonOptions));
+                File.Move(temporaryBackupPath, StatePath + ".bak", true);
+            }
+
+            File.Move(temporaryPath, StatePath, true);
         }
-        File.Move(temporaryPath, StatePath, true);
+    }
+
+    private static bool TryReadValidStateHeader(string path, out int schemaVersion)
+    {
+        schemaVersion = 0;
+        if (!File.Exists(path))
+        {
+            return false;
+        }
+        try
+        {
+            using var stream = File.OpenRead(path);
+            using var document = JsonDocument.Parse(stream);
+            if (document.RootElement.ValueKind != JsonValueKind.Object)
+            {
+                return false;
+            }
+            schemaVersion = AppState.CurrentSchemaVersion;
+            foreach (var property in document.RootElement.EnumerateObject())
+            {
+                if (string.Equals(property.Name, nameof(AppState.SchemaVersion), StringComparison.OrdinalIgnoreCase))
+                {
+                    if (!property.Value.TryGetInt32(out schemaVersion) || schemaVersion <= 0)
+                    {
+                        return false;
+                    }
+                    break;
+                }
+            }
+            return true;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException)
+        {
+            return false;
+        }
     }
 
     public string CreateBackup(AppState state)
@@ -219,7 +302,46 @@ public sealed class LocalStateStore
             path = Path.Combine(BackupDirectory, $"{prefix}-{stamp}-{suffix}.json");
         }
         File.Copy(sourcePath ?? StatePath, path);
+        // File.Copy preserves the source file's old timestamp; stamp creation time now so
+        // PruneAutomaticBackups never mistakes a fresh migration snapshot for the oldest file.
+        File.SetLastWriteTimeUtc(path, DateTime.UtcNow);
+        if (AutomaticBackupPrefixes.Any(autoPrefix =>
+                string.Equals(prefix + "-", autoPrefix, StringComparison.Ordinal)))
+        {
+            PruneAutomaticBackups();
+        }
         return path;
+    }
+
+    private void PruneAutomaticBackups()
+    {
+        if (!Directory.Exists(BackupDirectory))
+        {
+            return;
+        }
+
+        var stale = Directory.EnumerateFiles(BackupDirectory, "*.json")
+            .Where(file =>
+            {
+                var name = Path.GetFileName(file);
+                return AutomaticBackupPrefixes.Any(prefix =>
+                    name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
+            })
+            .OrderByDescending(File.GetLastWriteTimeUtc)
+            .ThenByDescending(file => file, StringComparer.OrdinalIgnoreCase)
+            .Skip(MaximumAutomaticBackups)
+            .ToArray();
+
+        foreach (var file in stale)
+        {
+            try
+            {
+                File.Delete(file);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+            }
+        }
     }
 
     public static AppState CreateDefault()
@@ -246,12 +368,6 @@ public sealed class LocalStateStore
 
     private static void MigrateAndNormalize(AppState state)
     {
-        if (state.SchemaVersion > AppState.CurrentSchemaVersion)
-        {
-            throw new InvalidDataException(
-                $"状态文件版本 {state.SchemaVersion} 高于当前支持版本 {AppState.CurrentSchemaVersion}。");
-        }
-
         // A hand-edited file can hold null lists; every step below expects lists.
         state.TodoWidgets ??= [];
         state.NoteWidgets ??= [];
@@ -610,6 +726,20 @@ public sealed class LocalStateStore
             }
             state.SchemaVersion = 44;
         }
+        if (state.SchemaVersion < 45)
+        {
+            // Additional to-do cards now carry their own font scale and font family instead
+            // of being overwritten by the primary to-do component on every launch.
+            state.DesktopExperience ??= DesktopExperienceRules.CreateDefault();
+            DesktopExperienceRules.Normalize(state.DesktopExperience);
+            var todoComponent = state.DesktopExperience.GetComponent(DesktopComponentKind.Todo);
+            foreach (var widget in state.TodoWidgets)
+            {
+                widget.FontScale = todoComponent.FontScale;
+                widget.FontFamily = todoComponent.FontFamily;
+            }
+            state.SchemaVersion = 45;
+        }
         state.Updates ??= new UpdateState();
         state.QuickPlaces = QuickPlaceRules.Normalize(state.QuickPlaces);
         state.DismissedDesktopCategories = (state.DismissedDesktopCategories ?? [])
@@ -628,6 +758,10 @@ public sealed class LocalStateStore
             todo.Appearance.TextColor = WidgetAppearanceRules.CoerceTextColor(
                 todo.Appearance.TextColor);
             todo.CornerRadius = WidgetAppearanceRules.CoerceCornerRadius(todo.CornerRadius);
+            todo.FontScale = DesktopExperienceRules.CoerceFontScale(todo.FontScale);
+            todo.FontFamily = string.IsNullOrWhiteSpace(todo.FontFamily)
+                ? null
+                : WidgetAppearanceRules.CoerceTitleFontFamily(todo.FontFamily);
             if (todo.WeeklyWeekCount is < 1 or > 5)
             {
                 todo.WeeklyWeekCount = 4;

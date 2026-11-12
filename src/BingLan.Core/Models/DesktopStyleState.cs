@@ -1,3 +1,6 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
 namespace BingLan.Core.Models;
 
 public enum CardShadow
@@ -128,6 +131,9 @@ public sealed class DesktopStyleState
         get => _itemSurfaceStrength;
         set => _itemSurfaceStrength = DesktopStyleRules.CoerceItemSurfaceStrength(value);
     }
+
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? ExtensionData { get; set; }
 }
 
 public static class DesktopStyleRules
@@ -364,9 +370,30 @@ public static class DesktopStyleRules
         ArgumentNullException.ThrowIfNull(component);
         var look = ComponentLook(component.Kind, style, clearBarOpacity);
         var appearance = component.Appearance;
-        return string.Equals(appearance.BackgroundColor, look.BackgroundColor, StringComparison.OrdinalIgnoreCase)
+        var bodyMatches = string.Equals(appearance.BackgroundColor, look.BackgroundColor, StringComparison.OrdinalIgnoreCase)
             && string.Equals(appearance.TextColor, look.TextColor, StringComparison.OrdinalIgnoreCase)
             && Math.Abs(appearance.BackgroundOpacity - look.BackgroundOpacity) < 0.005d;
+        if (!bodyMatches || component.Kind != DesktopComponentKind.Todo)
+        {
+            return bodyMatches;
+        }
+
+        var glass = Appearance(style);
+        return string.Equals(appearance.HeaderColor, glass.HeaderColor, StringComparison.OrdinalIgnoreCase)
+            && Math.Abs(appearance.HeaderOpacity - glass.HeaderOpacity) < 0.005d;
+    }
+
+    public static bool FollowsSharedCardLook(
+        WidgetAppearanceState appearance,
+        DesktopStyleState style)
+    {
+        ArgumentNullException.ThrowIfNull(appearance);
+        var glass = Appearance(style);
+        return string.Equals(appearance.BackgroundColor, glass.BackgroundColor, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(appearance.HeaderColor, glass.HeaderColor, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(appearance.TextColor, glass.TextColor, StringComparison.OrdinalIgnoreCase)
+            && Math.Abs(appearance.BackgroundOpacity - glass.BackgroundOpacity) < 0.005d
+            && Math.Abs(appearance.HeaderOpacity - glass.HeaderOpacity) < 0.005d;
     }
 
     public static double CoerceCardSpacing(double value) =>

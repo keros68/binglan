@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Drawing;
 using System.IO;
 using System.Windows;
 using System.Windows.Threading;
@@ -16,7 +15,6 @@ using BingLan.Core.TopBar;
 using BingLan.App.Windows;
 using BingLan.Core.Models;
 using BingLan.Core.Services;
-using Forms = System.Windows.Forms;
 
 namespace BingLan.App;
 
@@ -33,7 +31,7 @@ public sealed class WidgetCoordinator : IDisposable
     private readonly LocalStateStore _store;
     private readonly List<WidgetWindowBase> _windows = [];
     private readonly DispatcherTimer _saveTimer;
-    private readonly Forms.NotifyIcon _trayIcon;
+    private readonly TrayIconHost _trayIcon;
     private readonly WindowsPerformanceSamplingService _performanceSampler;
     private readonly WeatherService _weatherService;
     private readonly CityLookupService _citySearchService;
@@ -46,7 +44,7 @@ public sealed class WidgetCoordinator : IDisposable
     private readonly TaskbarCornerReveal _cornerReveal = new();
     private readonly DockIconStore _iconStore;
     private readonly AppUpdater _updater;
-    private Forms.ToolStripMenuItem? _updateMenuItem;
+    private TrayMenuItem? _updateMenuItem;
     private Action? _balloonClicked;
     private IReadOnlyDictionary<string, byte[]> _pendingThemeIcons = new Dictionary<string, byte[]>();
     private readonly SemaphoreSlim _cleanDesktopGate = new(1, 1);
@@ -57,7 +55,7 @@ public sealed class WidgetCoordinator : IDisposable
     private readonly DesktopSurfaceWatcher _desktopSurfaceWatcher;
     private readonly FileMappingWatchService _mappingWatcher;
     private readonly List<WidgetWindowBase> _windowsHiddenFromTray = [];
-    private Forms.ToolStripMenuItem? _toggleDesktopMenuItem;
+    private TrayMenuItem? _toggleDesktopMenuItem;
     private bool _desktopHidden;
     private bool _saveFailureShown;
     private readonly string[] _launchArguments;
@@ -66,6 +64,8 @@ public sealed class WidgetCoordinator : IDisposable
     private SettingsWindow? _settingsWindow;
     private bool _isExiting;
     private bool _exitRequested;
+    private bool _sessionEndingPending;
+    private bool _sessionEndedHandled;
     private bool _isOrganizingDesktop;
     private bool _isApplyingDesktopExperience;
     private bool _isApplyingTaskbar;
@@ -121,7 +121,7 @@ public sealed class WidgetCoordinator : IDisposable
                 3000,
                 "冰蓝 Dock",
                 message,
-                Forms.ToolTipIcon.Info));
+                TrayTipKind.Info));
         _taskbar = new TaskbarAdapter(TaskbarCheckpointPath(_store.DataDirectory));
         _taskbar.StatusChanged += OnTaskbarStatusChanged;
         _taskbar.AutoHideTakenOver += () =>
@@ -139,9 +139,12 @@ public sealed class WidgetCoordinator : IDisposable
                 3000,
                 "顶端信息条",
                 message,
-                Forms.ToolTipIcon.Info));
+                TrayTipKind.Info));
         StartupLog.Open(_store.DataDirectory);
-        UiDiagnostics.Start(Dispatcher.CurrentDispatcher, _store.DataDirectory);
+        UiDiagnostics.Start(
+            Dispatcher.CurrentDispatcher,
+            _store.DataDirectory,
+            trackOperations: Environment.GetEnvironmentVariable("BINGLAN_DIAG_HOOKS") == "1");
         _cleanDesktop = new CleanDesktopAdapter(CleanDesktopCheckpointPath(_store.DataDirectory));
         _cleanDesktop.TakenOver += () =>
         {
@@ -241,29 +244,58 @@ public sealed class WidgetCoordinator : IDisposable
         if (Environment.TickCount64 < LogonWindow.TotalMilliseconds)
         {
             await WaitForExplorerAsync();
-            StartupLog.Write("资源管理器就绪，等待桌面稳定");
-            await Task.Delay(LogonSettleDelay);
+            if (Environment.TickCount64 < EarlyLogonWindow.TotalMilliseconds)
+            {
+                StartupLog.Write("资源管理器就绪，短暂等待桌面稳定");
+                await Task.Delay(LogonSettleDelay);
+            }
         }
         if (_isExiting)
         {
             return;
         }
 
-        // Icons left hidden by a run that did not exit cleanly come back first; clean
-        // desktop is then re-applied from the saved setting.
         var path = CleanDesktopCheckpointPath(_store.DataDirectory);
         await _cleanDesktopGate.WaitAsync();
         try
         {
-            var restored = await Task.Run(() => CleanDesktopAdapter.RecoverNow(path));
-            _cleanDesktopRestoreFailed = !restored;
-            _cleanDesktopRecovered = restored && CleanDesktopAdapter.IsOriginalStateKnown(path);
+            if (_state.CleanDesktopEnabled)
+            {
+                var places = _state.DesktopExperience.GetComponent(DesktopComponentKind.QuickLaunch);
+                if (!places.IsVisible)
+                {
+                    places.IsVisible = true;
+                    ApplyQuickPlaces();
+                    _settingsWindow?.RefreshDesktopExperience();
+                }
+
+                var (succeeded, restoredWhenFailed, originalKnown, _) = await _cleanDesktop.ResumeOrEnableAsync();
+                if (succeeded)
+                {
+                    _cleanDesktopRestoreFailed = false;
+                    _cleanDesktopRecovered = true;
+                    StartupLog.Write("清爽桌面已应用");
+                }
+                else
+                {
+                    _cleanDesktopRestoreFailed = !restoredWhenFailed;
+                    _cleanDesktopRecovered = restoredWhenFailed && originalKnown;
+                    _state.CleanDesktopEnabled = false;
+                    _settingsWindow?.RefreshCleanDesktopSettings();
+                }
+            }
+            else
+            {
+                var restored = await Task.Run(() => CleanDesktopAdapter.RecoverNow(path));
+                _cleanDesktopRestoreFailed = !restored;
+                _cleanDesktopRecovered = restored && CleanDesktopAdapter.IsOriginalStateKnown(path);
+            }
         }
         finally
         {
             _cleanDesktopGate.Release();
         }
-        StartupLog.Write("桌面图标恢复检查完成");
+        StartupLog.Write("桌面图标状态检查完成");
         if (_isExiting)
         {
             return;
@@ -289,13 +321,8 @@ public sealed class WidgetCoordinator : IDisposable
                     5000,
                     "清爽桌面",
                     "上次隐藏的桌面图标未能自动恢复，可在设置的“桌面”页点“重新恢复”再试。",
-                    Forms.ToolTipIcon.Warning);
+                    TrayTipKind.Warning);
             }
-        }
-        else if (_state.CleanDesktopEnabled)
-        {
-            await SetCleanDesktopAsync(true);
-            StartupLog.Write("清爽桌面已应用");
         }
         ScheduleSave();
         _updater.Start();
@@ -314,7 +341,7 @@ public sealed class WidgetCoordinator : IDisposable
             8000,
             "冰蓝桌面有新版本",
             $"{version} 已发布，点击查看更新内容并安装。",
-            Forms.ToolTipIcon.Info);
+            TrayTipKind.Info);
     }
 
     private void OnHighContrastChanged(object? sender, EventArgs e) => ApplyItemSurface();
@@ -424,7 +451,7 @@ public sealed class WidgetCoordinator : IDisposable
             4000,
             "冰蓝桌面",
             "刚才的操作没有完成。",
-            Forms.ToolTipIcon.Warning);
+            TrayTipKind.Warning);
     }
 
     // A step that fails is logged and the other modules still start.
@@ -443,18 +470,38 @@ public sealed class WidgetCoordinator : IDisposable
 
     // Started within this long after Windows started counts as starting at logon.
     private static readonly TimeSpan LogonWindow = TimeSpan.FromMinutes(3);
-    private static readonly TimeSpan LogonSettleDelay = TimeSpan.FromSeconds(20);
-    private static readonly TimeSpan ExplorerWaitLimit = TimeSpan.FromSeconds(90);
+    private static readonly TimeSpan EarlyLogonWindow = TimeSpan.FromSeconds(60);
+    private static readonly TimeSpan LogonSettleDelay = TimeSpan.FromMilliseconds(1500);
+    private static readonly TimeSpan ExplorerWaitLimit = TimeSpan.FromSeconds(30);
 
-    // Explorer is ready once both the taskbar and the desktop window exist.
+    // Explorer is ready once the taskbar, desktop window and Shell desktop view are reachable.
     private static async Task WaitForExplorerAsync()
     {
         var deadline = DateTime.UtcNow + ExplorerWaitLimit;
-        while (DateTime.UtcNow < deadline
-               && (Interop.TaskbarNativeMethods.FindWindowW("Shell_TrayWnd", null) == 0
-                   || Interop.TaskbarNativeMethods.FindWindowW("Progman", null) == 0))
+        while (DateTime.UtcNow < deadline)
         {
-            await Task.Delay(1000);
+            if (Interop.TaskbarNativeMethods.FindWindowW("Shell_TrayWnd", null) != 0
+                && Interop.TaskbarNativeMethods.FindWindowW("Progman", null) != 0
+                && await Task.Run(IsDesktopShellViewReady))
+            {
+                return;
+            }
+            await Task.Delay(250);
+        }
+    }
+
+    private static bool IsDesktopShellViewReady()
+    {
+        try
+        {
+            using var view = DesktopShellView.Open();
+            _ = view.ReadFolderFlags();
+            return true;
+        }
+        catch (Exception exception) when (exception is System.Runtime.InteropServices.COMException
+            or InvalidCastException or InvalidOperationException or UnauthorizedAccessException or IOException)
+        {
+            return false;
         }
     }
 
@@ -596,20 +643,21 @@ public sealed class WidgetCoordinator : IDisposable
 
     private void UpdateSamplingMode()
     {
-        // The top bar reads the same snapshots, so an enabled bar keeps the clock
-        // ticking even when the desktop cards are hidden — and with the last card
-        // removed it is the only listener left, so it also keeps the sampler running.
-        // Nobody is listening only when there is neither a card window nor a bar.
-        if (_windows.OfType<InformationWidgetWindow>().Any() || _state.TopBar.IsEnabled)
+        var hasVisiblePerformanceCard = !_desktopHidden
+            && _windows.OfType<InformationWidgetWindow>().Any(window =>
+                window.IsVisible
+                && window.ComponentKind is null or DesktopComponentKind.Performance);
+        var hasTopBarPerformance = _state.TopBar.IsEnabled
+            && TopBarRules.IsModuleOn(_state.TopBar.Modules, TopBarModuleKind.Performance);
+        if (hasVisiblePerformanceCard || hasTopBarPerformance)
         {
-            // A bar-only setup has no card window to start the sampler on load.
             if (!_performanceSampler.IsRunning)
             {
                 _performanceSampler.Start();
             }
             _performanceSampler.SetMode(PerformanceSamplingRules.ResolveMode(
                 _fullScreenWatcher.IsFullScreenInFront,
-                _desktopHidden && !_state.TopBar.IsEnabled));
+                false));
             return;
         }
         _performanceSampler.Stop();
@@ -688,18 +736,67 @@ public sealed class WidgetCoordinator : IDisposable
         UpdateSamplingMode();
     }
 
+    internal void OnQueryEndSession()
+    {
+        if (_isExiting)
+        {
+            return;
+        }
+
+        // WM_QUERYENDSESSION can still be cancelled by another application; save now without
+        // disposing Shell adapters or locking in reboot behaviour until WM_ENDSESSION confirms.
+        _sessionEndingPending = true;
+        _saveTimer.Stop();
+        SaveNow();
+    }
+
+    private void OnSessionEndingResolved(bool ending)
+    {
+        if (!ending)
+        {
+            _sessionEndingPending = false;
+            _cleanDesktop.CancelKeepHiddenForReboot();
+            return;
+        }
+
+        FinalizeSessionEnd();
+    }
+
+    private void FinalizeSessionEnd()
+    {
+        if (_isExiting || _sessionEndedHandled)
+        {
+            return;
+        }
+
+        _sessionEndedHandled = true;
+        _sessionEndingPending = false;
+        _saveTimer.Stop();
+        SaveNow();
+        if (_cleanDesktop.IsActive && _state.CleanDesktopEnabled && _startup.IsEnabled())
+        {
+            _cleanDesktop.KeepHiddenForReboot();
+        }
+        else
+        {
+            _cleanDesktop.Dispose();
+        }
+        _taskbar.Dispose();
+    }
+
     public void Dispose()
     {
+        if (_sessionEndingPending && !_sessionEndedHandled)
+        {
+            FinalizeSessionEnd();
+        }
         if (!_isExiting)
         {
             SaveNow();
         }
         _isExiting = true;
         _trayIcon.Visible = false;
-        var trayIconImage = _trayIcon.Icon;
-        _trayIcon.Icon = null;
         _trayIcon.Dispose();
-        trayIconImage?.Dispose();
         _settingsWindow?.Close();
         _settingsWindow = null;
         SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
@@ -717,6 +814,9 @@ public sealed class WidgetCoordinator : IDisposable
         _performanceSampler.Dispose();
     }
 
+    private bool IsPrimaryTodo(TodoWidgetState state) =>
+        _state.TodoWidgets.FirstOrDefault()?.Id == state.Id;
+
     private TodoWidgetWindow ShowTodo(TodoWidgetState state)
     {
         SanitizePlacement(state.Placement);
@@ -724,15 +824,20 @@ public sealed class WidgetCoordinator : IDisposable
         {
             ShowInTaskbar = false
         };
-        ApplyTodoComponent(window, _state.DesktopExperience.GetComponent(DesktopComponentKind.Todo));
+        if (IsPrimaryTodo(state))
+        {
+            var component = _state.DesktopExperience.GetComponent(DesktopComponentKind.Todo);
+            CopyTodoLookFromComponent(state, component);
+            ApplyTodoComponent(window, component);
+        }
         Wire(window);
         _windows.Add(window);
         window.Show();
         return window;
     }
 
-    // A todo card takes the component's look from the moment it opens, not only after
-    // the next settings change.
+    // The primary todo card follows the built-in Todo component; extra todo cards start
+    // with the component's look and keep their own settings afterwards.
     private static void ApplyTodoComponent(TodoWidgetWindow window, DesktopComponentState component)
     {
         window.SetWidgetBackgroundColor(component.Appearance.BackgroundColor);
@@ -743,6 +848,44 @@ public sealed class WidgetCoordinator : IDisposable
         window.SetContentFontScale(component.FontScale);
         window.SetContentFontFamily(component.FontFamily);
         window.WidgetCornerRadius = component.CornerRadius;
+    }
+
+    private static void CopyTodoLookFromComponent(TodoWidgetState target, DesktopComponentState component)
+    {
+        target.Appearance.BackgroundColor = component.Appearance.BackgroundColor;
+        target.Appearance.BackgroundOpacity = component.Appearance.BackgroundOpacity;
+        target.Appearance.HeaderColor = component.Appearance.HeaderColor;
+        target.Appearance.HeaderOpacity = component.Appearance.HeaderOpacity;
+        target.Appearance.TextColor = component.Appearance.TextColor;
+        target.Appearance.TitleFontFamily = component.Appearance.TitleFontFamily;
+        target.Appearance.TitleFontBold = component.Appearance.TitleFontBold;
+        target.Appearance.TitleFontItalic = component.Appearance.TitleFontItalic;
+        target.CornerRadius = component.CornerRadius;
+        target.FontScale = component.FontScale;
+        target.FontFamily = component.FontFamily;
+    }
+
+    private static void SyncComponentFromTodo(DesktopComponentState component, TodoWidgetState source)
+    {
+        component.Placement = new WindowPlacement
+        {
+            Left = source.Placement.Left,
+            Top = source.Placement.Top,
+            Width = source.Placement.Width,
+            Height = source.Placement.Height
+        };
+        component.IsLocked = source.IsLocked;
+        component.Appearance.BackgroundColor = source.Appearance.BackgroundColor;
+        component.Appearance.BackgroundOpacity = source.Appearance.BackgroundOpacity;
+        component.Appearance.HeaderColor = source.Appearance.HeaderColor;
+        component.Appearance.HeaderOpacity = source.Appearance.HeaderOpacity;
+        component.Appearance.TextColor = source.Appearance.TextColor;
+        component.Appearance.TitleFontFamily = source.Appearance.TitleFontFamily;
+        component.Appearance.TitleFontBold = source.Appearance.TitleFontBold;
+        component.Appearance.TitleFontItalic = source.Appearance.TitleFontItalic;
+        component.CornerRadius = source.CornerRadius;
+        component.FontScale = source.FontScale;
+        component.FontFamily = source.FontFamily;
     }
 
     private FileBoxWindow ShowFileBox(FileBoxState state)
@@ -919,20 +1062,18 @@ public sealed class WidgetCoordinator : IDisposable
 
     private void AddTodo()
     {
-        _state.DesktopExperience
-            .GetComponent(DesktopComponentKind.Todo)
-            .IsVisible = true;
+        var todoComponent = _state.DesktopExperience.GetComponent(DesktopComponentKind.Todo);
+        todoComponent.IsVisible = true;
         var offset = _state.TodoWidgets.Count * 24;
         var state = TodoService.CreateDefaultWidget();
         state.Title = WidgetTitleRules.NextTitle(state.Title, _state.TodoWidgets.Select(todo => todo.Title));
+        CopyTodoLookFromComponent(state, todoComponent);
         if (_state.TodoWidgets.Count == 0)
         {
-            state.IsLocked = _state.DesktopExperience
-                .GetComponent(DesktopComponentKind.Todo)
-                .IsLocked;
+            state.IsLocked = todoComponent.IsLocked;
         }
         state.Placement = _state.TodoWidgets.Count == 0
-            ? _state.DesktopExperience.GetComponent(DesktopComponentKind.Todo).Placement
+            ? todoComponent.Placement
             : new WindowPlacement
             {
                 Left = 92 + offset,
@@ -1058,6 +1199,7 @@ public sealed class WidgetCoordinator : IDisposable
             }
             first.Activate();
         }
+        UpdateSamplingMode();
         ScheduleSave();
     }
 
@@ -1122,6 +1264,7 @@ public sealed class WidgetCoordinator : IDisposable
                 CanChangeStartup = _startup.CanModify,
                 IsStartupEnabled = _startup.IsEnabled,
                 SetStartupEnabled = _startup.SetEnabled,
+                PrimaryTodoId = () => _state.TodoWidgets.FirstOrDefault()?.Id,
                 DataDirectory = _store.DataDirectory,
                 OpenDataDirectory = OpenDataDirectory,
                 CreateBackup = () =>
@@ -1237,7 +1380,10 @@ public sealed class WidgetCoordinator : IDisposable
         settings.Activate();
     }
 
-    private void ApplyDesktopExperience(DesktopExperienceState experience)
+    private void ApplyDesktopExperience(DesktopExperienceState experience) =>
+        ApplyDesktopExperienceWithSave(experience, saveImmediate: true);
+
+    private void ApplyDesktopExperienceWithSave(DesktopExperienceState experience, bool saveImmediate)
     {
         // Changing which cards show brings back cards hidden from the tray first, so the
         // tray menu and the desktop agree.
@@ -1248,7 +1394,7 @@ public sealed class WidgetCoordinator : IDisposable
         _isApplyingDesktopExperience = true;
         try
         {
-            ApplyDesktopExperienceCore(experience);
+            ApplyDesktopExperienceCore(experience, saveImmediate);
         }
         finally
         {
@@ -1256,7 +1402,7 @@ public sealed class WidgetCoordinator : IDisposable
         }
     }
 
-    private void ApplyDesktopExperienceCore(DesktopExperienceState experience)
+    private void ApplyDesktopExperienceCore(DesktopExperienceState experience, bool saveImmediate)
     {
         DesktopExperienceRules.Normalize(experience);
         _state.DesktopExperience = experience;
@@ -1267,7 +1413,9 @@ public sealed class WidgetCoordinator : IDisposable
         var todoComponent = experience.GetComponent(DesktopComponentKind.Todo);
         if (todoComponent.IsVisible && !_state.TodoWidgets.Any())
         {
-            _state.TodoWidgets.Add(TodoService.CreateDefaultWidget());
+            var created = TodoService.CreateDefaultWidget();
+            CopyTodoLookFromComponent(created, todoComponent);
+            _state.TodoWidgets.Add(created);
         }
         if (HasVisibleInformationComponent())
         {
@@ -1315,16 +1463,14 @@ public sealed class WidgetCoordinator : IDisposable
                 {
                     window = ShowTodo(state);
                 }
-                ApplyTodoComponent(window, todoComponent);
-                var placement = ReferenceEquals(state, _state.TodoWidgets.FirstOrDefault())
-                    ? todoComponent.Placement
-                    : state.Placement;
-                if (ReferenceEquals(state, _state.TodoWidgets.FirstOrDefault()))
+                if (IsPrimaryTodo(state))
                 {
+                    CopyTodoLookFromComponent(state, todoComponent);
+                    ApplyTodoComponent(window, todoComponent);
                     state.IsLocked = todoComponent.IsLocked;
+                    state.Placement = todoComponent.Placement;
                 }
-                state.Placement = placement;
-                window.ApplyPlacement(placement, state.IsLocked);
+                window.ApplyPlacement(state.Placement, state.IsLocked);
                 window.Show();
             }
         }
@@ -1336,8 +1482,16 @@ public sealed class WidgetCoordinator : IDisposable
             }
         }
         ApplyQuickPlaces();
+        UpdateSamplingMode();
 
-        SaveNow();
+        if (saveImmediate)
+        {
+            SaveNow();
+        }
+        else
+        {
+            ScheduleSave();
+        }
     }
 
     // The row of system places follows its component: shown, placed and coloured by it.
@@ -1515,6 +1669,19 @@ public sealed class WidgetCoordinator : IDisposable
             component.Appearance.BackgroundColor = look.BackgroundColor;
             component.Appearance.BackgroundOpacity = look.BackgroundOpacity;
             component.Appearance.TextColor = look.TextColor;
+            if (component.Kind == DesktopComponentKind.Todo)
+            {
+                component.Appearance.HeaderColor = glass.HeaderColor;
+                component.Appearance.HeaderOpacity = glass.HeaderOpacity;
+            }
+        }
+        foreach (var todoState in _state.TodoWidgets)
+        {
+            todoState.Appearance.BackgroundColor = glass.BackgroundColor;
+            todoState.Appearance.BackgroundOpacity = glass.BackgroundOpacity;
+            todoState.Appearance.HeaderColor = glass.HeaderColor;
+            todoState.Appearance.HeaderOpacity = glass.HeaderOpacity;
+            todoState.Appearance.TextColor = glass.TextColor;
         }
         foreach (var window in _windows.Where(window => window is not InformationWidgetWindow))
         {
@@ -1528,8 +1695,7 @@ public sealed class WidgetCoordinator : IDisposable
         {
             note.SetBodyColor(glass.TextColor);
         }
-        ApplyDesktopExperience(_state.DesktopExperience);
-        SaveNow();
+        ApplyDesktopExperienceWithSave(_state.DesktopExperience, saveImmediate: false);
     }
 
     // Rows inside cards (to-dos, the weather and performance panels) and the dock take the
@@ -1563,7 +1729,7 @@ public sealed class WidgetCoordinator : IDisposable
     private void ApplyStyle()
     {
         ApplyStyleSettings();
-        SaveNow();
+        ScheduleSave();
     }
 
     private void ApplyTaskbar()
@@ -1600,7 +1766,7 @@ public sealed class WidgetCoordinator : IDisposable
                 3500,
                 "Windows 任务栏",
                 _taskbar.Problem,
-                Forms.ToolTipIcon.Warning);
+                TrayTipKind.Warning);
         }
     }
 
@@ -1707,12 +1873,20 @@ public sealed class WidgetCoordinator : IDisposable
         switch (window)
         {
             case TodoWidgetWindow todo:
+                var wasPrimary = IsPrimaryTodo(todo.State);
                 _state.TodoWidgets.RemoveAll(x => x.Id == todo.State.Id);
                 // With the last one gone the to-do card is off, so a later settings change
                 // does not bring back an empty one.
                 if (_state.TodoWidgets.Count == 0)
                 {
                     _state.DesktopExperience.GetComponent(DesktopComponentKind.Todo).IsVisible = false;
+                    _settingsWindow?.RefreshDesktopExperience();
+                }
+                else if (wasPrimary)
+                {
+                    SyncComponentFromTodo(
+                        _state.DesktopExperience.GetComponent(DesktopComponentKind.Todo),
+                        _state.TodoWidgets[0]);
                     _settingsWindow?.RefreshDesktopExperience();
                 }
                 break;
@@ -1758,7 +1932,7 @@ public sealed class WidgetCoordinator : IDisposable
             2500,
             "备份完成",
             $"已保存到 {path}",
-            Forms.ToolTipIcon.Info);
+            TrayTipKind.Info);
     }
 
     private static Version AppVersion =>
@@ -2174,7 +2348,7 @@ public sealed class WidgetCoordinator : IDisposable
                 $"新增 {added} 项，创建 {created} 个分类盒"
                 + (cleared > 0 ? $"，清除 {cleared} 项已失效映射" : string.Empty)
                 + $"。{hint}",
-                Forms.ToolTipIcon.Info);
+                TrayTipKind.Info);
         }
         catch (Exception ex)
         {
@@ -2186,7 +2360,7 @@ public sealed class WidgetCoordinator : IDisposable
                 3500,
                 "桌面归类未完成",
                 ex.Message,
-                Forms.ToolTipIcon.Warning);
+                TrayTipKind.Warning);
         }
         finally
         {
@@ -2270,7 +2444,7 @@ public sealed class WidgetCoordinator : IDisposable
                     5000,
                     "冰蓝桌面",
                     "设置暂时无法保存，稍后修改时会再次尝试。",
-                    Forms.ToolTipIcon.Warning);
+                    TrayTipKind.Warning);
             }
         }
     }
@@ -2325,13 +2499,12 @@ public sealed class WidgetCoordinator : IDisposable
             return;
         }
         _exitRequested = true;
+        _sessionEndingPending = false;
+        _cleanDesktop.CancelKeepHiddenForReboot();
         var trayClosed = await CloseTrayOverflowAsync();
-        if (trayClosed != "closed" && System.Windows.MessageBox.Show(
-                "Windows 托盘面板尚未关闭。是否仍要退出？\n退出后可点击其他窗口收起面板。",
-                "退出冰蓝桌面", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) != MessageBoxResult.Yes)
+        if (trayClosed != "closed")
         {
-            _exitRequested = false;
-            return;
+            StartupLog.Write($"退出时托盘面板状态：{trayClosed}");
         }
         _isExiting = true;
         _saveTimer.Stop();
@@ -2355,61 +2528,33 @@ public sealed class WidgetCoordinator : IDisposable
         System.Windows.Application.Current.Shutdown();
     }
 
-    private Forms.NotifyIcon BuildTrayIcon()
+    private TrayIconHost BuildTrayIcon()
     {
-        var menu = new Forms.ContextMenuStrip();
-        menu.Items.Add(
-            "一键整理桌面",
-            null,
-            async (_, _) => await OrganizeDesktopAsync());
-        menu.Items.Add(new Forms.ToolStripSeparator());
-        _toggleDesktopMenuItem = new Forms.ToolStripMenuItem("隐藏桌面组件", null, (_, _) => ToggleDesktop());
-        menu.Items.Add(_toggleDesktopMenuItem);
-        menu.Items.Add(new Forms.ToolStripSeparator());
-        menu.Items.Add("显示桌面信息", null, (_, _) => AddInformation());
-        menu.Items.Add("新建待办便签", null, (_, _) => AddTodo());
-        menu.Items.Add("新建普通便签", null, (_, _) => AddNote());
-        menu.Items.Add("新建桌面分组盒", null, (_, _) => AddFileBox());
-        menu.Items.Add("框选新建分组盒…", null, (_, _) => StartMarqueeFileBox());
-        menu.Items.Add(new Forms.ToolStripSeparator());
-        _updateMenuItem = new Forms.ToolStripMenuItem(string.Empty, null, (_, _) => OpenSettings("About"))
-        {
-            Visible = false
-        };
-        menu.Items.Add(_updateMenuItem);
-        menu.Items.Add("冰蓝桌面设置…", null, (_, _) => OpenSettings());
-        menu.Items.Add("立即备份", null, (_, _) => Backup());
-        menu.Items.Add("打开数据目录", null, (_, _) => OpenDataDirectory());
-        menu.Items.Add(new Forms.ToolStripSeparator());
-        menu.Items.Add("退出", null, (_, _) => Exit());
+        var trayIcon = new TrayIconHost("冰蓝桌面");
+        trayIcon.AddItem("一键整理桌面", async () => await OrganizeDesktopAsync());
+        trayIcon.AddSeparator();
+        _toggleDesktopMenuItem = trayIcon.AddItem("隐藏桌面组件", ToggleDesktop);
+        trayIcon.AddSeparator();
+        trayIcon.AddItem("显示桌面信息", AddInformation);
+        trayIcon.AddItem("新建待办便签", AddTodo);
+        trayIcon.AddItem("新建普通便签", AddNote);
+        trayIcon.AddItem("新建桌面分组盒", () => AddFileBox());
+        trayIcon.AddItem("框选新建分组盒…", StartMarqueeFileBox);
+        trayIcon.AddSeparator();
+        _updateMenuItem = trayIcon.AddItem(string.Empty, () => OpenSettings("About"));
+        _updateMenuItem.Visible = false;
+        trayIcon.AddItem("冰蓝桌面设置…", () => OpenSettings());
+        trayIcon.AddItem("立即备份", Backup);
+        trayIcon.AddItem("打开数据目录", OpenDataDirectory);
+        trayIcon.AddSeparator();
+        trayIcon.AddItem("退出", Exit);
 
-        var trayIcon = new Forms.NotifyIcon
-        {
-            Text = "冰蓝桌面",
-            Icon = LoadApplicationIcon(),
-            ContextMenuStrip = menu
-        };
         trayIcon.DoubleClick += (_, _) => OpenSettings();
+        trayIcon.SessionEndingResolved += OnSessionEndingResolved;
         // Only the update notice acts on a click; other notices are plain information.
         trayIcon.BalloonTipClicked += (_, _) => _balloonClicked?.Invoke();
         trayIcon.BalloonTipClosed += (_, _) => _balloonClicked = null;
         return trayIcon;
-    }
-
-    private static Icon LoadApplicationIcon()
-    {
-        var resource = System.Windows.Application.GetResourceStream(
-            new Uri(
-                "pack://application:,,,/BingLan;component/Assets/Brand/BingLan.ico",
-                UriKind.Absolute));
-        if (resource is null)
-        {
-            return (Icon)SystemIcons.Application.Clone();
-        }
-
-        using var stream = resource.Stream;
-        using var icon = new Icon(stream);
-        return (Icon)icon.Clone();
     }
 
     // A rough bound over all monitors; Start then moves any card that lands between or off
@@ -2591,15 +2736,13 @@ public sealed class WidgetCoordinator : IDisposable
                 }
                 if (owner._exitRequested || owner._isExiting) return;
                 var controller = owner._trayOverflow ??= new TrayOverflowController();
-                // A second click closes the panel this button opened, like the native
-                // chevron. A click that already dismissed it must not reopen it.
+                // A second click closes the panel this button opened, like the native chevron.
                 if (controller.OwnsPanel && TrayOverflowController.IsVisible)
                 {
                     if (!await controller.CloseOwnedPanelAsync() && TrayOverflowController.IsVisible
                         && !owner._exitRequested && !owner._isExiting) ReportShellFailure();
                     return;
                 }
-                if (controller.EndedWithin(400)) return;
                 var result = await controller.OpenAsync();
                 if (owner._exitRequested || owner._isExiting) return;
                 if (result == "elevated-foreground") ReportElevatedForeground();
@@ -2618,7 +2761,7 @@ public sealed class WidgetCoordinator : IDisposable
             var result = await owner.CloseTrayOverflowAsync();
             if (result != "closed" && !owner._isExiting && !owner._exitRequested)
                 owner._trayIcon.ShowBalloonTip(4000, "系统托盘尚未关闭",
-                    "可点击其他窗口收起面板，或稍后重试退出冰蓝桌面。", Forms.ToolTipIcon.Info);
+                    "可点击其他窗口收起面板，或稍后重试退出冰蓝桌面。", TrayTipKind.Info);
         }
 
         public async void OpenQuickSettings(TopBarModuleKind kind)
@@ -2644,10 +2787,10 @@ public sealed class WidgetCoordinator : IDisposable
         }
 
         private void ReportShellFailure() => owner._trayIcon.ShowBalloonTip(
-            4000, "系统入口暂不可用", "可将鼠标移到屏幕底边或角落唤出 Windows 任务栏。", Forms.ToolTipIcon.Info);
+            4000, "系统入口暂不可用", "可将鼠标移到屏幕底边或角落唤出 Windows 任务栏。", TrayTipKind.Info);
 
         private void ReportElevatedForeground() => owner._trayIcon.ShowBalloonTip(
-            4000, "当前前台是管理员程序", "Windows 不允许普通程序向它发送快捷键，请先切换到其他窗口再试。", Forms.ToolTipIcon.Info);
+            4000, "当前前台是管理员程序", "Windows 不允许普通程序向它发送快捷键，请先切换到其他窗口再试。", TrayTipKind.Info);
 
         public void OpenTaskManagerPerformance()
         {

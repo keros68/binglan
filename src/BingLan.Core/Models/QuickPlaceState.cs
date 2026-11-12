@@ -1,3 +1,6 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
 namespace BingLan.Core.Models;
 
 /// <summary>
@@ -10,6 +13,9 @@ public sealed class QuickPlaceState
     public string Icon { get; set; } = QuickPlaceRules.FolderIcon;
     public string Name { get; set; } = string.Empty;
     public string Target { get; set; } = string.Empty;
+
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? ExtensionData { get; set; }
 }
 
 /// <summary>A preset icon: its key, Segoe Fluent Icons glyph and name in the picker.</summary>
@@ -78,7 +84,8 @@ public static class QuickPlaceRules
                 Name = (item.Name ?? string.Empty).Trim() is { Length: > 0 } name
                     ? name[..Math.Min(name.Length, MaximumNameLength)]
                     : GetIcon(item.Icon).Name,
-                Target = item.Target.Trim()
+                Target = item.Target.Trim(),
+                ExtensionData = item.ExtensionData
             })
             .ToList();
     }

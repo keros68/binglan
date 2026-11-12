@@ -1,3 +1,6 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
 namespace BingLan.Core.Models;
 
 public enum DesktopLayoutPreset
@@ -65,6 +68,9 @@ public sealed class DesktopComponentState
         get => _cornerRadius;
         set => _cornerRadius = WidgetAppearanceRules.CoerceCornerRadius(value);
     }
+
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? ExtensionData { get; set; }
 }
 
 public sealed class DesktopExperienceState
@@ -73,6 +79,9 @@ public sealed class DesktopExperienceState
         DesktopLayoutPreset.QuietInformation;
     public List<DesktopComponentState> Components { get; set; } =
         DesktopExperienceRules.CreateDefaultComponents();
+
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? ExtensionData { get; set; }
 
     public DesktopComponentState GetComponent(DesktopComponentKind kind) =>
         Components.First(component => component.Kind == kind);
@@ -176,6 +185,7 @@ public static class DesktopExperienceRules
 
         state.Components = ComponentOrder
             .Select(kind => state.Components.First(component => component.Kind == kind))
+            .Concat(state.Components.Where(component => !ComponentOrder.Contains(component.Kind)))
             .ToList();
     }
 

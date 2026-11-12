@@ -5,32 +5,25 @@ using BingLan.App.Interop;
 
 namespace BingLan.App.Taskbar;
 
-/// <summary>Opens the Windows-owned overflow panel without changing taskbar settings.</summary>
+/// <summary>Opens the Windows-owned overflow panel on demand without persistent hooks or polling.</summary>
 internal sealed class TrayOverflowController : IDisposable
 {
     private const uint GaRoot = 2;
-    private const uint EventObjectDestroy = 0x8001;
-    private const uint EventObjectShow = 0x8002;
+    private const int ClaimWindowMs = 2000;
     private const string PanelClass = "TopLevelWindowForOverflowXamlIsland";
-    // Ownership stays armed during the provider call and for this long after it
-    // returns. Later Explorer animations require more build-specific validation.
-    private const long ClaimWindowMs = 2000;
     private static readonly TimeSpan UiaWait = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan SessionPollInterval = TimeSpan.FromMilliseconds(200);
     private readonly CancellationTokenSource _lifetime = new();
-    private readonly DispatcherTimer _closeCheck;
-    private readonly DispatcherTimer _focusReturn;
-    private readonly DockNativeMethods.WinEventProc _panelEventCallback;
+    private readonly Dispatcher _dispatcher = Dispatcher.CurrentDispatcher;
     private readonly int _slowUiaMs;
     private readonly Action<string> _log;
+    private DispatcherTimer? _sessionTimer;
     private Task<string>? _uiaCall;
-    private nint _panelEvents;
-    private uint _explorerProcessId;
-    private nint _panelWindow;
-    private long _claimUntil;
-    private long _sessionEndedAt;
     // The button matched while opening; focus is inside the panel when closing it.
     private int[]? _chevronRuntimeId;
+    private uint _explorerProcessId;
     private nint _previousForeground;
+    private long _claimUntilTick;
     private int _opening;
     private bool _ownsPanel;
     private bool _stopping;
@@ -41,15 +34,6 @@ internal sealed class TrayOverflowController : IDisposable
     {
         _slowUiaMs = slowUiaMs;
         _log = log ?? (message => System.Diagnostics.Debug.WriteLine(message));
-        // Explorer show/hide events end a panel session; the 150 ms poll stays as a
-        // fallback until the event path is verified on more builds.
-        _closeCheck = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(150) };
-        _closeCheck.Tick += (_, _) => { if (!IsVisible) EndSession("poll"); };
-        // A tray icon's context menu or window takes focus shortly after the panel
-        // hides; only return focus if it is still inside the taskbar by then.
-        _focusReturn = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(300) };
-        _focusReturn.Tick += (_, _) => RestoreForeground();
-        _panelEventCallback = OnPanelEvent;
     }
 
     internal static bool IsSupported => OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000);
@@ -66,17 +50,7 @@ internal sealed class TrayOverflowController : IDisposable
     internal bool IsStopping => _stopping;
 
     /// <summary>True while the panel on screen was opened by this controller.</summary>
-    internal bool OwnsPanel => _ownsPanel;
-
-    /// <summary>
-    /// Whether an owned panel closed within the last <paramref name="milliseconds"/>; the
-    /// click that dismissed it should not immediately reopen it.
-    /// </summary>
-    internal bool EndedWithin(long milliseconds)
-    {
-        var endedAt = Interlocked.Read(ref _sessionEndedAt);
-        return endedAt != 0 && Environment.TickCount64 - endedAt < milliseconds;
-    }
+    internal bool OwnsPanel => _ownsPanel && IsVisible;
 
     /// <summary>True while a UIA toggle call has been issued and not yet returned.</summary>
     internal bool IsInvoking => _uiaCall is { IsCompleted: false };
@@ -94,11 +68,10 @@ internal sealed class TrayOverflowController : IDisposable
             // Verified on Windows 11 only; older shells keep their own tray behavior.
             if (!IsSupported) return "unsupported-build";
             if (IsVisible) return "already-open";
+            _ownsPanel = false;
             var tray = TaskbarNativeMethods.FindWindowW("Shell_TrayWnd", null);
             if (tray == 0) return "taskbar-missing";
-            WatchPanel(tray);
-            _closeCheck.Stop();
-            _focusReturn.Stop();
+            TrackExplorerInstance(tray);
             // Win+B injected toward an elevated window would be dropped without an error.
             if (ShellSurfaceNativeMethods.IsForegroundElevated()) return "elevated-foreground";
             _previousForeground = DockNativeMethods.GetForegroundWindow();
@@ -118,16 +91,21 @@ internal sealed class TrayOverflowController : IDisposable
                 var invoked = await InvokeAsync(expectVisible: false, cancellationToken);
                 if (invoked is "missing" or "unavailable") continue;
                 if (invoked == "state-changed") return "already-open";
-                if (invoked != "invoked") return invoked;
+                if (invoked != "invoked")
+                {
+                    if (invoked == "pending") StartSessionMonitor();
+                    return invoked;
+                }
                 _ownsPanel = true;
-                for (var check = 0; check < 10; check++)
+                StartSessionMonitor();
+                for (var check = 0; check < 20; check++)
                 {
                     // Settle the accepted toggle even during cancellation;
                     // CloseAsync must observe the resulting native surface.
                     await Task.Delay(100);
                     if (!IsVisible) continue;
                     opened = true;
-                    if (!_stopping) _closeCheck.Start();
+                    Interlocked.Exchange(ref _claimUntilTick, 0);
                     cancellationToken.ThrowIfCancellationRequested();
                     return "opened";
                 }
@@ -138,10 +116,11 @@ internal sealed class TrayOverflowController : IDisposable
         catch (OperationCanceledException) { return "cancelled"; }
         finally
         {
-            if (!opened && !IsVisible)
+            var claimPending = IsInvoking || Environment.TickCount64 <= Interlocked.Read(ref _claimUntilTick);
+            if (!opened && !IsVisible && !claimPending)
             {
-                // A later panel is still claimed by the show event; a user-opened one is not ours.
                 _ownsPanel = false;
+                _sessionTimer?.Stop();
                 if (inputSent) await RestoreAfterInputAsync();
                 else RestoreForeground();
             }
@@ -149,13 +128,12 @@ internal sealed class TrayOverflowController : IDisposable
         }
     }
 
-    private bool Claimed
+    private void TrackExplorerInstance(nint tray)
     {
-        get
-        {
-            var deadline = Interlocked.Read(ref _claimUntil);
-            return deadline != 0 && (IsInvoking || Environment.TickCount64 <= deadline);
-        }
+        DockNativeMethods.GetWindowThreadProcessId(tray, out var processId);
+        if (processId == _explorerProcessId) return;
+        _explorerProcessId = processId;
+        Volatile.Write(ref _chevronRuntimeId, null);
     }
 
     /// <summary>
@@ -168,7 +146,7 @@ internal sealed class TrayOverflowController : IDisposable
     {
         // All callers are on the owner dispatcher. Do not await an older call here:
         // multiple waiters could otherwise resume and each issue a new toggle.
-        _closeCheck.Dispatcher.VerifyAccess();
+        _dispatcher.VerifyAccess();
         if (IsInvoking) return "pending";
         var call = Task.Run(() => InvokeButton(expectVisible, cancellationToken));
         _uiaCall = call;
@@ -214,11 +192,11 @@ internal sealed class TrayOverflowController : IDisposable
                 // The panel may have closed or opened on its own during the search;
                 // a toggle now would reverse the user's or Explorer's change.
                 if (IsVisible != expectVisible) return "state-changed";
-                if (!expectVisible) Interlocked.Exchange(ref _claimUntil, Environment.TickCount64 + ClaimWindowMs);
                 Volatile.Write(ref _chevronRuntimeId, button.GetRuntimeId());
                 _log($"OVERFLOW invoke expect-visible={expectVisible} match={match}");
+                if (!expectVisible) Interlocked.Exchange(ref _claimUntilTick, Environment.TickCount64 + ClaimWindowMs);
                 invoke.Invoke();
-                if (!expectVisible) Interlocked.Exchange(ref _claimUntil, Environment.TickCount64 + ClaimWindowMs);
+                if (!expectVisible) Interlocked.Exchange(ref _claimUntilTick, Environment.TickCount64 + ClaimWindowMs);
                 return "invoked";
             }
             return "missing";
@@ -285,59 +263,78 @@ internal sealed class TrayOverflowController : IDisposable
         return outside ? focusedIndex : -1;
     }
 
-    /// <summary>Close path used by the cycle check; same gates as exit cleanup.</summary>
-    internal async Task<bool> CloseOwnedPanelAsync() =>
-        await InvokeAsync(expectVisible: true, CancellationToken.None) == "invoked";
-
-    private void WatchPanel(nint tray)
+    /// <summary>Close path used by toggle and cycle checks; same gates as exit cleanup.</summary>
+    internal async Task<bool> CloseOwnedPanelAsync()
     {
-        // Explorer restarts with a new process; re-hook when it changed.
-        DockNativeMethods.GetWindowThreadProcessId(tray, out var processId);
-        if (processId == _explorerProcessId && _panelEvents != 0) return;
-        if (_panelEvents != 0) DockNativeMethods.UnhookWinEvent(_panelEvents);
-        _panelWindow = 0;
-        Volatile.Write(ref _chevronRuntimeId, null);
-        _explorerProcessId = processId;
-        _panelEvents = DockNativeMethods.SetWinEventHook(EventObjectDestroy, DockNativeMethods.EventObjectHide, 0,
-            _panelEventCallback, processId, 0, DockNativeMethods.WineventOutOfContext);
-        _log($"OVERFLOW events hooked={_panelEvents != 0} explorer={processId}");
+        if (!IsVisible)
+        {
+            _ownsPanel = false;
+            Interlocked.Exchange(ref _claimUntilTick, 0);
+            _sessionTimer?.Stop();
+            return true;
+        }
+        var result = await InvokeAsync(expectVisible: true, CancellationToken.None);
+        if (result is "invoked" or "state-changed")
+        {
+            _ownsPanel = false;
+            Interlocked.Exchange(ref _claimUntilTick, 0);
+            _sessionTimer?.Stop();
+            RestoreForeground();
+            return true;
+        }
+        return false;
     }
 
-    private void OnPanelEvent(nint hook, uint eventType, nint hwnd, int objectId, int childId, uint thread, uint time)
+    // Active only while a panel session or late-open claim window is live; idle otherwise.
+    private void StartSessionMonitor()
     {
-        if (_disposed || objectId != DockNativeMethods.ObjidWindow || childId != 0 || hwnd == 0) return;
-        if (eventType == EventObjectShow)
+        if (_disposed || _stopping) return;
+        if (_sessionTimer is null)
         {
-            var name = new System.Text.StringBuilder(64);
-            DockNativeMethods.GetClassNameW(hwnd, name, name.Capacity);
-            if (name.ToString() != PanelClass) return;
-            _panelWindow = hwnd;
-            if (!_ownsPanel && Claimed)
+            _sessionTimer = new DispatcherTimer(DispatcherPriority.Background, _dispatcher)
             {
-                // A panel that appears after a slow or timed-out invoke is still ours.
-                _ownsPanel = true;
-                _log("OVERFLOW session-start source=event");
-                if (!_stopping) _closeCheck.Start();
-            }
+                Interval = SessionPollInterval
+            };
+            _sessionTimer.Tick += (_, _) => MonitorSession();
         }
-        else if (hwnd == _panelWindow)
-        {
-            // The class cannot be read after destroy, so match the shown handle.
-            if (eventType == EventObjectDestroy) _panelWindow = 0;
-            EndSession("event");
-        }
+        _sessionTimer.Start();
     }
 
-    private void EndSession(string source)
+    private void MonitorSession()
     {
-        _closeCheck.Stop();
-        if (!_ownsPanel) return;
-        _ownsPanel = false;
-        Interlocked.Exchange(ref _claimUntil, 0);
-        Interlocked.Exchange(ref _sessionEndedAt, Environment.TickCount64);
-        _log($"OVERFLOW session-end source={source}");
-        if (_stopping) RestoreForeground();
-        else _focusReturn.Start();
+        if (_disposed || _stopping)
+        {
+            _sessionTimer?.Stop();
+            return;
+        }
+        if (Volatile.Read(ref _opening) != 0) return;
+
+        var visible = IsVisible;
+        var claimActive = IsInvoking || Environment.TickCount64 <= Interlocked.Read(ref _claimUntilTick);
+        if (visible)
+        {
+            if (!_ownsPanel && claimActive)
+            {
+                _ownsPanel = true;
+                Interlocked.Exchange(ref _claimUntilTick, 0);
+            }
+            return;
+        }
+
+        if (_ownsPanel)
+        {
+            _ownsPanel = false;
+            Interlocked.Exchange(ref _claimUntilTick, 0);
+            _sessionTimer?.Stop();
+            RestoreForeground();
+            return;
+        }
+
+        if (!claimActive)
+        {
+            _sessionTimer?.Stop();
+            RestoreForeground();
+        }
     }
 
     private static bool IsTaskbarForeground()
@@ -353,7 +350,6 @@ internal sealed class TrayOverflowController : IDisposable
 
     private void RestoreForeground()
     {
-        _focusReturn.Stop();
         var previous = _previousForeground;
         _previousForeground = 0;
         // A user who has switched to another app, or opened a tray icon's menu,
@@ -362,7 +358,7 @@ internal sealed class TrayOverflowController : IDisposable
         var foreground = DockNativeMethods.GetForegroundWindow();
         var panel = TaskbarNativeMethods.FindWindowW(PanelClass, null);
         var shellForeground = IsTaskbarForeground() || BelongsTo(foreground, panel);
-        if (!_disposed && Claimed && IsInvoking && (foreground == previous || shellForeground))
+        if (!_disposed && IsInvoking && (foreground == previous || shellForeground))
             _previousForeground = previous;
         if (shellForeground)
         {
@@ -406,35 +402,24 @@ internal sealed class TrayOverflowController : IDisposable
     internal async Task<string> CloseAsync()
     {
         _stopping = true;
-        _focusReturn.Stop();
         _lifetime.Cancel();
-        // Keep the host HWND alive until pending input and UIA work have settled.
         for (var check = 0; check < 60 && Volatile.Read(ref _opening) != 0; check++)
             await Task.Delay(50);
         if (Volatile.Read(ref _opening) != 0) return "open-pending";
-        // An open request may have given up on a slow call that has not reached its
-        // cancellation gate yet; its result decides whether a panel can still appear.
         if (_uiaCall is { IsCompleted: false } call && await Task.WhenAny(call, Task.Delay(UiaWait)) != call)
             return "open-pending";
 
-        if (_ownsPanel || Claimed)
+        if (_ownsPanel && IsVisible)
         {
-            // A late panel from an invoke that just returned can still appear.
-            for (var check = 0; check < ClaimWindowMs / 100 && !IsVisible && Claimed; check++) await Task.Delay(100);
-            if (IsVisible)
-            {
-                // Focus restoration alone does not collapse this XAML surface on the
-                // verified build. Use the same native toggle that closes it normally.
-                var result = await InvokeAsync(expectVisible: true, CancellationToken.None);
-                if (result == "pending") return "close-pending";
-                if (result is not ("invoked" or "state-changed")) return result;
-                for (var check = 0; check < 20 && IsVisible; check++) await Task.Delay(50);
-                if (IsVisible) return "close-unconfirmed";
-            }
+            var result = await InvokeAsync(expectVisible: true, CancellationToken.None);
+            if (result == "pending") return "close-pending";
+            if (result is not ("invoked" or "state-changed")) return result;
+            for (var check = 0; check < 20 && IsVisible; check++) await Task.Delay(50);
+            if (IsVisible) return "close-unconfirmed";
         }
-        _closeCheck.Stop();
         _ownsPanel = false;
-        Interlocked.Exchange(ref _claimUntil, 0);
+        Interlocked.Exchange(ref _claimUntilTick, 0);
+        _sessionTimer?.Stop();
         RestoreForeground();
         return "closed";
     }
@@ -443,9 +428,7 @@ internal sealed class TrayOverflowController : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
-        _closeCheck.Stop();
-        if (_panelEvents != 0) DockNativeMethods.UnhookWinEvent(_panelEvents);
-        _panelEvents = 0;
+        _sessionTimer?.Stop();
         _lifetime.Cancel();
         RestoreForeground();
         // A UIA call that never returned still holds the token; leave it to the GC.

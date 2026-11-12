@@ -25,6 +25,7 @@ public sealed class SettingsMaintenance
     public bool CanChangeStartup { get; init; }
     public Func<bool> IsStartupEnabled { get; init; } = () => false;
     public Action<bool> SetStartupEnabled { get; init; } = _ => { };
+    public Func<Guid?> PrimaryTodoId { get; init; } = () => null;
     public string DataDirectory { get; init; } = string.Empty;
     public Action OpenDataDirectory { get; init; } = () => { };
     public Func<string> CreateBackup { get; init; } = () => string.Empty;

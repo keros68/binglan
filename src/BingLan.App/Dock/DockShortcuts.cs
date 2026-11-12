@@ -1,4 +1,7 @@
 using System.IO;
+using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.ComTypes;
+using System.Text;
 using BingLan.Core.Dock;
 using BingLan.Core.Models;
 
@@ -11,6 +14,11 @@ namespace BingLan.App.Dock;
 /// </summary>
 internal static class DockShortcuts
 {
+    private const int StgmRead = 0;
+    private const uint SlgpRawPath = 0x4;
+    private const int PathBufferChars = 1024;
+    private const int ArgumentsBufferChars = 2048;
+
     private static string TaskbarPinFolder => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
         @"Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar");
@@ -148,33 +156,81 @@ internal static class DockShortcuts
 
     private static ResolvedShortcut? ResolveShortcut(string shortcut)
     {
-        var shellType = Type.GetTypeFromProgID("WScript.Shell");
-        if (shellType is null)
-        {
-            return null;
-        }
-
+        object? comObject = null;
         try
         {
-            dynamic shell = Activator.CreateInstance(shellType)!;
-            var link = shell.CreateShortcut(shortcut);
-            var targetPath = (string)link.TargetPath;
+            comObject = new ShellLink();
+            var persistFile = (IPersistFile)comObject;
+            // STGM_READ only; never call IShellLinkW.Resolve so offline network targets
+            // cannot stall or show shell dialogs.
+            persistFile.Load(shortcut, StgmRead);
+
+            var link = (IShellLinkW)comObject;
+            var pathBuilder = new StringBuilder(PathBufferChars);
+            link.GetPath(pathBuilder, pathBuilder.Capacity, 0, 0);
+            if (pathBuilder.Length == 0)
+            {
+                link.GetPath(pathBuilder, pathBuilder.Capacity, 0, SlgpRawPath);
+            }
+
+            var targetPath = pathBuilder.ToString();
             if (string.IsNullOrWhiteSpace(targetPath))
             {
                 return null;
             }
 
+            var argsBuilder = new StringBuilder(ArgumentsBufferChars);
+            link.GetArguments(argsBuilder, argsBuilder.Capacity);
+
+            var workDirBuilder = new StringBuilder(PathBufferChars);
+            link.GetWorkingDirectory(workDirBuilder, workDirBuilder.Capacity);
+
             return new ResolvedShortcut(
                 Environment.ExpandEnvironmentVariables(targetPath),
                 // Arguments stay verbatim: they belong to the target program and may
                 // contain text that looks like a variable (cmd's %CD%, format strings).
-                ((string)link.Arguments).Trim(),
-                Environment.ExpandEnvironmentVariables((string)link.WorkingDirectory).Trim());
+                argsBuilder.ToString().Trim(),
+                Environment.ExpandEnvironmentVariables(workDirBuilder.ToString()).Trim());
         }
-        catch (Exception exception) when (exception is System.Runtime.InteropServices.COMException
-            or Microsoft.CSharp.RuntimeBinder.RuntimeBinderException)
+        catch (Exception exception) when (exception is COMException or IOException or UnauthorizedAccessException or InvalidCastException)
         {
             return null;
         }
+        finally
+        {
+            if (comObject is not null && Marshal.IsComObject(comObject))
+            {
+                Marshal.FinalReleaseComObject(comObject);
+            }
+        }
+    }
+
+    [ComImport]
+    [Guid("00021401-0000-0000-C000-000000000046")]
+    private sealed class ShellLink;
+
+    [ComImport]
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    [Guid("000214F9-0000-0000-C000-000000000046")]
+    private interface IShellLinkW
+    {
+        void GetPath([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder pszFile, int cch, nint pfd, uint fFlags);
+        void GetIDList(out nint ppidl);
+        void SetIDList(nint pidl);
+        void GetDescription([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder pszName, int cch);
+        void SetDescription([MarshalAs(UnmanagedType.LPWStr)] string pszName);
+        void GetWorkingDirectory([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder pszDir, int cch);
+        void SetWorkingDirectory([MarshalAs(UnmanagedType.LPWStr)] string pszDir);
+        void GetArguments([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder pszArgs, int cch);
+        void SetArguments([MarshalAs(UnmanagedType.LPWStr)] string pszArgs);
+        void GetHotkey(out ushort pwHotkey);
+        void SetHotkey(ushort wHotkey);
+        void GetShowCmd(out int piShowCmd);
+        void SetShowCmd(int iShowCmd);
+        void GetIconLocation([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder pszIconPath, int cch, out int piIcon);
+        void SetIconLocation([MarshalAs(UnmanagedType.LPWStr)] string pszIconPath, int iIcon);
+        void SetRelativePath([MarshalAs(UnmanagedType.LPWStr)] string pszPathRel, uint dwReserved);
+        void Resolve(nint hwnd, uint fFlags);
+        void SetPath([MarshalAs(UnmanagedType.LPWStr)] string pszFile);
     }
 }

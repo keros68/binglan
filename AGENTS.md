@@ -30,9 +30,11 @@ MVP 保留 Windows 原生任务栏，只提供保持默认、透明/模糊和智
 ## 3. 当前技术基线
 
 - SDK：由 `global.json` 固定的 .NET 10。
-- UI：WPF，目标框架 `net10.0-windows10.0.19041.0`；Windows 11 Dock 玻璃使用原生 Windows Composition，Windows 10 回退半透明。
-- `src/BingLan.App`：WPF 表面、Windows API、托盘、窗口和应用生命周期。
+- UI：WPF，目标框架 `net10.0-windows`（无 WinForms 或 `Microsoft.Windows.SDK.NET.Ref` 托管投影依赖）；Windows 11 Dock 玻璃通过原生 C++/WinRT `src/BingLan.Composition` 调用 Windows Composition，Windows 10 回退半透明。
+- `src/BingLan.App`：WPF 表面、Windows API、原生托盘、窗口和应用生命周期。
 - `src/BingLan.Core`：模型、业务规则、主题/状态逻辑和可脱离 UI 测试的服务。
+- `src/BingLan.Composition`：Dock 与隐藏把手的轻量原生 C++/WinRT Windows Composition 背板 DLL。
+- `src/BingLan.Taskbar.Xaml`：经验证 Windows 11 Build 上的原生任务栏背景适配 DLL。
 - `tests/BingLan.SmokeTests`：核心逻辑烟雾测试。
 - `tests/BingLan.UiSmokeTests`：真实 WPF 控件、窗口和命中测试。
 - `design-lab`：隔离的视觉/技术研究，不是生产运行时依赖。

@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Net.NetworkInformation;
 using BingLan.App.Interop;
 using BingLan.Core.Models;
@@ -121,6 +122,7 @@ internal static class TopBarSystemInfo
     }
 
     private const uint ConversionModeTimeoutMilliseconds = 50;
+    private static readonly ConcurrentDictionary<nint, string> LayoutNames = new();
 
     private static string LayoutName(nint layout)
     {
@@ -129,27 +131,30 @@ internal static class TopBarSystemInfo
             return LayoutFallback;
         }
 
-        // The layout's registry subkey: an IME names it with the whole HKL (E0200804),
-        // a standard layout with its high word (00000409). Try both spellings.
-        var candidates = new[]
+        return LayoutNames.GetOrAdd(layout, static handle =>
         {
-            layout.ToString("X8"),
-            ((layout >> 16) & 0xFFFF).ToString("X8"),
-            (layout & 0xFFFF).ToString("X8")
-        };
-        foreach (var id in candidates.Distinct())
-        {
-            var text = Registry.GetValue(
-                $"HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Keyboard Layouts\\{id}",
-                "Layout Text",
-                null) as string;
-            if (!string.IsNullOrWhiteSpace(text))
+            // The layout's registry subkey: an IME names it with the whole HKL (E0200804),
+            // a standard layout with its high word (00000409). Try both spellings.
+            var candidates = new[]
             {
-                return text;
+                handle.ToString("X8"),
+                ((handle >> 16) & 0xFFFF).ToString("X8"),
+                (handle & 0xFFFF).ToString("X8")
+            };
+            foreach (var id in candidates.Distinct())
+            {
+                var text = Registry.GetValue(
+                    $"HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Keyboard Layouts\\{id}",
+                    "Layout Text",
+                    null) as string;
+                if (!string.IsNullOrWhiteSpace(text))
+                {
+                    return text;
+                }
             }
-        }
 
-        return LayoutFallback;
+            return LayoutFallback;
+        });
     }
 
     private const string LayoutFallback = "键盘";

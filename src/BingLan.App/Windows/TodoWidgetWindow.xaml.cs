@@ -33,6 +33,7 @@ public partial class TodoWidgetWindow : WidgetWindowBase
     private const int WeeklyOffsetLimit = 5200;
 
     private readonly ObservableCollection<TodoItemState> _items;
+    private readonly ObservableCollection<TodoItemState> _todayItems = [];
     private readonly Dictionary<DateTime, WeekCellView> _cellsByDate = [];
     private string? _textBeforeEdit;
     private int _weekOffset;
@@ -84,14 +85,15 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         var legacyDatesChanged = TodoService.MigrateUndatedItems(state, DateTime.Today) > 0;
         var restoredOrderChanged = TodoService.NormalizeTodayCompletionOrder(state, DateTime.Today);
         _items = new ObservableCollection<TodoItemState>(state.Items.OrderBy(x => x.Order));
+        _items.CollectionChanged += (_, _) => SyncTodayItems();
         SyncCompletedSnapshot();
         InitializeComponent();
         DataContext = state;
         ApplyAppearance(state.Appearance);
-        SetContentFontScale(1d);
-        SetContentFontFamily(null);
-        TodoList.ItemsSource = _items;
-        TodoList.ItemContainerGenerator.StatusChanged += (_, _) => ApplyCompletedVisibility();
+        SetContentFontScale(state.FontScale);
+        SetContentFontFamily(state.FontFamily);
+        SyncTodayItems();
+        TodoList.ItemsSource = _todayItems;
         ApplyPlacement(state.Placement, state.IsLocked);
         WidgetCornerRadius = state.CornerRadius;
         ApplyViewMode();
@@ -122,12 +124,15 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         State.IsLocked = locked;
     }
 
-    public void CaptureState()
+    public void CaptureState(bool commitDayEditor = true)
     {
         CopyPlacementTo(State.Placement);
         State.CornerRadius = WidgetCornerRadius;
         State.Items = _items.OrderBy(x => x.Order).ToList();
-        _dayEditor?.CommitPendingChanges();
+        if (commitDayEditor)
+        {
+            _dayEditor?.CommitPendingChanges();
+        }
     }
 
     private void Add_Click(object sender, RoutedEventArgs e)
@@ -1026,14 +1031,21 @@ public partial class TodoWidgetWindow : WidgetWindowBase
     /// font. The app-wide TextBox style pins its font, so the card's editors read this
     /// resource explicitly instead of inheriting it. The title keeps its own title font.
     /// </summary>
-    public void SetContentFontFamily(string? fontName) =>
-        Resources["TodoContentFont"] = fontName is { } name
-            ? InstalledFontCatalog.Create(InstalledFontCatalog.Resolve(name))
+    public void SetContentFontFamily(string? fontName)
+    {
+        var resolved = fontName is { } name && !string.IsNullOrWhiteSpace(name)
+            ? InstalledFontCatalog.Resolve(name)
+            : null;
+        State.FontFamily = resolved;
+        Resources["TodoContentFont"] = resolved is not null
+            ? InstalledFontCatalog.Create(resolved)
             : (System.Windows.Media.FontFamily)FindResource("UiFont");
+    }
 
     public void SetContentFontScale(double scale)
     {
         ContentFontScale = DesktopExperienceRules.CoerceFontScale(scale);
+        State.FontScale = ContentFontScale;
         foreach (var (key, size) in ScaledFontSizes)
         {
             Resources[key] = size * ContentFontScale;
@@ -1593,7 +1605,7 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         }
         _peekFromIndex = _peekDragCell is not null
             ? _peekDragCell.Items.IndexOf(_peekDragItem)
-            : _items.IndexOf(_peekDragItem);
+            : _todayItems.IndexOf(_peekDragItem);
         _peekTargetIndex = _peekFromIndex;
         ApplyPeekShifts();
     }
@@ -1774,9 +1786,11 @@ public partial class TodoWidgetWindow : WidgetWindowBase
 
         if (ReferenceEquals(dragList, TodoList))
         {
-            var finalIndex = Math.Clamp(targetIndex, 0, Math.Max(0, _items.Count - 1));
+            var clampedTarget = Math.Clamp(targetIndex, 0, Math.Max(0, _todayItems.Count - 1));
+            var targetAnchor = clampedTarget < _todayItems.Count ? _todayItems[clampedTarget] : null;
+            var finalIndex = targetAnchor is not null ? _items.IndexOf(targetAnchor) : -1;
             var current = _items.IndexOf(dragItem);
-            if (finalIndex != fromIndex && current >= 0 && current != finalIndex)
+            if (clampedTarget != fromIndex && current >= 0 && finalIndex >= 0 && current != finalIndex)
             {
                 CaptureState();
                 _items.Move(current, finalIndex);
@@ -1790,13 +1804,13 @@ public partial class TodoWidgetWindow : WidgetWindowBase
                     if (TodoService.PlaceEventsFirst(State, itemDate))
                     {
                         ReloadItems();
-                        ApplyCompletedVisibility();
                     }
                     if (_cellsByDate.TryGetValue(itemDate, out var cell))
                     {
                         ResortCell(cell);
                     }
                 }
+                ApplyCompletedVisibility();
                 CaptureState();
                 NotifyStateChanged();
             }
@@ -2344,7 +2358,7 @@ public partial class TodoWidgetWindow : WidgetWindowBase
 
     private void CommitDayEditor(DateTime date, IReadOnlyList<string> lines)
     {
-        CaptureState();
+        CaptureState(commitDayEditor: false);
         TodoService.SyncDayItems(State, date, lines);
         if (date == DateTime.Today)
         {
@@ -2524,7 +2538,7 @@ public partial class TodoWidgetWindow : WidgetWindowBase
 
     private bool NormalizeTodayList()
     {
-        CaptureState();
+        CaptureState(commitDayEditor: false);
         var orderChanged = TodoService.NormalizeTodayCompletionOrder(State, DateTime.Today);
         if (orderChanged)
         {
@@ -2554,6 +2568,11 @@ public partial class TodoWidgetWindow : WidgetWindowBase
     private void TodayRefreshTimer_Tick(object? sender, EventArgs e)
     {
         _todayRefreshTimer?.Stop();
+        if (_dayEditor is not null)
+        {
+            ScheduleTodayRefresh();
+            return;
+        }
         var today = DateTime.Today;
         if (today != _todayScopeDate)
         {
@@ -2614,31 +2633,25 @@ public partial class TodoWidgetWindow : WidgetWindowBase
 
     private void ReloadItems()
     {
-        _items.Clear();
         SyncCompletedSnapshot();
-        foreach (var item in State.Items.OrderBy(x => x.Order))
-        {
-            _items.Add(item);
-        }
+        SyncObservableOrder(_items, State.Items.OrderBy(x => x.Order).ToList());
+        SyncTodayItems();
         RefreshSummary();
     }
 
-    // Rows outside the today scope and completed rows are hidden in place rather than
-    // filtered out of the list, so the other rows keep their controls and stay reachable
-    // for screen readers and other assistive tools. _items itself stays complete so
-    // CaptureState keeps persisting every entry, dated or not.
-    private void ApplyCompletedVisibility()
+    // TodoList binds only to the filtered today slice (_todayItems) via SyncObservableOrder,
+    // avoiding Collapsed visual subtrees for historical dates while keeping existing row
+    // containers and automation peers intact. _items retains the complete task history.
+    private void ApplyCompletedVisibility() => SyncTodayItems();
+
+    private void SyncTodayItems()
     {
         var today = DateTime.Today;
-        foreach (var item in _items)
-        {
-            if (TodoList.ItemContainerGenerator.ContainerFromItem(item) is UIElement row)
-            {
-                var visible = TodoService.BelongsToTodayList(item, today)
-                    && (!State.HideCompleted || !item.IsCompleted);
-                row.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
-            }
-        }
+        var desired = _items
+            .Where(item => TodoService.BelongsToTodayList(item, today)
+                && (!State.HideCompleted || !item.IsCompleted))
+            .ToList();
+        SyncObservableOrder(_todayItems, desired);
     }
 
     // A blank row only exists while it is being typed into (blanks are pruned once

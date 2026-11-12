@@ -6,8 +6,8 @@ using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Interop;
 using System.Windows.Media;
-using System.Windows.Media.Effects;
 using System.Windows.Threading;
+using Microsoft.Win32;
 using BingLan.App.Dock;
 using BingLan.App.Interop;
 using BingLan.App.Services;
@@ -122,6 +122,8 @@ public sealed partial class TopBarWindow : Window
     private readonly Dictionary<nint, string> _attentionNames = [];
     private readonly WindowCatalog _catalog = new();
     private readonly DispatcherTimer _foregroundTimer;
+    private readonly DispatcherTimer _ambientTimer;
+    private readonly DispatcherTimer _minuteTimer;
     private readonly Dictionary<TopBarModuleKind, FrameworkElement> _modules = [];
     private TopBarAppBarController? _appBar;
     private PerformanceSnapshot? _lastSnapshot;
@@ -142,6 +144,7 @@ public sealed partial class TopBarWindow : Window
     private string? _inputMethodName;
     private string _inputMethodToolTip = string.Empty;
     private string _inputMethodLabel = string.Empty;
+    private int _imeReadInFlight;
 
     // ---------------------------------------------------------------- 搜索
 
@@ -225,6 +228,13 @@ public sealed partial class TopBarWindow : Window
             DispatcherPriority.Background,
             (_, _) => UpdateForForeground(),
             Dispatcher);
+        _ambientTimer = new DispatcherTimer(
+            TimeSpan.FromSeconds(5),
+            DispatcherPriority.Background,
+            (_, _) => OnAmbientTick(),
+            Dispatcher);
+        _minuteTimer = new DispatcherTimer(DispatcherPriority.Background, Dispatcher);
+        _minuteTimer.Tick += (_, _) => OnMinuteTick();
         _sampler.Sampled += OnSampled;
         _searchDebounce = new DispatcherTimer(
             SearchDebounceInterval,
@@ -232,8 +242,10 @@ public sealed partial class TopBarWindow : Window
             (_, _) => OnSearchDebounceTick(),
             Dispatcher);
         // A network address change is the one system fact with an event source; the
-        // others ride the sampling tick.
+        // others ride the sampling or ambient tick.
         System.Net.NetworkInformation.NetworkChange.NetworkAddressChanged += OnNetworkAddressChanged;
+        SystemEvents.TimeChanged += OnSystemTimeChanged;
+        SystemEvents.PowerModeChanged += OnPowerModeChanged;
         // The centred search box must not sit on top of the side modules when they
         // leave little room: every size change on the bar or either module group
         // re-clamps the box width around the true centre.
@@ -289,6 +301,8 @@ public sealed partial class TopBarWindow : Window
             ? FullScreenCheckInterval
             : SmartHideCheckInterval;
         _foregroundTimer.Start();
+        _ambientTimer.Start();
+        ArmMinuteTimer();
         SyncSearchHotkey();
         RenderModules();
         RefreshSystemFacts();
@@ -391,8 +405,12 @@ public sealed partial class TopBarWindow : Window
         CloseTodoFlyout();
         CloseClockFlyout();
         _foregroundTimer.Stop();
+        _ambientTimer.Stop();
+        _minuteTimer.Stop();
         _sampler.Sampled -= OnSampled;
         System.Net.NetworkInformation.NetworkChange.NetworkAddressChanged -= OnNetworkAddressChanged;
+        SystemEvents.TimeChanged -= OnSystemTimeChanged;
+        SystemEvents.PowerModeChanged -= OnPowerModeChanged;
         if (_shellHookActive && _handle != 0)
         {
             DockNativeMethods.DeregisterShellHookWindow(_handle);
@@ -402,6 +420,57 @@ public sealed partial class TopBarWindow : Window
     }
 
     private void OnNetworkAddressChanged(object? sender, EventArgs e) => RefreshSystemFacts();
+
+    private void OnSystemTimeChanged(object? sender, EventArgs e) =>
+        Dispatcher.BeginInvoke(() =>
+        {
+            if (_closing) return;
+            ArmMinuteTimer();
+            if (IsLoaded && IsVisible) RenderModules();
+        });
+
+    private void OnPowerModeChanged(object sender, PowerModeChangedEventArgs e)
+    {
+        if (e.Mode != PowerModes.Resume) return;
+        Dispatcher.BeginInvoke(() =>
+        {
+            if (_closing) return;
+            ArmMinuteTimer();
+            RefreshSystemFacts();
+            _environment.RefreshWeatherIfDue();
+            if (IsLoaded && IsVisible) RenderModules();
+        });
+    }
+
+    private void ArmMinuteTimer()
+    {
+        var now = DateTime.Now;
+        var msToNextMinute = Math.Clamp(60_000 - ((now.Second * 1000) + now.Millisecond) + 50, 250, 60_050);
+        _minuteTimer.Interval = TimeSpan.FromMilliseconds(msToNextMinute);
+        _minuteTimer.Start();
+    }
+
+    private void OnMinuteTick()
+    {
+        if (_closing) return;
+        ArmMinuteTimer();
+        if (!_sampler.IsRunning && IsLoaded && IsVisible)
+        {
+            RenderModules();
+        }
+    }
+
+    private void OnAmbientTick()
+    {
+        if (_closing || _sampler.IsRunning || !IsLoaded || !IsVisible)
+        {
+            return;
+        }
+
+        RefreshSystemFacts();
+        _environment.RefreshWeatherIfDue();
+        RenderModules();
+    }
 
     private void OnSampled(PerformanceSnapshot snapshot)
     {
@@ -553,10 +622,27 @@ public sealed partial class TopBarWindow : Window
         if (TrayOverflowController.IsSupported)
         {
             if (!_state.Modules.TrayOverflow) _environment.CloseTrayOverflow();
-            AddModule(TopBarModuleKind.TrayOverflow, RightModules, "托盘", _environment.OpenTrayOverflow, "\uE70E");
+            var visibleOnPress = false;
+            AddModule(TopBarModuleKind.TrayOverflow, RightModules, "托盘", () =>
+            {
+                var wasVisibleOnPress = visibleOnPress;
+                visibleOnPress = false;
+                // If Explorer light-dismissed the XAML overflow island on mouse-down,
+                // do not immediately reopen it on mouse-up.
+                if (wasVisibleOnPress && !TrayOverflowController.IsVisible)
+                {
+                    return;
+                }
+                _environment.OpenTrayOverflow();
+            }, "\uE70E");
             if (ModuleText(TopBarModuleKind.TrayOverflow) is { } trayText) trayText.Text = "托盘";
             if (_modules.TryGetValue(TopBarModuleKind.TrayOverflow, out var trayButton))
+            {
                 trayButton.ToolTip = "打开 Windows 隐藏的托盘图标";
+                trayButton.PreviewMouseLeftButtonDown += (_, _) =>
+                    visibleOnPress = TrayOverflowController.IsVisible;
+                trayButton.MouseLeave += (_, _) => visibleOnPress = false;
+            }
         }
         AddModule(TopBarModuleKind.InputMethod, RightModules, "输入法", _environment.OpenInputMethod);
         StyleInputMethodModule();
@@ -722,20 +808,63 @@ public sealed partial class TopBarWindow : Window
         var toolTip = CreateGlassToolTip();
         AttachHoverToolTip(block, toolTip);
         block.ToolTip = toolTip;
+        ApplyInputMethodSnapshot(TopBarSystemInfo.ReadInputMethod());
     }
 
     /// <summary>
-    /// Re-reads the input method on the fast focus tick: the badge every call, the TSF
-    /// name only when the layout handle changed, because switching input methods changes
-    /// the layout while an in-method mode toggle does not.
+    /// Re-reads the input method on the fast focus tick off the UI thread so a busy or
+    /// hung foreground IME window cannot stall the bar; the TSF name is queried on the
+    /// UI thread only when the keyboard layout handle actually changes.
     /// </summary>
-    private void UpdateInputMethod()
+    private void PollInputMethod()
     {
-        var (layout, label, fullName, modeKnown) = TopBarSystemInfo.ReadInputMethod();
         if (_searchActive && _searchBox?.IsKeyboardFocused == true)
         {
             // WPF's TSF state is authoritative for our own text store. The legacy
             // IME window can keep reporting its last native mode after Shift.
+            var layout = TopBarNativeMethods.GetKeyboardLayout(0);
+            var input = InputMethod.Current;
+            var native = input.ImeState == InputMethodState.On
+                && (input.ImeConversionMode & ImeConversionModeValues.Native) != 0;
+            var label = TopBarModuleRules.DescribeInputMethod(layout, native ? 1 : 0);
+            ApplyInputMethodSnapshot((layout, label, _inputMethodToolTip, true));
+            return;
+        }
+
+        if (Interlocked.CompareExchange(ref _imeReadInFlight, 1, 0) != 0)
+        {
+            return;
+        }
+
+        Task.Run(() =>
+        {
+            try
+            {
+                if (_closing) return;
+                var snapshot = TopBarSystemInfo.ReadInputMethod();
+                if (_closing) return;
+                if (snapshot.Layout == _lastInputLayout
+                    && (!snapshot.ModeKnown || snapshot.Label == _inputMethodLabel))
+                {
+                    return;
+                }
+                Dispatcher.BeginInvoke(() =>
+                {
+                    if (!_closing) ApplyInputMethodSnapshot(snapshot);
+                });
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _imeReadInFlight, 0);
+            }
+        });
+    }
+
+    private void ApplyInputMethodSnapshot((nint Layout, string Label, string FullName, bool ModeKnown) snapshot)
+    {
+        var (layout, label, fullName, modeKnown) = snapshot;
+        if (_searchActive && _searchBox?.IsKeyboardFocused == true)
+        {
             var input = InputMethod.Current;
             var native = input.ImeState == InputMethodState.On
                 && (input.ImeConversionMode & ImeConversionModeValues.Native) != 0;
@@ -773,8 +902,7 @@ public sealed partial class TopBarWindow : Window
         {
             toolTip.Content = new TextBlock
             {
-                Text = _inputMethodToolTip,
-                Effect = CreateTextShadow()
+                Text = _inputMethodToolTip
             };
         }
     }
@@ -852,12 +980,7 @@ public sealed partial class TopBarWindow : Window
             return;
         }
 
-        var text = new TextBlock
-        {
-            Foreground = Brushes.White,
-            TextTrimming = TextTrimming.CharacterEllipsis,
-            Effect = CreateTextShadow()
-        };
+        var text = CreateValueText();
         var button = new Button
         {
             Style = (Style)Resources["ModuleButton"],
@@ -928,16 +1051,14 @@ public sealed partial class TopBarWindow : Window
         {
             Text = now.ToString(_environment.Use24HourClock ? "HH:mm" : "hh:mm tt"),
             Foreground = Brushes.White,
-            FontSize = 30,
-            Effect = CreateTextShadow()
+            FontSize = 30
         });
         panel.Children.Add(new TextBlock
         {
             Text = now.Year + "年" + now.Month + "月" + now.Day + "日 " + "日一二三四五六"[(int)now.DayOfWeek],
             Foreground = Brushes.White,
             Opacity = 0.8,
-            Margin = new Thickness(0, 2, 0, 10),
-            Effect = CreateTextShadow()
+            Margin = new Thickness(0, 2, 0, 10)
         });
         panel.Children.Add(BuildMonthView());
         return panel;
@@ -953,8 +1074,7 @@ public sealed partial class TopBarWindow : Window
             Text = MonthTitle(_clockMonth),
             Foreground = Brushes.White,
             FontSize = 13,
-            HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
-            Effect = CreateTextShadow()
+            HorizontalAlignment = System.Windows.HorizontalAlignment.Center
         };
         var previous = CreateMonthNavButton("‹", "上一月", -1);
         var next = CreateMonthNavButton("›", "下一月", 1);
@@ -985,8 +1105,7 @@ public sealed partial class TopBarWindow : Window
                 Text = weekdayNames[column],
                 Foreground = Brushes.White,
                 Opacity = 0.6,
-                HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
-                Effect = CreateTextShadow()
+                HorizontalAlignment = System.Windows.HorizontalAlignment.Center
             };
             Grid.SetRow(headerCell, 0);
             Grid.SetColumn(headerCell, column);
@@ -1014,8 +1133,7 @@ public sealed partial class TopBarWindow : Window
                         Text = day.ToString(),
                         Foreground = Brushes.White,
                         HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
-                        VerticalAlignment = VerticalAlignment.Center,
-                        Effect = CreateTextShadow()
+                        VerticalAlignment = VerticalAlignment.Center
                     }
                 };
             }
@@ -1027,8 +1145,7 @@ public sealed partial class TopBarWindow : Window
                     Foreground = Brushes.White,
                     Opacity = 0.85,
                     HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
-                    VerticalAlignment = VerticalAlignment.Center,
-                    Effect = CreateTextShadow()
+                    VerticalAlignment = VerticalAlignment.Center
                 };
             }
             Grid.SetRow(cell, row);
@@ -1056,8 +1173,7 @@ public sealed partial class TopBarWindow : Window
             {
                 Text = glyph,
                 Foreground = Brushes.White,
-                FontSize = 16,
-                Effect = CreateTextShadow()
+                FontSize = 16
             },
             Style = (Style)Resources["ModuleButton"],
             MinWidth = 28,
@@ -1114,8 +1230,7 @@ public sealed partial class TopBarWindow : Window
             Text = string.IsNullOrWhiteSpace(list?.Title) ? "待办" : list!.Title,
             Foreground = Brushes.White,
             FontSize = 13,
-            Margin = new Thickness(0, 0, 0, 6),
-            Effect = CreateTextShadow()
+            Margin = new Thickness(0, 0, 0, 6)
         });
         if (items.Count == 0)
         {
@@ -1123,8 +1238,7 @@ public sealed partial class TopBarWindow : Window
             {
                 Text = "暂无待办",
                 Foreground = Brushes.White,
-                Opacity = 0.7,
-                Effect = CreateTextShadow()
+                Opacity = 0.7
             });
         }
         else
@@ -1179,8 +1293,7 @@ public sealed partial class TopBarWindow : Window
         {
             Width = 18,
             Foreground = Brushes.White,
-            Opacity = 0.7,
-            Effect = CreateTextShadow()
+            Opacity = 0.7
         };
         if (item.Kind == TodoItemKind.Event)
         {
@@ -1203,8 +1316,7 @@ public sealed partial class TopBarWindow : Window
                 Text = item.Text,
                 TextWrapping = TextWrapping.Wrap,
                 MaxWidth = 270,
-                Foreground = Brushes.White,
-                Effect = CreateTextShadow()
+                Foreground = Brushes.White
             });
             return eventRow;
         }
@@ -1220,8 +1332,7 @@ public sealed partial class TopBarWindow : Window
         {
             TextWrapping = TextWrapping.Wrap,
             MaxWidth = 270,
-            Foreground = Brushes.White,
-            Effect = CreateTextShadow()
+            Foreground = Brushes.White
         };
         text.SetBinding(TextBlock.TextProperty, new System.Windows.Data.Binding(nameof(TodoItemState.Text)));
         var textStyle = new Style(typeof(TextBlock));
@@ -2774,15 +2885,6 @@ public sealed partial class TopBarWindow : Window
         return brush;
     }
 
-    private static DropShadowEffect CreateTextShadow() => new()
-    {
-        Color = Colors.Black,
-        Opacity = 0.55d,
-        BlurRadius = 2d,
-        ShadowDepth = 1d,
-        Direction = 270
-    };
-
     private void RenderModules()
     {
         if (_closing)
@@ -2899,8 +3001,7 @@ public sealed partial class TopBarWindow : Window
             {
                 Text = DescribeWeather(snapshot),
                 MaxWidth = 320,
-                TextWrapping = TextWrapping.Wrap,
-                Effect = CreateTextShadow()
+                TextWrapping = TextWrapping.Wrap
             };
         }
     }
@@ -2983,8 +3084,7 @@ public sealed partial class TopBarWindow : Window
                         Text = name,
                         Foreground = Brushes.Orange,
                         TextTrimming = TextTrimming.CharacterEllipsis,
-                        MaxWidth = 120,
-                        Effect = CreateTextShadow()
+                        MaxWidth = 120
                     },
                     Focusable = true,
                     Tag = window
@@ -3006,8 +3106,7 @@ public sealed partial class TopBarWindow : Window
                     Text = $"+{overflow}",
                     Foreground = Brushes.Orange,
                     VerticalAlignment = VerticalAlignment.Center,
-                    Margin = new Thickness(4, 0, 8, 0),
-                    Effect = CreateTextShadow()
+                    Margin = new Thickness(4, 0, 8, 0)
                 });
             }
         }
@@ -3102,9 +3201,9 @@ public sealed partial class TopBarWindow : Window
         // The keyboard layout follows the focused window, and the IME's own
         // Chinese/English toggle changes no window at all, so the module re-reads on
         // every fast tick instead of waiting for the slower system-info cadence.
-        if (foregroundWindow != 0 && IsVisible)
+        if (foregroundWindow != 0 && IsVisible && _modules.ContainsKey(TopBarModuleKind.InputMethod))
         {
-            UpdateInputMethod();
+            PollInputMethod();
         }
 
         var fullScreen = foreground

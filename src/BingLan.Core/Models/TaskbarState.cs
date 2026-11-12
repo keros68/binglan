@@ -1,3 +1,6 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
 namespace BingLan.Core.Models;
 
 public enum TaskbarMode
@@ -17,4 +20,7 @@ public sealed class TaskbarState
     /// edge rather than anywhere along it.
     /// </summary>
     public bool RevealOnlyAtCorners { get; set; }
+
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? ExtensionData { get; set; }
 }

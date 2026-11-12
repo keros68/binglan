@@ -51,6 +51,16 @@ public sealed class ThemeStyleTokens
 
     public MotionLevel Motion { get; set; } = MotionLevel.Standard;
     public TaskbarMaterial TaskbarMaterial { get; set; } = TaskbarMaterial.SystemDefault;
+
+    /// <summary>Optional material tokens added after v1; null in older packages leaves the importer's choice intact.</summary>
+    public GlassMode? Glass { get; set; }
+    public string? Palette { get; set; }
+    public double? GlassDensity { get; set; }
+    public TextInk? TextInk { get; set; }
+    public string? CustomTextColor { get; set; }
+    public string? AccentColor { get; set; }
+    public SurfaceTone? ItemSurfaceTone { get; set; }
+    public double? ItemSurfaceStrength { get; set; }
 }
 
 public enum TaskbarMaterial

@@ -7,16 +7,13 @@ internal static class TrayOverflowExperimentTests
 {
     internal static void Run(Action pump)
     {
-        // Controlled pending work verifies the gates without issuing a native
+        // Controlled pending work verifies the single-flight gates without issuing a native
         // toggle. Actual Explorer behavior is checked in the opt-in preview.
         using var experiment = new TrayOverflowController();
         var type = typeof(TrayOverflowController);
         const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
         var pending = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
         var callField = type.GetField("_uiaCall", flags)!;
-        var claimField = type.GetField("_claimUntil", flags)!;
-        var stoppingField = type.GetField("_stopping", flags)!;
-        var claimed = type.GetProperty("Claimed", flags)!;
         var invoke = type.GetMethod("InvokeAsync", flags)!;
         callField.SetValue(experiment, pending.Task);
         Assert(experiment.OpenAsync().GetAwaiter().GetResult() == "pending", "未返回期间不能再次发出通知区域快捷键");
@@ -28,25 +25,19 @@ internal static class TrayOverflowExperimentTests
                 "调用未返回时，新请求应立即报告 pending，不排队执行反向切换");
             Assert(ReferenceEquals(callField.GetValue(experiment), pending.Task), "新请求不能替换未完成调用");
         }
-
-        claimField.SetValue(experiment, Environment.TickCount64 - 1);
-        stoppingField.SetValue(experiment, true);
-        Assert((bool)claimed.GetValue(experiment)!, "退出期间尚未返回的调用仍应保留迟到浮层归属");
-        claimField.SetValue(experiment, 0L);
-        Assert(!(bool)claimed.GetValue(experiment)!, "尚未进入 Invoke 的任务不能认领用户打开的浮层");
-        claimField.SetValue(experiment, Environment.TickCount64 - 1);
         pending.SetResult("invoked");
-        Assert(!(bool)claimed.GetValue(experiment)!, "调用结束且认领期限已过时应释放归属");
 
         using (var toggle = new TrayOverflowController())
         {
-            Assert(!toggle.OwnsPanel && !toggle.EndedWithin(400), "新控制器没有面板会话");
-            type.GetField("_ownsPanel", flags)!.SetValue(toggle, true);
-            Assert(toggle.OwnsPanel, "本按钮打开的面板应可再次点击收起");
-            type.GetMethod("EndSession", flags)!.Invoke(toggle, ["test"]);
-            Assert(!toggle.OwnsPanel && toggle.EndedWithin(400), "面板刚被点击收起时，同一次点击不能重新打开");
-            type.GetField("_sessionEndedAt", flags)!.SetValue(toggle, Environment.TickCount64 - 1000);
-            Assert(!toggle.EndedWithin(400), "超过收起窗口后应正常重新打开");
+            Assert(!toggle.OwnsPanel, "新控制器没有面板会话");
+            var ownsField = type.GetField("_ownsPanel", flags)!;
+            ownsField.SetValue(toggle, true);
+            if (!TrayOverflowController.IsVisible)
+            {
+                Assert(!toggle.OwnsPanel, "原生面板未显示时控制器不应继续声称归属");
+                Assert(toggle.CloseOwnedPanelAsync().GetAwaiter().GetResult(), "面板已消失时收起操作应幂等成功");
+                Assert(!(bool)ownsField.GetValue(toggle)!, "幂等收起后应清除内部归属标记");
+            }
         }
 
         var directory = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "BingLan-tray-lifetime-" + Guid.NewGuid().ToString("N")));

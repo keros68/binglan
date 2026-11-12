@@ -1,3 +1,5 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using BingLan.Core.TopBar;
 
 namespace BingLan.Core.Models;
@@ -46,6 +48,9 @@ public sealed class TopBarModuleSwitches
     public bool Clock { get; set; } = true;
     public bool Search { get; set; } = true;
     public bool TrayOverflow { get; set; } = true;
+
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? ExtensionData { get; set; }
 }
 
 /// <summary>
@@ -106,6 +111,9 @@ public sealed class TopBarState
     public string SearchSurfaceColor { get; set; } = DefaultSurfaceColor;
     public double SearchSurfaceOpacity { get; set; } = 0.94d;
     public double SearchCornerRadius { get; set; } = 10d;
+
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? ExtensionData { get; set; }
 }
 
 public static class TopBarRules

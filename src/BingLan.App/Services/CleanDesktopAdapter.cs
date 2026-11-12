@@ -33,6 +33,7 @@ internal sealed class CleanDesktopAdapter : IDisposable
     private readonly string _checkpointPath;
     private readonly DispatcherTimer _takeoverTimer;
     private bool _checking;
+    private bool _keepOnDispose;
     private bool _disposed;
 
     internal CleanDesktopAdapter(string checkpointPath)
@@ -56,6 +57,7 @@ internal sealed class CleanDesktopAdapter : IDisposable
     internal async Task<string> EnableAsync()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+        _keepOnDispose = false;
         var problem = await RunShellAsync(
             () => WithMachineLock(() => Hide(_checkpointPath), "桌面图标正由另一个冰蓝桌面进程处理，请稍后再试"));
         IsActive = problem.Length == 0 && !_disposed;
@@ -66,9 +68,39 @@ internal sealed class CleanDesktopAdapter : IDisposable
         return problem;
     }
 
+    /// <summary>
+    /// Resumes clean desktop on startup when the user setting is already enabled: adopts an
+    /// existing checkpoint without flashing the desktop icons visible, or enables fresh when
+    /// no checkpoint exists.
+    /// </summary>
+    internal async Task<(bool Succeeded, bool RestoredWhenFailed, bool OriginalStateKnown, string Problem)> ResumeOrEnableAsync()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        _keepOnDispose = false;
+        var outcome = await RunShellAsync(
+            () => WithMachineLock<(bool Succeeded, bool RestoredWhenFailed, bool OriginalStateKnown, string Problem)>(
+                () => ResumeOrHide(_checkpointPath),
+                (false, !File.Exists(_checkpointPath), IsOriginalStateKnown(_checkpointPath), "桌面图标正由另一个冰蓝桌面进程处理，请稍后再试")));
+        IsActive = outcome.Succeeded && !_disposed;
+        if (IsActive)
+        {
+            _takeoverTimer.Start();
+        }
+        return outcome;
+    }
+
+    /// <summary>
+    /// Called during Windows shutdown/restart when auto-start is enabled and clean desktop
+    /// stays active across sign-ins, avoiding an unnecessary show-then-hide flash on reboot.
+    /// </summary>
+    internal void KeepHiddenForReboot() => _keepOnDispose = true;
+
+    internal void CancelKeepHiddenForReboot() => _keepOnDispose = false;
+
     /// <summary>Puts the icons back as they were. Returns false when that could not be verified.</summary>
     internal async Task<bool> DisableAsync()
     {
+        _keepOnDispose = false;
         _takeoverTimer.Stop();
         IsActive = false;
         return await RunShellAsync(() => WithMachineLock(() => ShowIconsForTurnOff(_checkpointPath), false));
@@ -177,6 +209,10 @@ internal sealed class CleanDesktopAdapter : IDisposable
         _disposed = true;
         _takeoverTimer.Stop();
         IsActive = false;
+        if (_keepOnDispose)
+        {
+            return;
+        }
         // Exit must not hang on a busy Explorer; a restore that does not finish keeps
         // its checkpoint and runs again on the next start.
         try
@@ -284,6 +320,70 @@ internal sealed class CleanDesktopAdapter : IDisposable
             Debug.WriteLine($"桌面图标恢复显示失败：{exception.Message}");
             StartupLog.Write($"桌面图标恢复显示失败：{exception.Message}");
             return false;
+        }
+    }
+
+    private static (bool Succeeded, bool RestoredWhenFailed, bool OriginalStateKnown, string Problem) ResumeOrHide(string checkpointPath)
+    {
+        if (!File.Exists(checkpointPath))
+        {
+            if (!IsOriginalStateKnown(checkpointPath))
+            {
+                return (false, true, false, "无法确认开启清爽桌面前的图标状态");
+            }
+
+            var problem = Hide(checkpointPath);
+            return (problem.Length == 0, !File.Exists(checkpointPath), IsOriginalStateKnown(checkpointPath), problem);
+        }
+
+        CleanDesktopCheckpoint? checkpoint;
+        try
+        {
+            checkpoint = CleanDesktopCheckpoint.Parse(File.ReadAllText(checkpointPath));
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            StartupLog.Write("桌面图标检查点读取失败，未改动桌面");
+            return (false, false, IsOriginalStateKnown(checkpointPath), "桌面图标检查点读取失败");
+        }
+
+        if (checkpoint is null)
+        {
+            TryMove(checkpointPath, InvalidCheckpointPath(checkpointPath));
+            StartupLog.Write("桌面图标检查点损坏，已移旁，未改动桌面");
+            return (false, false, false, "无法确认开启清爽桌面前的图标状态");
+        }
+
+        try
+        {
+            using (var view = DesktopShellView.Open())
+            {
+                var plan = CleanDesktopRules.PlanStartupResume(checkpoint, view.ReadFolderFlags());
+                if (plan == CleanDesktopStartupPlan.HidePreservingCheckpoint && !view.SetIconsHidden(true))
+                {
+                    StartupLog.Write("启动接续清爽桌面：Windows 未接受隐藏桌面图标");
+                    view.Dispose();
+                    var restored = RecoverFromCheckpoint(checkpointPath);
+                    return (false, restored, IsOriginalStateKnown(checkpointPath), "Windows 没有接受隐藏桌面图标");
+                }
+
+                if (checkpoint.Phase != CleanDesktopPhase.Applied)
+                {
+                    checkpoint.Phase = CleanDesktopPhase.Applied;
+                    WriteCheckpoint(checkpointPath, checkpoint);
+                }
+                TryDelete(InvalidCheckpointPath(checkpointPath));
+                StartupLog.Write(plan == CleanDesktopStartupPlan.KeepHidden
+                    ? "清爽桌面无闪烁接续已有隐藏状态"
+                    : "清爽桌面按原检查点重新隐藏桌面图标");
+                return (true, true, true, string.Empty);
+            }
+        }
+        catch (Exception exception) when (IsShellFailure(exception))
+        {
+            StartupLog.Write($"启动接续清爽桌面失败：{exception.Message}");
+            var restored = RecoverFromCheckpoint(checkpointPath);
+            return (false, restored, IsOriginalStateKnown(checkpointPath), "当前桌面不支持清爽模式");
         }
     }
 
@@ -407,6 +507,7 @@ internal sealed class CleanDesktopAdapter : IDisposable
     private static bool IsShellFailure(Exception exception) =>
         exception is COMException
             or InvalidCastException
+            or InvalidOperationException
             or UnauthorizedAccessException
             or IOException;
 

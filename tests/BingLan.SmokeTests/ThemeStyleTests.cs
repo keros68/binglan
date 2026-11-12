@@ -87,6 +87,12 @@ internal static class ThemeStyleTests
         weather.Appearance.BackgroundColor = "#ffffff";
         Check(DesktopStyleRules.FollowsSharedLook(weather, style, clearBar), "颜色比较不区分大小写");
 
+        var todo = experience.GetComponent(DesktopComponentKind.Todo);
+        todo.Appearance.HeaderColor = "#123456";
+        Check(!DesktopStyleRules.FollowsSharedLook(todo, style, clearBar), "单独改过待办标题栏颜色也应视为独立外观");
+        todo.Appearance.HeaderColor = WidgetAppearanceRules.DefaultHeaderColor;
+        Check(DesktopStyleRules.FollowsSharedLook(todo, style, clearBar), "恢复默认标题栏颜色后应回到跟随全局外观");
+
         style.Glass = GlassMode.Clear;
         var time = DesktopStyleRules.ComponentLook(DesktopComponentKind.TimeDate, style, clearBar);
         var strip = DesktopStyleRules.ComponentLook(DesktopComponentKind.QuickLaunch, style, clearBar);
@@ -284,6 +290,14 @@ internal static class ThemeStyleTests
         state.Style.CardSpacing = 8;
         state.Style.GridSnap = true;
         state.Style.Motion = MotionLevel.Reduced;
+        state.Style.Glass = GlassMode.Dark;
+        state.Style.Palette = "matcha";
+        state.Style.GlassDensity = 0.62;
+        state.Style.TextInk = TextInk.Custom;
+        state.Style.CustomTextColor = "#224433";
+        state.Style.AccentColor = "#33AA77";
+        state.Style.ItemSurfaceTone = SurfaceTone.Dark;
+        state.Style.ItemSurfaceStrength = 0.35;
         state.Taskbar.Mode = TaskbarMode.Blur;
         state.Dock.PinnedApps.Add(new DockPinnedApp
         {
@@ -316,8 +330,40 @@ internal static class ThemeStyleTests
         var target = new DesktopStyleState();
         var taskbar = new TaskbarState();
         ThemeRules.ApplyStyle(result.Package, target, taskbar);
-        Check(target is { CardShadow: CardShadow.Soft, CardSpacing: 8, GridSnap: true, Motion: MotionLevel.Reduced }
-            && taskbar.Mode == TaskbarMode.Blur, "导入应应用整体风格和任务栏材质");
+        Check(target is
+            {
+                CardShadow: CardShadow.Soft,
+                CardSpacing: 8,
+                GridSnap: true,
+                Motion: MotionLevel.Reduced,
+                Glass: GlassMode.Dark,
+                Palette: "matcha",
+                TextInk: TextInk.Custom,
+                CustomTextColor: "#224433",
+                AccentColor: "#33AA77",
+                ItemSurfaceTone: SurfaceTone.Dark
+            }
+            && Math.Abs(target.GlassDensity - 0.62) < 1e-6
+            && Math.Abs(target.ItemSurfaceStrength - 0.35) < 1e-6
+            && taskbar.Mode == TaskbarMode.Blur, "导入应完整应用整体材质、配色、强调色与任务栏材质");
+
+        var legacyStyle = new ThemePackage
+        {
+            Tokens = new ThemeTokens
+            {
+                Style = new ThemeStyleTokens { CardShadow = CardShadow.Strong }
+            }
+        };
+        var preserved = new DesktopStyleState
+        {
+            Glass = GlassMode.Dark,
+            Palette = "nord",
+            AccentColor = "#FF8844",
+            TextInk = TextInk.White
+        };
+        ThemeRules.ApplyStyle(legacyStyle, preserved, new TaskbarState());
+        Check(preserved is { CardShadow: CardShadow.Strong, Glass: GlassMode.Dark, Palette: "nord", AccentColor: "#FF8844", TextInk: TextInk.White },
+            "旧版主题缺少新增材质字段时应保留用户原有材质与配色");
 
         var hidden = new TaskbarState { Mode = TaskbarMode.SmartHide };
         ThemeRules.ApplyStyle(result.Package, new DesktopStyleState(), hidden);

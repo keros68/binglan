@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 using BingLan.Core.Services;
 
@@ -33,6 +34,9 @@ public sealed class WindowPlacement
     /// screen back in puts the card where it was on that arrangement.
     /// </summary>
     public List<DisplayLayoutPlacement> DisplayLayouts { get; set; } = [];
+
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? ExtensionData { get; set; }
 }
 
 /// <summary>The card's bounds, in physical pixels, on one arrangement of monitors.</summary>
@@ -43,6 +47,9 @@ public sealed class DisplayLayoutPlacement
     public int Top { get; set; }
     public int Right { get; set; }
     public int Bottom { get; set; }
+
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? ExtensionData { get; set; }
 }
 
 public sealed class WidgetAppearanceState
@@ -93,15 +100,28 @@ public sealed class WidgetAppearanceState
     public bool TitleFontBold { get; set; } = WidgetAppearanceRules.DefaultTitleFontBold;
 
     public bool TitleFontItalic { get; set; } = WidgetAppearanceRules.DefaultTitleFontItalic;
+
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? ExtensionData { get; set; }
 }
 
 public sealed class TodoWidgetState
 {
+    private double _fontScale = 1d;
     private double _cornerRadius = WidgetAppearanceRules.DefaultCornerRadius;
 
     public Guid Id { get; set; } = Guid.NewGuid();
     public string Title { get; set; } = "今日待办";
     public bool HideCompleted { get; set; }
+
+    /// <summary>The font of the card's text; null keeps the app's interface font.</summary>
+    public string? FontFamily { get; set; }
+
+    public double FontScale
+    {
+        get => _fontScale;
+        set => _fontScale = DesktopExperienceRules.CoerceFontScale(value);
+    }
 
     /// <summary>Whether the card shows the five-week calendar view instead of today's list.</summary>
     public bool WeeklyView { get; set; }
@@ -140,6 +160,9 @@ public sealed class TodoWidgetState
     }
     public WindowPlacement Placement { get; set; } = new();
     public List<TodoItemState> Items { get; set; } = [];
+
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? ExtensionData { get; set; }
 }
 
 /// <summary>Whether an entry is a checkable to-do, a calendar event, or a countdown.</summary>
@@ -292,6 +315,9 @@ public sealed class TodoItemState : INotifyPropertyChanged
     /// </summary>
     public ObservableCollection<string> LinkedPaths { get; set; } = [];
 
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? ExtensionData { get; set; }
+
     /// <summary>Whether an open to-do's deadline is close enough to surface in the list.</summary>
     [JsonIgnore]
     public bool IsDueSoon => TodoService.IsDueSoon(this, DateTime.Now);
@@ -354,6 +380,9 @@ public sealed class FileBoxState
         Height = 306
     };
     public List<FileMappingState> Items { get; set; } = [];
+
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? ExtensionData { get; set; }
 }
 
 public sealed class FileMappingState
@@ -362,4 +391,7 @@ public sealed class FileMappingState
     public string Path { get; set; } = "";
     public string? Title { get; set; }
     public int Order { get; set; }
+
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? ExtensionData { get; set; }
 }

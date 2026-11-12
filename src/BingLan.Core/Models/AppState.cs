@@ -1,10 +1,21 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
 namespace BingLan.Core.Models;
 
 public sealed class AppState
 {
-    public const int CurrentSchemaVersion = 44;
+    public const int CurrentSchemaVersion = 45;
 
     public int SchemaVersion { get; set; } = CurrentSchemaVersion;
+
+    /// <summary>
+    /// Unknown top-level properties from a newer version of the app, preserved on save so
+    /// opening a newer state file does not wipe personal data or drop future settings.
+    /// </summary>
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? ExtensionData { get; set; }
+
     public List<TodoWidgetState> TodoWidgets { get; set; } = [];
     public List<NoteWidgetState> NoteWidgets { get; set; } = [];
     public List<InformationWidgetState> InformationWidgets { get; set; } = [];

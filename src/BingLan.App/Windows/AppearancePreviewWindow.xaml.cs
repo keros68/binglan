@@ -89,12 +89,21 @@ public partial class AppearancePreviewWindow : Window
 
     private void FitWorkArea()
     {
-        var ownerHandle = Owner is null ? 0 : new System.Windows.Interop.WindowInteropHelper(Owner).Handle;
-        var screen = System.Windows.Forms.Screen.FromHandle(ownerHandle);
-        var monitor = BingLan.App.Dock.MonitorCatalog.GetAll().FirstOrDefault(item => item.DeviceName == screen.DeviceName);
+        var ownerHandle = Owner is null
+            ? new System.Windows.Interop.WindowInteropHelper(this).Handle
+            : new System.Windows.Interop.WindowInteropHelper(Owner).Handle;
+        var monitorHandle = BingLan.App.Interop.DockNativeMethods.MonitorFromWindow(
+            ownerHandle,
+            BingLan.App.Interop.DockNativeMethods.MonitorDefaultToNearest);
+        var monitors = BingLan.App.Dock.MonitorCatalog.GetAll();
+        var monitor = monitors.FirstOrDefault(item => item.MonitorHandle == monitorHandle)
+            ?? monitors.FirstOrDefault(item => item.IsPrimary)
+            ?? monitors.FirstOrDefault();
         var scale = (monitor?.Dpi ?? 96) / 96d;
-        var area = new Rect(screen.WorkingArea.Left / scale, screen.WorkingArea.Top / scale,
-            screen.WorkingArea.Width / scale, screen.WorkingArea.Height / scale);
+        var area = monitor is not null
+            ? new Rect(monitor.WorkingArea.Left / scale, monitor.WorkingArea.Top / scale,
+                monitor.WorkingArea.Width / scale, monitor.WorkingArea.Height / scale)
+            : SystemParameters.WorkArea;
         MaxWidth = Math.Max(1d, area.Width - 24d);
         MaxHeight = Math.Max(1d, area.Height - 24d);
         MinWidth = Math.Min(MinWidth, MaxWidth);
@@ -142,12 +151,8 @@ public partial class AppearancePreviewWindow : Window
     private void CustomColor_Click(object sender, RoutedEventArgs e)
     {
         var color = (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(Draft.CustomTextColor)!;
-        using var dialog = new System.Windows.Forms.ColorDialog
-        {
-            Color = System.Drawing.Color.FromArgb(color.R, color.G, color.B), FullOpen = true, AnyColor = true
-        };
-        if (dialog.ShowDialog() != System.Windows.Forms.DialogResult.OK) return;
-        Draft.CustomTextColor = $"#{dialog.Color.R:X2}{dialog.Color.G:X2}{dialog.Color.B:X2}";
+        if (!BingLan.App.Interop.NativeColorDialog.TryPickColor(this, color, out var chosen)) return;
+        Draft.CustomTextColor = chosen;
         TextInkSelector.SelectedIndex = (int)TextInk.Custom;
         UpdateControls();
         QueuePreview();

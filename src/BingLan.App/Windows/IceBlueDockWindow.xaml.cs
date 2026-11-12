@@ -61,7 +61,9 @@ public partial class IceBlueDockWindow : Window
     private DockAppBarController? _appBar;
     private IReadOnlyList<DockItem> _items = [];
     private IReadOnlyList<string> _groupOrder = [];
+    private readonly List<DockButtonParts> _itemButtons = [];
     private string _lastSignature = string.Empty;
+    private string _lastStructureKey = string.Empty;
     private bool _renderedStartEntry;
     private bool _renderedDesktopEntry;
     private nint _handle;
@@ -339,6 +341,7 @@ public partial class IceBlueDockWindow : Window
                 ShowDock();
             }
             _lastSignature = string.Empty;
+            _lastStructureKey = string.Empty;
             RefreshWindows();
         }
         return 0;
@@ -453,6 +456,24 @@ public partial class IceBlueDockWindow : Window
         _renderedDesktopEntry = _state.ShowDesktopButton;
         _lastSignature = signature;
         _items = items;
+
+        var structureKey = $"{_effectiveIconSize}|{_state.ShowStartMenuButton}|{_state.ShowDesktopButton}|{_dockOverflowing}|{BuildStructureKey(items)}";
+        if (string.Equals(structureKey, _lastStructureKey, StringComparison.Ordinal)
+            && _itemButtons.Count == items.Count)
+        {
+            for (var index = 0; index < items.Count; index++)
+            {
+                UpdateItemButton(_itemButtons[index], items[index]);
+            }
+            if (countChanged)
+            {
+                ApplyState();
+            }
+            return;
+        }
+
+        _lastStructureKey = structureKey;
+        _itemButtons.Clear();
         ItemPanel.Children.Clear();
         if (_state.ShowStartMenuButton)
         {
@@ -469,14 +490,16 @@ public partial class IceBlueDockWindow : Window
             {
                 ItemPanel.Children.Add(BuildDivider());
             }
-            ItemPanel.Children.Add(BuildItem(items[index]));
+            var parts = BuildItem(items[index]);
+            _itemButtons.Add(parts);
+            ItemPanel.Children.Add(parts.Button);
         }
 
         if (_dockOverflowing)
         {
             // Too many apps even at the minimum icon: the row scrolls, and this menu
             // keeps every app reachable without hunting for the scroll position.
-            ItemPanel.Children.Add(BuildOverflowButton(items));
+            ItemPanel.Children.Add(BuildOverflowButton());
         }
 
         if (_state.ShowDesktopButton)
@@ -494,7 +517,7 @@ public partial class IceBlueDockWindow : Window
         }
     }
 
-    private Button BuildOverflowButton(IReadOnlyList<DockItem> items)
+    private Button BuildOverflowButton()
     {
         var glyph = new TextBlock
         {
@@ -518,7 +541,7 @@ public partial class IceBlueDockWindow : Window
         button.Click += (_, _) =>
         {
             var menu = CreateMenu();
-            foreach (var item in items)
+            foreach (var item in _items)
             {
                 var entry = new MenuItem { Header = DisplayNameOf(item) };
                 if (_visuals.TryGetValue(item.Key, out var visual) && visual.Icon is { } icon)
@@ -691,20 +714,98 @@ public partial class IceBlueDockWindow : Window
         return divider;
     }
 
-    private Button BuildItem(DockItem item)
+    private sealed record DockButtonParts(Button Button, Image Icon, Grid IconHost, Border Dot);
+
+    private DockButtonParts BuildItem(DockItem item)
     {
-        var wantsAttention = _attention.Wants(item.Group);
         var content = new StackPanel { Orientation = Orientation.Vertical };
         var icon = new Image
         {
             Width = _effectiveIconSize,
             Height = _effectiveIconSize,
-            HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
-            Source = _visuals.TryGetValue(item.Key, out var visual) ? visual.Icon : null
+            HorizontalAlignment = System.Windows.HorizontalAlignment.Center
         };
         RenderOptions.SetBitmapScalingMode(icon, BitmapScalingMode.HighQuality);
         var iconHost = new Grid();
         iconHost.Children.Add(icon);
+        content.Children.Add(iconHost);
+        // The dot under a running app: wider for several windows, blue for the current one.
+        var dot = new Border
+        {
+            Height = 4,
+            CornerRadius = new CornerRadius(2),
+            Margin = new Thickness(0, 3, 0, 0),
+            HorizontalAlignment = System.Windows.HorizontalAlignment.Center
+        };
+        content.Children.Add(dot);
+
+        var button = new Button
+        {
+            Content = content,
+            Width = _effectiveIconSize + 16,
+            Height = _effectiveIconSize + 16,
+            Style = (Style)Resources["DockItemButtonStyle"],
+            Tag = item,
+            AllowDrop = true
+        };
+
+        button.Click += (_, _) =>
+        {
+            if (button.Tag is not DockItem current) return;
+            var currentName = DisplayNameOf(current);
+            if ((Keyboard.Modifiers & ModifierKeys.Shift) != 0)
+            {
+                LaunchNewInstance(current, currentName);
+            }
+            else
+            {
+                Invoke(current);
+            }
+        };
+        button.MouseUp += (_, eventArgs) =>
+        {
+            if (eventArgs.ChangedButton == MouseButton.Middle && button.Tag is DockItem current)
+            {
+                eventArgs.Handled = true;
+                LaunchNewInstance(current, DisplayNameOf(current));
+            }
+        };
+        AddHoverZoom(button, icon);
+        button.MouseRightButtonUp += (_, eventArgs) =>
+        {
+            if (button.Tag is not DockItem current) return;
+            eventArgs.Handled = true;
+            OpenItemMenu(current, DisplayNameOf(current));
+        };
+        button.PreviewMouseLeftButtonDown += (_, eventArgs) =>
+        {
+            if (button.Tag is not DockItem current) return;
+            // Pinned apps are dragged to reorder; running apps are dragged in to pin them.
+            _dragStart = eventArgs.GetPosition(this);
+            _dragItem = current;
+        };
+        button.PreviewMouseMove += OnItemMouseMove;
+        button.DragOver += OnDragOver;
+        button.Drop += (_, eventArgs) =>
+        {
+            if (button.Tag is DockItem current) DropPin(eventArgs, current);
+        };
+
+        var parts = new DockButtonParts(button, icon, iconHost, dot);
+        UpdateItemButton(parts, item);
+        return parts;
+    }
+
+    private void UpdateItemButton(DockButtonParts parts, DockItem item)
+    {
+        parts.Button.Tag = item;
+        parts.Icon.Source = _visuals.TryGetValue(item.Key, out var visual) ? visual.Icon : null;
+        while (parts.IconHost.Children.Count > 1)
+        {
+            parts.IconHost.Children.RemoveAt(parts.IconHost.Children.Count - 1);
+        }
+
+        var wantsAttention = _attention.Wants(item.Group);
         var unread = _attention.UnreadCount(item.Group);
         if (wantsAttention && unread > 0)
         {
@@ -718,26 +819,25 @@ public partial class IceBlueDockWindow : Window
                 Margin = new Thickness(0, -4, -4, 0),
                 HorizontalAlignment = System.Windows.HorizontalAlignment.Right,
                 VerticalAlignment = System.Windows.VerticalAlignment.Top,
-                Background = new SolidColorBrush(System.Windows.Media.Color.FromRgb(0xFF, 0x3B, 0x30)),
+                Background = UnreadPillBrush,
                 BorderBrush = System.Windows.Media.Brushes.White,
-                BorderThickness = new Thickness(1)
+                BorderThickness = new Thickness(1),
+                Child = new TextBlock
+                {
+                    Text = UnreadBadgeRules.BadgeText(unread),
+                    Foreground = System.Windows.Media.Brushes.White,
+                    FontSize = Math.Max(9, _effectiveIconSize * 0.28),
+                    FontFamily = new System.Windows.Media.FontFamily("Segoe UI"),
+                    FontWeight = System.Windows.FontWeights.SemiBold,
+                    HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
+                    VerticalAlignment = VerticalAlignment.Center
+                }
             };
-            pill.Child = new TextBlock
-            {
-                Text = UnreadBadgeRules.BadgeText(unread),
-                Foreground = System.Windows.Media.Brushes.White,
-                FontSize = Math.Max(9, _effectiveIconSize * 0.28),
-                FontFamily = new System.Windows.Media.FontFamily("Segoe UI"),
-                FontWeight = System.Windows.FontWeights.SemiBold,
-                HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center
-            };
-            iconHost.Children.Add(pill);
+            parts.IconHost.Children.Add(pill);
         }
         else if (wantsAttention)
         {
-            // An orange badge at the top-right corner, like an unread count.
-            iconHost.Children.Add(new Border
+            parts.IconHost.Children.Add(new Border
             {
                 Width = 12,
                 Height = 12,
@@ -750,83 +850,38 @@ public partial class IceBlueDockWindow : Window
                 BorderThickness = new Thickness(1.5)
             });
         }
-        content.Children.Add(iconHost);
-        // The dot under a running app: wider for several windows, blue for the current one.
-        var dot = new Border
-        {
-            Width = item.HasMultipleWindows ? 10 : 4,
-            Height = 4,
-            CornerRadius = new CornerRadius(2),
-            Margin = new Thickness(0, 3, 0, 0),
-            HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
-            Visibility = item.IsRunning ? Visibility.Visible : Visibility.Hidden
-        };
+
+        parts.Dot.Width = item.HasMultipleWindows ? 10 : 4;
+        parts.Dot.Visibility = item.IsRunning ? Visibility.Visible : Visibility.Hidden;
         if (wantsAttention)
         {
-            dot.Background = AttentionBrush;
+            parts.Dot.Background = AttentionBrush;
         }
         else
         {
-            dot.SetResourceReference(
+            parts.Dot.SetResourceReference(
                 Border.BackgroundProperty,
                 item.IsActive ? "DockActiveDotBrush" : "DockRunningDotBrush");
         }
-        content.Children.Add(dot);
 
         var name = DisplayNameOf(item);
-        var button = new Button
-        {
-            Content = content,
-            Width = _effectiveIconSize + 16,
-            Height = _effectiveIconSize + 16,
-            Style = (Style)Resources["DockItemButtonStyle"],
-            ToolTip = BuildToolTip(item, name),
-            Tag = item,
-            AllowDrop = true
-        };
-        AutomationProperties.SetName(button, name);
-        AutomationProperties.SetHelpText(button, wantsAttention ? "有新提醒" : item.State switch
+        parts.Button.ToolTip = BuildToolTip(item, name);
+        AutomationProperties.SetName(parts.Button, name);
+        AutomationProperties.SetHelpText(parts.Button, wantsAttention ? "有新提醒" : item.State switch
         {
             DockItemState.Active => "当前窗口",
             DockItemState.Running => item.HasMultipleWindows ? $"{item.WindowCount} 个窗口" : "正在运行",
             _ => "已固定，未运行"
         });
+    }
 
-        button.Click += (_, _) =>
-        {
-            if ((Keyboard.Modifiers & ModifierKeys.Shift) != 0)
-            {
-                LaunchNewInstance(item, name);
-            }
-            else
-            {
-                Invoke(item);
-            }
-        };
-        button.MouseUp += (_, eventArgs) =>
-        {
-            if (eventArgs.ChangedButton == MouseButton.Middle)
-            {
-                eventArgs.Handled = true;
-                LaunchNewInstance(item, name);
-            }
-        };
-        AddHoverZoom(button, icon);
-        button.MouseRightButtonUp += (_, eventArgs) =>
-        {
-            eventArgs.Handled = true;
-            OpenItemMenu(item, name);
-        };
-        button.PreviewMouseLeftButtonDown += (_, eventArgs) =>
-        {
-            // Pinned apps are dragged to reorder; running apps are dragged in to pin them.
-            _dragStart = eventArgs.GetPosition(this);
-            _dragItem = item;
-        };
-        button.PreviewMouseMove += OnItemMouseMove;
-        button.DragOver += OnDragOver;
-        button.Drop += (_, eventArgs) => DropPin(eventArgs, item);
-        return button;
+    private static readonly SolidColorBrush UnreadPillBrush = CreateUnreadPillBrush();
+
+    private static SolidColorBrush CreateUnreadPillBrush()
+    {
+        var brush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(0xFF, 0x3B, 0x30));
+        brush.Freeze();
+        return brush;
     }
 
     private static readonly SolidColorBrush AttentionBrush = CreateAttentionBrush();
@@ -1206,6 +1261,7 @@ public partial class IceBlueDockWindow : Window
         }
         _visuals.Remove(item.Key);
         _lastSignature = string.Empty;
+        _lastStructureKey = string.Empty;
         PinsChanged();
     }
 
@@ -1254,6 +1310,7 @@ public partial class IceBlueDockWindow : Window
         {
             _effectiveIconSize = preferred;
             _lastSignature = string.Empty;
+            _lastStructureKey = string.Empty;
         }
     }
 
@@ -1849,6 +1906,19 @@ public partial class IceBlueDockWindow : Window
             {
                 builder.AppendLine().Append(window.Title);
             }
+        }
+        return builder.ToString();
+    }
+
+    private static string BuildStructureKey(IReadOnlyList<DockItem> items)
+    {
+        var builder = new StringBuilder(items.Count * 24);
+        foreach (var item in items)
+        {
+            builder.Append(item.Key)
+                .Append(':')
+                .Append(item.IsPinned ? 'P' : '-')
+                .Append('|');
         }
         return builder.ToString();
     }

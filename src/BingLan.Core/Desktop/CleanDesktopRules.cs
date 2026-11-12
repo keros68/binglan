@@ -10,6 +10,12 @@ public enum CleanDesktopPhase
     Restoring
 }
 
+public enum CleanDesktopStartupPlan
+{
+    KeepHidden,
+    HidePreservingCheckpoint
+}
+
 /// <summary>
 /// What clean desktop changed on the Windows desktop view, written before the change so
 /// a later start (or an uninstaller) can put the icons back after a crash. Windows keeps
@@ -115,4 +121,19 @@ public static class CleanDesktopRules
     /// </summary>
     public static bool NeedsAdoption(bool hasCheckpoint, uint currentFlags) =>
         !hasCheckpoint && AreIconsHidden(currentFlags);
+
+    /// <summary>
+    /// Decides how startup resumes clean desktop when both the user setting is enabled
+    /// and a valid checkpoint from the previous session is present: never show-then-hide
+    /// icons that are already hidden, and never overwrite OriginalIconsHidden.
+    /// </summary>
+    public static CleanDesktopStartupPlan PlanStartupResume(
+        CleanDesktopCheckpoint checkpoint,
+        uint currentFlags)
+    {
+        ArgumentNullException.ThrowIfNull(checkpoint);
+        return AreIconsHidden(currentFlags)
+            ? CleanDesktopStartupPlan.KeepHidden
+            : CleanDesktopStartupPlan.HidePreservingCheckpoint;
+    }
 }

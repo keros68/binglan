@@ -10,6 +10,7 @@ internal sealed class StartupRegistration(string executablePath, bool canModify)
 {
     internal const string ValueName = "BingLan";
     private const string RunKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
+    private const string StartupApprovedRunKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run";
     private readonly string _command = $"\"{executablePath}\"";
 
     internal bool CanModify { get; } = canModify;
@@ -17,8 +18,17 @@ internal sealed class StartupRegistration(string executablePath, bool canModify)
     internal bool IsEnabled()
     {
         using var key = Registry.CurrentUser.OpenSubKey(RunKeyPath);
-        return key?.GetValue(ValueName) is string value
-            && string.Equals(value, _command, StringComparison.OrdinalIgnoreCase);
+        if (key?.GetValue(ValueName) is not string value
+            || !string.Equals(value, _command, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        // Task Manager / Windows Settings disable startup entries via StartupApproved\Run
+        // (odd low bit such as 0x01/0x03/0x05) without deleting the Run value itself.
+        using var approvedKey = Registry.CurrentUser.OpenSubKey(StartupApprovedRunKeyPath);
+        return approvedKey?.GetValue(ValueName) is not byte[] { Length: > 0 } status
+            || (status[0] & 1) == 0;
     }
 
     internal void SetEnabled(bool enabled)
@@ -32,6 +42,8 @@ internal sealed class StartupRegistration(string executablePath, bool canModify)
         if (enabled)
         {
             key.SetValue(ValueName, _command, RegistryValueKind.String);
+            using var approvedKey = Registry.CurrentUser.OpenSubKey(StartupApprovedRunKeyPath, writable: true);
+            approvedKey?.DeleteValue(ValueName, throwOnMissingValue: false);
         }
         else
         {

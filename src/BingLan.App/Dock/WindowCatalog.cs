@@ -8,6 +8,10 @@ namespace BingLan.App.Dock;
 internal sealed class WindowCatalog
 {
     private const int ErrorInsufficientBuffer = 122;
+    private const long NullAumidRetryMs = 5000;
+    private readonly object _cacheGate = new();
+    private readonly Dictionary<uint, (long CreationTime, ProcessIdentity Identity)> _processCache = [];
+    private readonly Dictionary<nint, (uint ProcessId, string? AppUserModelId, long CheckedTick)> _windowAumidCache = [];
 
     internal IReadOnlyList<TrackedWindow> Capture()
     {
@@ -16,41 +20,120 @@ internal sealed class WindowCatalog
         var foregroundRootOwner = GetRootOwnerOrSelf(foreground);
         var shell = DockNativeMethods.GetShellWindow();
         var identities = new Dictionary<uint, ProcessIdentity>();
+        var seenWindows = new HashSet<nint>();
 
-        DockNativeMethods.EnumWindows((window, _) =>
+        lock (_cacheGate)
         {
-            if (!ShouldInclude(window, shell))
+            DockNativeMethods.EnumWindows((window, _) =>
             {
+                if (!ShouldInclude(window, shell))
+                {
+                    return true;
+                }
+
+                // The app's own cards, dock and guides are tool windows and already left out;
+                // its settings window is an ordinary window and shows like any other app.
+                DockNativeMethods.GetWindowThreadProcessId(window, out var processId);
+                if (processId == 0)
+                {
+                    return true;
+                }
+
+                seenWindows.Add(window);
+                if (!identities.TryGetValue(processId, out var identity))
+                {
+                    identity = ResolveCachedProcessIdentity(processId);
+                    identities.Add(processId, identity);
+                }
+
+                var windowAumid = ResolveCachedWindowAppUserModelId(window, processId, identity.ExecutablePath);
+                windows.Add(new TrackedWindow(
+                    window,
+                    processId,
+                    GetTitle(window),
+                    windowAumid ?? identity.AppUserModelId,
+                    identity.ExecutablePath,
+                    window == foreground
+                        || GetRootOwnerOrSelf(window) == foregroundRootOwner,
+                    DockNativeMethods.IsIconic(window)));
                 return true;
-            }
+            }, 0);
 
-            // The app's own cards, dock and guides are tool windows and already left out;
-            // its settings window is an ordinary window and shows like any other app.
-            DockNativeMethods.GetWindowThreadProcessId(window, out var processId);
-            if (processId == 0)
+            if (_windowAumidCache.Count > seenWindows.Count)
             {
-                return true;
+                foreach (var staleWindow in _windowAumidCache.Keys.Where(handle => !seenWindows.Contains(handle)).ToArray())
+                {
+                    _windowAumidCache.Remove(staleWindow);
+                }
             }
 
-            if (!identities.TryGetValue(processId, out var identity))
+            if (_processCache.Count > identities.Count)
             {
-                identity = ResolveProcessIdentity(processId);
-                identities.Add(processId, identity);
+                foreach (var stalePid in _processCache.Keys.Where(pid => !identities.ContainsKey(pid)).ToArray())
+                {
+                    _processCache.Remove(stalePid);
+                }
             }
-
-            windows.Add(new TrackedWindow(
-                window,
-                processId,
-                GetTitle(window),
-                TryGetWindowAppUserModelId(window) ?? identity.AppUserModelId,
-                identity.ExecutablePath,
-                window == foreground
-                    || GetRootOwnerOrSelf(window) == foregroundRootOwner,
-                DockNativeMethods.IsIconic(window)));
-            return true;
-        }, 0);
+        }
 
         return windows;
+    }
+
+    private ProcessIdentity ResolveCachedProcessIdentity(uint processId)
+    {
+        var process = DockNativeMethods.OpenProcess(
+            DockNativeMethods.ProcessQueryLimitedInformation,
+            false,
+            processId);
+        if (process == 0)
+        {
+            _processCache.Remove(processId);
+            return new ProcessIdentity(null, null);
+        }
+
+        try
+        {
+            var hasCreationTime = DockNativeMethods.GetProcessTimes(
+                process, out var creationTime, out _, out _, out _);
+            if (hasCreationTime
+                && _processCache.TryGetValue(processId, out var cached)
+                && cached.CreationTime == creationTime)
+            {
+                return cached.Identity;
+            }
+
+            var identity = new ProcessIdentity(
+                TryGetAppUserModelId(process),
+                TryGetExecutablePath(process));
+            if (hasCreationTime)
+            {
+                _processCache[processId] = (creationTime, identity);
+            }
+            return identity;
+        }
+        finally
+        {
+            DockNativeMethods.CloseHandle(process);
+        }
+    }
+
+    private string? ResolveCachedWindowAppUserModelId(nint window, uint processId, string? executablePath)
+    {
+        var nowTick = Environment.TickCount64;
+        if (_windowAumidCache.TryGetValue(window, out var cached)
+            && cached.ProcessId == processId
+            && (cached.AppUserModelId is not null
+                || (!DockAppResolver.IsFrameHost(executablePath) && nowTick - cached.CheckedTick < NullAumidRetryMs)))
+        {
+            return cached.AppUserModelId;
+        }
+
+        var resolved = TryGetWindowAppUserModelId(window);
+        if (resolved is not null || !DockAppResolver.IsFrameHost(executablePath))
+        {
+            _windowAumidCache[window] = (processId, resolved, nowTick);
+        }
+        return resolved;
     }
 
     private static nint GetRootOwnerOrSelf(nint window)
@@ -199,33 +282,20 @@ internal sealed class WindowCatalog
         }
     }
 
-    private static ProcessIdentity ResolveProcessIdentity(uint processId)
-    {
-        var process = DockNativeMethods.OpenProcess(
-            DockNativeMethods.ProcessQueryLimitedInformation,
-            false,
-            processId);
-        if (process == 0)
-        {
-            return new ProcessIdentity(null, null);
-        }
-
-        try
-        {
-            return new ProcessIdentity(
-                TryGetAppUserModelId(process),
-                TryGetExecutablePath(process));
-        }
-        finally
-        {
-            DockNativeMethods.CloseHandle(process);
-        }
-    }
-
     private static string? TryGetExecutablePath(nint process)
     {
-        var buffer = new StringBuilder(32768);
+        var buffer = new StringBuilder(512);
         var size = (uint)buffer.Capacity;
+        if (DockNativeMethods.QueryFullProcessImageNameW(process, 0, buffer, ref size))
+        {
+            return buffer.ToString();
+        }
+        if (Marshal.GetLastWin32Error() != ErrorInsufficientBuffer)
+        {
+            return null;
+        }
+        buffer.EnsureCapacity(32768);
+        size = (uint)buffer.Capacity;
         return DockNativeMethods.QueryFullProcessImageNameW(process, 0, buffer, ref size)
             ? buffer.ToString()
             : null;

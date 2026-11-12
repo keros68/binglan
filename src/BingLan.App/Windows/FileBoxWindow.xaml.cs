@@ -10,9 +10,9 @@ using BingLan.App.Interop;
 using BingLan.App.Services;
 using BingLan.Core.Models;
 using BingLan.Core.Services;
-using Forms = System.Windows.Forms;
 using Button = System.Windows.Controls.Button;
 using WpfOpenFileDialog = Microsoft.Win32.OpenFileDialog;
+using WpfOpenFolderDialog = Microsoft.Win32.OpenFolderDialog;
 
 namespace BingLan.App.Windows;
 
@@ -20,12 +20,14 @@ public partial class FileBoxWindow : WidgetWindowBase
 {
     private const string MyComputerEntry = "shell:MyComputerFolder";
     private const string RecycleBinEntry = "shell:RecycleBinFolder";
+    private static readonly SemaphoreSlim ProbeLimiter = new(2, 2);
 
     private readonly ObservableCollection<FileTile> _items;
     private readonly HashSet<Button> _singleClickFileTiles = [];
     // The selection lives on mapping ids so it survives tiles being replaced (icon refresh)
     // or the list being rebuilt; the anchor remembers where a Shift range starts.
     private readonly HashSet<Guid> _selectedIds = [];
+    private readonly CancellationTokenSource _closeCts = new();
     private Guid? _selectionAnchor;
     private bool _initialIconLoadStarted;
 
@@ -50,6 +52,15 @@ public partial class FileBoxWindow : WidgetWindowBase
     }
 
     public FileBoxState State { get; }
+
+    internal bool InitialProbeCompleted { get; private set; }
+
+    protected override void OnClosed(EventArgs e)
+    {
+        _closeCts.Cancel();
+        _closeCts.Dispose();
+        base.OnClosed(e);
+    }
 
     /// <summary>The other open boxes a mapping can be transferred to.</summary>
     internal Func<IReadOnlyList<FileBoxWindow>> OtherBoxes { get; set; } = () => [];
@@ -172,21 +183,13 @@ public partial class FileBoxWindow : WidgetWindowBase
         }
 
         _initialIconLoadStarted = true;
-        var initialMappings = _items
-            .Select(tile => tile.Mapping)
-            .ToDictionary(mapping => mapping.Id);
-        var icons = await Task.Run(() => LoadIcons(initialMappings.Values.Select(mapping => mapping.Path)));
-
-        for (var index = 0; index < _items.Count; index++)
+        try
         {
-            var tile = _items[index];
-            if (!initialMappings.ContainsKey(tile.Mapping.Id))
-            {
-                continue;
-            }
-
-            icons.TryGetValue(tile.Path, out var icon);
-            _items[index] = CreateTile(tile.Mapping, icon);
+            await ProbeTilesAsync(_items.ToArray(), loadMissingIcons: true);
+        }
+        finally
+        {
+            InitialProbeCompleted = true;
         }
     }
 
@@ -217,15 +220,13 @@ public partial class FileBoxWindow : WidgetWindowBase
 
     private async void AddFolder_Click(object sender, RoutedEventArgs e)
     {
-        using var dialog = new Forms.FolderBrowserDialog
+        var dialog = new WpfOpenFolderDialog
         {
-            Description = "选择要映射到桌面分组盒的文件夹",
-            UseDescriptionForTitle = true,
-            ShowNewFolderButton = false
+            Title = "选择要映射到桌面分组盒的文件夹"
         };
-        if (dialog.ShowDialog() == Forms.DialogResult.OK)
+        if (dialog.ShowDialog(this) == true)
         {
-            await AddMappingsWithStatusAsync([dialog.SelectedPath]);
+            await AddMappingsWithStatusAsync([dialog.FolderName]);
         }
     }
 
@@ -606,13 +607,7 @@ public partial class FileBoxWindow : WidgetWindowBase
             return;
         }
 
-        var icon = await Task.Run(() => ShellIconProvider.GetIcon(tile.Path));
-        // The tile may have moved or gone while the icon loaded.
-        var index = _items.IndexOf(tile);
-        if (index >= 0)
-        {
-            _items[index] = CreateTile(tile.Mapping, icon);
-        }
+        await ProbeTilesAsync([tile], loadMissingIcons: true, forceReloadIcon: true);
     }
 
     private void FileTileContextMenu_Opened(object sender, RoutedEventArgs e)
@@ -679,7 +674,7 @@ public partial class FileBoxWindow : WidgetWindowBase
         CaptureState();
         if (FileMappingService.Rename(State, tile.Mapping.Id, displayName))
         {
-            RefreshTile(tile);
+            tile.RefreshName();
             NotifyStateChanged();
         }
     }
@@ -714,7 +709,9 @@ public partial class FileBoxWindow : WidgetWindowBase
         _selectedIds.Remove(tile.Mapping.Id);
         RefreshCount();
         NotifyStateChanged();
-        target._items.Add(target.CreateTile(tile.Mapping, tile.Icon));
+        var transferred = target.CreateTile(tile.Mapping, tile.Icon);
+        transferred.IsMissing = tile.IsMissing;
+        target._items.Add(transferred);
         target.RefreshCount();
         target.NotifyStateChanged();
         StatusText.Text = $"已转移到“{target.State.Title}”";
@@ -735,15 +732,13 @@ public partial class FileBoxWindow : WidgetWindowBase
             return;
         }
 
-        using var dialog = new Forms.FolderBrowserDialog
+        var dialog = new WpfOpenFolderDialog
         {
-            Description = "选择用于重新定位的文件夹",
-            UseDescriptionForTitle = true,
-            ShowNewFolderButton = false
+            Title = "选择用于重新定位的文件夹"
         };
-        if (dialog.ShowDialog() == Forms.DialogResult.OK)
+        if (dialog.ShowDialog(this) == true)
         {
-            ApplyRelink(tile, dialog.SelectedPath);
+            ApplyRelink(tile, dialog.FolderName);
         }
     }
 
@@ -834,7 +829,9 @@ public partial class FileBoxWindow : WidgetWindowBase
 
     private async Task<bool> AddSystemEntryAsync(string path, string title)
     {
-        var icon = await Task.Run(() => ShellIconProvider.GetIcon(path));
+        var (icon, isMissing) = await Task.Run(() => (
+            ShellIconProvider.GetIcon(path),
+            !FileMappingService.IsShellEntry(path) && !File.Exists(path) && !Directory.Exists(path)));
         CaptureState();
         var added = FileMappingService.AddSystemEntry(State, path, title);
         if (added == 0)
@@ -844,7 +841,8 @@ public partial class FileBoxWindow : WidgetWindowBase
         }
 
         var mapping = State.Items.Single(item => item.Path == path);
-        _items.Add(new FileTile(mapping, icon));
+        var tile = new FileTile(mapping, icon) { IsMissing = isMissing };
+        _items.Add(tile);
         RefreshCount();
         NotifyStateChanged();
         StatusText.Text = $"已添加“{title}”";
@@ -1013,7 +1011,9 @@ public partial class FileBoxWindow : WidgetWindowBase
 
             _items.Remove(tile);
             _selectedIds.Remove(tile.Mapping.Id);
-            target._items.Add(target.CreateTile(tile.Mapping, tile.Icon));
+            var transferred = target.CreateTile(tile.Mapping, tile.Icon);
+            transferred.IsMissing = tile.IsMissing;
+            target._items.Add(transferred);
             moved++;
         }
 
@@ -1260,40 +1260,34 @@ public partial class FileBoxWindow : WidgetWindowBase
 
     private async void ReloadItems()
     {
-        var icons = _items.ToDictionary(
+        var previous = _items.ToDictionary(
             tile => tile.Mapping.Id,
-            tile => tile.Icon);
+            tile => (tile.Icon, tile.IsMissing));
         _items.Clear();
-        var pendingIcons = new List<FileMappingState>();
+        var pendingProbe = new List<FileTile>();
         foreach (var item in State.Items.OrderBy(x => x.Order))
         {
-            icons.TryGetValue(item.Id, out var icon);
-            if (icon is null)
+            var known = previous.TryGetValue(item.Id, out var prev);
+            var tile = CreateTile(item, known ? prev.Icon : null);
+            if (known)
             {
-                pendingIcons.Add(item);
+                tile.IsMissing = prev.IsMissing;
             }
-            _items.Add(CreateTile(item, icon));
+            if (!known || tile.Icon is null)
+            {
+                pendingProbe.Add(tile);
+            }
+            _items.Add(tile);
         }
         RefreshCount();
-        if (pendingIcons.Count == 0)
+        if (pendingProbe.Count == 0)
         {
             return;
         }
 
-        // Icons that are not in memory yet are extracted off the UI thread and patched in
-        // afterwards, like the initial load in FileBoxWindow_Loaded; sorting, moving or
-        // relinking must not block the window on shell icon extraction.
-        var paths = pendingIcons.Select(item => item.Path).ToArray();
-        var loaded = await Task.Run(() => LoadIcons(paths));
-        for (var index = 0; index < _items.Count; index++)
-        {
-            var tile = _items[index];
-            if (tile.Icon is not null || !loaded.TryGetValue(tile.Path, out var icon))
-            {
-                continue;
-            }
-            _items[index] = CreateTile(tile.Mapping, icon);
-        }
+        // Existence and missing icons are probed off the UI thread so sorting, moving or
+        // relinking never blocks the window on offline network paths or shell icon extraction.
+        await ProbeTilesAsync(pendingProbe, loadMissingIcons: true);
     }
 
     // Drop sources can hand over malformed paths; those are skipped instead of failing the drop.
@@ -1316,11 +1310,13 @@ public partial class FileBoxWindow : WidgetWindowBase
             .OfType<string>()
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
-        var preparedIcons = await Task.Run(() => LoadIcons(candidates));
+        var existingCandidates = await Task.Run(
+            () => candidates.Where(path => File.Exists(path) || Directory.Exists(path)).ToArray());
+        var preparedIcons = await Task.Run(() => LoadIcons(existingCandidates));
 
         CaptureState();
         var existingIds = State.Items.Select(item => item.Id).ToHashSet();
-        var added = FileMappingService.AddExisting(State, candidates);
+        var added = FileMappingService.AddExisting(State, existingCandidates);
         if (added == 0)
         {
             return 0;
@@ -1356,8 +1352,8 @@ public partial class FileBoxWindow : WidgetWindowBase
     private async Task AddMappingsWithStatusAsync(IEnumerable<string> paths)
     {
         var list = paths.ToList();
-        var invalid = list.Count(path => TryGetFullPath(path) is not { } full
-            || (!File.Exists(full) && !Directory.Exists(full)));
+        var invalid = await Task.Run(() => list.Count(path => TryGetFullPath(path) is not { } full
+            || (!File.Exists(full) && !Directory.Exists(full))));
         var added = await AddMappingsAsync(list);
         var skipped = invalid > 0 ? $"{invalid} 项路径无效，已跳过" : string.Empty;
         StatusText.Text = added > 0
@@ -1367,10 +1363,85 @@ public partial class FileBoxWindow : WidgetWindowBase
 
     private void RefreshTile(FileTile tile)
     {
-        var index = _items.IndexOf(tile);
-        if (index >= 0)
+        _ = ProbeTilesAsync([tile], loadMissingIcons: tile.Icon is null);
+    }
+
+    private async Task ProbeTilesAsync(
+        IReadOnlyList<FileTile> tiles,
+        bool loadMissingIcons,
+        bool forceReloadIcon = false)
+    {
+        if (tiles.Count == 0 || _closeCts.IsCancellationRequested)
         {
-            _items[index] = CreateTile(tile.Mapping, tile.Icon);
+            return;
+        }
+
+        var token = _closeCts.Token;
+        var snapshots = tiles
+            .Select(tile => (Tile: tile, tile.Mapping, NeedIcon: forceReloadIcon || (loadMissingIcons && tile.Icon is null)))
+            .ToArray();
+
+        try
+        {
+            await ProbeLimiter.WaitAsync(token);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+
+        (FileTile Tile, bool IsMissing, ImageSource? Icon, bool HasIconUpdate)[] results;
+        try
+        {
+            results = await Task.Run(() =>
+            {
+                var computed = new List<(FileTile, bool, ImageSource?, bool)>(snapshots.Length);
+                foreach (var (tile, mapping, needIcon) in snapshots)
+                {
+                    if (token.IsCancellationRequested)
+                    {
+                        break;
+                    }
+
+                    var isMissing = FileMappingService.IsMissing(mapping);
+                    ImageSource? icon = null;
+                    if (needIcon)
+                    {
+                        try
+                        {
+                            icon = ShellIconProvider.GetIcon(mapping.Path);
+                        }
+                        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                        {
+                            icon = null;
+                        }
+                    }
+                    computed.Add((tile, isMissing, icon, needIcon));
+                }
+                return computed.ToArray();
+            }, token);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+        finally
+        {
+            ProbeLimiter.Release();
+        }
+
+        if (token.IsCancellationRequested)
+        {
+            return;
+        }
+
+        foreach (var (tile, isMissing, icon, hasIconUpdate) in results)
+        {
+            tile.IsMissing = isMissing;
+            if (hasIconUpdate)
+            {
+                tile.Icon = icon;
+            }
         }
     }
 
@@ -1409,6 +1480,7 @@ public partial class FileBoxWindow : WidgetWindowBase
         public FileTile(FileMappingState mapping)
             : this(mapping, ShellIconProvider.GetIcon(mapping.Path))
         {
+            _isMissing = FileMappingService.IsMissing(mapping);
         }
 
         public FileTile(FileMappingState mapping, ImageSource? icon)
@@ -1416,22 +1488,60 @@ public partial class FileBoxWindow : WidgetWindowBase
             Mapping = mapping;
             Path = mapping.Path;
             IsShellEntry = FileMappingService.IsShellEntry(mapping.Path);
-            IsMissing = FileMappingService.IsMissing(mapping);
-            Name = FileMappingService.GetDisplayName(mapping);
-            Icon = icon;
+            _name = FileMappingService.GetDisplayName(mapping);
+            _icon = icon;
         }
 
         public event PropertyChangedEventHandler? PropertyChanged;
 
         public FileMappingState Mapping { get; }
         public string Path { get; }
-        public string Name { get; }
         public bool IsShellEntry { get; }
-        public bool IsMissing { get; }
-        public ImageSource? Icon { get; }
 
-        // The identity of a tile is immutable; only the selection highlight is mutable so
-        // the templates can bind to it without the tile being replaced.
+        private string _name;
+        public string Name => _name;
+
+        internal void RefreshName()
+        {
+            var next = FileMappingService.GetDisplayName(Mapping);
+            if (_name == next)
+            {
+                return;
+            }
+            _name = next;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Name)));
+        }
+
+        private bool _isMissing;
+        public bool IsMissing
+        {
+            get => _isMissing;
+            internal set
+            {
+                if (_isMissing == value)
+                {
+                    return;
+                }
+                _isMissing = value;
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsMissing)));
+            }
+        }
+
+        private ImageSource? _icon;
+        public ImageSource? Icon
+        {
+            get => _icon;
+            internal set
+            {
+                if (ReferenceEquals(_icon, value))
+                {
+                    return;
+                }
+                _icon = value;
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Icon)));
+            }
+        }
+
         private bool _isSelected;
         public bool IsSelected
         {

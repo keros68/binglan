@@ -18,22 +18,26 @@ namespace BingLan.App.Services;
 /// </summary>
 internal sealed class DesktopSurfaceWatcher : IDisposable
 {
-    private const uint EventSystemForeground = 0x0003;
-    private const uint EventSystemMinimizeStart = 0x0016;
-    private const uint WinEventOutOfContext = 0;
     private static readonly TimeSpan SettleDelay = TimeSpan.FromMilliseconds(150);
     private const int ObjidWindow = 0;
 
     private readonly Func<IReadOnlyList<nint>> _cardHandles;
     private readonly NativeMethods.WinEventProc _hookCallback;
-    private nint _hook;
-    private DispatcherTimer? _evaluateTimer;
+    private readonly List<nint> _hooks = [];
+    private readonly DispatcherTimer _evaluateTimer;
+    private bool _disposed;
 
     internal DesktopSurfaceWatcher(Func<IReadOnlyList<nint>> cardHandles)
     {
         _cardHandles = cardHandles;
         // Keep the delegate alive for as long as the hook exists.
         _hookCallback = OnWinEvent;
+        _evaluateTimer = new DispatcherTimer(
+            SettleDelay,
+            DispatcherPriority.Background,
+            OnEvaluateTick,
+            Dispatcher.CurrentDispatcher);
+        _evaluateTimer.Stop();
     }
 
     /// <summary>Raised when <see cref="IsDesktopShown"/> changed.</summary>
@@ -43,28 +47,47 @@ internal sealed class DesktopSurfaceWatcher : IDisposable
 
     internal void Start()
     {
-        if (_hook != 0)
+        if (_hooks.Count > 0 || _disposed)
         {
             return;
         }
-        _hook = NativeMethods.SetWinEventHook(
-            EventSystemForeground,
-            EventSystemMinimizeStart,
-            nint.Zero,
-            _hookCallback,
-            0,
-            0,
-            WinEventOutOfContext);
+        Hook(DockNativeMethods.EventSystemForeground, DockNativeMethods.EventSystemForeground);
+        Hook(DockNativeMethods.EventSystemMinimizeStart, DockNativeMethods.EventSystemMinimizeEnd);
     }
 
     public void Dispose()
     {
-        _evaluateTimer?.Stop();
-        _evaluateTimer = null;
-        if (_hook != 0)
+        _disposed = true;
+        _evaluateTimer.Stop();
+        foreach (var hook in _hooks)
         {
-            NativeMethods.UnhookWinEvent(_hook);
-            _hook = 0;
+            NativeMethods.UnhookWinEvent(hook);
+        }
+        _hooks.Clear();
+    }
+
+    private void Hook(uint eventMin, uint eventMax)
+    {
+        var hook = NativeMethods.SetWinEventHook(
+            eventMin,
+            eventMax,
+            nint.Zero,
+            _hookCallback,
+            0,
+            0,
+            DockNativeMethods.WineventOutOfContext | DockNativeMethods.WineventSkipOwnProcess);
+        if (hook != 0)
+        {
+            _hooks.Add(hook);
+        }
+    }
+
+    private void OnEvaluateTick(object? sender, EventArgs e)
+    {
+        _evaluateTimer.Stop();
+        if (!_disposed)
+        {
+            Evaluate();
         }
     }
 
@@ -78,27 +101,16 @@ internal sealed class DesktopSurfaceWatcher : IDisposable
         uint eventTime)
     {
         UiDiagnostics.Hit(UiActivity.DesktopEvent);
-        if (idObject != ObjidWindow)
+        if (_disposed || idObject != ObjidWindow || idChild != 0)
         {
             return;
         }
         // The shell raises the desktop surface while it minimises everything, so the
-        // z-order settles a moment after the first event. Coalesce the burst. This
-        // constructor starts the timer, and a timer keeps ticking until stopped: each
-        // one must stop itself after its single check, or every burst would leave
-        // another timer re-enumerating the windows every 150 ms for good.
-        if (_evaluateTimer is null)
+        // z-order settles a moment after the first event. Coalesce the burst on one
+        // reusable timer instead of allocating a new timer per event burst.
+        if (!_evaluateTimer.IsEnabled)
         {
-            _evaluateTimer = new DispatcherTimer(
-                SettleDelay,
-                DispatcherPriority.Background,
-                (sender, _) =>
-                {
-                    ((DispatcherTimer)sender!).Stop();
-                    _evaluateTimer = null;
-                    Evaluate();
-                },
-                Dispatcher.CurrentDispatcher);
+            _evaluateTimer.Start();
         }
     }
 
@@ -118,7 +130,7 @@ internal sealed class DesktopSurfaceWatcher : IDisposable
         if (found)
         {
             NativeMethods.GetWindowThreadProcessId(progman, out var shellProcess);
-            var cards = _cardHandles();
+            var cards = _cardHandles().ToHashSet();
             NativeMethods.EnumWindows((window, _) =>
             {
                 if (window == progman)
@@ -133,7 +145,7 @@ internal sealed class DesktopSurfaceWatcher : IDisposable
                 {
                     return true;
                 }
-                if (((IReadOnlyList<nint>)cards).Contains(window))
+                if (cards.Contains(window))
                 {
                     return true;
                 }

@@ -77,7 +77,7 @@ void Run(string name, Action test)
     }
     catch (Exception exception)
     {
-        failures.Add($"失败：{name} - {exception.Message}");
+        failures.Add($"失败：{name} - {exception}");
     }
 }
 

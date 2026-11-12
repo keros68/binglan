@@ -1,4 +1,5 @@
 using System.IO;
+using System.Reflection;
 
 namespace BingLan.App.Services;
 
@@ -10,6 +11,10 @@ namespace BingLan.App.Services;
 internal static class StartupLog
 {
     private const long MaximumBytes = 64 * 1024;
+    internal static readonly string BuildVersion =
+        typeof(StartupLog).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+        ?? typeof(StartupLog).Assembly.GetName().Version?.ToString()
+        ?? "unknown";
     private static string? _path;
 
     internal static void Open(string dataDirectory) => _path = Path.Combine(dataDirectory, "startup.log");
@@ -23,7 +28,7 @@ internal static class StartupLog
 
         LocalLogFile.Append(
             path,
-            $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}  开机后 {Environment.TickCount64 / 1000} 秒  {step}",
+            $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}  [{BuildVersion}]  开机后 {Environment.TickCount64 / 1000} 秒  {step}",
             MaximumBytes);
     }
 }

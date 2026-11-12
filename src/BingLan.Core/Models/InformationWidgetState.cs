@@ -1,3 +1,6 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
 namespace BingLan.Core.Models;
 
 public sealed class InformationWidgetState
@@ -33,4 +36,7 @@ public sealed class InformationWidgetState
         !string.IsNullOrWhiteSpace(WeatherCity) &&
         WeatherLatitude is >= -90d and <= 90d &&
         WeatherLongitude is >= -180d and <= 180d;
+
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? ExtensionData { get; set; }
 }

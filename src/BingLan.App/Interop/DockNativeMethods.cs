@@ -340,7 +340,16 @@ internal static class DockNativeMethods
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool CloseHandle(nint handle);
 
-    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+    [DllImport("kernel32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool GetProcessTimes(
+        nint process,
+        out long creationTime,
+        out long exitTime,
+        out long kernelTime,
+        out long userTime);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool QueryFullProcessImageNameW(
         nint process,

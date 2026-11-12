@@ -1,3 +1,6 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
 namespace BingLan.Core.Models;
 
 public enum NoteBodyTextAlignment
@@ -36,6 +39,9 @@ public sealed class NoteBodyTypography
     public bool Italic { get; set; }
 
     public NoteBodyTextAlignment Alignment { get; set; } = NoteBodyTextAlignment.Left;
+
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? ExtensionData { get; set; }
 }
 
 public static class NoteBodyTypographyRules
@@ -99,4 +105,7 @@ public sealed class NoteWidgetState
         Height = 266
     };
     public NoteBodyTypography BodyTypography { get; set; } = new();
+
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? ExtensionData { get; set; }
 }

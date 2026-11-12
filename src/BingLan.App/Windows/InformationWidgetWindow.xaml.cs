@@ -2,8 +2,10 @@ using System.Globalization;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Threading;
 using BingLan.Core.Models;
 using BingLan.Core.Services;
+using Microsoft.Win32;
 using Brush = System.Windows.Media.Brush;
 using Color = System.Windows.Media.Color;
 using ColorConverter = System.Windows.Media.ColorConverter;
@@ -17,8 +19,10 @@ public partial class InformationWidgetWindow : WidgetWindowBase
     private readonly bool _usesLegacyAppearance;
     private readonly DesktopComponentKind? _componentKind;
     private DesktopExperienceState _experience;
+    private readonly DispatcherTimer _ambientTimer;
     private DateTimeOffset? _lastWeatherSuccess;
     private bool _weatherInFlight;
+    private bool _systemEventsHooked;
 
     public InformationWidgetWindow(
         InformationWidgetState state,
@@ -41,7 +45,19 @@ public partial class InformationWidgetWindow : WidgetWindowBase
         ApplyDesktopExperience(_experience);
 
         _sampler.Sampled += OnSampled;
-        Closed += (_, _) => _sampler.Sampled -= OnSampled;
+        _ambientTimer = new DispatcherTimer(DispatcherPriority.Background, Dispatcher);
+        _ambientTimer.Tick += OnAmbientTick;
+        Closed += (_, _) =>
+        {
+            _sampler.Sampled -= OnSampled;
+            _ambientTimer.Stop();
+            if (_systemEventsHooked)
+            {
+                _systemEventsHooked = false;
+                SystemEvents.TimeChanged -= OnSystemTimeChanged;
+                SystemEvents.PowerModeChanged -= OnPowerModeChanged;
+            }
+        };
 
         UpdateClock();
         UpdatePerformance(new PerformanceSnapshot(0d, 0d, 0d, 0d, DateTimeOffset.Now));
@@ -65,11 +81,22 @@ public partial class InformationWidgetWindow : WidgetWindowBase
 
         Loaded += (_, _) =>
         {
-            // 采样服务由宿主共享拥有；窗口只在尚未启动时启动，不在关闭时停止。
-            if (!_sampler.IsRunning)
+            // 采样服务由宿主共享拥有；需要性能数据的卡片在尚未启动时启动，纯时间/问候/天气卡片使用分钟对齐低频刷新。
+            if (_componentKind is null or DesktopComponentKind.Performance && !_sampler.IsRunning)
             {
                 _sampler.Start();
             }
+            if (!_systemEventsHooked)
+            {
+                _systemEventsHooked = true;
+                SystemEvents.TimeChanged += OnSystemTimeChanged;
+                SystemEvents.PowerModeChanged += OnPowerModeChanged;
+            }
+            if (_componentKind is null or DesktopComponentKind.Weather && !_sampler.IsRunning)
+            {
+                MaybeRefreshWeather(false);
+            }
+            ArmAmbientTimer();
         };
     }
 
@@ -323,6 +350,73 @@ public partial class InformationWidgetWindow : WidgetWindowBase
             {
                 MaybeRefreshWeather(false);
             }
+        });
+    }
+
+    private void OnAmbientTick(object? sender, EventArgs e)
+    {
+        if (!IsLoaded)
+        {
+            return;
+        }
+        if (!_sampler.IsRunning)
+        {
+            if (_componentKind is null or DesktopComponentKind.TimeDate or DesktopComponentKind.Greeting)
+            {
+                UpdateClock();
+            }
+            if (_componentKind is null or DesktopComponentKind.Weather)
+            {
+                MaybeRefreshWeather(false);
+            }
+        }
+        ArmAmbientTimer();
+    }
+
+    private void ArmAmbientTimer()
+    {
+        var now = DateTime.Now;
+        var nowOffset = DateTimeOffset.Now;
+        var delayMs = Math.Clamp(60_000d - ((now.Second * 1000) + now.Millisecond) + 50d, 250d, 60_050d);
+        if ((_componentKind is null or DesktopComponentKind.Weather)
+            && State.HasWeatherLocation
+            && !_weatherInFlight
+            && _weather.NextRetryAt is { } retryAt
+            && retryAt > nowOffset)
+        {
+            var retryMs = Math.Clamp((retryAt - nowOffset).TotalMilliseconds + 100d, 1000d, 60_050d);
+            delayMs = Math.Min(delayMs, retryMs);
+        }
+        _ambientTimer.Interval = TimeSpan.FromMilliseconds(delayMs);
+        _ambientTimer.Start();
+    }
+
+    private void OnSystemTimeChanged(object? sender, EventArgs e) =>
+        Dispatcher.BeginInvoke(() =>
+        {
+            if (!IsLoaded) return;
+            if (_componentKind is null or DesktopComponentKind.TimeDate or DesktopComponentKind.Greeting)
+            {
+                UpdateClock();
+            }
+            ArmAmbientTimer();
+        });
+
+    private void OnPowerModeChanged(object sender, PowerModeChangedEventArgs e)
+    {
+        if (e.Mode != PowerModes.Resume) return;
+        Dispatcher.BeginInvoke(() =>
+        {
+            if (!IsLoaded) return;
+            if (_componentKind is null or DesktopComponentKind.TimeDate or DesktopComponentKind.Greeting)
+            {
+                UpdateClock();
+            }
+            if (_componentKind is null or DesktopComponentKind.Weather)
+            {
+                MaybeRefreshWeather(false);
+            }
+            ArmAmbientTimer();
         });
     }
 

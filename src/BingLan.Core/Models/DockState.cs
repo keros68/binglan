@@ -1,3 +1,5 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using BingLan.Core.Dock;
 
 namespace BingLan.Core.Models;
@@ -46,6 +48,9 @@ public sealed class DockPinnedApp
     /// icon. Only a bare generated name is kept, never a path.
     /// </summary>
     public string? IconFile { get; set; }
+
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? ExtensionData { get; set; }
 }
 
 public sealed class DockState
@@ -126,6 +131,9 @@ public sealed class DockState
         get => _surfaceOpacity;
         set => _surfaceOpacity = double.IsFinite(value)
             ? Math.Clamp(value, DesktopStyleRules.MinimumGlassDensity, DesktopStyleRules.MaximumGlassDensity)
-            : DefaultSurfaceOpacity;
+            : DockState.DefaultSurfaceOpacity;
     }
+
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? ExtensionData { get; set; }
 }

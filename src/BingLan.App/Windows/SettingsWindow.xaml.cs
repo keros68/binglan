@@ -1,3 +1,5 @@
+using System.ComponentModel;
+using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
@@ -5,6 +7,7 @@ using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Threading;
 using BingLan.App.Dock;
+using BingLan.App.Interop;
 using BingLan.App.Themes;
 using BingLan.Core.Dock;
 using BingLan.Core.Models;
@@ -379,6 +382,24 @@ public partial class SettingsWindow : Window
         ComponentDetailsScrollViewer.ScrollToTop();
     }
 
+    private bool IsSecondaryTodoWindow(
+        WidgetWindowBase? window,
+        [NotNullWhen(true)] out TodoWidgetWindow? todoWindow)
+    {
+        var primaryId = _maintenance.PrimaryTodoId()
+            ?? _widgetProvider().OfType<TodoWidgetWindow>().FirstOrDefault()?.State.Id;
+        if (window is TodoWidgetWindow candidate
+            && primaryId is { } id
+            && id != candidate.State.Id)
+        {
+            todoWindow = candidate;
+            return true;
+        }
+
+        todoWindow = null;
+        return false;
+    }
+
     private void LoadSelectedComponentEditor(
         DesktopComponentKind kind,
         WidgetWindowBase? targetWindow)
@@ -387,27 +408,36 @@ public partial class SettingsWindow : Window
         try
         {
             var component = _desktopExperience.GetComponent(kind);
+            TodoWidgetWindow? secondaryTodo = null;
+            var isSecondaryTodo = kind == DesktopComponentKind.Todo
+                && IsSecondaryTodoWindow(targetWindow, out secondaryTodo);
+            var appearance = isSecondaryTodo ? secondaryTodo!.State.Appearance : component.Appearance;
+            var fontScale = isSecondaryTodo ? secondaryTodo!.State.FontScale : component.FontScale;
+            var fontFamily = isSecondaryTodo ? secondaryTodo!.State.FontFamily : component.FontFamily;
+            var cornerRadius = isSecondaryTodo ? secondaryTodo!.State.CornerRadius : component.CornerRadius;
+            var placement = isSecondaryTodo ? secondaryTodo!.State.Placement : component.Placement;
+
             SelectedComponentVisibleCheckBox.IsChecked = component.IsVisible;
             SelectedComponentLockedCheckBox.IsChecked =
                 targetWindow?.IsWidgetLocked ?? component.IsLocked;
-            SelectedComponentFontScaleSlider.Value = component.FontScale;
-            SelectedComponentFontPicker.SelectedItem = component.FontFamily is { } font
+            SelectedComponentFontScaleSlider.Value = fontScale;
+            SelectedComponentFontPicker.SelectedItem = fontFamily is { } font
                 ? InstalledFontCatalog.Resolve(font)
                 : DefaultFontLabel;
-            SelectedComponentTextColorEditor.Text = component.Appearance.TextColor;
+            SelectedComponentTextColorEditor.Text = appearance.TextColor;
             SelectedComponentBackgroundColorEditor.Text =
-                component.Appearance.BackgroundColor;
-            SelectedComponentOpacitySlider.Value = component.Appearance.BackgroundOpacity;
+                appearance.BackgroundColor;
+            SelectedComponentOpacitySlider.Value = appearance.BackgroundOpacity;
             // 标题栏设置只在有标题栏的组件（待办卡片）上显示；裸文字信息卡没有
             // 这一层，隐藏不等于不可调。
             SelectedComponentHeaderRows.Visibility = kind == DesktopComponentKind.Todo
                 ? Visibility.Visible
                 : Visibility.Collapsed;
-            SelectedComponentHeaderColorEditor.Text = component.Appearance.HeaderColor;
-            SelectedComponentHeaderOpacitySlider.Value = component.Appearance.HeaderOpacity;
-            SelectedComponentCornerRadiusSlider.Value = component.CornerRadius;
-            SelectedComponentWidthEditor.Text = $"{component.Placement.Width:0.#}";
-            SelectedComponentHeightEditor.Text = $"{component.Placement.Height:0.#}";
+            SelectedComponentHeaderColorEditor.Text = appearance.HeaderColor;
+            SelectedComponentHeaderOpacitySlider.Value = appearance.HeaderOpacity;
+            SelectedComponentCornerRadiusSlider.Value = cornerRadius;
+            SelectedComponentWidthEditor.Text = $"{placement.Width:0.#}";
+            SelectedComponentHeightEditor.Text = $"{placement.Height:0.#}";
             SelectedComponentDensitySelector.SelectedIndex = component.Density switch
             {
                 DesktopInformationDensity.Comfortable => 0,
@@ -416,7 +446,7 @@ public partial class SettingsWindow : Window
             };
             // The segment shows which material this card wears; custom colours read as
             // the nearer of light and dark glass.
-            var inferredLook = InferLook(component.Appearance);
+            var inferredLook = InferLook(appearance);
             ComponentLookLightRadio.IsChecked = inferredLook == GlassMode.Light;
             ComponentLookDarkRadio.IsChecked = inferredLook == GlassMode.Dark;
             ComponentLookClearRadio.IsChecked = inferredLook == GlassMode.Clear;
@@ -489,6 +519,8 @@ public partial class SettingsWindow : Window
         SelectedComponentBackgroundColorEditor.Text = look.BackgroundColor;
         SelectedComponentTextColorEditor.Text = look.TextColor;
         SelectedComponentOpacitySlider.Value = look.BackgroundOpacity;
+        SelectedComponentHeaderColorEditor.Text = look.HeaderColor;
+        SelectedComponentHeaderOpacitySlider.Value = look.HeaderOpacity;
         _componentApplyTimer.Stop();
         ApplySelectedComponent(refreshList: false);
     }
@@ -560,18 +592,12 @@ public partial class SettingsWindow : Window
         {
         }
 
-        using var dialog = new System.Windows.Forms.ColorDialog
-        {
-            Color = System.Drawing.Color.FromArgb(current.R, current.G, current.B),
-            FullOpen = true,
-            AnyColor = true
-        };
-        if (dialog.ShowDialog() != System.Windows.Forms.DialogResult.OK)
+        if (!NativeColorDialog.TryPickColor(this, current, out var chosen))
         {
             return;
         }
 
-        editor.Text = $"#{dialog.Color.R:X2}{dialog.Color.G:X2}{dialog.Color.B:X2}";
+        editor.Text = chosen;
     }
 
     private void RefreshComponentColorChips()
@@ -933,56 +959,108 @@ public partial class SettingsWindow : Window
         }
 
         var component = _desktopExperience.GetComponent(kind);
-        component.IsVisible = SelectedComponentVisibleCheckBox.IsChecked == true;
-        component.FontScale = SelectedComponentFontScaleSlider.Value;
-        component.FontFamily = SelectedComponentFontPicker.SelectedItem is string font && font != DefaultFontLabel
+        var (minimumWidth, minimumHeight) = GetMinimumComponentSize(kind);
+        var fontFamily = SelectedComponentFontPicker.SelectedItem is string font && font != DefaultFontLabel
             ? font
             : null;
-        component.Appearance.TextColor = WidgetAppearanceRules.CoerceTextColor(
-            SelectedComponentTextColorEditor.Text);
-        component.Appearance.BackgroundColor = WidgetAppearanceRules.CoerceBackgroundColor(
-            SelectedComponentBackgroundColorEditor.Text);
-        component.Appearance.BackgroundOpacity =
-            WidgetAppearanceRules.CoerceBackgroundOpacity(
-                SelectedComponentOpacitySlider.Value);
-        component.Appearance.HeaderColor = WidgetAppearanceRules.CoerceHeaderColor(
-            SelectedComponentHeaderColorEditor.Text);
-        component.Appearance.HeaderOpacity =
-            WidgetAppearanceRules.CoerceHeaderOpacity(
-                SelectedComponentHeaderOpacitySlider.Value);
-        component.CornerRadius = SelectedComponentCornerRadiusSlider.Value;
-        var (minimumWidth, minimumHeight) = GetMinimumComponentSize(kind);
-        component.Placement.Width = ParseSize(
-            SelectedComponentWidthEditor.Text,
-            component.Placement.Width,
-            minimumWidth,
-            1600d);
-        component.Placement.Height = ParseSize(
-            SelectedComponentHeightEditor.Text,
-            component.Placement.Height,
-            minimumHeight,
-            1200d);
-        component.Density = SelectedComponentDensitySelector.SelectedIndex switch
+
+        if (kind == DesktopComponentKind.Todo
+            && IsSecondaryTodoWindow(_selectedComponentEntry.Window, out var secondaryTodo))
         {
-            0 => DesktopInformationDensity.Comfortable,
-            2 => DesktopInformationDensity.Compact,
-            _ => DesktopInformationDensity.Standard
-        };
-        if (_selectedComponentEntry.Window is { } targetWindow)
-        {
-            // 先应用组件状态、再应用锁定：ApplyWidgetLock 会触发窗口状态回写，
-            // 把窗口当前尺寸写回组件 Placement。放在后面时窗口已拿到上面写入的
-            // 新尺寸，回写与设置一致；放在前面则会用旧尺寸覆盖，卡片尺寸设置
-            // 永远不生效。
-            _applyDesktopExperience(_desktopExperience);
-            _applyWidgetLock(
-                targetWindow,
-                SelectedComponentLockedCheckBox.IsChecked == true);
+            var visibilityChanged = component.IsVisible != (SelectedComponentVisibleCheckBox.IsChecked == true);
+            component.IsVisible = SelectedComponentVisibleCheckBox.IsChecked == true;
+            var todoState = secondaryTodo.State;
+            todoState.FontScale = SelectedComponentFontScaleSlider.Value;
+            todoState.FontFamily = fontFamily;
+            todoState.Appearance.TextColor = WidgetAppearanceRules.CoerceTextColor(
+                SelectedComponentTextColorEditor.Text);
+            todoState.Appearance.BackgroundColor = WidgetAppearanceRules.CoerceBackgroundColor(
+                SelectedComponentBackgroundColorEditor.Text);
+            todoState.Appearance.BackgroundOpacity =
+                WidgetAppearanceRules.CoerceBackgroundOpacity(
+                    SelectedComponentOpacitySlider.Value);
+            todoState.Appearance.HeaderColor = WidgetAppearanceRules.CoerceHeaderColor(
+                SelectedComponentHeaderColorEditor.Text);
+            todoState.Appearance.HeaderOpacity =
+                WidgetAppearanceRules.CoerceHeaderOpacity(
+                    SelectedComponentHeaderOpacitySlider.Value);
+            todoState.CornerRadius = SelectedComponentCornerRadiusSlider.Value;
+            todoState.Placement.Width = ParseSize(
+                SelectedComponentWidthEditor.Text,
+                todoState.Placement.Width,
+                minimumWidth,
+                1600d);
+            todoState.Placement.Height = ParseSize(
+                SelectedComponentHeightEditor.Text,
+                todoState.Placement.Height,
+                minimumHeight,
+                1200d);
+
+            secondaryTodo.SetWidgetBackgroundColor(todoState.Appearance.BackgroundColor);
+            secondaryTodo.SetWidgetBackgroundOpacity(todoState.Appearance.BackgroundOpacity);
+            secondaryTodo.SetWidgetHeaderColor(todoState.Appearance.HeaderColor);
+            secondaryTodo.SetWidgetHeaderOpacity(todoState.Appearance.HeaderOpacity);
+            secondaryTodo.SetWidgetTextColor(todoState.Appearance.TextColor);
+            secondaryTodo.SetContentFontScale(todoState.FontScale);
+            secondaryTodo.SetContentFontFamily(todoState.FontFamily);
+            secondaryTodo.WidgetCornerRadius = todoState.CornerRadius;
+            secondaryTodo.ApplyPlacement(todoState.Placement, SelectedComponentLockedCheckBox.IsChecked == true);
+            if (visibilityChanged)
+            {
+                _applyDesktopExperience(_desktopExperience);
+            }
+            _applyWidgetLock(secondaryTodo, SelectedComponentLockedCheckBox.IsChecked == true);
         }
         else
         {
-            component.IsLocked = SelectedComponentLockedCheckBox.IsChecked == true;
-            _applyDesktopExperience(_desktopExperience);
+            component.IsVisible = SelectedComponentVisibleCheckBox.IsChecked == true;
+            component.FontScale = SelectedComponentFontScaleSlider.Value;
+            component.FontFamily = fontFamily;
+            component.Appearance.TextColor = WidgetAppearanceRules.CoerceTextColor(
+                SelectedComponentTextColorEditor.Text);
+            component.Appearance.BackgroundColor = WidgetAppearanceRules.CoerceBackgroundColor(
+                SelectedComponentBackgroundColorEditor.Text);
+            component.Appearance.BackgroundOpacity =
+                WidgetAppearanceRules.CoerceBackgroundOpacity(
+                    SelectedComponentOpacitySlider.Value);
+            component.Appearance.HeaderColor = WidgetAppearanceRules.CoerceHeaderColor(
+                SelectedComponentHeaderColorEditor.Text);
+            component.Appearance.HeaderOpacity =
+                WidgetAppearanceRules.CoerceHeaderOpacity(
+                    SelectedComponentHeaderOpacitySlider.Value);
+            component.CornerRadius = SelectedComponentCornerRadiusSlider.Value;
+            component.Placement.Width = ParseSize(
+                SelectedComponentWidthEditor.Text,
+                component.Placement.Width,
+                minimumWidth,
+                1600d);
+            component.Placement.Height = ParseSize(
+                SelectedComponentHeightEditor.Text,
+                component.Placement.Height,
+                minimumHeight,
+                1200d);
+            component.Density = SelectedComponentDensitySelector.SelectedIndex switch
+            {
+                0 => DesktopInformationDensity.Comfortable,
+                2 => DesktopInformationDensity.Compact,
+                _ => DesktopInformationDensity.Standard
+            };
+            if (_selectedComponentEntry.Window is { } targetWindow)
+            {
+                // 先应用组件状态、再应用锁定：ApplyWidgetLock 会触发窗口状态回写，
+                // 把窗口当前尺寸写回组件 Placement。放在后面时窗口已拿到上面写入的
+                // 新尺寸，回写与设置一致；放在前面则会用旧尺寸覆盖，卡片尺寸设置
+                // 永远不生效。
+                _applyDesktopExperience(_desktopExperience);
+                _applyWidgetLock(
+                    targetWindow,
+                    SelectedComponentLockedCheckBox.IsChecked == true);
+            }
+            else
+            {
+                component.IsLocked = SelectedComponentLockedCheckBox.IsChecked == true;
+                _applyDesktopExperience(_desktopExperience);
+            }
         }
         ComponentSettingsStatusText.Text = $"已保存“{_selectedComponentEntry.Name}”设置";
         UpdateOwnLookSummary(kind);
@@ -999,7 +1077,10 @@ public partial class SettingsWindow : Window
     /// </summary>
     private bool UpdateOwnLookSummary(DesktopComponentKind kind)
     {
-        var own = HasOwnLook(kind);
+        var own = kind == DesktopComponentKind.Todo
+            && IsSecondaryTodoWindow(_selectedComponentEntry?.Window, out var secondaryTodo)
+            ? !DesktopStyleRules.FollowsSharedCardLook(secondaryTodo.State.Appearance, _maintenance.Style)
+            : HasOwnLook(kind);
         ComponentOwnLookSummaryText.Text = own
             ? "已独立设置颜色，不跟随全局外观"
             : "跟随全局外观，展开后可为这张卡片独立设置";
@@ -1021,6 +1102,12 @@ public partial class SettingsWindow : Window
         component.Appearance.BackgroundColor = look.BackgroundColor;
         component.Appearance.BackgroundOpacity = look.BackgroundOpacity;
         component.Appearance.TextColor = look.TextColor;
+        if (kind == DesktopComponentKind.Todo)
+        {
+            var glass = DesktopStyleRules.Appearance(_maintenance.Style);
+            component.Appearance.HeaderColor = glass.HeaderColor;
+            component.Appearance.HeaderOpacity = glass.HeaderOpacity;
+        }
         _applyDesktopExperience(_desktopExperience);
         if (_selectedComponentEntry?.Kind == kind)
         {
@@ -1032,8 +1119,32 @@ public partial class SettingsWindow : Window
         RefreshAppearanceOverrides();
     }
 
+    private void FollowSecondaryTodoSharedLook(TodoWidgetWindow todoWindow)
+    {
+        var glass = DesktopStyleRules.Appearance(_maintenance.Style);
+        todoWindow.SetWidgetBackgroundColor(glass.BackgroundColor);
+        todoWindow.SetWidgetBackgroundOpacity(glass.BackgroundOpacity);
+        todoWindow.SetWidgetHeaderColor(glass.HeaderColor);
+        todoWindow.SetWidgetHeaderOpacity(glass.HeaderOpacity);
+        todoWindow.SetWidgetTextColor(glass.TextColor);
+        if (ReferenceEquals(_selectedComponentEntry?.Window, todoWindow))
+        {
+            _componentApplyTimer.Stop();
+            LoadSelectedComponentEditor(DesktopComponentKind.Todo, todoWindow);
+            UpdateOwnLookSummary(DesktopComponentKind.Todo);
+        }
+        ComponentSettingsStatusText.Text = $"“{todoWindow.State.Title}”已恢复跟随全局外观";
+        RefreshAppearanceOverrides();
+    }
+
     private void ComponentFollowSharedLook_Click(object sender, RoutedEventArgs e)
     {
+        if (_selectedComponentEntry?.Kind == DesktopComponentKind.Todo
+            && IsSecondaryTodoWindow(_selectedComponentEntry.Window, out var secondaryTodo))
+        {
+            FollowSecondaryTodoSharedLook(secondaryTodo);
+            return;
+        }
         if (_selectedComponentEntry?.Kind is { } kind)
         {
             FollowSharedLook(kind);
@@ -1711,18 +1822,12 @@ public partial class SettingsWindow : Window
     {
         var style = _maintenance.Style;
         var current = (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(style.CustomTextColor)!;
-        using var dialog = new System.Windows.Forms.ColorDialog
-        {
-            Color = System.Drawing.Color.FromArgb(current.R, current.G, current.B),
-            FullOpen = true,
-            AnyColor = true
-        };
-        if (dialog.ShowDialog() != System.Windows.Forms.DialogResult.OK)
+        if (!NativeColorDialog.TryPickColor(this, current, out var chosen))
         {
             return;
         }
 
-        style.CustomTextColor = $"#{dialog.Color.R:X2}{dialog.Color.G:X2}{dialog.Color.B:X2}";
+        style.CustomTextColor = chosen;
         style.TextInk = TextInk.Custom;
         _maintenance.ApplyGlass();
         LoadStyle();
@@ -1877,13 +1982,31 @@ public partial class SettingsWindow : Window
     private void OpenDataDirectory_Click(object sender, RoutedEventArgs e) =>
         _maintenance.OpenDataDirectory();
 
-    private void RefreshBackupList()
+    private int _backupRefreshVersion;
+
+    private async void RefreshBackupList()
     {
-        var entries = _maintenance.ListBackups()
-            .Select(path => new BackupEntry(path))
-            .ToList();
+        var version = ++_backupRefreshVersion;
+        var paths = _maintenance.ListBackups();
+        var entries = paths.Select(path => new BackupEntry(path)).ToList();
         BackupList.ItemsSource = entries;
         BackupEmptyText.Visibility = entries.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        if (entries.Count == 0)
+        {
+            return;
+        }
+
+        var labels = await Task.Run(() =>
+            paths.Select(BackupEntry.FormatLabel).ToArray());
+        if (_isClosed || version != _backupRefreshVersion)
+        {
+            return;
+        }
+
+        for (var i = 0; i < entries.Count && i < labels.Length; i++)
+        {
+            entries[i].Label = labels[i];
+        }
     }
 
     private void CreateBackup_Click(object sender, RoutedEventArgs e)
@@ -2055,6 +2178,7 @@ public partial class SettingsWindow : Window
             ThemeStatusText.Text = "正在匹配本机应用…";
             var outcome = await _maintenance.ImportTheme(dialog.FileName);
             ThemeStatusText.Text = outcome.Message;
+            LoadStyle();
             LoadDockSettings();
             LoadDesktopMode();
             RefreshBackupList();
@@ -2487,6 +2611,23 @@ public partial class SettingsWindow : Window
                 RevealElement(ComponentOwnLookFold);
             }, () => FollowSharedLook(kind));
         }
+        if (_desktopExperience.GetComponent(DesktopComponentKind.Todo).IsVisible)
+        {
+            foreach (var todoWindow in _widgetProvider()
+                         .OfType<TodoWidgetWindow>()
+                         .Where(todo => IsSecondaryTodoWindow(todo, out _)
+                             && !DesktopStyleRules.FollowsSharedCardLook(todo.State.Appearance, _maintenance.Style)))
+            {
+                var target = todoWindow;
+                AddOverride(target.State.Title, "已独立设置颜色", () =>
+                {
+                    SelectNavigationPage("Components");
+                    RefreshComponentList(target);
+                    ComponentOwnLookFold.IsExpanded = true;
+                    RevealElement(ComponentOwnLookFold);
+                }, () => FollowSecondaryTodoSharedLook(target));
+            }
+        }
         if (AppearanceOverridesGroup.Items.Count == 0)
         {
             AppearanceOverridesGroup.Items.Add(new TextBlock
@@ -2569,18 +2710,12 @@ public partial class SettingsWindow : Window
     private void DockChooseColor_Click(object sender, RoutedEventArgs e)
     {
         var current = (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(_dockState.SurfaceColor)!;
-        using var dialog = new System.Windows.Forms.ColorDialog
-        {
-            Color = System.Drawing.Color.FromArgb(current.R, current.G, current.B),
-            FullOpen = true,
-            AnyColor = true
-        };
-        if (dialog.ShowDialog() != System.Windows.Forms.DialogResult.OK)
+        if (!NativeColorDialog.TryPickColor(this, current, out var chosen))
         {
             return;
         }
 
-        _dockState.SurfaceColor = $"#{dialog.Color.R:X2}{dialog.Color.G:X2}{dialog.Color.B:X2}";
+        _dockState.SurfaceColor = chosen;
         ApplyDockChange("已调整 Dock 颜色");
         LoadDockLook();
     }
@@ -2761,13 +2896,9 @@ public partial class SettingsWindow : Window
     {
         if (_topBarState is not { } state) return;
         var current = (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(state.SearchSurfaceColor);
-        using var dialog = new System.Windows.Forms.ColorDialog
-        {
-            Color = System.Drawing.Color.FromArgb(current.R, current.G, current.B), FullOpen = true, AnyColor = true
-        };
-        if (dialog.ShowDialog() != System.Windows.Forms.DialogResult.OK) return;
+        if (!NativeColorDialog.TryPickColor(this, current, out var chosen)) return;
         state.SearchFollowCardLook = false;
-        state.SearchSurfaceColor = $"#{dialog.Color.R:X2}{dialog.Color.G:X2}{dialog.Color.B:X2}";
+        state.SearchSurfaceColor = chosen;
         LoadSearchAppearance();
         ApplyTopBarChange("已调整搜索框底色");
     }
@@ -2998,18 +3129,12 @@ public partial class SettingsWindow : Window
         }
 
         var current = (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(state.SurfaceColor)!;
-        using var dialog = new System.Windows.Forms.ColorDialog
-        {
-            Color = System.Drawing.Color.FromArgb(current.R, current.G, current.B),
-            FullOpen = true,
-            AnyColor = true
-        };
-        if (dialog.ShowDialog() != System.Windows.Forms.DialogResult.OK)
+        if (!NativeColorDialog.TryPickColor(this, current, out var chosen))
         {
             return;
         }
 
-        state.SurfaceColor = $"#{dialog.Color.R:X2}{dialog.Color.G:X2}{dialog.Color.B:X2}";
+        state.SurfaceColor = chosen;
         ApplyTopBarChange("已调整信息条颜色");
         LoadTopBarLook();
     }
@@ -3645,12 +3770,36 @@ internal sealed class DockPinnedEntry(DockPinnedApp app)
     public string Detail => App.ExecutablePath ?? App.TargetPath ?? "Microsoft Store 或网页应用";
 }
 
-internal sealed class BackupEntry(string path)
+internal sealed class BackupEntry(string path) : INotifyPropertyChanged
 {
     public string Path { get; } = path;
 
+    public event PropertyChangedEventHandler? PropertyChanged;
+
+    private string _label = $"{System.IO.Path.GetFileNameWithoutExtension(path)}  ·  正在读取…";
+
     // The time plus what the backup holds, so the right one can be picked without opening it.
-    public string Label { get; } = LocalStateStore.DescribeBackup(path) is { } summary
-        ? $"{File.GetLastWriteTime(path):yyyy-MM-dd HH:mm}  ·  {summary.PresetName}  ·  {summary.CardCount} 张卡片  ·  Dock {summary.DockAppCount} 个应用"
-        : $"{File.GetLastWriteTime(path):yyyy-MM-dd HH:mm}  ·  无法读取此备份";
+    public string Label
+    {
+        get => _label;
+        internal set
+        {
+            if (_label == value)
+            {
+                return;
+            }
+            _label = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Label)));
+        }
+    }
+
+    internal static string FormatLabel(string path)
+    {
+        var timestamp = File.Exists(path)
+            ? File.GetLastWriteTime(path).ToString("yyyy-MM-dd HH:mm")
+            : System.IO.Path.GetFileNameWithoutExtension(path);
+        return LocalStateStore.DescribeBackup(path) is { } summary
+            ? $"{timestamp}  ·  {summary.PresetName}  ·  {summary.CardCount} 张卡片  ·  Dock {summary.DockAppCount} 个应用"
+            : $"{timestamp}  ·  无法读取此备份";
+    }
 }

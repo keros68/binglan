@@ -52,11 +52,12 @@ internal sealed class DockGlassSurface : IDisposable
         window.LocationChanged += PlacementChanged;
         window.SizeChanged += SizeChanged;
         window.Closed += Closed;
-        surface.LayoutUpdated += LayoutUpdated;
+        surface.SizeChanged += SurfaceSizeChanged;
         AccessibilityThemeManager.HighContrastChanged += ThemeChanged;
+        SystemEvents.PowerModeChanged += PowerModeChanged;
     }
 
-    internal bool IsActive => _backdrop is not null;
+    internal bool IsActive => _backdrop is { IsShown: true };
     internal nint BackgroundHandle => _backdrop?.Handle ?? 0;
     internal PixelRect? BackgroundBounds => _backdrop?.Bounds;
 
@@ -86,19 +87,39 @@ internal sealed class DockGlassSurface : IDisposable
     private void VisibilityChanged(object sender, DependencyPropertyChangedEventArgs e) => Sync(true);
     private void PlacementChanged(object? sender, EventArgs e) => Sync(true);
     private void SizeChanged(object sender, SizeChangedEventArgs e) => Sync(true);
-    private void LayoutUpdated(object? sender, EventArgs e) => Sync();
+    private void SurfaceSizeChanged(object sender, SizeChangedEventArgs e) => Sync();
     private void Rendering(object? sender, EventArgs e) => Sync();
     private void ThemeChanged(object? sender, EventArgs e) => Sync();
+    private void PowerModeChanged(object sender, PowerModeChangedEventArgs e)
+    {
+        if (e.Mode == PowerModes.Resume)
+        {
+            _window.Dispatcher.BeginInvoke(() =>
+            {
+                _failed = false;
+                _lastVisual = null;
+                Sync(true);
+            });
+        }
+    }
     private void Closed(object? sender, EventArgs e) => Dispose();
 
     private nint WindowProc(nint hwnd, int message, nint wParam, nint lParam, ref bool handled)
     {
-        if (message is NativeMethods.WmSettingChange or NativeMethods.WmThemeChanged)
+        if (message is NativeMethods.WmSettingChange or NativeMethods.WmThemeChanged or NativeMethods.WmDwmCompositionChanged)
         {
+            if (message == NativeMethods.WmDwmCompositionChanged)
+            {
+                _failed = false;
+            }
             _transparency = ReadTransparency();
-            Sync();
+            _lastVisual = null;
+            Sync(true);
         }
-        else if (message == NativeMethods.WmWindowPosChanged) Sync(true);
+        else if (message is NativeMethods.WmWindowPosChanged or DockNativeMethods.WmDpiChanged or DockNativeMethods.WmDisplayChange)
+        {
+            Sync(true);
+        }
         return 0;
     }
 
@@ -114,9 +135,14 @@ internal sealed class DockGlassSurface : IDisposable
             var stroke = _surface.GetValue(StrokeProperty) as SolidColorBrush;
             if (_failed || !OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000)
                 || !_transparency || AccessibilityThemeManager.IsHighContrastEnabled || SystemParameters.HighContrast
-                || fill is null || fill.Color.A == 0 || !_window.IsVisible)
+                || fill is null || fill.Color.A == 0)
             {
                 Release();
+                return;
+            }
+            if (!_window.IsVisible)
+            {
+                _backdrop?.Hide();
                 return;
             }
             if (!_surface.IsLoaded || _surface.ActualWidth <= 0 || _surface.ActualHeight <= 0) return;
@@ -194,8 +220,9 @@ internal sealed class DockGlassSurface : IDisposable
         _window.LocationChanged -= PlacementChanged;
         _window.SizeChanged -= SizeChanged;
         _window.Closed -= Closed;
-        _surface.LayoutUpdated -= LayoutUpdated;
+        _surface.SizeChanged -= SurfaceSizeChanged;
         AccessibilityThemeManager.HighContrastChanged -= ThemeChanged;
+        SystemEvents.PowerModeChanged -= PowerModeChanged;
         _surface.ClearValue(ControllerProperty);
         Release();
     }

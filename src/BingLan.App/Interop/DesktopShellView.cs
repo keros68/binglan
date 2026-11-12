@@ -62,11 +62,31 @@ internal sealed class DesktopShellView : IDisposable
         return flags;
     }
 
-    /// <summary>Writes only the icon visibility bit and reads the result back.</summary>
+    /// <summary>Writes only the icon visibility bit and reads the result back, retrying briefly if Explorer is still settling.</summary>
     internal bool SetIconsHidden(bool hidden)
     {
-        var flags = CleanDesktopRules.Apply(ReadFolderFlags(), hidden);
-        Check(_folderView.SetCurrentFolderFlags(CleanDesktopRules.NoIconsFlag, flags));
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            var flags = CleanDesktopRules.Apply(ReadFolderFlags(), hidden);
+            var hr = _folderView.SetCurrentFolderFlags(CleanDesktopRules.NoIconsFlag, flags);
+            if (hr < 0)
+            {
+                if (attempt < 2)
+                {
+                    Thread.Sleep(80);
+                    continue;
+                }
+                Check(hr);
+            }
+            if (CleanDesktopRules.AreIconsHidden(ReadFolderFlags()) == hidden)
+            {
+                return true;
+            }
+            if (attempt < 2)
+            {
+                Thread.Sleep(80);
+            }
+        }
         return CleanDesktopRules.AreIconsHidden(ReadFolderFlags()) == hidden;
     }
 

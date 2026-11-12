@@ -112,7 +112,7 @@ void Run(string name, Action test)
     }
     catch (Exception ex)
     {
-        failures.Add($"失败：{name} - {ex.Message}");
+        failures.Add($"失败：{name} - {ex}");
     }
 }
 

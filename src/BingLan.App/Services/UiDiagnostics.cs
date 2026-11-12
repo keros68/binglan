@@ -34,7 +34,7 @@ internal enum UiActivity
 internal static class UiDiagnostics
 {
     private const long StallThresholdMs = 2000;
-    private const int ProbeIntervalMs = 250;
+    private const int ProbeIntervalMs = 500;
     private const long SpanThresholdMs = 150;
     private const long WindowMs = 10_000;
     private const long FloodPerWindow = 3000;
@@ -55,6 +55,7 @@ internal static class UiDiagnostics
     private static long _answeredAt;
     private static string? _path;
     private static Thread? _thread;
+    private static bool _hooksAttached;
     private static volatile bool _stopping;
 
     internal static string? LogPath => _path;
@@ -91,17 +92,21 @@ internal static class UiDiagnostics
     internal static Span Measure(string name) => new(name);
 
     /// <summary>Starts the watchdog once; a later call only moves the log to that directory.</summary>
-    internal static void Start(Dispatcher dispatcher, string dataDirectory)
+    internal static void Start(Dispatcher dispatcher, string dataDirectory, bool trackOperations = true)
     {
         _path = Path.Combine(dataDirectory, "stall.log");
+        if (trackOperations && !_hooksAttached)
+        {
+            _hooksAttached = true;
+            dispatcher.Hooks.OperationStarted += (_, e) => Push(e.Operation);
+            dispatcher.Hooks.OperationCompleted += (_, e) => Pop(e.Operation);
+            dispatcher.Hooks.OperationAborted += (_, e) => Pop(e.Operation);
+        }
         if (_thread is not null)
         {
             return;
         }
 
-        dispatcher.Hooks.OperationStarted += (_, e) => Push(e.Operation);
-        dispatcher.Hooks.OperationCompleted += (_, e) => Pop(e.Operation);
-        dispatcher.Hooks.OperationAborted += (_, e) => Pop(e.Operation);
         _thread = new Thread(() => Watch(dispatcher))
         {
             IsBackground = true,
@@ -149,7 +154,7 @@ internal static class UiDiagnostics
         long lastFloodLog = -FloodLogIntervalMs;
         var cpuAt = Environment.TickCount64;
         var cpuTime = CpuTime();
-        Write($"监测启动：冰蓝 {Assembly.GetEntryAssembly()?.GetName().Version?.ToString(3)}，Windows {Environment.OSVersion.Version}");
+        Write($"监测启动：冰蓝 {StartupLog.BuildVersion}，Windows {Environment.OSVersion.Version}");
 
         while (!_stopping && !dispatcher.HasShutdownStarted)
         {
@@ -274,7 +279,7 @@ internal static class UiDiagnostics
     {
         if (_path is { } path)
         {
-            LocalLogFile.Append(path, $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}  {message}", MaximumBytes);
+            LocalLogFile.Append(path, $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}  [{StartupLog.BuildVersion}]  {message}", MaximumBytes);
         }
     }
 }

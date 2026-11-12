@@ -2,8 +2,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
-using Forms = System.Windows.Forms;
-using DrawingColor = System.Drawing.Color;
+using BingLan.App.Interop;
 using MediaColor = System.Windows.Media.Color;
 using WpfKeyEventArgs = System.Windows.Input.KeyEventArgs;
 using WpfUserControl = System.Windows.Controls.UserControl;
@@ -371,22 +370,15 @@ public partial class WidgetAppearancePanel : WpfUserControl
         }
     }
 
-    private static bool TryChooseColor(string current, out string color)
+    private bool TryChooseColor(string current, out string color)
     {
         var mediaColor = ParseMediaColor(current);
-        using var dialog = new Forms.ColorDialog
-        {
-            Color = DrawingColor.FromArgb(mediaColor.R, mediaColor.G, mediaColor.B),
-            FullOpen = true,
-            AnyColor = true
-        };
-        if (dialog.ShowDialog() != Forms.DialogResult.OK)
+        if (!NativeColorDialog.TryPickColor(Window.GetWindow(this), mediaColor, out color))
         {
             color = current;
             return false;
         }
 
-        color = $"#{dialog.Color.R:X2}{dialog.Color.G:X2}{dialog.Color.B:X2}";
         return true;
     }
 

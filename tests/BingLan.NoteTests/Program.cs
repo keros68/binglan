@@ -465,7 +465,7 @@ internal static class Program
         }
         catch (Exception ex)
         {
-            failures.Add($"失败：{name} - {ex.Message}");
+            failures.Add($"失败：{name} - {ex}");
         }
     }
 

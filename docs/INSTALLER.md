@@ -5,19 +5,19 @@
 推送版本标签后由 GitHub Actions（`.github/workflows/release.yml`）在 Windows 云端机器上构建、运行全部五套测试（含会创建真实窗口的三套）、打包，并建立带三个文件的草稿 Release：
 
 ```powershell
-git tag v0.2.64
-git push origin v0.2.64
+git tag v0.2.65
+git push origin v0.2.65
 ```
 
-草稿的发布说明补写后转为正式发布：`gh release edit v0.2.64 --notes-file <说明文件> --draft=false`。在 Actions 页面手动运行“发布”并填写版本号只打包、把产物保存为构建附件，不建立 Release，用于试跑。本地构建仍可用下面的命令。
+草稿的发布说明补写后转为正式发布：`gh release edit v0.2.65 --notes-file <说明文件> --draft=false`。在 Actions 页面手动运行“发布”并填写版本号只打包、把产物保存为构建附件，不建立 Release，用于试跑。本地构建仍可用下面的命令。
 
 ## 构建
 
 ```powershell
-pwsh -NoProfile -File .\installer\build.ps1 -Version 0.2.64
+pwsh -NoProfile -File .\installer\build.ps1 -Version 0.2.65
 ```
 
-输出 `installer\bin\BingLan-Setup-0.2.64.exe`（约 56.5 MB）和免安装包 `installer\bin\BingLan-0.2.64-portable.zip`。脚本先把应用发布为 win-x64 自包含程序（附带 .NET 运行时，只保留中文和英文资源），再用 Inno Setup 打包为按用户安装的安装程序，并把同一份发布输出压成免安装 zip。构建还需要 .NET 10 SDK、PowerShell 7、Visual Studio 2022 C++ x64 工具链和 Windows SDK；自有任务栏 DLL 随发布输出进入安装包，细节见 [任务栏 XAML 适配](TASKBAR-XAML.md)。需要 Inno Setup 6：`winget install JRSoftware.InnoSetup --scope user`。注意 winget 安装的 Inno Setup 不带简体中文语言文件（非官方翻译），脚本引用的 `Languages\ChineseSimplified.isl` 需从 [istrans 页面](https://jrsoftware.org/files/istrans/) 下载后放入 Inno Setup 安装目录的 `Languages\` 下。
+输出 `installer\bin\BingLan-Setup-0.2.65.exe`（约 44.7 MB）和免安装包 `installer\bin\BingLan-0.2.65-portable.zip`。脚本先把应用发布为 win-x64 自包含程序（附带 .NET 运行时，只保留中文和英文资源），再用 Inno Setup 打包为按用户安装的安装程序，并把同一份发布输出压成免安装 zip。构建还需要 .NET 10 SDK、PowerShell 7、Visual Studio 2022 C++ x64 工具链和 Windows SDK；自有任务栏与 Dock 玻璃原生 DLL 随发布输出进入安装包，细节见 [任务栏 XAML 适配](TASKBAR-XAML.md)。需要 Inno Setup 6：`winget install JRSoftware.InnoSetup --scope user`。注意 winget 安装的 Inno Setup 不带简体中文语言文件（非官方翻译），脚本引用的 `Languages\ChineseSimplified.isl` 需从 [istrans 页面](https://jrsoftware.org/files/istrans/) 下载后放入 Inno Setup 安装目录的 `Languages\` 下。
 
 ## 免安装包
 
@@ -41,11 +41,11 @@ zip 版内容与安装后的程序目录一致（程序文件、`使用说明.md
 
 | 项目 | 内容 |
 | --- | --- |
-| 依赖 | Microsoft.Windows.SDK.NET.Ref 10.0.19041.57（SDK 自动还原的 Windows API 投影） |
+| 依赖 | 自有原生 C++/WinRT 组件 `BingLan.Composition.dll`（编译期使用 Windows SDK 头文件，无托管 WinRT 投影包） |
 | 用途 | Windows Composition 背景画刷与圆角几何裁剪；Dock 和隐藏把手共用一个适配实现 |
-| 许可证 | [Windows SDK 许可](https://aka.ms/WinSDKLicenseURL)，程序目录附带第三方组件说明 |
-| 打包体积 | 未压缩的 Microsoft.Windows.SDK.NET.dll 约 23.73 MiB，WinRT.Runtime.dll 约 0.50 MiB；安装包增量以实际压缩结果为准 |
-| 运行时成本 | 玻璃可见时由系统合成层处理实时背景；动画期间跟随 WPF 渲染节拍提交几何，静止时不添加计时器；隐藏时销毁背景窗口 |
+| 许可证 | 项目自有代码；构建期引用 [Windows SDK 许可](https://aka.ms/WinSDKLicenseURL)，程序目录附带第三方组件说明 |
+| 打包体积 | `BingLan.Composition.dll` 约 150 KB（静态链接 `/MT`）；自包含发布目录约 136.8 MB |
+| 运行时成本 | 玻璃可见时由系统合成层处理实时背景；动画期间跟随 WPF 渲染节拍提交几何，智能隐藏时隐藏并复用合成背板（显示器、DPI、DWM 变化或休眠恢复时重建） |
 | 可替代方案 | 原半透明 WPF 表面；WCA 实验无法同时满足裁剪与形变需求，正式版不使用 WCA |
 | 兼容与回退 | Windows 11、系统透明效果开启时尝试创建；Windows 10、高对比度、透明效果关闭或合成失败时恢复半透明表面 |
 
@@ -54,7 +54,7 @@ zip 版内容与安装后的程序目录一致（程序文件、`使用说明.md
 | 依赖 | Inno Setup 6.7.3（构建工具，不随应用分发） |
 | 用途 | 生成安装程序：文件安装、快捷方式、启动项、卸载和数据保留询问 |
 | 许可证 | Inno Setup License：允许包括商业用途在内的任何用途；官方请求商业用户购买许可证，但不强制，个人和非商业使用免费 |
-| 打包体积 | 安装程序约 56.5 MB；安装后还包含约 24.23 MiB 的 Windows API 投影，主要体积仍为自包含 .NET 运行时 |
+| 打包体积 | 安装程序约 44.7 MB，主要体积为自包含 .NET 10 WPF 运行时 |
 | 运行时成本 | 无，Inno Setup 只在构建时使用 |
 | 可替代方案 | MSI（开发机上 Windows Installer 对按用户安装报错 2503，无法使用）；依赖框架的发布（安装包约 1 MB，但需先安装 .NET 10 桌面运行时）；MSIX（需要代码签名证书） |
 
@@ -76,6 +76,8 @@ zip 版内容与安装后的程序目录一致（程序文件、`使用说明.md
 本机覆盖安装退出码为 0，无需重启；安装前后个人配置哈希一致。在正常 Windows 桌面上下文启动后，透明模式的共享状态确认 1 个背景生效、错误码为 0，截图确认任务栏透出背景。最终设置除任务栏模式外与安装前逐项一致。新原生组件的卸载场景尚未执行。真机透明与恢复结果见 [任务栏验证](TASKBAR-QA.md)。
 
 ## 验证状态
+
+v0.2.65 在 Windows 11 Build 26300、2560×1600 150% 缩放下通过 Release 构建及核心、Dock、便签、信息组件、WPF UI 五套测试。真机交互验收覆盖首次引导与开始菜单快捷方式解析、设置中心云母与设置搜索、自有原生 `BingLan.Composition.dll` Dock 玻璃与微信角标、显示桌面卡片提升回落、原生 `ChooseColorW` 选色器、顶栏托盘按钮 `Esc` 收起与再次单击打开、多待办卡独立字号缩放（Schema v45）、前向兼容未知字段保留与自动备份上限裁剪，以及正常退出清理恢复检查点。此轮未重做卸载、Windows 10 真机、真实多显示器与混合 DPI 验证。
 
 v0.2.54 在 Windows 11 Build 26300、175% 缩放下通过 Release 构建、核心烟雾测试与完整 WPF UI 烟雾测试。正文菜单检查使用真实键盘菜单键打开，覆盖截止时间与倒数日入口、取消保留状态、文本编辑命令、周历菜单和当日详情正文菜单。安装日志确认覆盖安装成功且无需重启，设置页显示 0.2.54；既有待办内容、完成状态、便签和启动项保持，旧格式配置迁移到 Schema v41。免安装包中 262 个程序文件与发布输出逐文件 SHA-256 一致。此轮未重做卸载、Windows 10 真机、多显示器与混合 DPI 验证。
 

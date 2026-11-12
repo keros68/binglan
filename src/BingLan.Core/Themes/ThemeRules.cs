@@ -59,7 +59,15 @@ public static class ThemeRules
                 TaskbarMode.Transparent => TaskbarMaterial.Transparent,
                 TaskbarMode.Blur => TaskbarMaterial.Blur,
                 _ => TaskbarMaterial.SystemDefault
-            }
+            },
+            Glass = state.Style.Glass,
+            Palette = state.Style.Palette,
+            GlassDensity = state.Style.GlassDensity,
+            TextInk = state.Style.TextInk,
+            CustomTextColor = state.Style.CustomTextColor,
+            AccentColor = state.Style.AccentColor,
+            ItemSurfaceTone = state.Style.ItemSurfaceTone,
+            ItemSurfaceStrength = state.Style.ItemSurfaceStrength
         };
 
         foreach (var component in state.DesktopExperience.Components)
@@ -158,6 +166,38 @@ public static class ThemeRules
         style.CardSpacing = tokens.CardSpacing;
         style.GridSnap = tokens.GridSnap;
         style.Motion = tokens.Motion;
+        if (tokens.Glass is { } glass)
+        {
+            style.Glass = glass;
+        }
+        if (tokens.Palette is { } palette)
+        {
+            style.Palette = DesktopStyleRules.GetPalette(palette).Key;
+        }
+        if (tokens.GlassDensity is { } glassDensity)
+        {
+            style.GlassDensity = glassDensity;
+        }
+        if (tokens.TextInk is { } textInk)
+        {
+            style.TextInk = textInk;
+        }
+        if (tokens.CustomTextColor is { } customTextColor)
+        {
+            style.CustomTextColor = customTextColor;
+        }
+        if (tokens.AccentColor is { } accentColor)
+        {
+            style.AccentColor = accentColor;
+        }
+        if (tokens.ItemSurfaceTone is { } itemSurfaceTone)
+        {
+            style.ItemSurfaceTone = itemSurfaceTone;
+        }
+        if (tokens.ItemSurfaceStrength is { } itemSurfaceStrength)
+        {
+            style.ItemSurfaceStrength = itemSurfaceStrength;
+        }
         if (taskbar.Mode != TaskbarMode.SmartHide)
         {
             taskbar.Mode = tokens.TaskbarMaterial switch
@@ -211,6 +251,40 @@ public static class ThemeRules
                 style.TaskbarMaterial = TaskbarMaterial.SystemDefault;
             }
             style.CardSpacing = DesktopStyleRules.CoerceCardSpacing(style.CardSpacing);
+            if (style.Glass is { } glass && !Enum.IsDefined(glass))
+            {
+                style.Glass = GlassMode.Light;
+            }
+            if (style.Palette is { } palette)
+            {
+                style.Palette = DesktopStyleRules.GetPalette(palette).Key;
+            }
+            if (style.GlassDensity is { } glassDensity)
+            {
+                style.GlassDensity = DesktopStyleRules.CoerceGlassDensity(glassDensity);
+            }
+            if (style.TextInk is { } textInk && !Enum.IsDefined(textInk))
+            {
+                style.TextInk = TextInk.Auto;
+            }
+            if (style.CustomTextColor is { } customTextColor)
+            {
+                style.CustomTextColor = WidgetAppearanceRules.CoerceColorOrDefault(customTextColor, "#FFFFFF");
+            }
+            if (style.AccentColor is { } accentColor)
+            {
+                style.AccentColor = WidgetAppearanceRules.CoerceColorOrDefault(
+                    accentColor,
+                    DesktopStyleRules.DefaultAccentColor);
+            }
+            if (style.ItemSurfaceTone is { } itemSurfaceTone && !Enum.IsDefined(itemSurfaceTone))
+            {
+                style.ItemSurfaceTone = SurfaceTone.Light;
+            }
+            if (style.ItemSurfaceStrength is { } itemSurfaceStrength)
+            {
+                style.ItemSurfaceStrength = DesktopStyleRules.CoerceItemSurfaceStrength(itemSurfaceStrength);
+            }
         }
 
         if (!Enum.IsDefined(package.Layout.Preset))
