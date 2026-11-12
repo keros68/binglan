@@ -94,6 +94,9 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         SetContentFontFamily(state.FontFamily);
         SyncTodayItems();
         TodoList.ItemsSource = _todayItems;
+        _todayItems.CollectionChanged += (_, _) =>
+            System.Windows.Automation.Peers.UIElementAutomationPeer.FromElement(TodoList)?.ResetChildrenCache();
+        TodoList.ItemContainerGenerator.StatusChanged += (_, _) => ApplyCompletedVisibilityOnContainers();
         ApplyPlacement(state.Placement, state.IsLocked);
         WidgetCornerRadius = state.CornerRadius;
         ApplyViewMode();
@@ -2639,19 +2642,36 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         RefreshSummary();
     }
 
-    // TodoList binds only to the filtered today slice (_todayItems) via SyncObservableOrder,
-    // avoiding Collapsed visual subtrees for historical dates while keeping existing row
-    // containers and automation peers intact. _items retains the complete task history.
+    // TodoList binds only to the today slice (_todayItems) so historical dates do not
+    // build visual subtrees; completed today rows collapse in place so existing row
+    // containers and automation peers remain intact when toggling visibility.
     private void ApplyCompletedVisibility() => SyncTodayItems();
 
     private void SyncTodayItems()
     {
         var today = DateTime.Today;
         var desired = _items
-            .Where(item => TodoService.BelongsToTodayList(item, today)
-                && (!State.HideCompleted || !item.IsCompleted))
+            .Where(item => TodoService.BelongsToTodayList(item, today))
             .ToList();
         SyncObservableOrder(_todayItems, desired);
+        ApplyCompletedVisibilityOnContainers();
+    }
+
+    private void ApplyCompletedVisibilityOnContainers()
+    {
+        if (TodoList is null)
+        {
+            return;
+        }
+        foreach (var item in _todayItems)
+        {
+            if (TodoList.ItemContainerGenerator.ContainerFromItem(item) is UIElement row)
+            {
+                row.Visibility = !State.HideCompleted || !item.IsCompleted
+                    ? Visibility.Visible
+                    : Visibility.Collapsed;
+            }
+        }
     }
 
     // A blank row only exists while it is being typed into (blanks are pruned once
