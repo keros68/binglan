@@ -112,7 +112,7 @@ internal sealed class TaskbarAdapter : IDisposable
         {
             checkpoint = TaskbarCheckpoint.Parse(File.ReadAllText(checkpointPath));
         }
-        catch (IOException)
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
             return false;
         }
@@ -314,6 +314,9 @@ internal sealed class TaskbarAdapter : IDisposable
         // Keep the checkpoint when the rollback itself fails, so the next start retries.
         if (TrySetAccent(_taskbars, TaskbarNativeMethods.AccentDisabled, out _))
         {
+            // Put back the transparency effect this call switched on before the record goes.
+            if (originalTransparency == false && IsSystemTransparencyEnabled())
+                TryWriteSystemTransparency(false);
             TryDelete(_checkpointPath);
             SetStatus(TaskbarMode.SystemDefault, $"无法设置任务栏外观：{error}");
             return;
@@ -326,13 +329,13 @@ internal sealed class TaskbarAdapter : IDisposable
         if (GetAutoHide())
         {
             // Already hidden by the user; nothing of ours to restore later.
+            EnsureMessageWindow();
             SetStatus(TaskbarMode.SmartHide, string.Empty);
             return;
         }
 
         WriteCheckpoint(new TaskbarCheckpoint { AutoHideApplied = true, OriginalAutoHide = false });
-        SetAutoHide(true);
-        if (GetAutoHide())
+        if (SetAutoHide(true))
         {
             EnsureMessageWindow();
             SetStatus(TaskbarMode.SmartHide, string.Empty);
@@ -363,8 +366,14 @@ internal sealed class TaskbarAdapter : IDisposable
 
     private static bool Restore(TaskbarCheckpoint checkpoint)
     {
-        var plan = TaskbarRecovery.Plan(checkpoint, GetAutoHide());
         var restored = true;
+        if (checkpoint.AutoHideApplied && !HasTaskbarWindow())
+        {
+            // Without the taskbar window Windows reports "not hidden", which is not the
+            // user's choice: keep the checkpoint and try again once Explorer is up.
+            restored = false;
+        }
+        var plan = TaskbarRecovery.Plan(checkpoint, GetAutoHide());
         if (checkpoint.XamlSessionName is { } name)
             restored &= TaskbarXamlSession.Restore(name);
         if (plan.ResetTransparency)
@@ -377,10 +386,9 @@ internal sealed class TaskbarAdapter : IDisposable
             // the value to restore to is already in place.
             restored &= TryWriteSystemTransparency(false);
         }
-        if (plan.SetAutoHide is { } autoHide)
+        if (plan.SetAutoHide is { } autoHide && HasTaskbarWindow())
         {
-            SetAutoHide(autoHide);
-            restored &= GetAutoHide() == autoHide;
+            restored &= SetAutoHide(autoHide);
         }
         return restored;
     }
@@ -465,7 +473,14 @@ internal sealed class TaskbarAdapter : IDisposable
             var usedXaml = _xamlSession is not null;
             _xamlSession?.Dispose();
             _xamlSession = null;
-            if (!usedXaml) TryDelete(_checkpointPath);
+            if (!usedXaml)
+            {
+                // Only the effect this app switched on goes back; the other tool keeps the taskbar.
+                var recorded = File.Exists(_checkpointPath) ? ReadCheckpoint(_checkpointPath) : null;
+                if (recorded?.OriginalSystemTransparency == false && IsSystemTransparencyEnabled())
+                    TryWriteSystemTransparency(false);
+                TryDelete(_checkpointPath);
+            }
             SetStatus(TaskbarMode.SystemDefault, $"{customizer} 正在调整任务栏，冰蓝桌面已停止调整");
             return;
         }
@@ -618,7 +633,8 @@ internal sealed class TaskbarAdapter : IDisposable
 
     private void CheckAutoHideTakeover()
     {
-        if (GetAutoHide())
+        // No taskbar window (Explorer restarting) reads as "not hidden"; wait for the next change.
+        if (!HasTaskbarWindow() || GetAutoHide())
         {
             return;
         }
@@ -644,13 +660,25 @@ internal sealed class TaskbarAdapter : IDisposable
         File.Move(temporaryPath, _checkpointPath, true);
     }
 
+    private static TaskbarCheckpoint? ReadCheckpoint(string path)
+    {
+        try
+        {
+            return TaskbarCheckpoint.Parse(File.ReadAllText(path));
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
+
     private static void TryDelete(string path)
     {
         try
         {
             File.Delete(path);
         }
-        catch (IOException)
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
         }
     }
@@ -661,10 +689,40 @@ internal sealed class TaskbarAdapter : IDisposable
         {
             File.Move(source, destination, true);
         }
-        catch (IOException)
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
         }
     }
+
+    private static bool HasTaskbarWindow() =>
+        TaskbarNativeMethods.FindWindowW("Shell_TrayWnd", null) != 0;
+
+    /// <summary>
+    /// What Windows keeps for the next sign-in or Explorer restart. The live state can be
+    /// off while this still says hidden; null when it cannot be read.
+    /// </summary>
+    internal static bool? IsAutoHideStored()
+    {
+        try
+        {
+            using var key = Registry.CurrentUser.OpenSubKey(
+                @"Software\Microsoft\Windows\CurrentVersion\Explorer\StuckRects3");
+            return key?.GetValue("Settings") is byte[] { Length: > 8 } settings
+                ? (settings[8] & 1) != 0
+                : null;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
+            or System.Security.SecurityException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Whether Windows currently hides the taskbar automatically.</summary>
+    internal static bool IsWindowsAutoHideOn() => GetAutoHide();
+
+    /// <summary>Turns Windows' auto-hide off on the user's explicit request.</summary>
+    internal static bool TryShowTaskbarAlways() => SetAutoHide(false);
 
     private static bool GetAutoHide()
     {
@@ -676,8 +734,12 @@ internal sealed class TaskbarAdapter : IDisposable
         return ((int)state & TaskbarNativeMethods.AbsAutoHide) != 0;
     }
 
-    private static void SetAutoHide(bool autoHide)
+    // Explorer applies the state asynchronously, so a read right after the write can still
+    // return the old value. Waiting for it (up to about half a second) keeps the next
+    // GetAutoHide from mistaking our own pending change for the user's setting.
+    private static bool SetAutoHide(bool autoHide)
     {
+        if (!HasTaskbarWindow()) return false;
         var data = new TaskbarNativeMethods.AppBarData
         {
             Size = (uint)Marshal.SizeOf<TaskbarNativeMethods.AppBarData>(),
@@ -685,6 +747,12 @@ internal sealed class TaskbarAdapter : IDisposable
             Parameter = autoHide ? TaskbarNativeMethods.AbsAutoHide : 0
         };
         TaskbarNativeMethods.SHAppBarMessage(TaskbarNativeMethods.AbmSetState, ref data);
+        for (var attempt = 0; attempt < 10; attempt++)
+        {
+            if (GetAutoHide() == autoHide) return true;
+            Thread.Sleep(50);
+        }
+        return GetAutoHide() == autoHide;
     }
 
     private static bool TrySetAccent(IReadOnlyList<nint> taskbars, int accentState, out string error)
@@ -698,6 +766,7 @@ internal sealed class TaskbarAdapter : IDisposable
         var policy = new TaskbarNativeMethods.AccentPolicy { State = accentState };
         var size = Marshal.SizeOf<TaskbarNativeMethods.AccentPolicy>();
         var pointer = Marshal.AllocHGlobal(size);
+        var firstError = string.Empty;
         try
         {
             Marshal.StructureToPtr(policy, pointer, false);
@@ -709,10 +778,11 @@ internal sealed class TaskbarAdapter : IDisposable
                     Data = pointer,
                     SizeOfData = size
                 };
-                if (!TaskbarNativeMethods.SetWindowCompositionAttribute(taskbar, ref data))
+                // A window that vanished must not keep the other monitors' taskbars from being set.
+                if (!TaskbarNativeMethods.SetWindowCompositionAttribute(taskbar, ref data)
+                    && firstError.Length == 0)
                 {
-                    error = new Win32Exception(Marshal.GetLastWin32Error()).Message;
-                    return false;
+                    firstError = new Win32Exception(Marshal.GetLastWin32Error()).Message;
                 }
             }
         }
@@ -721,8 +791,8 @@ internal sealed class TaskbarAdapter : IDisposable
             Marshal.FreeHGlobal(pointer);
         }
 
-        error = string.Empty;
-        return true;
+        error = firstError;
+        return firstError.Length == 0;
     }
 
     private static List<nint> FindTaskbars()

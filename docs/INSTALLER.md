@@ -5,19 +5,19 @@
 推送版本标签后由 GitHub Actions（`.github/workflows/release.yml`）在 Windows 云端机器上构建、运行全部五套测试（含会创建真实窗口的三套）、打包，并建立带三个文件的草稿 Release：
 
 ```powershell
-git tag v0.2.65
-git push origin v0.2.65
+git tag v0.2.66
+git push origin v0.2.66
 ```
 
-草稿的发布说明补写后转为正式发布：`gh release edit v0.2.65 --notes-file <说明文件> --draft=false`。在 Actions 页面手动运行“发布”并填写版本号只打包、把产物保存为构建附件，不建立 Release，用于试跑。本地构建仍可用下面的命令。
+草稿的发布说明补写后转为正式发布：`gh release edit v0.2.66 --notes-file <说明文件> --draft=false`。在 Actions 页面手动运行“发布”并填写版本号只打包、把产物保存为构建附件，不建立 Release，用于试跑。本地构建仍可用下面的命令。
 
 ## 构建
 
 ```powershell
-pwsh -NoProfile -File .\installer\build.ps1 -Version 0.2.65
+pwsh -NoProfile -File .\installer\build.ps1 -Version 0.2.66
 ```
 
-输出 `installer\bin\BingLan-Setup-0.2.65.exe`（约 44.7 MB）和免安装包 `installer\bin\BingLan-0.2.65-portable.zip`。脚本先把应用发布为 win-x64 自包含程序（附带 .NET 运行时，只保留中文和英文资源），再用 Inno Setup 打包为按用户安装的安装程序，并把同一份发布输出压成免安装 zip。构建还需要 .NET 10 SDK、PowerShell 7、Visual Studio 2022 C++ x64 工具链和 Windows SDK；自有任务栏与 Dock 玻璃原生 DLL 随发布输出进入安装包，细节见 [任务栏 XAML 适配](TASKBAR-XAML.md)。需要 Inno Setup 6：`winget install JRSoftware.InnoSetup --scope user`。注意 winget 安装的 Inno Setup 不带简体中文语言文件（非官方翻译），脚本引用的 `Languages\ChineseSimplified.isl` 需从 [istrans 页面](https://jrsoftware.org/files/istrans/) 下载后放入 Inno Setup 安装目录的 `Languages\` 下。
+输出 `installer\bin\BingLan-Setup-0.2.66.exe`（约 44.7 MB）和免安装包 `installer\bin\BingLan-0.2.66-portable.zip`。脚本先把应用发布为 win-x64 自包含程序（附带 .NET 运行时，只保留中文和英文资源），再用 Inno Setup 打包为按用户安装的安装程序，并把同一份发布输出压成免安装 zip。构建还需要 .NET 10 SDK、PowerShell 7、Visual Studio 2022 C++ x64 工具链和 Windows SDK；自有任务栏与 Dock 玻璃原生 DLL 随发布输出进入安装包，细节见 [任务栏 XAML 适配](TASKBAR-XAML.md)。需要 Inno Setup 6：`winget install JRSoftware.InnoSetup --scope user`。注意 winget 安装的 Inno Setup 不带简体中文语言文件（非官方翻译），脚本引用的 `Languages\ChineseSimplified.isl` 需从 [istrans 页面](https://jrsoftware.org/files/istrans/) 下载后放入 Inno Setup 安装目录的 `Languages\` 下。
 
 ## 免安装包
 

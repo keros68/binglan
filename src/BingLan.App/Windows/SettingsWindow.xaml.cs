@@ -210,6 +210,8 @@ public partial class SettingsWindow : Window
         // The index reads the finished pages once, after the window has shown.
         Loaded += (_, _) => Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, () => _ = SearchIndex);
         Deactivated += (_, _) => SettingsSearchPopup.IsOpen = false;
+        // Back from Windows' own taskbar settings: show what is there now.
+        Activated += (_, _) => LoadTaskbarSettings();
         LocationChanged += (_, _) => SettingsSearchPopup.IsOpen = false;
         SystemParameters.StaticPropertyChanged += SystemParameters_Changed;
         Closed += (_, _) => SystemParameters.StaticPropertyChanged -= SystemParameters_Changed;
@@ -2396,6 +2398,33 @@ public partial class SettingsWindow : Window
             : activeMode == TaskbarMode.SystemDefault
                 ? $"当前保持系统默认：{problem}"
                 : $"当前：{activeName}（{problem}）";
+
+        // The app owns auto-hide only in the auto-hide mode; anywhere else it is Windows' own.
+        WindowsAutoHidePanel.Visibility = _taskbarState.Mode != TaskbarMode.SmartHide
+            && Taskbar.TaskbarAdapter.IsWindowsAutoHideOn()
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+    }
+
+    private void ShowTaskbarAlways_Click(object sender, RoutedEventArgs e)
+    {
+        var done = Taskbar.TaskbarAdapter.TryShowTaskbarAlways();
+        LoadTaskbarSettings();
+        if (!done)
+        {
+            TaskbarStatusText.Text = "Windows 没有接受修改，请在 Windows 任务栏设置中手动关闭自动隐藏";
+        }
+        else if (Taskbar.TaskbarAdapter.IsAutoHideStored() == true)
+        {
+            // The live state is off but Windows still stores "hidden" for the next sign-in.
+            TaskbarStatusText.Text = "任务栏已显示；Windows 仍记着自动隐藏，重新登录后可能恢复。请打开 Windows 任务栏设置，把“自动隐藏任务栏”关闭一次";
+        }
+    }
+
+    private void OpenWindowsTaskbarSettings_Click(object sender, RoutedEventArgs e)
+    {
+        _ = Services.ShellLauncher.StartAsync(
+            new System.Diagnostics.ProcessStartInfo("ms-settings:taskbar") { UseShellExecute = true });
     }
 
     private void RevealOnlyAtCorners_Click(object sender, RoutedEventArgs e)

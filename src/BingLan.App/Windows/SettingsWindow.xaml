@@ -2160,7 +2160,7 @@
                                                      local:SettingsSearch.Keywords="任务栏样式 隐藏任务栏">
                                             <StackPanel Margin="2,0,24,0">
                                                 <TextBlock FontWeight="Medium" Text="自动隐藏"/>
-                                                <TextBlock Margin="0,2,0,0" Style="{StaticResource CaptionStyle}" Text="平时隐藏，鼠标移到屏幕边缘时显示"/>
+                                                <TextBlock Margin="0,2,0,0" Style="{StaticResource CaptionStyle}" Text="由冰蓝桌面接管；切走或退出时恢复到进入前的状态"/>
                                             </StackPanel>
                                         </RadioButton>
                                     </UniformGrid>
@@ -2168,6 +2168,16 @@
                                                Margin="2,10,0,0"
                                                AutomationProperties.LiveSetting="Polite"
                                                Style="{StaticResource CaptionStyle}"/>
+                                    <!-- Windows 自动隐藏开着、而不是冰蓝桌面设置的：说明来源并给出出路。 -->
+                                    <StackPanel x:Name="WindowsAutoHidePanel" Margin="2,10,0,0" Visibility="Collapsed">
+                                        <TextBlock TextWrapping="Wrap"
+                                                   Style="{StaticResource CaptionStyle}"
+                                                   Text="Windows 当前开启了“自动隐藏任务栏”，这不是冰蓝桌面设置的，所以选“系统默认”不会改动它。"/>
+                                        <WrapPanel Margin="0,8,0,0">
+                                            <Button Content="改为始终显示" Click="ShowTaskbarAlways_Click"/>
+                                            <Button Margin="8,0,0,0" Content="打开 Windows 任务栏设置" Click="OpenWindowsTaskbarSettings_Click"/>
+                                        </WrapPanel>
+                                    </StackPanel>
                                 </StackPanel>
                             </Border>
                             <!-- 只在选“自动隐藏”时显示：两项都只影响任务栏弹出。 -->
@@ -2290,7 +2300,7 @@
                                        Text="备份包含全部桌面组件、个人内容和设置，保存在数据目录的 Backups 文件夹。恢复后冰蓝桌面会重新启动。"/>
                             <ListBox x:Name="BackupList"
                                      MinHeight="96"
-                                     MaxHeight="260"
+                                     MaxHeight="150"
                                      AutomationProperties.Name="已有备份"
                                      DisplayMemberPath="Label"/>
                             <TextBlock x:Name="BackupEmptyText"

@@ -32,8 +32,8 @@ public static class TaskbarCompatibility
 
     /// <summary>
     /// Windows 11 builds the XAML taskbar background was verified on, live, for the
-    /// visual effect, a clean exit, a host crash and an Explorer restart. Other builds
-    /// keep the system default rather than trusting an unverified structure.
+    /// visual effect, a clean exit, a host crash and an Explorer restart. On other builds
+    /// transparent uses the blur accent instead of trusting an unverified XAML structure.
     /// </summary>
     public static readonly IReadOnlySet<int> VerifiedTransparentBuilds = new HashSet<int> { 26200, 26300 };
 
