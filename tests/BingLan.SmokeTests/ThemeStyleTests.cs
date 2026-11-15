@@ -1200,6 +1200,33 @@ internal static class ThemeStyleTests
         }
     }
 
+    public static void TestSettingsWindowSizingRules()
+    {
+        var medium = SettingsWindowSizingRules.Resolve(0d, 0d, 1138d, 711d);
+        Check(medium.Width <= 1138d && medium.Height <= 711d
+            && medium.MinWidth <= 1138d && medium.MinHeight <= 711d
+            && medium.Width == 1138d && medium.Height == 711d
+            && medium.MinWidth == SettingsWindowSizingRules.DefaultMinWidth
+            && medium.MinHeight == SettingsWindowSizingRules.DefaultMinHeight
+            && medium.Left == 0d && medium.Top == 0d,
+            $"1138×711 工作区应把设置窗口收进工作区内，实际 {medium}");
+
+        var tiny = SettingsWindowSizingRules.Resolve(24d, 32d, 900d, 620d);
+        Check(tiny.Width == 900d && tiny.Height == 620d
+            && tiny.MinWidth == 900d && tiny.MinHeight == 620d
+            && tiny.Left == 24d && tiny.Top == 32d,
+            $"小于默认最小尺寸的工作区应同步下调最小宽高并对齐起点，实际 {tiny}");
+
+        var large = SettingsWindowSizingRules.Resolve(100d, 40d, 1706d, 1018d);
+        Check(large.Width == SettingsWindowSizingRules.DefaultWidth
+            && large.Height == SettingsWindowSizingRules.DefaultHeight
+            && large.MinWidth == SettingsWindowSizingRules.DefaultMinWidth
+            && large.MinHeight == SettingsWindowSizingRules.DefaultMinHeight
+            && large.Left == 100d + (1706d - SettingsWindowSizingRules.DefaultWidth) / 2d
+            && large.Top == 40d + (1018d - SettingsWindowSizingRules.DefaultHeight) / 2d,
+            $"充裕工作区应保持默认尺寸并居中显示，实际 {large}");
+    }
+
     private static void Check(bool condition, string message)
     {
         if (!condition)

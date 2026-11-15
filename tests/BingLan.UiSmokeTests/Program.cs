@@ -201,6 +201,7 @@ internal static class Program
         Run("设置搜索索引、键盘选择与跳转展开", TestSettingsSearchJump, failures);
         Run("独立外观折叠与未跟随全局的部分", TestComponentOwnLookAndOverrides, failures);
         Run("设置中心深色配色只作用于设置窗口", TestSettingsDarkPalette, failures);
+        Run("小工作区下设置窗口不越界且各页底部控件可滚动可见", TestSettingsWindowSmallWorkAreaScrollsAllPages, failures);
         Run("系统入口选择与 Dock 开始菜单开关", () => ShellSurfaceTests.Run(ShowAndPump, Pump), failures);
         Run("托盘调用门控、迟到会话与宿主清理", () => TrayOverflowExperimentTests.Run(Pump), failures);
         Run("待办按 Enter 提交后文字写入状态", TestTodoEnterCommitsText, failures);
@@ -6747,6 +6748,140 @@ internal static class Program
         finally
         {
             AccessibilityThemeManager.SetDarkModeForTesting(null);
+            window.Close();
+            Pump();
+        }
+    }
+
+    private static void TestSettingsWindowSmallWorkAreaScrollsAllPages()
+    {
+        var todo = new TodoWidgetWindow(new TodoWidgetState());
+        var fileBox = new FileBoxWindow(new FileBoxState());
+        ShowAndPump(todo);
+        ShowAndPump(fileBox);
+        var window = CreateLinkedSettings(new DockState(), new TaskbarState(), new TopBarState(), () => [todo, fileBox]);
+        ShowAndPump(window);
+
+        try
+        {
+            foreach (var workArea in new[] { new Rect(0d, 0d, 1138d, 711d), new Rect(0d, 0d, 920d, 620d) })
+            {
+                window.ApplyWorkAreaConstraint(workArea, recenter: true);
+                window.UpdateLayout();
+                Pump();
+
+                Assert(window.Width <= workArea.Width + 0.5d
+                    && window.Height <= workArea.Height + 0.5d
+                    && window.ActualWidth <= workArea.Width + 0.5d
+                    && window.ActualHeight <= workArea.Height + 0.5d
+                    && window.MinWidth <= workArea.Width + 0.5d
+                    && window.MinHeight <= workArea.Height + 0.5d,
+                    $"工作区 {workArea.Width}×{workArea.Height} 下设置窗口实际 {window.ActualWidth:0.##}×{window.ActualHeight:0.##}、最小 {window.MinWidth:0.##}×{window.MinHeight:0.##} 不应超出工作区");
+                Assert(window.Left >= workArea.Left - 0.5d
+                    && window.Top >= workArea.Top - 0.5d
+                    && window.Left + window.ActualWidth <= workArea.Right + 0.5d
+                    && window.Top + window.ActualHeight <= workArea.Bottom + 0.5d,
+                    $"工作区 {workArea.Width}×{workArea.Height} 下设置窗口位置 {window.Left:0.##},{window.Top:0.##} 不应越界");
+
+                void AssertControlScrollsIntoView(ScrollViewer viewer, FrameworkElement target, string label)
+                {
+                    Assert(target.IsVisible, $"{label} 未处于可见状态");
+                    viewer.ScrollToBottom();
+                    target.BringIntoView();
+                    window.UpdateLayout();
+                    Pump();
+
+                    var bounds = target.TransformToAncestor(viewer)
+                        .TransformBounds(new Rect(0d, 0d, target.ActualWidth, target.ActualHeight));
+                    Assert(bounds.Top >= -1d
+                        && bounds.Bottom <= viewer.ViewportHeight + 1d
+                        && bounds.Left >= -1d
+                        && bounds.Right <= viewer.ViewportWidth + 1d,
+                        $"{label} 应能滚入可视区 ({viewer.ViewportWidth:0.##}×{viewer.ViewportHeight:0.##})，实际 {bounds.Left:0.##},{bounds.Top:0.##}..{bounds.Right:0.##},{bounds.Bottom:0.##}");
+                }
+
+                window.ShowSettingsPage("Scheme");
+                Pump();
+                AssertControlScrollsIntoView(
+                    Require<ScrollViewer>(window, "SchemePage"),
+                    Require<CheckBox>(window, "CleanDesktopCheckBox"),
+                    "桌面方案页末尾控件");
+
+                window.ShowSettingsPage("Appearance");
+                Pump();
+                Require<Expander>(window, "AppearanceBarsLookFold").IsExpanded = true;
+                var appearanceLayoutFold = Require<Expander>(window, "AppearanceLayoutFold");
+                appearanceLayoutFold.IsExpanded = true;
+                Pump();
+                var appearanceBottomButton = FindVisualChildren<Button>(appearanceLayoutFold).Last(b => b.IsVisible);
+                AssertControlScrollsIntoView(
+                    Require<ScrollViewer>(window, "AppearancePage"),
+                    appearanceBottomButton,
+                    "外观样式页末尾按钮");
+
+                window.ShowSettingsPage("Components");
+                window.ShowComponentSettings(DesktopComponentKind.Weather);
+                Pump();
+                var componentList = Require<ListBox>(window, "DesktopComponentList");
+                componentList.ScrollIntoView(componentList.Items[^1]!);
+                window.UpdateLayout();
+                Pump();
+                var lastListItem = (ListBoxItem)componentList.ItemContainerGenerator.ContainerFromIndex(componentList.Items.Count - 1);
+                var listBounds = lastListItem.TransformToAncestor(componentList)
+                    .TransformBounds(new Rect(0d, 0d, lastListItem.ActualWidth, lastListItem.ActualHeight));
+                Assert(listBounds.Top >= -1d && listBounds.Bottom <= componentList.ActualHeight + 1d,
+                    $"桌面组件列表末项应能滚入可见区域 (高 {componentList.ActualHeight:0.##})，实际 {listBounds.Top:0.##}..{listBounds.Bottom:0.##}");
+
+                var detailsViewer = Require<ScrollViewer>(window, "ComponentDetailsScrollViewer");
+                var ownLookFold = Require<Expander>(window, "ComponentOwnLookFold");
+                ownLookFold.IsExpanded = true;
+                Pump();
+                AssertControlScrollsIntoView(
+                    detailsViewer,
+                    Require<TextBox>(window, "SelectedComponentHeightEditor"),
+                    "桌面组件内置卡末尾控件");
+                AssertControlScrollsIntoView(
+                    detailsViewer,
+                    Require<TextBlock>(window, "ComponentSettingsStatusText"),
+                    "桌面组件页末尾状态文案");
+
+                componentList.SelectedIndex = componentList.Items.Count - 1;
+                window.UpdateLayout();
+                Pump();
+                var selectedWidgetFold = Require<Expander>(window, "SelectedWidgetOwnLookFold");
+                selectedWidgetFold.IsExpanded = true;
+                Pump();
+                AssertControlScrollsIntoView(
+                    detailsViewer,
+                    Require<TextBlock>(window, "ComponentSettingsStatusText"),
+                    "桌面组件分组盒末尾状态文案");
+
+                window.ShowSettingsPage("Bars");
+                Pump();
+                Require<Expander>(window, "DockSection").IsExpanded = true;
+                Require<Expander>(window, "TopBarSection").IsExpanded = true;
+                Require<Expander>(window, "TaskbarSection").IsExpanded = true;
+                Require<RadioButton>(window, "TaskbarSmartHideRadio").IsChecked = true;
+                Pump();
+                AssertControlScrollsIntoView(
+                    Require<ScrollViewer>(window, "BarsPage"),
+                    Require<CheckBox>(window, "QuietTaskbarFlashCheckBox"),
+                    "顶栏底栏页末尾开关");
+
+                window.ShowSettingsPage("General");
+                Pump();
+                var uninstall = Require<Button>(window, "UninstallButton");
+                var exit = Require<Button>(window, "ExitAppButton");
+                AssertControlScrollsIntoView(
+                    Require<ScrollViewer>(window, "GeneralPage"),
+                    uninstall.IsVisible ? uninstall : exit,
+                    "通用设置页末尾按钮");
+            }
+        }
+        finally
+        {
+            Close(fileBox);
+            Close(todo);
             window.Close();
             Pump();
         }

@@ -7,7 +7,7 @@
         Height="820"
         MinWidth="980"
         MinHeight="700"
-        WindowStartupLocation="CenterScreen"
+        WindowStartupLocation="Manual"
         Background="{DynamicResource IcePageBrush}"
         Foreground="{DynamicResource IceInkBrush}"
         FontFamily="{StaticResource UiFont}"
@@ -226,6 +226,7 @@
                          Padding="0"
                          BorderThickness="0"
                          Background="Transparent"
+                         ScrollViewer.VerticalScrollBarVisibility="Auto"
                          ItemContainerStyle="{StaticResource NavigationItemStyle}"
                          SelectionChanged="SettingsNavigationList_SelectionChanged"
                          SelectedIndex="0">
@@ -921,11 +922,15 @@
                     <RowDefinition Height="*"/>
                 </Grid.RowDefinitions>
                 <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
                     <StackPanel>
                         <TextBlock Style="{StaticResource PageTitleStyle}" Text="桌面组件"/>
                         <TextBlock Style="{StaticResource PageSubtitleStyle}" Text="选择一张卡片，在右侧调整显示、内容和外观；修改立即生效。"/>
                     </StackPanel>
-                    <StackPanel HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,0,6" Orientation="Horizontal">
+                    <StackPanel Grid.Column="1" VerticalAlignment="Bottom" Margin="16,0,0,6" Orientation="Horizontal">
                         <Button x:Name="AddTodoButton" AutomationProperties.Name="新建待办便签" Click="AddTodo_Click">
                             <StackPanel Orientation="Horizontal">
                                 <TextBlock Style="{StaticResource ButtonGlyphStyle}" Text="&#xE710;"/>

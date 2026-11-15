@@ -136,6 +136,7 @@ public partial class SettingsWindow : Window
         SourceInitialized += (_, _) =>
         {
             ApplyTheme();
+            ApplyWorkAreaConstraint(ResolveHostWorkAreaDip(), recenter: true);
             HwndSource.FromHwnd(new WindowInteropHelper(this).Handle)?.AddHook(ThemeMessageHook);
         };
         AccessibilityThemeManager.HighContrastChanged += ReapplyTheme;
@@ -214,12 +215,20 @@ public partial class SettingsWindow : Window
         Activated += (_, _) => LoadTaskbarSettings();
         LocationChanged += (_, _) => SettingsSearchPopup.IsOpen = false;
         SystemParameters.StaticPropertyChanged += SystemParameters_Changed;
-        Closed += (_, _) => SystemParameters.StaticPropertyChanged -= SystemParameters_Changed;
+        DpiChanged += SettingsWindow_DpiChanged;
+        Microsoft.Win32.SystemEvents.DisplaySettingsChanged += SystemEvents_DisplaySettingsChanged;
+        Closed += (_, _) =>
+        {
+            SystemParameters.StaticPropertyChanged -= SystemParameters_Changed;
+            DpiChanged -= SettingsWindow_DpiChanged;
+            Microsoft.Win32.SystemEvents.DisplaySettingsChanged -= SystemEvents_DisplaySettingsChanged;
+        };
         if (_maintenance.Updater is { } updater)
         {
             updater.Changed += RefreshUpdateView;
             Closed += (_, _) => updater.Changed -= RefreshUpdateView;
         }
+        ApplyWorkAreaConstraint(ResolveHostWorkAreaDip(), recenter: true);
     }
 
     /// <summary>Whether the window shows the Mica material instead of the solid page colour.</summary>
@@ -265,8 +274,119 @@ public partial class SettingsWindow : Window
     {
         if (e.PropertyName == nameof(SystemParameters.WorkArea))
         {
-            Dispatcher.InvokeAsync(() => UpdatePresetPreview(GetSelectedPreset()));
+            Dispatcher.InvokeAsync(() =>
+            {
+                if (!_isClosed)
+                {
+                    ApplyWorkAreaConstraint(ResolveHostWorkAreaDip(), recenter: false);
+                }
+                UpdatePresetPreview(GetSelectedPreset());
+            });
         }
+    }
+
+    private void SettingsWindow_DpiChanged(object sender, DpiChangedEventArgs e) =>
+        Dispatcher.InvokeAsync(() =>
+        {
+            if (!_isClosed)
+            {
+                ApplyWorkAreaConstraint(ResolveHostWorkAreaDip(), recenter: false);
+            }
+        });
+
+    private void SystemEvents_DisplaySettingsChanged(object? sender, EventArgs e) =>
+        Dispatcher.InvokeAsync(() =>
+        {
+            if (!_isClosed)
+            {
+                ApplyWorkAreaConstraint(ResolveHostWorkAreaDip(), recenter: false);
+            }
+        });
+
+    internal void ApplyWorkAreaConstraint(Rect workArea, bool recenter)
+    {
+        var bounds = SettingsWindowSizingRules.Resolve(
+            workArea.Left,
+            workArea.Top,
+            workArea.Width,
+            workArea.Height);
+
+        MinWidth = bounds.MinWidth;
+        MinHeight = bounds.MinHeight;
+
+        if (recenter)
+        {
+            Width = bounds.Width;
+            Height = bounds.Height;
+            Left = bounds.Left;
+            Top = bounds.Top;
+            return;
+        }
+
+        if (WindowState != WindowState.Normal)
+        {
+            return;
+        }
+
+        var safeLeft = double.IsFinite(workArea.Left) ? workArea.Left : bounds.Left;
+        var safeTop = double.IsFinite(workArea.Top) ? workArea.Top : bounds.Top;
+        var safeWidth = double.IsFinite(workArea.Width) && workArea.Width > 0d
+            ? workArea.Width
+            : bounds.Width;
+        var safeHeight = double.IsFinite(workArea.Height) && workArea.Height > 0d
+            ? workArea.Height
+            : bounds.Height;
+
+        if (!double.IsFinite(Width) || Width > safeWidth)
+        {
+            Width = Math.Max(bounds.MinWidth, Math.Min(SettingsWindowSizingRules.DefaultWidth, safeWidth));
+        }
+        if (!double.IsFinite(Height) || Height > safeHeight)
+        {
+            Height = Math.Max(bounds.MinHeight, Math.Min(SettingsWindowSizingRules.DefaultHeight, safeHeight));
+        }
+
+        var currentWidth = double.IsFinite(Width) ? Width : bounds.Width;
+        var currentHeight = double.IsFinite(Height) ? Height : bounds.Height;
+        var maxLeft = safeLeft + Math.Max(0d, safeWidth - currentWidth);
+        var maxTop = safeTop + Math.Max(0d, safeHeight - currentHeight);
+        Left = double.IsFinite(Left) ? Math.Clamp(Left, safeLeft, maxLeft) : bounds.Left;
+        Top = double.IsFinite(Top) ? Math.Clamp(Top, safeTop, maxTop) : bounds.Top;
+    }
+
+    private Rect ResolveHostWorkAreaDip()
+    {
+        var monitors = MonitorCatalog.GetAll();
+        if (monitors.Count == 0)
+        {
+            return SystemParameters.WorkArea;
+        }
+
+        MonitorSnapshot? monitor = null;
+        var handle = new WindowInteropHelper(this).Handle;
+        if (handle != 0)
+        {
+            var monitorHandle = DockNativeMethods.MonitorFromWindow(
+                handle,
+                DockNativeMethods.MonitorDefaultToNearest);
+            monitor = monitors.FirstOrDefault(candidate => candidate.MonitorHandle == monitorHandle);
+        }
+        else if (DockNativeMethods.GetCursorPos(out var cursor))
+        {
+            monitor = monitors.FirstOrDefault(candidate =>
+                cursor.X >= candidate.Bounds.Left
+                && cursor.X < candidate.Bounds.Right
+                && cursor.Y >= candidate.Bounds.Top
+                && cursor.Y < candidate.Bounds.Bottom);
+        }
+
+        monitor ??= monitors.FirstOrDefault(candidate => candidate.IsPrimary) ?? monitors[0];
+        var scale = monitor.Dpi > 0 ? monitor.Dpi / 96d : 1d;
+        return new Rect(
+            monitor.WorkingArea.Left / scale,
+            monitor.WorkingArea.Top / scale,
+            monitor.WorkingArea.Width / scale,
+            monitor.WorkingArea.Height / scale);
     }
 
     private void LoadDesktopExperience()
