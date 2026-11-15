@@ -27,11 +27,13 @@
         <CornerRadius x:Key="CardRadius.Pill">8</CornerRadius>
 
         <!-- 桌面卡片间距令牌（4 的倍数） -->
+        <Thickness x:Key="CardSpace.TightGap">0,4,0,0</Thickness>
         <Thickness x:Key="CardSpace.CompactPadding">8,4</Thickness>
         <Thickness x:Key="CardSpace.RowPadding">8,8</Thickness>
         <Thickness x:Key="CardSpace.BodyPadding">12,8</Thickness>
         <Thickness x:Key="CardSpace.HeaderMargin">16,0,12,0</Thickness>
         <Thickness x:Key="CardSpace.SectionGap">0,8,0,0</Thickness>
+        <Thickness x:Key="CardSpace.EmptyMargin">24,16</Thickness>
 
         <!-- 桌面卡片共享特效与语义画刷 -->
         <DropShadowEffect x:Key="NakedTextContrastShadow"

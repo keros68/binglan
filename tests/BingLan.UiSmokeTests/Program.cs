@@ -236,6 +236,7 @@ internal static class Program
         Run("搜索菜单对比度、右键与键盘操作", () => TopBarWindowTests.SearchResultContextMenuStaysOpen(ShowAndPump, Pump), failures);
         Run("主题导入对话框显示名称与预览图", TestThemeImportDialogShowsNameAndPreview, failures);
         Run("三种材质与 0/12/32 圆角真实窗口无白边或锯齿", TestMaterialCornerEdgesNoWhiteHalo, failures);
+        Run("空状态引导与卡片折叠增删动效", TestWp6EmptyStateAndCardMotion, failures);
 
         if (failures.Count > 0)
         {
@@ -2111,6 +2112,213 @@ internal static class Program
         }
     }
 
+    private static void TestWp6EmptyStateAndCardMotion()
+    {
+        var originalAnimationSetting = CardMotionAnimator.AreSystemAnimationsEnabled;
+        var tempDir = Path.Combine(Path.GetTempPath(), $"BingLan-wp6-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
+        var sampleFile = Path.Combine(tempDir, "示例文档.txt");
+        File.WriteAllText(sampleFile, "wp6");
+
+        TodoWidgetWindow? todo = null;
+        FileBoxWindow? box = null;
+        try
+        {
+            CardMotionAnimator.AreSystemAnimationsEnabled = () => false;
+            var todoState = new TodoWidgetState
+            {
+                Placement = new WindowPlacement { Width = 286d, Height = 336d }
+            };
+            todo = new TodoWidgetWindow(todoState);
+            ShowAndPump(todo);
+            todo.Activate();
+            Pump();
+
+            var todoEmpty = Require<StackPanel>(todo, "TodoEmptyState");
+            var todoFooter = Require<Border>(todo, "TodoFooterBorder");
+            var todoList = Require<ItemsControl>(todo, "TodoList");
+            var todoOverlay = Require<Canvas>(todo, "TodoMotionOverlay");
+            var todoBody = Require<Grid>(todo, "BodySurface");
+            Assert(todoState.Items.Count == 0, "新建待办卡应保持空列表");
+            Assert(todoEmpty.IsVisible, "空待办卡应显示空状态引导");
+            Assert(
+                !string.IsNullOrWhiteSpace(Require<TextBlock>(todo, "TodoEmptyTitleText").Text) &&
+                !string.IsNullOrWhiteSpace(Require<TextBlock>(todo, "TodoEmptyGuideText").Text),
+                "空待办引导文案不能为空");
+            Assert(todoFooter.Visibility == Visibility.Collapsed, "空待办状态下应隐藏底部统计栏");
+
+            Require<Button>(todo, "AddTodoButton").RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            Pump();
+            Assert(!todoEmpty.IsVisible, "点击 + 新增待办后应隐藏空状态引导");
+            Assert(todoFooter.Visibility == Visibility.Visible, "有待办条目后应显示底部统计栏");
+            Assert(todoState.Items.Count == 1, "点击 + 应新增一条待办");
+            var firstEditor = FindVisualChildren<TextBox>(todoList).Single();
+            PumpUntil(
+                () => firstEditor.IsFocused
+                    || firstEditor.IsKeyboardFocused
+                    || ReferenceEquals(FocusManager.GetFocusedElement(todo), firstEditor),
+                "空待办点击 + 后应立即聚焦到文本输入");
+
+            Require<Button>(todo, "CollapseButton").Focus();
+            FocusManager.SetFocusedElement(todo, Require<Button>(todo, "CollapseButton"));
+            PumpUntil(
+                () => todoState.Items.Count == 0 && todoEmpty.IsVisible,
+                "空白待办失去焦点后应清理并恢复空状态引导");
+            Assert(todoFooter.Visibility == Visibility.Collapsed, "恢复空状态后底部统计栏应隐藏");
+
+            var boxState = new FileBoxState
+            {
+                Placement = new WindowPlacement { Width = 366d, Height = 306d }
+            };
+            box = new FileBoxWindow(boxState);
+            ShowAndPump(box);
+
+            var boxEmpty = Require<StackPanel>(box, "FileBoxEmptyState");
+            var boxList = Require<ItemsControl>(box, "FileList");
+            var boxOverlay = Require<Canvas>(box, "FileBoxMotionOverlay");
+            var boxBody = Require<Grid>(box, "BodySurface");
+            Assert(boxEmpty.IsVisible, "空分组盒应显示空状态引导");
+            Assert(
+                !string.IsNullOrWhiteSpace(Require<TextBlock>(box, "FileBoxEmptyTitleText").Text) &&
+                !string.IsNullOrWhiteSpace(Require<TextBlock>(box, "FileBoxEmptyGuideText").Text),
+                "空分组盒引导文案不能为空");
+
+            var firstAddTask = box.AddMappingsAsync([sampleFile]);
+            PumpUntil(() => firstAddTask.IsCompleted, "分组盒添加首条映射未完成");
+            Assert(firstAddTask.GetAwaiter().GetResult() == 1, "分组盒应加入测试文件映射");
+            Pump();
+            Assert(!boxEmpty.IsVisible, "分组盒存在条目后应隐藏空状态引导");
+
+            // 系统开启“动画效果”时，折叠/展开与增删条目播放 120-200ms 过渡并释放动画时钟。
+            CardMotionAnimator.AreSystemAnimationsEnabled = () => true;
+            todo.Activate();
+            Pump();
+            Require<Button>(todo, "AddTodoButton").RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            todoState.Items.Single().Text = "待办动画条目";
+            Pump();
+            var animatedTodoRow = (ContentPresenter)todoList.ItemContainerGenerator.ContainerFromIndex(0)!;
+            PumpUntil(
+                () => animatedTodoRow.Opacity == 1d && !animatedTodoRow.HasAnimatedProperties,
+                "待办条目入场动画应在过渡结束后清理动画属性");
+
+            Require<Button>(todo, "CollapseButton").RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            Assert(todo.IsFoldAnimating, "系统动画开启时待办收起应启动过渡动效");
+            PumpUntil(
+                () => !todo.IsFoldAnimating && Near(todo.ActualHeight, 48d),
+                "系统动画开启时待办收起未正常完成");
+            Pump();
+            Assert(!todoBody.HasAnimatedProperties && double.IsNaN(todoBody.Height), "待办收起后应清理正文动画属性");
+
+            Require<Button>(todo, "CollapseButton").RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            Assert(todo.IsFoldAnimating, "系统动画开启时待办展开应启动过渡动效");
+            PumpUntil(
+                () => !todo.IsFoldAnimating && Near(todo.ActualHeight, 336d),
+                "系统动画开启时待办展开未正常完成");
+            Pump();
+            Assert(!todoBody.HasAnimatedProperties && double.IsNaN(todoBody.Height), "待办展开后应清理正文动画属性");
+
+            Require<Button>(box, "CollapseButton").RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            Assert(box.IsFoldAnimating, "系统动画开启时分组盒收起应启动过渡动效");
+            PumpUntil(
+                () => !box.IsFoldAnimating && Near(box.ActualHeight, 48d),
+                "系统动画开启时分组盒收起未正常完成");
+            Pump();
+            Assert(!boxBody.HasAnimatedProperties && double.IsNaN(boxBody.Height), "分组盒收起后应清理正文动画属性");
+
+            Require<Button>(box, "CollapseButton").RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            Assert(box.IsFoldAnimating, "系统动画开启时分组盒展开应启动过渡动效");
+            PumpUntil(
+                () => !box.IsFoldAnimating && Near(box.ActualHeight, 306d),
+                "系统动画开启时分组盒展开未正常完成");
+            Pump();
+            Assert(!boxBody.HasAnimatedProperties && double.IsNaN(boxBody.Height), "分组盒展开后应清理正文动画属性");
+
+            FindVisualChildren<Button>(todoList)
+                .Single(x => Equals(x.Content, "×"))
+                .RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            Assert(todoOverlay.Children.Count == 1, "系统动画开启时删除待办应播放退场残影");
+            PumpUntil(() => todoOverlay.Children.Count == 0, "删除待办的退场残影应在过渡结束后移除");
+            PumpUntil(
+                () => !todoEmpty.HasAnimatedProperties && todoEmpty.Opacity == 1d,
+                "恢复空状态引导的淡入过渡应清理动画属性");
+
+            // 系统关闭“动画效果”时直接切换，不启动任何过渡动画或残影。
+            CardMotionAnimator.AreSystemAnimationsEnabled = () => false;
+            Require<Button>(todo, "CollapseButton").RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            Assert(!todo.IsFoldAnimating, "系统关闭动画时待办收起不应启动过渡");
+            Pump();
+            Assert(
+                Near(todo.ActualHeight, 48d) && !todoBody.HasAnimatedProperties,
+                "系统关闭动画时待办应直接收起且无动画时钟");
+
+            Require<Button>(todo, "CollapseButton").RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            Assert(!todo.IsFoldAnimating, "系统关闭动画时待办展开不应启动过渡");
+            Pump();
+            Assert(
+                Near(todo.ActualHeight, 336d) && !todoBody.HasAnimatedProperties,
+                "系统关闭动画时待办应直接展开且无动画时钟");
+
+            Require<Button>(box, "CollapseButton").RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            Assert(!box.IsFoldAnimating, "系统关闭动画时分组盒收起不应启动过渡");
+            Pump();
+            Assert(
+                Near(box.ActualHeight, 48d) && !boxBody.HasAnimatedProperties,
+                "系统关闭动画时分组盒应直接收起且无动画时钟");
+
+            Require<Button>(box, "CollapseButton").RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            Assert(!box.IsFoldAnimating, "系统关闭动画时分组盒展开不应启动过渡");
+            Pump();
+            Assert(
+                Near(box.ActualHeight, 306d) && !boxBody.HasAnimatedProperties,
+                "系统关闭动画时分组盒应直接展开且无动画时钟");
+
+            Require<Button>(todo, "AddTodoButton").RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            todoState.Items.Single().Text = "无动画待办";
+            Pump();
+            var staticTodoRow = (ContentPresenter)todoList.ItemContainerGenerator.ContainerFromIndex(0)!;
+            Assert(
+                !staticTodoRow.HasAnimatedProperties && staticTodoRow.Opacity == 1d,
+                "系统关闭动画时新增待办不应附加动画属性");
+            FindVisualChildren<Button>(todoList)
+                .Single(x => Equals(x.Content, "×"))
+                .RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            Assert(todoOverlay.Children.Count == 0, "系统关闭动画时删除待办不应生成退场残影");
+            Pump();
+            Assert(
+                todoEmpty.IsVisible && !todoEmpty.HasAnimatedProperties && todoEmpty.Opacity == 1d,
+                "系统关闭动画时恢复空状态引导不应附加动画属性");
+
+            var tilePresenter = (ContentPresenter)boxList.ItemContainerGenerator.ContainerFromIndex(0)!;
+            var tileButton = FindVisualChildren<Button>(tilePresenter)
+                .Single(button => button.DataContext is FileBoxWindow.FileTile);
+            var tileMenu = tileButton.ContextMenu ?? throw new InvalidOperationException("找不到文件项右键菜单");
+            tileMenu.DataContext = tileButton.DataContext;
+            var removeMenuItem = tileMenu.Items.OfType<MenuItem>().Single(item => Equals(item.Header, "移除映射"));
+            removeMenuItem.DataContext = tileButton.DataContext;
+            removeMenuItem.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+            Assert(boxOverlay.Children.Count == 0, "系统关闭动画时移除分组盒映射不应生成退场残影");
+            Pump();
+            Assert(
+                boxEmpty.IsVisible && !boxEmpty.HasAnimatedProperties && boxEmpty.Opacity == 1d,
+                "系统关闭动画时恢复分组盒空状态不应附加动画属性");
+
+            var reAddTask = box.AddMappingsAsync([sampleFile]);
+            PumpUntil(() => reAddTask.IsCompleted, "无动画分组盒重新添加映射未完成");
+            Pump();
+            var reAddedPresenter = (ContentPresenter)boxList.ItemContainerGenerator.ContainerFromIndex(0)!;
+            Assert(
+                !reAddedPresenter.HasAnimatedProperties && reAddedPresenter.Opacity == 1d,
+                "系统关闭动画时分组盒新增图标不应附加动画属性");
+        }
+        finally
+        {
+            CardMotionAnimator.AreSystemAnimationsEnabled = originalAnimationSetting;
+            if (todo is not null) Close(todo);
+            if (box is not null) Close(box);
+            if (Directory.Exists(tempDir)) Directory.Delete(tempDir, true);
+        }
+    }
+
     private static void TestTodoCollapseFoldsToTitleBar()
     {
         var temp = Path.Combine(Path.GetTempPath(), $"BingLan-ui-{Guid.NewGuid():N}");
@@ -2129,8 +2337,9 @@ internal static class Program
             window.Height = 336;
             Pump();
             Require<Button>(window, "CollapseButton").RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
-            Pump();
-            Assert(Near(window.ActualHeight, 48), "收起后卡片应只剩标题条高度");
+            PumpUntil(
+                () => Near(window.ActualHeight, 48) && !window.IsFoldAnimating,
+                "等待待办卡片完成收起动画");
             // 收起隐藏的是正文的整层 Grid，所以断言要考虑祖先的 IsVisible。
             Assert(!Require<ScrollViewer>(window, "ListHost").IsVisible, "收起后正文列表应隐藏");
             Assert(Require<Button>(window, "ViewModeButton").Visibility == Visibility.Collapsed, "收起后视图切换按钮应隐藏");
@@ -2153,8 +2362,9 @@ internal static class Program
         {
             Assert(Near(restored.ActualHeight, 48), "重启后收起的卡片应以标题条打开");
             Require<Button>(restored, "CollapseButton").RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
-            Pump();
-            Assert(Near(restored.ActualHeight, 336), "展开后应回到记住的展开高度");
+            PumpUntil(
+                () => Near(restored.ActualHeight, 336) && !restored.IsFoldAnimating,
+                "等待待办卡片完成展开动画");
             Assert(Require<ScrollViewer>(restored, "ListHost").IsVisible, "展开后正文应恢复显示");
             Assert(Require<Button>(restored, "ViewModeButton").Visibility == Visibility.Visible, "展开后视图切换按钮应恢复");
         }

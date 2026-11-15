@@ -394,15 +394,40 @@
                 </Grid>
             </Border>
 
-            <ScrollViewer Grid.Row="1"
-                          Margin="14,6,6,2"
-                          Style="{StaticResource CardScrollViewerStyle}"
-                          VerticalScrollBarVisibility="Auto"
-                          HorizontalScrollBarVisibility="Disabled">
-                <ItemsControl x:Name="FileList"
-                              Focusable="False"
-                              IsTabStop="False"/>
-            </ScrollViewer>
+            <Grid Grid.Row="1">
+                <ScrollViewer Margin="14,6,6,2"
+                              Style="{StaticResource CardScrollViewerStyle}"
+                              VerticalScrollBarVisibility="Auto"
+                              HorizontalScrollBarVisibility="Disabled">
+                    <ItemsControl x:Name="FileList"
+                                  Focusable="False"
+                                  IsTabStop="False"/>
+                </ScrollViewer>
+                <StackPanel x:Name="FileBoxEmptyState"
+                            Margin="{StaticResource CardSpace.EmptyMargin}"
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center"
+                            IsHitTestVisible="False"
+                            Visibility="Collapsed">
+                    <TextBlock x:Name="FileBoxEmptyTitleText"
+                               FontSize="{StaticResource CardFont.Subhead}"
+                               FontWeight="SemiBold"
+                               Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
+                               Text="还没有收纳项目"
+                               TextAlignment="Center"
+                               TextWrapping="Wrap"/>
+                    <TextBlock x:Name="FileBoxEmptyGuideText"
+                               Margin="{StaticResource CardSpace.TightGap}"
+                               FontSize="{StaticResource CardFont.Meta}"
+                               Foreground="{Binding WidgetSecondaryTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
+                               Text="拖入文件或文件夹，或点击右上角 + 添加"
+                               TextAlignment="Center"
+                               TextWrapping="Wrap"/>
+                </StackPanel>
+                <Canvas x:Name="FileBoxMotionOverlay"
+                        ClipToBounds="True"
+                        IsHitTestVisible="False"/>
+            </Grid>
 
             <Grid Grid.Row="2" Margin="17,0,17,7">
                 <Grid.ColumnDefinitions>

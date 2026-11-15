@@ -28,6 +28,7 @@ public partial class FileBoxWindow : WidgetWindowBase
     // or the list being rebuilt; the anchor remembers where a Shift range starts.
     private readonly HashSet<Guid> _selectedIds = [];
     private readonly CancellationTokenSource _closeCts = new();
+    private readonly CardFoldAnimator _foldAnimator;
     private Guid? _selectionAnchor;
     private bool _initialIconLoadStarted;
 
@@ -39,6 +40,7 @@ public partial class FileBoxWindow : WidgetWindowBase
         _items = new ObservableCollection<FileTile>(
             state.Items.OrderBy(x => x.Order).Select(x => new FileTile(x, null)));
         InitializeComponent();
+        _foldAnimator = new CardFoldAnimator(this, BodySurface);
         DataContext = state;
         ApplyAppearance(state.Appearance);
         FileList.ItemsSource = _items;
@@ -52,6 +54,8 @@ public partial class FileBoxWindow : WidgetWindowBase
     }
 
     public FileBoxState State { get; }
+
+    internal bool IsFoldAnimating => _foldAnimator.IsAnimating;
 
     internal bool InitialProbeCompleted { get; private set; }
 
@@ -132,44 +136,77 @@ public partial class FileBoxWindow : WidgetWindowBase
 
     private void CollapseButton_Click(object sender, RoutedEventArgs e)
     {
-        SetCollapsed(!State.IsCollapsed);
+        SetCollapsed(!State.IsCollapsed, animate: true);
         NotifyStateChanged();
     }
+
+    private UIElement[] FoldBodyElements() =>
+        BoxLayout.Children.OfType<FrameworkElement>()
+            .Where(element => System.Windows.Controls.Grid.GetRow(element) > 0)
+            .Append<UIElement>(TitleDivider)
+            .ToArray();
 
     /// <summary>
     /// Folds the box up to its title bar, or unfolds it to the height it had. A folded box
     /// keeps its width and can still be dragged; only its height is fixed.
     /// </summary>
-    internal void SetCollapsed(bool collapsed)
+    internal void SetCollapsed(bool collapsed, bool animate = false)
     {
         if (collapsed && !State.IsCollapsed)
         {
             State.ExpandedHeight = Height;
         }
         State.IsCollapsed = collapsed;
-        var body = collapsed ? Visibility.Collapsed : Visibility.Visible;
-        foreach (var element in BoxLayout.Children.OfType<FrameworkElement>().Where(element => System.Windows.Controls.Grid.GetRow(element) > 0))
-        {
-            element.Visibility = body;
-        }
-        TitleDivider.Visibility = body;
+        CollapseButton.Content = collapsed ? "\uE70D" : "\uE70E";
+        CollapseButton.ToolTip = collapsed ? "展开分组盒" : "折叠成标题条";
+
+        var bodyElements = FoldBodyElements();
         if (collapsed)
         {
-            MinHeight = CollapsedHeight;
-            MaxHeight = CollapsedHeight;
-            Height = CollapsedHeight;
+            FileBoxMotionOverlay.Children.Clear();
+            void CommitCollapsedLayout()
+            {
+                foreach (var element in bodyElements)
+                {
+                    element.Visibility = Visibility.Collapsed;
+                }
+                MinHeight = CollapsedHeight;
+                MaxHeight = CollapsedHeight;
+                Height = CollapsedHeight;
+            }
+
+            if (animate && IsLoaded && CardMotionAnimator.IsAnimationEnabled)
+            {
+                _foldAnimator.BeginCollapse(CollapsedHeight, bodyElements, CommitCollapsedLayout);
+            }
+            else
+            {
+                _foldAnimator.Snap();
+                CommitCollapsedLayout();
+            }
         }
         else
         {
+            foreach (var element in bodyElements)
+            {
+                element.Visibility = Visibility.Visible;
+            }
             MaxHeight = double.PositiveInfinity;
             MinHeight = DefaultMinHeight;
             Height = Math.Max(DefaultMinHeight, State.ExpandedHeight > 0 ? State.ExpandedHeight : 306d);
             // 展开向下长高，等原生矩形反映新尺寸后把卡片整体收回屏幕内。
             Dispatcher.BeginInvoke(
                 System.Windows.Threading.DispatcherPriority.Loaded, EnsureFullyOnScreen);
+
+            if (animate && IsLoaded && CardMotionAnimator.IsAnimationEnabled)
+            {
+                _foldAnimator.BeginExpand(CollapsedHeight, Height, bodyElements);
+            }
+            else
+            {
+                _foldAnimator.Snap();
+            }
         }
-        CollapseButton.Content = collapsed ? "" : "";
-        CollapseButton.ToolTip = collapsed ? "展开分组盒" : "折叠成标题条";
     }
 
     private async void FileBoxWindow_Loaded(object sender, RoutedEventArgs e)
@@ -285,6 +322,10 @@ public partial class FileBoxWindow : WidgetWindowBase
     public void CaptureState()
     {
         CopyPlacementTo(State.Placement);
+        if (State.IsCollapsed)
+        {
+            State.Placement.Height = CollapsedHeight;
+        }
         State.CornerRadius = WidgetCornerRadius;
         State.Items = _items.Select(x => x.Mapping).ToList();
     }
@@ -846,6 +887,10 @@ public partial class FileBoxWindow : WidgetWindowBase
         _items.Add(tile);
         RefreshCount();
         NotifyStateChanged();
+        if (IsLoaded)
+        {
+            AnimateTileEnter([tile]);
+        }
         StatusText.Text = $"已添加“{title}”";
         return true;
     }
@@ -856,6 +901,7 @@ public partial class FileBoxWindow : WidgetWindowBase
         {
             return;
         }
+        AnimateTileExit(tile);
         _items.Remove(tile);
         _selectedIds.Remove(tile.Mapping.Id);
         FileMappingService.Remove(State, tile.Mapping.Id);
@@ -986,6 +1032,7 @@ public partial class FileBoxWindow : WidgetWindowBase
 
         foreach (var tile in selected)
         {
+            AnimateTileExit(tile);
             _items.Remove(tile);
             FileMappingService.Remove(State, tile.Mapping.Id);
         }
@@ -1089,6 +1136,7 @@ public partial class FileBoxWindow : WidgetWindowBase
             return false;
         }
 
+        AnimateTileExit(tile);
         _items.Remove(tile);
         _selectedIds.Remove(tile.Mapping.Id);
         FileMappingService.Remove(State, tile.Mapping.Id);
@@ -1168,6 +1216,7 @@ public partial class FileBoxWindow : WidgetWindowBase
 
                 if (result == RecycleResult.Recycled)
                 {
+                    AnimateTileExit(tile);
                     _items.Remove(tile);
                     _selectedIds.Remove(tile.Mapping.Id);
                     FileMappingService.Remove(State, tile.Mapping.Id);
@@ -1323,15 +1372,22 @@ public partial class FileBoxWindow : WidgetWindowBase
             return 0;
         }
 
+        var addedTiles = new List<FileTile>(added);
         foreach (var mapping in State.Items
                      .Where(item => !existingIds.Contains(item.Id))
                      .OrderBy(item => item.Order))
         {
             preparedIcons.TryGetValue(mapping.Path, out var icon);
-            _items.Add(new FileTile(mapping, icon));
+            var tile = new FileTile(mapping, icon);
+            _items.Add(tile);
+            addedTiles.Add(tile);
         }
         RefreshCount();
         NotifyStateChanged();
+        if (IsLoaded)
+        {
+            AnimateTileEnter(addedTiles);
+        }
         return added;
     }
 
@@ -1471,9 +1527,53 @@ public partial class FileBoxWindow : WidgetWindowBase
         NotifyStateChanged();
     }
 
+    private void AnimateTileEnter(IReadOnlyList<FileTile> tiles)
+    {
+        if (tiles.Count == 0)
+        {
+            return;
+        }
+
+        Dispatcher.BeginInvoke(() =>
+        {
+            if (!FileList.IsVisible)
+            {
+                return;
+            }
+            foreach (var tile in tiles.Take(8))
+            {
+                if (FileList.ItemContainerGenerator.ContainerFromItem(tile) is FrameworkElement visual)
+                {
+                    CardMotionAnimator.AnimateItemEnter(visual);
+                }
+            }
+        }, System.Windows.Threading.DispatcherPriority.Loaded);
+    }
+
+    private void AnimateTileExit(FileTile tile)
+    {
+        if (FileList.ItemContainerGenerator.ContainerFromItem(tile) is FrameworkElement visual)
+        {
+            CardMotionAnimator.AnimateItemExit(visual, FileBoxMotionOverlay);
+        }
+    }
+
     private void RefreshCount()
     {
         CountText.Text = $"{_items.Count} 项";
+        var isEmpty = _items.Count == 0;
+        var becameEmpty = isEmpty && FileBoxEmptyState.Visibility != Visibility.Visible;
+        FileBoxEmptyState.Visibility = isEmpty ? Visibility.Visible : Visibility.Collapsed;
+        CountText.Visibility = isEmpty ? Visibility.Collapsed : Visibility.Visible;
+        if (becameEmpty && IsLoaded)
+        {
+            CardMotionAnimator.AnimateEmptyStateReveal(FileBoxEmptyState);
+        }
+        else if (isEmpty)
+        {
+            FileBoxEmptyState.BeginAnimation(UIElement.OpacityProperty, null);
+            FileBoxEmptyState.Opacity = 1d;
+        }
     }
 
     public sealed class FileTile : INotifyPropertyChanged

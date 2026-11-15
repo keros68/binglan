@@ -65,6 +65,7 @@ public partial class TodoWidgetWindow : WidgetWindowBase
     private double[]? _peekSlotTops;
     private double[]? _peekSlotHeights;
     private readonly HashSet<Guid> _completedItemIds = [];
+    private readonly CardFoldAnimator _foldAnimator;
     private System.Windows.Controls.ItemsControl? _peekDragList;
     private System.Windows.DependencyObject? _peekDwellSource;
     private System.Windows.Point _peekContainerClickPoint;
@@ -88,6 +89,7 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         _items.CollectionChanged += (_, _) => SyncTodayItems();
         SyncCompletedSnapshot();
         InitializeComponent();
+        _foldAnimator = new CardFoldAnimator(this, BodySurface);
         DataContext = state;
         ApplyAppearance(state.Appearance);
         SetContentFontScale(state.FontScale);
@@ -95,7 +97,10 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         SyncTodayItems();
         TodoList.ItemsSource = _todayItems;
         _todayItems.CollectionChanged += (_, _) =>
+        {
             System.Windows.Automation.Peers.UIElementAutomationPeer.FromElement(TodoList)?.ResetChildrenCache();
+            UpdateEmptyState(animateReveal: IsLoaded);
+        };
         TodoList.ItemContainerGenerator.StatusChanged += (_, _) => ApplyCompletedVisibilityOnContainers();
         ApplyPlacement(state.Placement, state.IsLocked);
         WidgetCornerRadius = state.CornerRadius;
@@ -112,6 +117,8 @@ public partial class TodoWidgetWindow : WidgetWindowBase
     }
 
     public TodoWidgetState State { get; }
+
+    internal bool IsFoldAnimating => _foldAnimator.IsAnimating;
 
     protected override System.Windows.Controls.TextBox? TitleEditorBox => TitleEditor;
 
@@ -130,6 +137,10 @@ public partial class TodoWidgetWindow : WidgetWindowBase
     public void CaptureState(bool commitDayEditor = true)
     {
         CopyPlacementTo(State.Placement);
+        if (State.IsCollapsed)
+        {
+            State.Placement.Height = CollapsedHeight;
+        }
         State.CornerRadius = WidgetCornerRadius;
         State.Items = _items.OrderBy(x => x.Order).ToList();
         if (commitDayEditor)
@@ -172,6 +183,7 @@ public partial class TodoWidgetWindow : WidgetWindowBase
             {
                 return;
             }
+            CardMotionAnimator.AnimateItemEnter(presenter);
             var editor = FindVisualChild<System.Windows.Controls.TextBox>(presenter);
             editor?.Focus();
         }, DispatcherPriority.Input);
@@ -330,8 +342,19 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         CaptureState();
         // Only today's completed entries are cleaned; dated history in the weekly
         // view stays until it is deleted one by one.
+        var today = DateTime.Today;
+        if (!State.WeeklyView && !State.HideCompleted)
+        {
+            foreach (var item in _todayItems.Where(x => x.IsCompleted && TodoService.BelongsToTodayList(x, today)))
+            {
+                if (TodoList.ItemContainerGenerator.ContainerFromItem(item) is FrameworkElement rowVisual)
+                {
+                    CardMotionAnimator.AnimateItemExit(rowVisual, TodoMotionOverlay);
+                }
+            }
+        }
         if (TodoService.RemoveCompleted(
-                State, x => TodoService.BelongsToTodayList(x, DateTime.Today)) == 0)
+                State, x => TodoService.BelongsToTodayList(x, today)) == 0)
         {
             return;
         }
@@ -779,6 +802,17 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         {
             return;
         }
+        if (!State.WeeklyView
+            && TodoList.ItemContainerGenerator.ContainerFromItem(item) is FrameworkElement listContainer)
+        {
+            CardMotionAnimator.AnimateItemExit(listContainer, TodoMotionOverlay);
+        }
+        else if (State.WeeklyView
+            && WeekPeekOverlay.Visibility == Visibility.Visible
+            && WeekPeekList.ItemContainerGenerator.ContainerFromItem(item) is FrameworkElement peekContainer)
+        {
+            CardMotionAnimator.AnimateItemExit(peekContainer, TodoMotionOverlay);
+        }
         if (ReferenceEquals(_editingItem, item))
         {
             _editingItem = null;
@@ -928,6 +962,8 @@ public partial class TodoWidgetWindow : WidgetWindowBase
 
     private void ToggleViewMode_Click(object sender, RoutedEventArgs e)
     {
+        _foldAnimator.Snap();
+        TodoMotionOverlay.Children.Clear();
         // 列表和周历各记一份尺寸：周历会把卡片撑大，切回列表时回到列表离开时的大小
         // （从没记过就用新卡片的默认大小），再切到周历时回到周历上次的大小。
         if (State.WeeklyView)
@@ -959,50 +995,85 @@ public partial class TodoWidgetWindow : WidgetWindowBase
 
     private void CollapseButton_Click(object sender, RoutedEventArgs e)
     {
-        SetCollapsed(!State.IsCollapsed);
+        SetCollapsed(!State.IsCollapsed, animate: true);
         NotifyStateChanged();
     }
+
+    private UIElement[] FoldBodyElements() =>
+        TodoLayout.Children.OfType<FrameworkElement>()
+            .Where(element => System.Windows.Controls.Grid.GetRow(element) > 0)
+            .Append<UIElement>(TitleDivider)
+            .ToArray();
 
     /// <summary>
     /// Folds the card up to its title bar, or unfolds it to the height it had. A folded
     /// card keeps its width and can still be dragged; only its height is fixed, and the
     /// view toggle and "+" wait until the card unfolds.
     /// </summary>
-    internal void SetCollapsed(bool collapsed)
+    internal void SetCollapsed(bool collapsed, bool animate = false)
     {
         if (collapsed && !State.IsCollapsed)
         {
             State.ExpandedHeight = Height;
         }
         State.IsCollapsed = collapsed;
-        var body = collapsed ? Visibility.Collapsed : Visibility.Visible;
-        foreach (var element in TodoLayout.Children.OfType<FrameworkElement>()
-                     .Where(element => System.Windows.Controls.Grid.GetRow(element) > 0))
-        {
-            element.Visibility = body;
-        }
-        TitleDivider.Visibility = body;
-        // 标题条上只留标题、收起按钮和设置入口：切换视图和新增都要在展开的正文上才有意义。
-        ViewModeButton.Visibility = body;
-        AddTodoButton.Visibility = body;
+        CollapseButton.Content = collapsed ? "\uE70D" : "\uE70E";
+        CollapseButton.ToolTip = collapsed ? "展开待办卡片" : "收起成标题条";
+
+        var bodyElements = FoldBodyElements();
         if (collapsed)
         {
             // 当日浮层挂在被隐藏的正文里，先断开再收起。
             CloseDayPeek();
-            MinHeight = CollapsedHeight;
-            MaxHeight = CollapsedHeight;
-            Height = CollapsedHeight;
+            TodoMotionOverlay.Children.Clear();
+            // 标题条上只留标题、收起按钮和设置入口：切换视图和新增都要在展开的正文上才有意义。
+            ViewModeButton.Visibility = Visibility.Collapsed;
+            AddTodoButton.Visibility = Visibility.Collapsed;
+
+            void CommitCollapsedLayout()
+            {
+                foreach (var element in bodyElements)
+                {
+                    element.Visibility = Visibility.Collapsed;
+                }
+                MinHeight = CollapsedHeight;
+                MaxHeight = CollapsedHeight;
+                Height = CollapsedHeight;
+            }
+
+            if (animate && IsLoaded && CardMotionAnimator.IsAnimationEnabled)
+            {
+                _foldAnimator.BeginCollapse(CollapsedHeight, bodyElements, CommitCollapsedLayout);
+            }
+            else
+            {
+                _foldAnimator.Snap();
+                CommitCollapsedLayout();
+            }
         }
         else
         {
+            foreach (var element in bodyElements)
+            {
+                element.Visibility = Visibility.Visible;
+            }
+            ViewModeButton.Visibility = Visibility.Visible;
+            AddTodoButton.Visibility = Visibility.Visible;
             MaxHeight = double.PositiveInfinity;
             // 先回到收起前的高度，再由 ApplyViewMode 抬到当前视图的最小值。
             Height = Math.Max(ListMinimumHeight, State.ExpandedHeight > 0 ? State.ExpandedHeight : Height);
             ApplyViewMode();
             foreach (var item in _items.Where(x => x.DeadlineDate is not null)) item.RefreshCountdownLabel();
+
+            if (animate && IsLoaded && CardMotionAnimator.IsAnimationEnabled)
+            {
+                _foldAnimator.BeginExpand(CollapsedHeight, Height, bodyElements);
+            }
+            else
+            {
+                _foldAnimator.Snap();
+            }
         }
-        CollapseButton.Content = collapsed ? "\uE70D" : "\uE70E";
-        CollapseButton.ToolTip = collapsed ? "展开待办卡片" : "收起成标题条";
     }
 
     // Base sizes of the card's reading text at 100%. The 字号缩放 setting scales them
@@ -2391,6 +2462,17 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         }
         RefreshSummary();
         NotifyStateChanged();
+        if (IsLoaded && WeekPeekOverlay.Visibility == Visibility.Visible)
+        {
+            Dispatcher.BeginInvoke(() =>
+            {
+                if (WeekPeekOverlay.Visibility == Visibility.Visible
+                    && WeekPeekList.ItemContainerGenerator.ContainerFromItem(item) is FrameworkElement presenter)
+                {
+                    CardMotionAnimator.AnimateItemEnter(presenter);
+                }
+            }, DispatcherPriority.Loaded);
+        }
     }
 
     private void ApplyViewMode()
@@ -2437,6 +2519,7 @@ public partial class TodoWidgetWindow : WidgetWindowBase
             }
             RefreshSummary();
         }
+        UpdateEmptyState(animateReveal: false);
         // 变大发生在布局之后，等原生矩形反映新尺寸再把卡片整体收回屏幕内，
         // 靠近屏幕边缘的卡片不会因切到周历而溢出。
         Dispatcher.BeginInvoke(DispatcherPriority.Loaded, EnsureFullyOnScreen);
@@ -2675,6 +2758,24 @@ public partial class TodoWidgetWindow : WidgetWindowBase
                     ? Visibility.Visible
                     : Visibility.Collapsed;
             }
+        }
+    }
+
+    private void UpdateEmptyState(bool animateReveal)
+    {
+        var showEmpty = !State.WeeklyView && _todayItems.Count == 0;
+        var becameEmpty = showEmpty && TodoEmptyState.Visibility != Visibility.Visible;
+        TodoEmptyState.Visibility = showEmpty ? Visibility.Visible : Visibility.Collapsed;
+        TodoFooterBorder.Visibility = showEmpty ? Visibility.Collapsed : Visibility.Visible;
+        TodoBodyFooterPanel.FillBody = State.WeeklyView || showEmpty;
+        if (becameEmpty && animateReveal && IsLoaded)
+        {
+            CardMotionAnimator.AnimateEmptyStateReveal(TodoEmptyState);
+        }
+        else if (showEmpty)
+        {
+            TodoEmptyState.BeginAnimation(UIElement.OpacityProperty, null);
+            TodoEmptyState.Opacity = 1d;
         }
     }
 

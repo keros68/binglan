@@ -1112,6 +1112,28 @@ internal static class ThemeStyleTests
             $"合并信息卡最小高度（{combinedMin}）应大于其中天气区自身最小高度（{weatherMin}）");
     }
 
+    public static void TestWp6CardMotionRules()
+    {
+        Check(
+            CardMotionRules.FoldDuration.TotalMilliseconds >= CardMotionRules.MinimumDurationMs &&
+            CardMotionRules.FoldDuration.TotalMilliseconds <= CardMotionRules.MaximumDurationMs,
+            $"折叠过渡时长（{CardMotionRules.FoldDuration.TotalMilliseconds} ms）应落在 {CardMotionRules.MinimumDurationMs}–{CardMotionRules.MaximumDurationMs} ms 区间内");
+        Check(
+            CardMotionRules.ItemDuration.TotalMilliseconds >= CardMotionRules.MinimumDurationMs &&
+            CardMotionRules.ItemDuration.TotalMilliseconds <= CardMotionRules.MaximumDurationMs,
+            $"条目增删过渡时长（{CardMotionRules.ItemDuration.TotalMilliseconds} ms）应落在 {CardMotionRules.MinimumDurationMs}–{CardMotionRules.MaximumDurationMs} ms 区间内");
+        Check(CardMotionRules.IsAnimated(true), "系统启用动画效果时应允许卡片过渡");
+        Check(!CardMotionRules.IsAnimated(false), "系统关闭动画效果时应禁用卡片过渡");
+        Check(
+            CardMotionRules.ResolveFoldDuration(true) == CardMotionRules.FoldDuration &&
+            CardMotionRules.ResolveFoldDuration(false) == TimeSpan.Zero,
+            "折叠过渡时长应仅在系统启用动画时非零");
+        Check(
+            CardMotionRules.ResolveItemDuration(true) == CardMotionRules.ItemDuration &&
+            CardMotionRules.ResolveItemDuration(false) == TimeSpan.Zero,
+            "条目增删过渡时长应仅在系统启用动画时非零");
+    }
+
     private static ThemeReadResult Read(string manifest)
     {
         using var stream = new MemoryStream();

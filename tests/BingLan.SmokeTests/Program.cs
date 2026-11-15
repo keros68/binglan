@@ -81,6 +81,7 @@ Run("卡片外观配色与居中时钟布局", ThemeStyleTests.TestGlassAndCente
 Run("内置卡片是否跟随全局外观", ThemeStyleTests.TestComponentLookFollowsSharedMaterial);
 Run("内置材质在亮暗壁纸上的墨色对比度", ThemeStyleTests.TestBuiltInMaterialReadabilityContrast);
 Run("天气卡片最小高度随字号与疏密缩放", ThemeStyleTests.TestWeatherCardMinimumHeightScalesWithFontAndDensity);
+Run("卡片折叠与条目增删动效规格", ThemeStyleTests.TestWp6CardMotionRules);
 Run("切换全局材质时保留自定义文字颜色", ThemeStyleTests.TestMaterialSwitchPreservesCustomTextColor);
 Run("天气矢量图标覆盖全部 WMO 描述", ThemeStyleTests.TestWeatherIconMapping);
 Run("统一圆角与标题色标默认值", ThemeStyleTests.TestDefaultRadiusAndHeaderTagDefaults);

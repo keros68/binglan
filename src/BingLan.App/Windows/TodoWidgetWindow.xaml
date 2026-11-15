@@ -1071,9 +1071,33 @@
                     </Border>
                 </Canvas>
                     </Grid>
+                    <StackPanel x:Name="TodoEmptyState"
+                                Margin="{StaticResource CardSpace.EmptyMargin}"
+                                HorizontalAlignment="Center"
+                                VerticalAlignment="Center"
+                                IsHitTestVisible="False"
+                                Visibility="Collapsed">
+                        <TextBlock x:Name="TodoEmptyTitleText"
+                                   FontSize="{StaticResource CardFont.Subhead}"
+                                   FontWeight="SemiBold"
+                                   Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
+                                   Text="还没有待办事项"
+                                   TextAlignment="Center"
+                                   TextWrapping="Wrap"/>
+                        <TextBlock x:Name="TodoEmptyGuideText"
+                                   Margin="{StaticResource CardSpace.TightGap}"
+                                   FontSize="{StaticResource CardFont.Meta}"
+                                   Foreground="{Binding WidgetSecondaryTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
+                                   Text="点击右上角 + 添加第一条待办"
+                                   TextAlignment="Center"
+                                   TextWrapping="Wrap"/>
+                    </StackPanel>
+                    <Canvas x:Name="TodoMotionOverlay"
+                            ClipToBounds="True"
+                            IsHitTestVisible="False"/>
                 </Grid>
 
-                <Border Height="44" Padding="17,0,17,7">
+                <Border x:Name="TodoFooterBorder" Height="44" Padding="17,0,17,7">
                     <Grid>
                 <TextBlock x:Name="SummaryText"
                            AutomationProperties.LiveSetting="Polite"
