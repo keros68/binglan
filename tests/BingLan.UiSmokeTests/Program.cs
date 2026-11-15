@@ -2077,7 +2077,7 @@ internal static class Program
             window.SetWidgetBackgroundOpacity(0.41d);
             window.SetWidgetHeaderColor("#8293A4");
             window.SetWidgetHeaderOpacity(0.86d);
-            window.SetWidgetTextColor("#FFFFFF");
+            window.SetWidgetTextColor("#223042");
             window.SetWidgetTitleFontFamily("Segoe UI");
             window.SetWidgetTitleFontBold(false);
             window.SetWidgetTitleFontItalic(true);
@@ -2100,7 +2100,7 @@ internal static class Program
                    loaded.Appearance.BackgroundOpacity == 0.41d &&
                    loaded.Appearance.HeaderColor == "#8293A4" &&
                    loaded.Appearance.HeaderOpacity == 0.86d &&
-                   loaded.Appearance.TextColor == "#FFFFFF" &&
+                   loaded.Appearance.TextColor == "#223042" &&
                    loaded.Appearance.TitleFontFamily == "Segoe UI" &&
                    !loaded.Appearance.TitleFontBold &&
                    loaded.Appearance.TitleFontItalic,
@@ -2118,7 +2118,7 @@ internal static class Program
                     "重建窗口主体材质");
                 AssertAppearanceBrush(
                     restoredWindow.WidgetTextBrush,
-                    Color.FromArgb(255, 255, 255, 255),
+                    Color.FromArgb(255, 34, 48, 66),
                     SystemColors.WindowTextColor,
                     "重建窗口卡片文字颜色");
                 var restoredTitle = Require<TextBox>(restoredWindow, "TitleEditor");
