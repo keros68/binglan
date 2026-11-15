@@ -103,6 +103,19 @@ public partial class InformationWidgetWindow : WidgetWindowBase
     public InformationWidgetState State { get; }
     public DesktopComponentKind? ComponentKind => _componentKind;
 
+    protected override void ApplyEffectiveCardShadow(CardShadow shadow)
+    {
+        if (_componentKind is DesktopComponentKind.TimeDate or DesktopComponentKind.Greeting
+            && (_experience?.GetComponent(_componentKind.Value).Appearance.BackgroundOpacity
+                ?? WidgetAppearance.BackgroundOpacity) <= WidgetAppearanceRules.MinimumBackgroundOpacity + 0.005d)
+        {
+            base.ApplyEffectiveCardShadow(CardShadow.None);
+            return;
+        }
+
+        base.ApplyEffectiveCardShadow(shadow);
+    }
+
     protected override void OnAppearanceRefreshed()
     {
         if (_experience is not null && Surface is not null)
@@ -183,7 +196,7 @@ public partial class InformationWidgetWindow : WidgetWindowBase
                 ? DesktopExperienceRules.CalculateWeatherMinHeight(weather.FontScale, weather.Density)
                 : 72d;
             Title = DesktopExperienceRules.GetComponentName(isolatedComponent.Kind);
-            isolatedRender = DesktopStyleRules.ResolveRenderedCard(isolatedComponent.Appearance, CurrentStyle);
+            isolatedRender = DesktopStyleRules.ResolveRenderedCard(isolatedComponent, CurrentStyle);
             BodySurface.Background = AccessibilityThemeManager.IsHighContrastEnabled
                 ? SystemColors.WindowBrush
                 : CreateBrush(isolatedRender.BackgroundColor, isolatedRender.BackgroundOpacity);

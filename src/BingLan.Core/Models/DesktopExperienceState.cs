@@ -92,6 +92,8 @@ public static class DesktopExperienceRules
     public const double MinimumFontScale = 0.7d;
     public const double MaximumFontScale = 2d;
     public const double PresetColumnGap = 12d;
+    public const double DefaultWeatherCardHeight = 137d;
+    public const double DefaultPerformanceCardHeight = 86d;
 
     public static IReadOnlyList<DesktopComponentKind> ComponentOrder { get; } =
     [
@@ -123,11 +125,11 @@ public static class DesktopExperienceRules
             {
                 DesktopComponentKind.TimeDate => Placement(92, 92, 328, 166),
                 DesktopComponentKind.Greeting => Placement(536, 856, 900, 115),
-                DesktopComponentKind.Weather => Placement(92, 270, 328, 150),
-                DesktopComponentKind.Performance => Placement(92, 432, 328, 126),
-                DesktopComponentKind.Todo => Placement(92, 570, 328, 300),
+                DesktopComponentKind.Weather => Placement(92, 270, 328, DefaultWeatherCardHeight),
+                DesktopComponentKind.Performance => Placement(92, 419, 328, DefaultPerformanceCardHeight),
+                DesktopComponentKind.Todo => Placement(92, 517, 328, 300),
                 DesktopComponentKind.AudioVisualizer => Placement(536, 620, 850, 220),
-                DesktopComponentKind.QuickLaunch => Placement(92, 882, 328, 72),
+                DesktopComponentKind.QuickLaunch => Placement(92, 829, 328, 72),
                 _ => new WindowPlacement()
             }
         };
@@ -199,13 +201,12 @@ public static class DesktopExperienceRules
         return Math.Clamp(value, MinimumFontScale, MaximumFontScale);
     }
 
-    private const double WeatherOuterVerticalMargin = 14d;
+    private const double WeatherSymmetricOuterVerticalMargin = 16d;
     private const double WeatherRuleHeight = 8d;
     private const double WeatherRefreshButtonHeight = 22d;
     private const double WeatherDetailsTopMargin = 2d;
-    private const double WeatherSafetyBuffer = 3d;
     private const double PerformanceOuterVerticalMargin = 10d;
-    private const double TypographicLineHeightFactor = 1.38d;
+    private const double TypographicLineHeightFactor = 1.28d;
 
     public static double GetWeatherVerticalPadding(DesktopInformationDensity density) => density switch
     {
@@ -223,7 +224,7 @@ public static class DesktopExperienceRules
 
     /// <summary>
     /// Computes the minimum DIP height needed by an isolated weather card from its font scale
-    /// and density so the bottom detail row stays unclipped without shrinking below content bounds.
+    /// and density so the bottom detail row stays unclipped with balanced top and bottom breathing room.
     /// </summary>
     public static double CalculateWeatherMinHeight(
         double fontScale,
@@ -233,13 +234,12 @@ public static class DesktopExperienceRules
         var headerRow = Math.Max(WeatherRefreshButtonHeight, 15d * scale * TypographicLineHeightFactor);
         var temperatureRow = 46d * scale * TypographicLineHeightFactor;
         var detailsRow = WeatherDetailsTopMargin + 12d * scale * TypographicLineHeightFactor;
-        var contentHeight = WeatherOuterVerticalMargin
+        var contentHeight = WeatherSymmetricOuterVerticalMargin
             + GetWeatherVerticalPadding(density)
             + WeatherRuleHeight
             + headerRow
             + temperatureRow
-            + detailsRow
-            + WeatherSafetyBuffer;
+            + detailsRow;
         return Math.Ceiling(contentHeight);
     }
 
@@ -335,9 +335,9 @@ public static class DesktopExperienceRules
             {
                 [DesktopComponentKind.TimeDate] = Placement(center - 280, area.Top + 56, 560, 200),
                 [DesktopComponentKind.Greeting] = Placement(center - 320, area.Bottom - 150, 640, 84),
-                [DesktopComponentKind.Performance] = Placement(column, area.Top + 30, 370, 126),
-                [DesktopComponentKind.Weather] = Placement(column, area.Top + 156 + PresetColumnGap, 370, 150),
-                [DesktopComponentKind.Todo] = Placement(column, area.Top + 306 + PresetColumnGap * 2d, 370, 300)
+                [DesktopComponentKind.Performance] = Placement(column, area.Top + 30, 370, DefaultPerformanceCardHeight),
+                [DesktopComponentKind.Weather] = Placement(column, area.Top + 116 + PresetColumnGap, 370, DefaultWeatherCardHeight),
+                [DesktopComponentKind.Todo] = Placement(column, area.Top + 253 + PresetColumnGap * 2d, 370, 300)
             };
         }
 
@@ -347,22 +347,22 @@ public static class DesktopExperienceRules
             (
                 Placement(area.Left + 62, area.Top + 70, 320, 170),
                 Placement(area.Left + 430, area.Bottom - 138, 760, 100),
-                Placement(area.Left + 62, area.Top + 240 + PresetColumnGap, 320, 150),
-                Placement(area.Left + 62, area.Top + 390 + PresetColumnGap * 2d, 320, 136)
+                Placement(area.Left + 62, area.Top + 240 + PresetColumnGap, 320, DefaultWeatherCardHeight),
+                Placement(area.Left + 62, area.Top + 377 + PresetColumnGap * 2d, 320, DefaultPerformanceCardHeight)
             ),
             DesktopLayoutPreset.TransparentApple =>
             (
                 Placement(area.Left + 70, area.Top + 60, 380, 170),
                 Placement(area.Left + 510, area.Bottom - 130, 820, 96),
-                Placement(area.Left + 70, area.Top + 230 + PresetColumnGap, 380, 150),
-                Placement(area.Left + 70, area.Top + 380 + PresetColumnGap * 2d, 380, 126)
+                Placement(area.Left + 70, area.Top + 230 + PresetColumnGap, 380, DefaultWeatherCardHeight),
+                Placement(area.Left + 70, area.Top + 367 + PresetColumnGap * 2d, 380, DefaultPerformanceCardHeight)
             ),
             _ =>
             (
                 Placement(area.Left + 70, area.Top + 70, 380, 176),
                 Placement(area.Left + 500, area.Bottom - 132, 820, 96),
-                Placement(area.Left + 70, area.Top + 246 + PresetColumnGap, 380, 150),
-                Placement(area.Left + 70, area.Top + 396 + PresetColumnGap * 2d, 380, 126)
+                Placement(area.Left + 70, area.Top + 246 + PresetColumnGap, 380, DefaultWeatherCardHeight),
+                Placement(area.Left + 70, area.Top + 383 + PresetColumnGap * 2d, 380, DefaultPerformanceCardHeight)
             )
         };
         var todo = preset switch
@@ -394,10 +394,10 @@ public static class DesktopExperienceRules
                 DesktopComponentKind.Performance, DesktopComponentKind.Todo, DesktopComponentKind.Greeting };
         var heights = preset switch
         {
-            DesktopLayoutPreset.GlacierWorkbench => new[] { 170d, 150d, 136d, 420d, 100d },
-            DesktopLayoutPreset.TransparentApple => new[] { 170d, 150d, 126d, 360d, 96d },
-            DesktopLayoutPreset.CenterClock => new[] { 200d, 126d, 150d, 300d, 84d },
-            _ => new[] { 176d, 150d, 126d, 410d, 96d }
+            DesktopLayoutPreset.GlacierWorkbench => new[] { 170d, DefaultWeatherCardHeight, DefaultPerformanceCardHeight, 420d, 100d },
+            DesktopLayoutPreset.TransparentApple => new[] { 170d, DefaultWeatherCardHeight, DefaultPerformanceCardHeight, 360d, 96d },
+            DesktopLayoutPreset.CenterClock => new[] { 200d, DefaultPerformanceCardHeight, DefaultWeatherCardHeight, 300d, 84d },
+            _ => new[] { 176d, DefaultWeatherCardHeight, DefaultPerformanceCardHeight, 410d, 96d }
         };
         var minimums = kinds.Select(kind => kind == DesktopComponentKind.Todo ? 166d : 72d).ToArray();
         var gap = Math.Min(PresetColumnGap, Math.Max(0d, (availableHeight - minimums.Sum()) / 4d));

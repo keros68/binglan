@@ -51,10 +51,38 @@ public sealed class QuickPlacesWindow : WidgetWindowBase
 
     internal System.Windows.Media.Effects.Effect? IconShadowEffect => _icons.Effect;
 
-    protected override void ApplyEffectiveCardShadow(CardShadow shadow) =>
-        _icons.Effect = AccessibilityThemeManager.IsHighContrastEnabled
-            ? null
-            : CreateCardShadowEffect(shadow);
+    internal static System.Windows.Media.Effects.DropShadowEffect CreateNakedTextContrastShadow() =>
+        System.Windows.Application.Current?.TryFindResource("NakedTextContrastShadow")
+            as System.Windows.Media.Effects.DropShadowEffect
+        ?? new System.Windows.Media.Effects.DropShadowEffect
+        {
+            Color = System.Windows.Media.Colors.Black,
+            Opacity = 0.45d,
+            BlurRadius = 10d,
+            ShadowDepth = 1d,
+            Direction = 270d
+        };
+
+    protected override void ApplyEffectiveCardShadow(CardShadow shadow)
+    {
+        if (AccessibilityThemeManager.IsHighContrastEnabled)
+        {
+            _icons.Effect = null;
+            return;
+        }
+
+        if (WidgetAppearance.BackgroundOpacity < ColorContrastRules.NearClearBackgroundOpacityThreshold)
+        {
+            var hasLightIcons = ColorContrastRules.RelativeLuminance(WidgetAppearance.TextColor)
+                > ColorContrastRules.LightTextLuminanceThreshold;
+            _icons.Effect = hasLightIcons
+                ? CreateNakedTextContrastShadow()
+                : CreateCardShadowEffect(CurrentStyle.CardShadow == CardShadow.None ? CardShadow.None : shadow);
+            return;
+        }
+
+        _icons.Effect = CreateCardShadowEffect(shadow);
+    }
 
     private double _fontScale = 1d;
 

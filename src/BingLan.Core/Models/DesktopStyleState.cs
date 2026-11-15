@@ -270,11 +270,35 @@ public static class DesktopStyleRules
             style);
     }
 
+    /// <summary>
+    /// Resolves the rendered whole-card look for a desktop component without mutating its
+    /// persisted material, tone, or strength. Unbacked components whose XAML text elements
+    /// already carry <c>NakedTextContrastShadow</c> (<c>TimeDate</c> and <c>Greeting</c>)
+    /// keep <see cref="CardShadow.None"/> on their container so only a single shadow layer
+    /// is drawn.
+    /// </summary>
+    public static RenderedCardLook ResolveRenderedCard(
+        DesktopComponentState component,
+        DesktopStyleState style)
+    {
+        ArgumentNullException.ThrowIfNull(component);
+        ArgumentNullException.ThrowIfNull(style);
+        var hasOwnNakedContrastShadow = component.Kind is
+            DesktopComponentKind.TimeDate or DesktopComponentKind.Greeting;
+        return ResolveRenderedCardCore(
+            component.Appearance.BackgroundColor,
+            component.Appearance.BackgroundOpacity,
+            component.Appearance.TextColor,
+            style,
+            hasOwnNakedContrastShadow);
+    }
+
     private static RenderedCardLook ResolveRenderedCardCore(
         string backgroundColor,
         double backgroundOpacity,
         string textColor,
-        DesktopStyleState style)
+        DesktopStyleState style,
+        bool hasOwnNakedContrastShadow = false)
     {
         if (backgroundOpacity <= WidgetAppearanceRules.MinimumBackgroundOpacity + 0.005d)
         {
@@ -284,7 +308,9 @@ public static class DesktopStyleRules
                 "#00FFFFFF",
                 "#00FFFFFF",
                 "#00FFFFFF",
-                ResolveContrastShadow(backgroundColor, backgroundOpacity, textColor, style.CardShadow));
+                hasOwnNakedContrastShadow
+                    ? CardShadow.None
+                    : ResolveContrastShadow(backgroundColor, backgroundOpacity, textColor, style.CardShadow));
         }
 
         var isLightGlass = ColorContrastRules.RelativeLuminance(backgroundColor) >= 0.5d;

@@ -374,6 +374,97 @@ internal static class WidgetWindowTests
             window.Close();
             Pump();
         }
+
+        AssertIsolatedWeatherSymmetry(state, sampler, weather, 1d, DesktopExperienceRules.DefaultWeatherCardHeight, "字号 1.0");
+        AssertIsolatedWeatherSymmetry(state, sampler, weather, 1.3d, DesktopExperienceRules.CalculateWeatherMinHeight(1.3d, DesktopInformationDensity.Standard), "字号 1.3");
+        AssertIsolatedPerformanceDefaultFits(state, sampler, weather);
+    }
+
+    private static void AssertIsolatedWeatherSymmetry(
+        InformationWidgetState state,
+        R1StubPerformanceSampler sampler,
+        WeatherService weather,
+        double fontScale,
+        double savedHeight,
+        string label)
+    {
+        var experience = DesktopExperienceRules.CreateDefault();
+        var weatherComponent = experience.GetComponent(DesktopComponentKind.Weather);
+        weatherComponent.IsVisible = true;
+        weatherComponent.FontScale = fontScale;
+        weatherComponent.Density = DesktopInformationDensity.Standard;
+        weatherComponent.Placement.Width = 370d;
+        weatherComponent.Placement.Height = savedHeight;
+
+        var window = new InformationWidgetWindow(
+            state,
+            sampler,
+            weather,
+            experience,
+            DesktopComponentKind.Weather);
+        try
+        {
+            window.ApplyPlacement(weatherComponent.Placement, false);
+            window.Show();
+            Pump();
+            window.UpdateLayout();
+            Pump();
+
+            var city = Require<TextBlock>(window, "WeatherCityText");
+            var detailsPanel = Require<WholeCellRowPanel>(window, "WeatherDetailsPanel");
+            var topWhitespace = Math.Max(0d, city.TranslatePoint(new Point(0d, 0d), window).Y - 8d);
+            var detailsBottom = detailsPanel.TranslatePoint(new Point(0d, detailsPanel.ActualHeight), window).Y;
+            var bottomWhitespace = window.ActualHeight - detailsBottom;
+            Assert(
+                bottomWhitespace >= 10d && Math.Abs(bottomWhitespace - topWhitespace) <= 4d,
+                $"{label} 天气卡上下留白应接近：顶部 {topWhitespace:0.#}，底部 {bottomWhitespace:0.#}，窗口高 {window.ActualHeight:0.#}");
+        }
+        finally
+        {
+            window.CanClose = true;
+            window.Close();
+            Pump();
+        }
+    }
+
+    private static void AssertIsolatedPerformanceDefaultFits(
+        InformationWidgetState state,
+        R1StubPerformanceSampler sampler,
+        WeatherService weather)
+    {
+        var experience = DesktopExperienceRules.CreateDefault();
+        var performanceComponent = experience.GetComponent(DesktopComponentKind.Performance);
+        performanceComponent.IsVisible = true;
+        var window = new InformationWidgetWindow(
+            state,
+            sampler,
+            weather,
+            experience,
+            DesktopComponentKind.Performance);
+        try
+        {
+            window.ApplyPlacement(performanceComponent.Placement, false);
+            window.Show();
+            Pump();
+            window.UpdateLayout();
+            Pump();
+
+            var downloadValue = Require<TextBlock>(window, "DownloadValueText");
+            var cpuBar = window.FindName("CpuBar") as FrameworkElement
+                ?? throw new InvalidOperationException("找不到 CpuBar");
+            var contentBottom = Math.Max(
+                downloadValue.TranslatePoint(new Point(0d, downloadValue.ActualHeight), window).Y,
+                cpuBar.TranslatePoint(new Point(0d, cpuBar.ActualHeight), window).Y);
+            Assert(
+                contentBottom <= window.ActualHeight - 10d,
+                $"性能卡片默认高度 {window.ActualHeight:0.#} 下内容被裁切或过紧：底部 {contentBottom:0.#}");
+        }
+        finally
+        {
+            window.CanClose = true;
+            window.Close();
+            Pump();
+        }
     }
 
     private sealed class R1StubPerformanceSampler : IPerformanceSamplingService
@@ -741,6 +832,9 @@ internal static class WidgetWindowTests
                 Require<TextBlock>(window, "GreetingText").Effect
                     is System.Windows.Media.Effects.DropShadowEffect,
                 "问候文字缺少对比度阴影");
+            Assert(
+                ((UIElement)window.Content).Effect is null,
+                "无底板时间日期卡片容器本身不应叠加第二层阴影");
             Assert(
                 timeText.Foreground is System.Windows.Media.SolidColorBrush
                 {

@@ -45,10 +45,10 @@ internal static class ThemeStyleTests
         // Representative coordinates lock the existing landscape compositions.
         var expected = new Dictionary<DesktopLayoutPreset, (double X, double Y, double W, double H)[]>
         {
-            [DesktopLayoutPreset.QuietInformation] = [(70,70,380,176), (500,908,820,96), (70,258,380,150), (70,420,380,126), (1550,86,330,410)],
-            [DesktopLayoutPreset.GlacierWorkbench] = [(62,70,320,170), (430,902,760,100), (62,252,320,150), (62,414,320,136), (1530,110,350,420)],
-            [DesktopLayoutPreset.TransparentApple] = [(70,60,380,170), (510,910,820,96), (70,242,380,150), (70,404,380,126), (1530,500,350,360)],
-            [DesktopLayoutPreset.CenterClock] = [(680,56,560,200), (640,890,640,84), (1520,168,370,150), (1520,30,370,126), (1520,330,370,300)]
+            [DesktopLayoutPreset.QuietInformation] = [(70,70,380,176), (500,908,820,96), (70,258,380,137), (70,407,380,86), (1550,86,330,410)],
+            [DesktopLayoutPreset.GlacierWorkbench] = [(62,70,320,170), (430,902,760,100), (62,252,320,137), (62,401,320,86), (1530,110,350,420)],
+            [DesktopLayoutPreset.TransparentApple] = [(70,60,380,170), (510,910,820,96), (70,242,380,137), (70,391,380,86), (1530,500,350,360)],
+            [DesktopLayoutPreset.CenterClock] = [(680,56,560,200), (640,890,640,84), (1520,128,370,137), (1520,30,370,86), (1520,277,370,300)]
         };
         var order = new[] { DesktopComponentKind.TimeDate, DesktopComponentKind.Greeting,
             DesktopComponentKind.Weather, DesktopComponentKind.Performance, DesktopComponentKind.Todo };
@@ -710,7 +710,22 @@ internal static class ThemeStyleTests
             },
             new DesktopStyleState { CardShadow = CardShadow.None });
         Check(nakedWhite.EffectiveShadow == CardShadow.Soft,
-            "单卡切到 0.01 无底板配白字时应与其他无底板元素一样启用柔和阴影");
+            "普通单卡切到 0.01 无底板配白字时应启用柔和阴影");
+
+        foreach (var nakedKind in new[] { DesktopComponentKind.TimeDate, DesktopComponentKind.Greeting })
+        {
+            var nakedComponent = DesktopExperienceRules.CreateDefaultComponent(nakedKind);
+            Check(
+                DesktopStyleRules.ResolveRenderedCard(
+                    nakedComponent,
+                    new DesktopStyleState { CardShadow = CardShadow.None }).EffectiveShadow == CardShadow.None,
+                $"{nakedKind} 自带 XAML 裸文字对比度阴影，无底板分支不应重复返回容器阴影");
+            Check(
+                DesktopStyleRules.ResolveRenderedCard(
+                    nakedComponent,
+                    new DesktopStyleState { Glass = GlassMode.Clear, CardShadow = CardShadow.Soft }).EffectiveShadow == CardShadow.None,
+                $"{nakedKind} 在无底板模式开启全局阴影时也不应叠加第二层容器阴影");
+        }
     }
 
     internal static void TestSchemaV46LegacyDefaultsMigration()
@@ -1062,13 +1077,13 @@ internal static class ThemeStyleTests
             foreach (var scale in scales)
             {
                 var calculated = DesktopExperienceRules.CalculateWeatherMinHeight(scale, density);
-                var requiredContentHeight = 14d
+                var requiredContentHeight = 16d
                     + padding
                     + 8d
-                    + Math.Max(22d, 15d * scale * 1.38d)
-                    + 46d * scale * 1.38d
+                    + Math.Max(22d, 15d * scale * 1.28d)
+                    + 46d * scale * 1.28d
                     + 2d
-                    + 12d * scale * 1.38d;
+                    + 12d * scale * 1.28d;
                 Check(calculated >= requiredContentHeight,
                     $"天气最小高度（字号 {scale:0.###}，疏密 {density}）计算值 {calculated} 不得小于内容所需高度 {requiredContentHeight:0.##}");
                 Check(calculated > previousHeight,
@@ -1077,6 +1092,14 @@ internal static class ThemeStyleTests
             }
         }
 
+        Check(
+            Math.Abs(
+                DesktopExperienceRules.DefaultWeatherCardHeight
+                - DesktopExperienceRules.CalculateWeatherMinHeight(1d, DesktopInformationDensity.Standard)) < 0.01d,
+            "天气卡片默认高度应与 1 倍标准疏密最小高度一致");
+        Check(
+            Math.Abs(DesktopExperienceRules.DefaultPerformanceCardHeight - 86d) < 0.01d,
+            "性能卡片默认高度应收紧为 86 DIP");
         Check(DesktopExperienceRules.CalculateWeatherMinHeight(1.296d, DesktopInformationDensity.Standard) > 154d,
             "标准疏密下字号 1.296 的天气最小高度应高于历史默认高度 154");
 

@@ -1796,42 +1796,145 @@ internal static class Program
             window.ApplyComponent(lightComponent);
             Pump();
             Assert(FindVisualChildren<Button>(window).All(button => button.Effect is null)
+                && ((UIElement)window.Content).Effect is null
                 && window.IconShadowEffect is null,
                 "浅色玻璃默认深色图标不应带独立硬编码阴影");
 
-            var clearStyle = new DesktopStyleState { Glass = GlassMode.Clear, CardShadow = CardShadow.None };
-            var clearLook = DesktopStyleRules.ComponentLook(
-                DesktopComponentKind.QuickLaunch,
-                clearStyle,
-                QuickPlacesWindow.ClearBarOpacity);
-            var clearComponent = DesktopExperienceRules.CreateDefaultComponent(DesktopComponentKind.QuickLaunch);
-            clearComponent.Appearance.BackgroundColor = clearLook.BackgroundColor;
-            clearComponent.Appearance.BackgroundOpacity = clearLook.BackgroundOpacity;
-            clearComponent.Appearance.TextColor = clearLook.TextColor;
-            window.ApplyStyle(clearStyle);
-            window.ApplyComponent(clearComponent);
-            Pump();
-            Assert(window.IconShadowEffect is System.Windows.Media.Effects.DropShadowEffect clearShadow
-                && Math.Abs(clearShadow.Opacity - 0.28) < 0.01
-                && Math.Abs(clearShadow.BlurRadius - 6) < 0.01,
-                "无底板下快捷入口白线图标应沿用统一的柔和阴影参数");
+            var nakedExperience = DesktopExperienceRules.CreateDefault();
+            using var sampler = new WindowsPerformanceSamplingService();
+            var timeWindow = new InformationWidgetWindow(
+                new InformationWidgetState(),
+                sampler,
+                new WeatherService(),
+                nakedExperience,
+                DesktopComponentKind.TimeDate);
+            var greetingWindow = new InformationWidgetWindow(
+                new InformationWidgetState(),
+                sampler,
+                new WeatherService(),
+                nakedExperience,
+                DesktopComponentKind.Greeting);
+            ShowAndPump(timeWindow);
+            ShowAndPump(greetingWindow);
+            try
+            {
+                var timeText = Require<TextBlock>(timeWindow, "TimeText");
+                var dateText = Require<TextBlock>(timeWindow, "DateText");
+                var greetingText = Require<TextBlock>(greetingWindow, "GreetingText");
 
-            clearComponent.Appearance.BackgroundOpacity = WidgetAppearanceRules.MinimumBackgroundOpacity;
-            window.ApplyComponent(clearComponent);
-            Pump();
-            Assert(window.IconShadowEffect is System.Windows.Media.Effects.DropShadowEffect,
-                "单卡无底板配白线图标同样应启用柔和对比度阴影");
+                Assert(CountDropShadowLayers(timeText, timeWindow, out var timeShadow) == 1 && timeShadow is not null,
+                    "默认时间文字沿视觉树到窗口只能有 1 层对比度阴影");
+                Assert(CountDropShadowLayers(dateText, timeWindow, out var dateShadow) == 1 && dateShadow is not null,
+                    "默认日期文字沿视觉树到窗口只能有 1 层对比度阴影");
+                Assert(CountDropShadowLayers(greetingText, greetingWindow, out var greetingShadow) == 1 && greetingShadow is not null,
+                    "默认问候语文字沿视觉树到窗口只能有 1 层对比度阴影");
 
-            clearComponent.Appearance.TextColor = WidgetAppearanceRules.DefaultTextColor;
-            window.ApplyComponent(clearComponent);
-            Pump();
-            Assert(window.IconShadowEffect is null,
-                "无底板配深色图标且全局关闭阴影时不应强加阴影");
+                AssertSameShadowParameters(timeShadow!, dateShadow!, "日期文字阴影与时间文字一致");
+                AssertSameShadowParameters(timeShadow!, greetingShadow!, "问候语文字阴影与时间文字一致");
+
+                var clearWithSoft = new DesktopStyleState { Glass = GlassMode.Clear, CardShadow = CardShadow.Soft };
+                timeWindow.ApplyStyle(clearWithSoft);
+                greetingWindow.ApplyStyle(clearWithSoft);
+                Pump();
+                Assert(CountDropShadowLayers(timeText, timeWindow, out _) == 1
+                    && CountDropShadowLayers(dateText, timeWindow, out _) == 1
+                    && CountDropShadowLayers(greetingText, greetingWindow, out _) == 1,
+                    "切换无底板材质时时间、日期、问候语仍只能各保留 1 层阴影");
+
+                foreach (var cardShadow in new[] { CardShadow.None, CardShadow.Soft })
+                {
+                    var clearStyle = new DesktopStyleState { Glass = GlassMode.Clear, CardShadow = cardShadow };
+                    var clearLook = DesktopStyleRules.ComponentLook(
+                        DesktopComponentKind.QuickLaunch,
+                        clearStyle,
+                        QuickPlacesWindow.ClearBarOpacity);
+                    var clearComponent = DesktopExperienceRules.CreateDefaultComponent(DesktopComponentKind.QuickLaunch);
+                    clearComponent.Appearance.BackgroundColor = clearLook.BackgroundColor;
+                    clearComponent.Appearance.BackgroundOpacity = clearLook.BackgroundOpacity;
+                    clearComponent.Appearance.TextColor = clearLook.TextColor;
+                    window.ApplyStyle(clearStyle);
+                    window.ApplyComponent(clearComponent);
+                    Pump();
+
+                    Assert(
+                        FindVisualChildren<Button>(window).All(button =>
+                            CountDropShadowLayers(button, window, out var iconShadow) == 1
+                            && iconShadow is not null
+                            && MatchesShadowParameters(timeShadow!, iconShadow)),
+                        $"无底板下快捷入口白线图标（CardShadow.{cardShadow}）应只有 1 层阴影且参数与裸文字完全一致");
+                }
+
+                var isolatedClearComponent = DesktopExperienceRules.CreateDefaultComponent(DesktopComponentKind.QuickLaunch);
+                isolatedClearComponent.Appearance.BackgroundColor = "#FFFFFF";
+                isolatedClearComponent.Appearance.BackgroundOpacity = WidgetAppearanceRules.MinimumBackgroundOpacity;
+                isolatedClearComponent.Appearance.TextColor = "#FFFFFF";
+                window.ApplyStyle(new DesktopStyleState { Glass = GlassMode.Light, CardShadow = CardShadow.None });
+                window.ApplyComponent(isolatedClearComponent);
+                Pump();
+                Assert(
+                    FindVisualChildren<Button>(window).All(button =>
+                        CountDropShadowLayers(button, window, out var isolatedIconShadow) == 1
+                        && isolatedIconShadow is not null
+                        && MatchesShadowParameters(timeShadow!, isolatedIconShadow)),
+                    "单卡无底板配白线图标同样应使用与裸文字一致的 1 层阴影");
+
+                isolatedClearComponent.Appearance.TextColor = WidgetAppearanceRules.DefaultTextColor;
+                window.ApplyComponent(isolatedClearComponent);
+                Pump();
+                Assert(window.IconShadowEffect is null,
+                    "无底板配深色图标且全局关闭阴影时不应强加阴影");
+            }
+            finally
+            {
+                Close(greetingWindow);
+                Close(timeWindow);
+            }
         }
         finally
         {
             Close(window);
         }
+    }
+
+    private static int CountDropShadowLayers(
+        DependencyObject leaf,
+        DependencyObject root,
+        out System.Windows.Media.Effects.DropShadowEffect? singleShadow)
+    {
+        var shadows = new List<System.Windows.Media.Effects.DropShadowEffect>();
+        for (DependencyObject? current = leaf; current is not null; current = VisualTreeHelper.GetParent(current))
+        {
+            if (current is UIElement element && element.Effect is System.Windows.Media.Effects.DropShadowEffect dropShadow)
+            {
+                shadows.Add(dropShadow);
+            }
+            if (ReferenceEquals(current, root))
+            {
+                break;
+            }
+        }
+
+        singleShadow = shadows.Count == 1 ? shadows[0] : null;
+        return shadows.Count;
+    }
+
+    private static bool MatchesShadowParameters(
+        System.Windows.Media.Effects.DropShadowEffect expected,
+        System.Windows.Media.Effects.DropShadowEffect actual) =>
+        expected.Color == actual.Color
+        && Math.Abs(expected.Opacity - actual.Opacity) < 0.001d
+        && Math.Abs(expected.BlurRadius - actual.BlurRadius) < 0.001d
+        && Math.Abs(expected.ShadowDepth - actual.ShadowDepth) < 0.001d
+        && Math.Abs(expected.Direction - actual.Direction) < 0.001d;
+
+    private static void AssertSameShadowParameters(
+        System.Windows.Media.Effects.DropShadowEffect expected,
+        System.Windows.Media.Effects.DropShadowEffect actual,
+        string message)
+    {
+        Assert(
+            MatchesShadowParameters(expected, actual),
+            $"{message}：预期 Color={expected.Color}, Opacity={expected.Opacity:0.###}, Blur={expected.BlurRadius:0.###}, Depth={expected.ShadowDepth:0.###}, Dir={expected.Direction:0.###}；实际 Color={actual.Color}, Opacity={actual.Opacity:0.###}, Blur={actual.BlurRadius:0.###}, Depth={actual.ShadowDepth:0.###}, Dir={actual.Direction:0.###}");
     }
 
     private static void TestCardLeavesReservedEdge()
