@@ -1790,6 +1790,43 @@ internal static class Program
             Assert(QuickPlacesWindow.Resolve("known:downloads") is { Length: > 0 }
                 && QuickPlacesWindow.Resolve(@"F:\Downloads") == @"F:\Downloads",
                 "系统文件夹在点击时查找，自定义路径原样打开");
+
+            var lightComponent = DesktopExperienceRules.CreateDefaultComponent(DesktopComponentKind.QuickLaunch);
+            window.ApplyStyle(new DesktopStyleState { Glass = GlassMode.Light, CardShadow = CardShadow.None });
+            window.ApplyComponent(lightComponent);
+            Pump();
+            Assert(FindVisualChildren<Button>(window).All(button => button.Effect is null)
+                && window.IconShadowEffect is null,
+                "浅色玻璃默认深色图标不应带独立硬编码阴影");
+
+            var clearStyle = new DesktopStyleState { Glass = GlassMode.Clear, CardShadow = CardShadow.None };
+            var clearLook = DesktopStyleRules.ComponentLook(
+                DesktopComponentKind.QuickLaunch,
+                clearStyle,
+                QuickPlacesWindow.ClearBarOpacity);
+            var clearComponent = DesktopExperienceRules.CreateDefaultComponent(DesktopComponentKind.QuickLaunch);
+            clearComponent.Appearance.BackgroundColor = clearLook.BackgroundColor;
+            clearComponent.Appearance.BackgroundOpacity = clearLook.BackgroundOpacity;
+            clearComponent.Appearance.TextColor = clearLook.TextColor;
+            window.ApplyStyle(clearStyle);
+            window.ApplyComponent(clearComponent);
+            Pump();
+            Assert(window.IconShadowEffect is System.Windows.Media.Effects.DropShadowEffect clearShadow
+                && Math.Abs(clearShadow.Opacity - 0.28) < 0.01
+                && Math.Abs(clearShadow.BlurRadius - 6) < 0.01,
+                "无底板下快捷入口白线图标应沿用统一的柔和阴影参数");
+
+            clearComponent.Appearance.BackgroundOpacity = WidgetAppearanceRules.MinimumBackgroundOpacity;
+            window.ApplyComponent(clearComponent);
+            Pump();
+            Assert(window.IconShadowEffect is System.Windows.Media.Effects.DropShadowEffect,
+                "单卡无底板配白线图标同样应启用柔和对比度阴影");
+
+            clearComponent.Appearance.TextColor = WidgetAppearanceRules.DefaultTextColor;
+            window.ApplyComponent(clearComponent);
+            Pump();
+            Assert(window.IconShadowEffect is null,
+                "无底板配深色图标且全局关闭阴影时不应强加阴影");
         }
         finally
         {

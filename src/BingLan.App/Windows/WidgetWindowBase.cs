@@ -1263,7 +1263,7 @@ public class WidgetWindowBase : Window
             _ => null
         };
 
-    protected void ApplyEffectiveCardShadow(CardShadow shadow)
+    protected virtual void ApplyEffectiveCardShadow(CardShadow shadow)
     {
         if (Content is not UIElement content)
         {

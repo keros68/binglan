@@ -45,10 +45,10 @@ internal static class ThemeStyleTests
         // Representative coordinates lock the existing landscape compositions.
         var expected = new Dictionary<DesktopLayoutPreset, (double X, double Y, double W, double H)[]>
         {
-            [DesktopLayoutPreset.QuietInformation] = [(70,70,410,176), (500,908,820,96), (70,260,360,150), (70,424,380,126), (1550,86,330,410)],
-            [DesktopLayoutPreset.GlacierWorkbench] = [(62,70,320,170), (430,902,760,100), (62,250,320,150), (62,410,320,136), (1530,110,350,420)],
-            [DesktopLayoutPreset.TransparentApple] = [(70,60,410,170), (510,910,820,96), (70,248,360,150), (70,414,380,126), (1530,500,350,360)],
-            [DesktopLayoutPreset.CenterClock] = [(680,56,560,200), (640,890,640,84), (1520,172,370,150), (1520,30,370,126), (1520,338,370,300)]
+            [DesktopLayoutPreset.QuietInformation] = [(70,70,380,176), (500,908,820,96), (70,258,380,150), (70,420,380,126), (1550,86,330,410)],
+            [DesktopLayoutPreset.GlacierWorkbench] = [(62,70,320,170), (430,902,760,100), (62,252,320,150), (62,414,320,136), (1530,110,350,420)],
+            [DesktopLayoutPreset.TransparentApple] = [(70,60,380,170), (510,910,820,96), (70,242,380,150), (70,404,380,126), (1530,500,350,360)],
+            [DesktopLayoutPreset.CenterClock] = [(680,56,560,200), (640,890,640,84), (1520,168,370,150), (1520,30,370,126), (1520,330,370,300)]
         };
         var order = new[] { DesktopComponentKind.TimeDate, DesktopComponentKind.Greeting,
             DesktopComponentKind.Weather, DesktopComponentKind.Performance, DesktopComponentKind.Todo };
@@ -59,9 +59,35 @@ internal static class ThemeStyleTests
             {
                 var card = actual[order[i]];
                 Check((card.Left, card.Top, card.Width, card.Height) == coordinates[i],
-                    $"{preset}/{order[i]} 横屏坐标应保持不变");
+                    $"{preset}/{order[i]} 横屏坐标应与预期一致");
             }
         }
+
+        foreach (var (workWidth, workHeight) in new[] { (1920d, 1040d), (2560d, 1440d) })
+        {
+            foreach (var preset in Enum.GetValues<DesktopLayoutPreset>())
+            {
+                var placements = DesktopExperienceRules.PresetPlacements(preset, 0, 0, workWidth, workHeight);
+                var column = preset == DesktopLayoutPreset.CenterClock
+                    ? new[] { DesktopComponentKind.Performance, DesktopComponentKind.Weather, DesktopComponentKind.Todo }
+                    : new[] { DesktopComponentKind.TimeDate, DesktopComponentKind.Weather, DesktopComponentKind.Performance };
+                AssertAlignedColumn(
+                    column.Select(kind => placements[kind]).ToArray(),
+                    $"{preset} ({workWidth}x{workHeight})");
+            }
+        }
+
+        var defaultColumn = new[]
+        {
+            DesktopComponentKind.TimeDate,
+            DesktopComponentKind.Weather,
+            DesktopComponentKind.Performance,
+            DesktopComponentKind.Todo,
+            DesktopComponentKind.QuickLaunch
+        }.Select(DesktopExperienceRules.CreateDefaultComponent).Select(c => c.Placement).ToArray();
+        AssertAlignedColumn(defaultColumn, "CreateDefaultComponents");
+        Check(Math.Abs((defaultColumn[0].Left + defaultColumn[0].Width + DesktopExperienceRules.PresetColumnGap) - new FileBoxState().Placement.Left) < 0.001d,
+            "默认左列右缘与默认分组盒左缘应保持 12 DIP 间距");
 
         var tiny = DesktopExperienceRules.PresetPlacements(DesktopLayoutPreset.CenterClock, -100, -50, 100, 250);
         Check(tiny.Values.All(card => card.Width > 0 && card.Height > 0
@@ -628,6 +654,63 @@ internal static class ThemeStyleTests
             && singleRendered.ControlColor == "#1CFFFFFF"
             && singleCustomWhiteInk.BackgroundColor == "#FFFFFF",
             "单卡单独设白字压浅色玻璃时应整卡切为深底高对比渲染且不改写单卡持久底色");
+
+        var quickLightLook = DesktopStyleRules.ComponentLook(
+            DesktopComponentKind.QuickLaunch,
+            new DesktopStyleState { Glass = GlassMode.Light, CardShadow = CardShadow.None },
+            0.18d);
+        var quickLightRendered = DesktopStyleRules.ResolveRenderedCard(
+            new WidgetAppearanceState
+            {
+                BackgroundColor = quickLightLook.BackgroundColor,
+                BackgroundOpacity = quickLightLook.BackgroundOpacity,
+                TextColor = quickLightLook.TextColor
+            },
+            new DesktopStyleState { CardShadow = CardShadow.None });
+        Check(quickLightRendered.EffectiveShadow == CardShadow.None,
+            "浅色玻璃默认深色图标在亮底上不应添加多余阴影");
+
+        var quickClearStyle = new DesktopStyleState { Glass = GlassMode.Clear, CardShadow = CardShadow.None };
+        var quickClearLook = DesktopStyleRules.ComponentLook(
+            DesktopComponentKind.QuickLaunch,
+            quickClearStyle,
+            0.18d);
+        var quickClearRendered = DesktopStyleRules.ResolveRenderedCard(
+            new WidgetAppearanceState
+            {
+                BackgroundColor = quickClearLook.BackgroundColor,
+                BackgroundOpacity = quickClearLook.BackgroundOpacity,
+                TextColor = quickClearLook.TextColor
+            },
+            quickClearStyle);
+        Check(quickClearRendered.EffectiveShadow == CardShadow.Soft,
+            "无底板下快捷入口浅色图标应与无底板文字一致启用柔和阴影");
+
+        var quickClearDarkInk = DesktopStyleRules.ComponentLook(
+            DesktopComponentKind.QuickLaunch,
+            new DesktopStyleState { Glass = GlassMode.Clear, TextInk = TextInk.Dark, CardShadow = CardShadow.None },
+            0.18d);
+        var quickClearDarkRendered = DesktopStyleRules.ResolveRenderedCard(
+            new WidgetAppearanceState
+            {
+                BackgroundColor = quickClearDarkInk.BackgroundColor,
+                BackgroundOpacity = quickClearDarkInk.BackgroundOpacity,
+                TextColor = quickClearDarkInk.TextColor
+            },
+            new DesktopStyleState { CardShadow = CardShadow.None });
+        Check(quickClearDarkRendered.EffectiveShadow == CardShadow.None,
+            "无底板配深色图标且关闭阴影时不应强加阴影");
+
+        var nakedWhite = DesktopStyleRules.ResolveRenderedCard(
+            new WidgetAppearanceState
+            {
+                BackgroundColor = "#FFFFFF",
+                BackgroundOpacity = WidgetAppearanceRules.MinimumBackgroundOpacity,
+                TextColor = "#FFFFFF"
+            },
+            new DesktopStyleState { CardShadow = CardShadow.None });
+        Check(nakedWhite.EffectiveShadow == CardShadow.Soft,
+            "单卡切到 0.01 无底板配白字时应与其他无底板元素一样启用柔和阴影");
     }
 
     internal static void TestSchemaV46LegacyDefaultsMigration()
@@ -1027,6 +1110,26 @@ internal static class ThemeStyleTests
         string themeVersion = "1.0.0",
         string minimum = "0.1.0") =>
         $$"""{ "Format": "binglan-theme", "SchemaVersion": 1, "Id": "{{id}}", "Name": "{{name}}", "ThemeVersion": "{{themeVersion}}", "MinimumAppVersion": "{{minimum}}" }""";
+
+    private static void AssertAlignedColumn(IReadOnlyList<WindowPlacement> cards, string label)
+    {
+        var left = cards[0].Left;
+        var width = cards[0].Width;
+        var right = left + width;
+        for (var i = 0; i < cards.Count; i++)
+        {
+            Check(Math.Abs(cards[i].Left - left) < 0.001d
+                && Math.Abs(cards[i].Width - width) < 0.001d
+                && Math.Abs((cards[i].Left + cards[i].Width) - right) < 0.001d,
+                $"{label} 列内第 {i + 1} 张卡片左右边缘或宽度不一致");
+            if (i > 0)
+            {
+                var gap = cards[i].Top - (cards[i - 1].Top + cards[i - 1].Height);
+                Check(Math.Abs(gap - DesktopExperienceRules.PresetColumnGap) < 0.001d,
+                    $"{label} 列内第 {i} 与第 {i + 1} 张卡片纵向间距应为 {DesktopExperienceRules.PresetColumnGap}，实际 {gap:0.##}");
+            }
+        }
+    }
 
     private static void Check(bool condition, string message)
     {

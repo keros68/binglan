@@ -284,7 +284,7 @@ public static class DesktopStyleRules
                 "#00FFFFFF",
                 "#00FFFFFF",
                 "#00FFFFFF",
-                style.CardShadow);
+                ResolveContrastShadow(backgroundColor, backgroundOpacity, textColor, style.CardShadow));
         }
 
         var isLightGlass = ColorContrastRules.RelativeLuminance(backgroundColor) >= 0.5d;
@@ -294,7 +294,11 @@ public static class DesktopStyleRules
         {
             if (backgroundOpacity < ColorContrastRules.NearClearBackgroundOpacityThreshold)
             {
-                var nearClearShadow = style.CardShadow == CardShadow.None ? CardShadow.Soft : style.CardShadow;
+                var nearClearShadow = ResolveContrastShadow(
+                    backgroundColor,
+                    backgroundOpacity,
+                    textColor,
+                    style.CardShadow);
                 var effectiveStrength = Math.Min(
                     style.ItemSurfaceStrength,
                     ColorContrastRules.NearClearMaxItemSurfaceStrength);
@@ -308,16 +312,11 @@ public static class DesktopStyleRules
                     nearClearShadow);
             }
 
-            var renderedBackdrop = ColorContrastRules.CompositeLayers(
-                ColorContrastRules.BrightWallpaper,
-                ColorContrastRules.WithAlpha(RenderedDarkBackgroundColor, backgroundOpacity));
-            var contrast = ColorContrastRules.ContrastRatio(
-                ColorContrastRules.ParseHex(textColor),
-                renderedBackdrop);
-            var shadow = contrast < ColorContrastRules.MinimumNormalTextContrast
-                && style.CardShadow == CardShadow.None
-                    ? CardShadow.Soft
-                    : style.CardShadow;
+            var shadow = ResolveContrastShadow(
+                RenderedDarkBackgroundColor,
+                backgroundOpacity,
+                textColor,
+                style.CardShadow);
 
             return new RenderedCardLook(
                 RenderedDarkBackgroundColor,
@@ -336,7 +335,7 @@ public static class DesktopStyleRules
                 RenderedDarkItemSurfaceColor,
                 RenderedDarkSubtleControlColor,
                 RenderedDarkControlColor,
-                style.CardShadow);
+                ResolveContrastShadow(backgroundColor, backgroundOpacity, textColor, style.CardShadow));
         }
 
         var tone = SurfaceToneColor(style);
@@ -350,6 +349,29 @@ public static class DesktopStyleRules
             WithAlpha(tone, style.ItemSurfaceStrength * SubtleControlRatio),
             controlColor,
             style.CardShadow);
+    }
+
+    private static CardShadow ResolveContrastShadow(
+        string backgroundColor,
+        double backgroundOpacity,
+        string textColor,
+        CardShadow configuredShadow)
+    {
+        if (configuredShadow != CardShadow.None
+            || ColorContrastRules.RelativeLuminance(textColor) <= ColorContrastRules.LightTextLuminanceThreshold)
+        {
+            return configuredShadow;
+        }
+
+        var renderedBackdrop = ColorContrastRules.CompositeLayers(
+            ColorContrastRules.BrightWallpaper,
+            ColorContrastRules.WithAlpha(backgroundColor, backgroundOpacity));
+        var contrast = ColorContrastRules.ContrastRatio(
+            ColorContrastRules.ParseHex(textColor),
+            renderedBackdrop);
+        return contrast < ColorContrastRules.MinimumNormalTextContrast
+            ? CardShadow.Soft
+            : configuredShadow;
     }
 
     /// <summary>

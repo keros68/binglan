@@ -27,6 +27,7 @@ public sealed class QuickPlacesWindow : WidgetWindowBase
     internal const double ClearBarOpacity = 0.18d;
 
     private readonly StackPanel _row = new() { Orientation = Orientation.Horizontal };
+    private readonly Viewbox _icons;
 
     public QuickPlacesWindow()
     {
@@ -36,15 +37,24 @@ public sealed class QuickPlacesWindow : WidgetWindowBase
         var body = new Grid { ClipToBounds = true };
         body.SetBinding(Panel.BackgroundProperty, new Binding(nameof(WidgetBackgroundBrush)) { Source = this });
         // The icons scale with the card, so resizing it makes them larger or smaller.
-        body.Children.Add(new Viewbox
+        _icons = new Viewbox
         {
             Stretch = Stretch.Uniform,
             Margin = new Thickness(10, 6, 10, 6),
             Child = _row
-        });
+        };
+        body.Children.Add(_icons);
         Content = body;
         SetItems(QuickPlaceRules.CreateDefaults());
+        ApplyStyle(CurrentStyle);
     }
+
+    internal System.Windows.Media.Effects.Effect? IconShadowEffect => _icons.Effect;
+
+    protected override void ApplyEffectiveCardShadow(CardShadow shadow) =>
+        _icons.Effect = AccessibilityThemeManager.IsHighContrastEnabled
+            ? null
+            : CreateCardShadowEffect(shadow);
 
     private double _fontScale = 1d;
 
@@ -90,16 +100,7 @@ public sealed class QuickPlacesWindow : WidgetWindowBase
             Background = Brushes.Transparent,
             BorderThickness = new Thickness(0),
             ToolTip = name,
-            Tag = target,
-            // A faint shadow keeps the thin strokes readable on light wallpaper.
-            Effect = new System.Windows.Media.Effects.DropShadowEffect
-            {
-                BlurRadius = 6,
-                ShadowDepth = 1,
-                Direction = 270,
-                Opacity = 0.35,
-                Color = Colors.Black
-            }
+            Tag = target
         };
         button.SetBinding(ForegroundProperty, new Binding(nameof(WidgetTextBrush)) { Source = this });
         AutomationProperties.SetName(button, name);

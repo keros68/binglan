@@ -91,6 +91,7 @@ public static class DesktopExperienceRules
 {
     public const double MinimumFontScale = 0.7d;
     public const double MaximumFontScale = 2d;
+    public const double PresetColumnGap = 12d;
 
     public static IReadOnlyList<DesktopComponentKind> ComponentOrder { get; } =
     [
@@ -120,13 +121,13 @@ public static class DesktopExperienceRules
                 not DesktopComponentKind.QuickLaunch,
             Placement = kind switch
             {
-                DesktopComponentKind.TimeDate => Placement(92, 92, 320, 166),
+                DesktopComponentKind.TimeDate => Placement(92, 92, 328, 166),
                 DesktopComponentKind.Greeting => Placement(536, 856, 900, 115),
-                DesktopComponentKind.Weather => Placement(92, 270, 360, 150),
-                DesktopComponentKind.Performance => Placement(92, 430, 380, 126),
-                DesktopComponentKind.Todo => Placement(92, 570, 340, 300),
+                DesktopComponentKind.Weather => Placement(92, 270, 328, 150),
+                DesktopComponentKind.Performance => Placement(92, 432, 328, 126),
+                DesktopComponentKind.Todo => Placement(92, 570, 328, 300),
                 DesktopComponentKind.AudioVisualizer => Placement(536, 620, 850, 220),
-                DesktopComponentKind.QuickLaunch => Placement(92, 830, 380, 72),
+                DesktopComponentKind.QuickLaunch => Placement(92, 882, 328, 72),
                 _ => new WindowPlacement()
             }
         };
@@ -335,8 +336,8 @@ public static class DesktopExperienceRules
                 [DesktopComponentKind.TimeDate] = Placement(center - 280, area.Top + 56, 560, 200),
                 [DesktopComponentKind.Greeting] = Placement(center - 320, area.Bottom - 150, 640, 84),
                 [DesktopComponentKind.Performance] = Placement(column, area.Top + 30, 370, 126),
-                [DesktopComponentKind.Weather] = Placement(column, area.Top + 172, 370, 150),
-                [DesktopComponentKind.Todo] = Placement(column, area.Top + 338, 370, 300)
+                [DesktopComponentKind.Weather] = Placement(column, area.Top + 156 + PresetColumnGap, 370, 150),
+                [DesktopComponentKind.Todo] = Placement(column, area.Top + 306 + PresetColumnGap * 2d, 370, 300)
             };
         }
 
@@ -346,22 +347,22 @@ public static class DesktopExperienceRules
             (
                 Placement(area.Left + 62, area.Top + 70, 320, 170),
                 Placement(area.Left + 430, area.Bottom - 138, 760, 100),
-                Placement(area.Left + 62, area.Top + 250, 320, 150),
-                Placement(area.Left + 62, area.Top + 410, 320, 136)
+                Placement(area.Left + 62, area.Top + 240 + PresetColumnGap, 320, 150),
+                Placement(area.Left + 62, area.Top + 390 + PresetColumnGap * 2d, 320, 136)
             ),
             DesktopLayoutPreset.TransparentApple =>
             (
-                Placement(area.Left + 70, area.Top + 60, 410, 170),
+                Placement(area.Left + 70, area.Top + 60, 380, 170),
                 Placement(area.Left + 510, area.Bottom - 130, 820, 96),
-                Placement(area.Left + 70, area.Top + 248, 360, 150),
-                Placement(area.Left + 70, area.Top + 414, 380, 126)
+                Placement(area.Left + 70, area.Top + 230 + PresetColumnGap, 380, 150),
+                Placement(area.Left + 70, area.Top + 380 + PresetColumnGap * 2d, 380, 126)
             ),
             _ =>
             (
-                Placement(area.Left + 70, area.Top + 70, 410, 176),
+                Placement(area.Left + 70, area.Top + 70, 380, 176),
                 Placement(area.Left + 500, area.Bottom - 132, 820, 96),
-                Placement(area.Left + 70, area.Top + 260, 360, 150),
-                Placement(area.Left + 70, area.Top + 424, 380, 126)
+                Placement(area.Left + 70, area.Top + 246 + PresetColumnGap, 380, 150),
+                Placement(area.Left + 70, area.Top + 396 + PresetColumnGap * 2d, 380, 126)
             )
         };
         var todo = preset switch
@@ -399,7 +400,7 @@ public static class DesktopExperienceRules
             _ => new[] { 176d, 150d, 126d, 410d, 96d }
         };
         var minimums = kinds.Select(kind => kind == DesktopComponentKind.Todo ? 166d : 72d).ToArray();
-        var gap = Math.Min(24d, Math.Max(0d, (availableHeight - minimums.Sum()) / 4d));
+        var gap = Math.Min(PresetColumnGap, Math.Max(0d, (availableHeight - minimums.Sum()) / 4d));
         var cardBudget = Math.Max(1d, availableHeight - gap * 4d);
         if (heights.Sum() > cardBudget)
         {
@@ -416,9 +417,8 @@ public static class DesktopExperienceRules
             var kind = kinds[index];
             var desiredWidth = kind switch
             {
-                DesktopComponentKind.TimeDate => preset == DesktopLayoutPreset.CenterClock ? 560d : 410d,
+                DesktopComponentKind.TimeDate => preset == DesktopLayoutPreset.CenterClock ? 560d : 380d,
                 DesktopComponentKind.Greeting => 640d,
-                DesktopComponentKind.Todo => preset == DesktopLayoutPreset.GlacierWorkbench ? 430d : 380d,
                 _ => 380d
             };
             var cardWidth = Math.Min(availableWidth, desiredWidth);
