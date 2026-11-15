@@ -226,6 +226,14 @@ public static class DesktopExperienceRules
     /// Computes the minimum DIP height needed by an isolated weather card from its font scale
     /// and density so the bottom detail row stays unclipped with balanced top and bottom breathing room.
     /// </summary>
+    /// <remarks>
+    /// Known upper bound: row heights are estimated from fixed font sizes multiplied by
+    /// <see cref="TypographicLineHeightFactor"/> (1.28) without measuring user-selected custom
+    /// fonts, so typefaces with unusually tall ascenders, descenders, or line spacing can exceed
+    /// this estimate. Upgrade condition: replace the fixed-factor estimate with measurement of the
+    /// actual rendered card content height if custom fonts cause clipping or visibly uneven vertical
+    /// breathing room on the weather card.
+    /// </remarks>
     public static double CalculateWeatherMinHeight(
         double fontScale,
         DesktopInformationDensity density = DesktopInformationDensity.Standard)
