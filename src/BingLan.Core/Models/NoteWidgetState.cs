@@ -50,7 +50,7 @@ public static class NoteBodyTypographyRules
     public const double DefaultFontSize = 14d;
     public const double MinimumFontSize = 9d;
     public const double MaximumFontSize = 48d;
-    public const string DefaultColor = "#243146";
+    public const string DefaultColor = WidgetAppearanceRules.DefaultTextColor;
 
     public static string CoerceFontFamily(string? value) =>
         WidgetAppearanceRules.CoerceTitleFontFamily(value);

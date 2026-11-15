@@ -4,10 +4,12 @@ using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Effects;
 using BingLan.Core.Models;
+using BingLan.Core.Services;
 using Brush = System.Windows.Media.Brush;
 using Color = System.Windows.Media.Color;
 using ColorConverter = System.Windows.Media.ColorConverter;
 using Orientation = System.Windows.Controls.Orientation;
+using Path = System.Windows.Shapes.Path;
 using UserControl = System.Windows.Controls.UserControl;
 
 namespace BingLan.App.Windows;
@@ -29,6 +31,7 @@ public sealed class AppearanceSampleView : UserControl
     internal void Update(DesktopStyleState style, bool lightBackground)
     {
         var look = DesktopStyleRules.Appearance(style);
+        var rendered = DesktopStyleRules.ResolveRenderedCard(style);
         DisplayedAppearance = look;
         var dock = DesktopStyleRules.Dock(style);
         DisplayedDock = dock;
@@ -47,8 +50,24 @@ public sealed class AppearanceSampleView : UserControl
         date.Effect = Shadow(textShadow);
         Add(canvas, clock, 32, 24);
         Add(canvas, date, 36, 90);
-        Add(canvas, Card("天气", look, style, 286, 111,
-            Text("☀  23°  晴", look.TextColor, 27, true),
+        var weatherHeadline = new StackPanel { Orientation = Orientation.Horizontal };
+        weatherHeadline.Children.Add(new Path
+        {
+            Data = Geometry.Parse(WeatherIconRules.GetPathData(WeatherIconKind.Clear)),
+            Stroke = Brush(look.TextColor),
+            StrokeThickness = 1.8,
+            StrokeStartLineCap = PenLineCap.Round,
+            StrokeEndLineCap = PenLineCap.Round,
+            StrokeLineJoin = PenLineJoin.Round,
+            Width = 22,
+            Height = 22,
+            Stretch = Stretch.Uniform,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 8, 0)
+        });
+        weatherHeadline.Children.Add(Text("23°  晴", look.TextColor, 27, true));
+        Add(canvas, Card("天气", look, rendered, 286, 111,
+            weatherHeadline,
             Text("最高 26°  ·  最低 18°", look.TextColor, 12, opacity: 0.76)), 400, 26);
 
         var performance = new StackPanel();
@@ -59,10 +78,10 @@ public sealed class AppearanceSampleView : UserControl
             Width = 94, HorizontalAlignment = System.Windows.HorizontalAlignment.Left, CornerRadius = new CornerRadius(2)
         });
         performance.Children.Add(Text("↑ 128 KB/s      ↓ 2.4 MB/s", look.TextColor, 12, opacity: 0.8));
-        Add(canvas, Card("电脑状态", look, style, 332, 124, performance), 32, 140);
-        Add(canvas, Card("今日待办", look, style, 286, 174,
-            Row("□  整理今天的计划", look),
-            Row("□  阅读一篇文章", look),
+        Add(canvas, Card("电脑状态", look, rendered, 332, 124, performance), 32, 140);
+        Add(canvas, Card("今日待办", look, rendered, 286, 174,
+            Row("□  整理今天的计划", look, rendered),
+            Row("□  阅读一篇文章", look, rendered),
             Text("✓  留一点休息时间", look.TextColor, 12, opacity: 0.6)), 400, 153);
 
         var files = new StackPanel { Orientation = Orientation.Horizontal };
@@ -73,7 +92,7 @@ public sealed class AppearanceSampleView : UserControl
             tile.Children.Add(Text(name, look.TextColor, 12));
             files.Children.Add(tile);
         }
-        Add(canvas, Card("文件分组", look, style, 332, 112, files), 32, 280);
+        Add(canvas, Card("文件分组", look, rendered, 332, 112, files), 32, 280);
         var greeting = Text("把今天过得从容一些", naked, 18, true);
         greeting.Effect = Shadow(textShadow);
         Add(canvas, greeting, 415, 347);
@@ -96,40 +115,67 @@ public sealed class AppearanceSampleView : UserControl
         Content = new Viewbox { Stretch = Stretch.Uniform, Child = canvas };
     }
 
-    private static Border Card(string title, GlassAppearance look, DesktopStyleState style,
+    private static Border Card(string title, GlassAppearance look, RenderedCardLook rendered,
         double width, double height, params UIElement[] content)
     {
+        var isClear = rendered.BackgroundOpacity <= WidgetAppearanceRules.MinimumBackgroundOpacity + 0.005d;
         var grid = new Grid();
-        grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(30) });
+        grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(34) });
         grid.RowDefinitions.Add(new RowDefinition());
+        // Keep the accent tag as the first Border child so AppearancePreviewTests finds the header swatch directly.
         grid.Children.Add(new Border
         {
-            Background = Brush(look.HeaderColor, look.HeaderOpacity),
-            CornerRadius = new CornerRadius(10, 10, 0, 0)
+            Width = 4,
+            Height = 14,
+            HorizontalAlignment = System.Windows.HorizontalAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(12, 0, 0, 0),
+            CornerRadius = new CornerRadius(2),
+            Background = Brush(look.HeaderColor, look.HeaderOpacity)
         });
         var titleText = Text(title, look.TextColor, 12, true);
-        titleText.Margin = new Thickness(14, 0, 14, 0);
+        titleText.Margin = new Thickness(22, 0, 14, 0);
         titleText.VerticalAlignment = VerticalAlignment.Center;
         grid.Children.Add(titleText);
-        var body = new StackPanel { Margin = new Thickness(14, 8, 14, 8) };
+        grid.Children.Add(new Border
+        {
+            Height = 1,
+            Margin = new Thickness(12, 0, 12, 0),
+            VerticalAlignment = VerticalAlignment.Bottom,
+            Background = isClear
+                ? System.Windows.Media.Brushes.Transparent
+                : Brush(look.TextColor, 0.14)
+        });
+        var body = new StackPanel { Margin = new Thickness(14, 6, 14, 8) };
         foreach (var item in content) body.Children.Add(item);
         Grid.SetRow(body, 1);
         grid.Children.Add(body);
-        var shadow = style.Glass == GlassMode.Clear && style.CardShadow == CardShadow.None
-            ? CardShadow.Soft : style.CardShadow;
-        titleText.Effect = Shadow(shadow);
-        body.Effect = Shadow(shadow);
+        titleText.Effect = Shadow(rendered.EffectiveShadow);
+        body.Effect = Shadow(rendered.EffectiveShadow);
+        var isDark = ColorContrastRules.RelativeLuminance(rendered.BackgroundColor) < 0.25d;
+        Brush borderBrush = isClear
+            ? System.Windows.Media.Brushes.Transparent
+            : new LinearGradientBrush(
+                Parse(isDark ? "#38FFFFFF" : "#99FFFFFF"),
+                Parse(isDark ? "#18FFFFFF" : "#4DFFFFFF"),
+                new System.Windows.Point(0, 0),
+                new System.Windows.Point(0, 1));
         return new Border
         {
-            Width = width, Height = height, CornerRadius = new CornerRadius(10),
-            Background = Brush(look.BackgroundColor, look.BackgroundOpacity), Child = grid
+            Width = width,
+            Height = height,
+            CornerRadius = new CornerRadius(12),
+            Background = Brush(rendered.BackgroundColor, rendered.BackgroundOpacity),
+            BorderBrush = borderBrush,
+            BorderThickness = new Thickness(isClear ? 0 : 1),
+            Child = grid
         };
     }
 
-    private static Border Row(string text, GlassAppearance look) => new()
+    private static Border Row(string text, GlassAppearance look, RenderedCardLook rendered) => new()
     {
-        Background = Brush(look.ItemSurfaceColor), Padding = new Thickness(7, 5, 7, 5),
-        Margin = new Thickness(0, 0, 0, 5), CornerRadius = new CornerRadius(5),
+        Background = Brush(rendered.ItemSurfaceColor), Padding = new Thickness(7, 5, 7, 5),
+        Margin = new Thickness(0, 0, 0, 5), CornerRadius = new CornerRadius(8),
         Child = Text(text, look.TextColor, 12)
     };
 

@@ -166,11 +166,11 @@ internal static class Program
 
             AssertAppearanceBrush(
                 window.WidgetBackgroundBrush,
-                Color.FromArgb(82, 255, 255, 255),
+                Color.FromArgb(168, 255, 255, 255),
                 "便签默认主体材质");
             AssertAppearanceBrush(
                 window.WidgetHeaderBrush,
-                Color.FromArgb(247, 160, 180, 225),
+                Color.FromArgb(247, 91, 155, 213),
                 "便签默认标题材质");
             Assert(title.FontFamily.Source == WidgetAppearanceRules.DefaultTitleFontFamily &&
                    title.FontWeight == FontWeights.Bold,

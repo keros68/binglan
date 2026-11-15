@@ -14,15 +14,6 @@
                         ShowInTaskbar="False"
                         FontFamily="{StaticResource UiFont}"
                         Foreground="{DynamicResource PrimaryTextBrush}">
-    <local:WidgetWindowBase.Resources>
-        <!-- 裸文字表面没有玻璃卡片衬底，用轻微暗影保证浅色壁纸上的可读性。 -->
-        <DropShadowEffect x:Key="NakedTextContrastShadow"
-                          Color="#000000"
-                          Opacity="0.45"
-                          BlurRadius="10"
-                          ShadowDepth="1"
-                          Direction="270"/>
-    </local:WidgetWindowBase.Resources>
     <Grid x:Name="BodySurface"
           Background="{Binding WidgetBackgroundBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
           ClipToBounds="True">
@@ -35,12 +26,12 @@
 
             <StackPanel x:Name="ClockPanel" Margin="17,8,17,0">
                 <TextBlock x:Name="TimeText"
-                           FontSize="36"
+                           FontSize="{StaticResource CardFont.DisplayClock}"
                            FontWeight="Bold"
                            Effect="{StaticResource NakedTextContrastShadow}"
                            Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
                 <TextBlock x:Name="DateText"
-                           FontSize="13"
+                           FontSize="{StaticResource CardFont.Body}"
                            Effect="{StaticResource NakedTextContrastShadow}"
                            Foreground="{Binding WidgetSecondaryTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
                 <!-- An optional line under the date that fades out at both ends. -->
@@ -50,7 +41,7 @@
                            Visibility="Collapsed"/>
                 <TextBlock x:Name="GreetingText"
                            Margin="0,3,0,0"
-                           FontSize="14"
+                           FontSize="{StaticResource CardFont.Subhead}"
                            Effect="{StaticResource NakedTextContrastShadow}"
                            Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
             </StackPanel>
@@ -70,15 +61,15 @@
                         <ColumnDefinition Width="1.25*"/>
                     </Grid.ColumnDefinitions>
                     <StackPanel Grid.Column="0" VerticalAlignment="Center">
-                        <TextBlock x:Name="CpuLabelText" Text="CPU" FontSize="10" FontWeight="Bold" Opacity="0.72"
-                                   Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
-                        <TextBlock x:Name="CpuValueText" Text="--" FontSize="18" FontWeight="Bold"
+                        <TextBlock x:Name="CpuLabelText" Tag="Secondary" Text="CPU" FontSize="{StaticResource CardFont.Caption}" FontWeight="Bold"
+                                   Foreground="{Binding WidgetSecondaryTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
+                        <TextBlock x:Name="CpuValueText" Text="--" FontSize="{StaticResource CardFont.Title}" FontWeight="Bold"
                                    Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
                         <!-- A thin bar that follows the value, as in the original desktop theme. -->
                         <Grid Height="3" Margin="0,5,8,0">
-                            <Rectangle RadiusX="1.5" RadiusY="1.5" Opacity="0.22"
+                            <Rectangle RadiusX="{StaticResource CardRadius.BarValue}" RadiusY="{StaticResource CardRadius.BarValue}" Opacity="0.22"
                                        Fill="{Binding Foreground, ElementName=CpuValueText}"/>
-                            <Rectangle x:Name="CpuBar" RadiusX="1.5" RadiusY="1.5"
+                            <Rectangle x:Name="CpuBar" RadiusX="{StaticResource CardRadius.BarValue}" RadiusY="{StaticResource CardRadius.BarValue}"
                                        Fill="{DynamicResource PerformanceAccentBrush}"
                                        RenderTransformOrigin="0,0.5">
                                 <Rectangle.RenderTransform>
@@ -90,15 +81,15 @@
                     <Rectangle Grid.Column="1" Width="1" Margin="0,3,10,3" Opacity="0.2"
                                Fill="{Binding Foreground, ElementName=CpuValueText}"/>
                     <StackPanel Grid.Column="2" VerticalAlignment="Center">
-                        <TextBlock x:Name="RamLabelText" Text="RAM" FontSize="10" FontWeight="Bold" Opacity="0.72"
-                                   Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
-                        <TextBlock x:Name="RamValueText" Text="--" FontSize="18" FontWeight="Bold"
+                        <TextBlock x:Name="RamLabelText" Tag="Secondary" Text="RAM" FontSize="{StaticResource CardFont.Caption}" FontWeight="Bold"
+                                   Foreground="{Binding WidgetSecondaryTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
+                        <TextBlock x:Name="RamValueText" Text="--" FontSize="{StaticResource CardFont.Title}" FontWeight="Bold"
                                    Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
                         <!-- A thin bar that follows the value, as in the original desktop theme. -->
                         <Grid Height="3" Margin="0,5,8,0">
-                            <Rectangle RadiusX="1.5" RadiusY="1.5" Opacity="0.22"
+                            <Rectangle RadiusX="{StaticResource CardRadius.BarValue}" RadiusY="{StaticResource CardRadius.BarValue}" Opacity="0.22"
                                        Fill="{Binding Foreground, ElementName=RamValueText}"/>
-                            <Rectangle x:Name="RamBar" RadiusX="1.5" RadiusY="1.5"
+                            <Rectangle x:Name="RamBar" RadiusX="{StaticResource CardRadius.BarValue}" RadiusY="{StaticResource CardRadius.BarValue}"
                                        Fill="{DynamicResource PerformanceAccentBrush}"
                                        RenderTransformOrigin="0,0.5">
                                 <Rectangle.RenderTransform>
@@ -119,17 +110,16 @@
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
                         </Grid.RowDefinitions>
-                        <TextBlock Grid.ColumnSpan="2" Margin="0,0,0,3" x:Name="NetworkLabelText" Text="NETWORK" FontSize="10" FontWeight="Bold"
-                                   Opacity="0.72" Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
-                        <TextBlock Grid.Row="1" Margin="0,0,6,0" x:Name="UploadLabelText" Text="UP" FontSize="12" FontWeight="Bold"
+                        <TextBlock Grid.ColumnSpan="2" Margin="0,0,0,3" x:Name="NetworkLabelText" Tag="Secondary" Text="NETWORK" FontSize="{StaticResource CardFont.Caption}" FontWeight="Bold"
+                                   Foreground="{Binding WidgetSecondaryTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
+                        <TextBlock Grid.Row="1" Margin="0,0,6,0" x:Name="UploadLabelText" Text="↑" FontSize="{StaticResource CardFont.Meta}" FontWeight="Bold"
                                    Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
-                        <TextBlock x:Name="UploadValueText" Grid.Row="1" Grid.Column="1" Text="--" FontSize="12"
+                        <TextBlock x:Name="UploadValueText" Grid.Row="1" Grid.Column="1" Text="--" FontSize="{StaticResource CardFont.Meta}"
                                    FontWeight="Bold" Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
-                        <!-- Download stands out in the accent colour. -->
-                        <TextBlock Grid.Row="2" Margin="0,0,6,0" x:Name="DownloadLabelText" Text="DN" FontSize="12" FontWeight="Bold"
-                                   Tag="Accent" Foreground="{DynamicResource PerformanceAccentBrush}"/>
-                        <TextBlock x:Name="DownloadValueText" Grid.Row="2" Grid.Column="1" Text="--" FontSize="12"
-                                   FontWeight="Bold" Tag="Accent" Foreground="{DynamicResource PerformanceAccentBrush}"/>
+                        <TextBlock Grid.Row="2" Margin="0,0,6,0" x:Name="DownloadLabelText" Text="↓" FontSize="{StaticResource CardFont.Meta}" FontWeight="Bold"
+                                   Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
+                        <TextBlock x:Name="DownloadValueText" Grid.Row="2" Grid.Column="1" Text="--" FontSize="{StaticResource CardFont.Meta}"
+                                   FontWeight="Bold" Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
                     </Grid>
                 </Grid>
             </Border>
@@ -158,16 +148,16 @@
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
                         <TextBlock x:Name="WeatherCityText"
-                                   FontSize="16"
+                                   FontSize="{StaticResource CardFont.Subhead}"
                                    VerticalAlignment="Center"
                                    TextTrimming="CharacterEllipsis"
                                    Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
                         <TextBlock x:Name="WeatherUpdatedText"
+                                   Tag="Secondary"
                                    Grid.Column="1"
                                    Margin="8,0,2,0"
                                    VerticalAlignment="Center"
-                                   FontSize="12"
-                                   Opacity="0.8"
+                                   FontSize="{StaticResource CardFont.Meta}"
                                    Foreground="{Binding WidgetSecondaryTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
                         <Button x:Name="WeatherRefreshButton"
                                 Grid.Column="2"
@@ -177,7 +167,7 @@
                                 Opacity="0.7"
                                 Background="Transparent"
                                 BorderThickness="0"
-                                FontSize="15"
+                                FontSize="{StaticResource CardFont.Subhead}"
                                 Content="↻"
                                 ToolTip="立即刷新天气"
                                 AutomationProperties.Name="刷新天气"
@@ -192,25 +182,58 @@
                         </Grid.ColumnDefinitions>
                         <TextBlock x:Name="WeatherTempText"
                                    Text="--"
-                                   FontSize="46"
+                                   FontSize="{StaticResource CardFont.DisplayWeather}"
                                    FontWeight="Light"
                                    Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
-                        <StackPanel Grid.Column="1" Margin="10,0,0,0" VerticalAlignment="Center">
+                        <Grid Grid.Column="1" Margin="10,0,0,0" VerticalAlignment="Center">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <Path x:Name="WeatherIconPath"
+                                  Width="24"
+                                  Height="24"
+                                  Margin="0,0,8,0"
+                                  VerticalAlignment="Center"
+                                  Stretch="Uniform"
+                                  StrokeThickness="1.75"
+                                  StrokeStartLineCap="Round"
+                                  StrokeEndLineCap="Round"
+                                  StrokeLineJoin="Round"
+                                  Stroke="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
                             <TextBlock x:Name="WeatherConditionText"
-                                       FontSize="19"
+                                       Grid.Column="1"
+                                       VerticalAlignment="Center"
+                                       FontSize="{StaticResource CardFont.Title}"
                                        TextTrimming="CharacterEllipsis"
                                        Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
-                            <TextBlock x:Name="WeatherRangeText"
-                                       Margin="0,3,0,0"
-                                       FontSize="13"
-                                       TextWrapping="Wrap"
-                                       Foreground="{Binding WidgetSecondaryTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
-                        </StackPanel>
+                        </Grid>
                     </Grid>
-                    <TextBlock Grid.Row="3"
+                    <local:WholeCellRowPanel x:Name="WeatherDetailsPanel"
+                                             Grid.Row="3"
+                                             Margin="0,2,0,0"
+                                             Gap="12"
+                                             ClipToBounds="True">
+                        <TextBlock x:Name="WeatherHighText"
+                                   Tag="Secondary"
+                                   FontSize="{StaticResource CardFont.Meta}"
+                                   TextWrapping="NoWrap"
+                                   Foreground="{Binding WidgetSecondaryTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
+                        <TextBlock x:Name="WeatherLowText"
+                                   Tag="Secondary"
+                                   FontSize="{StaticResource CardFont.Meta}"
+                                   TextWrapping="NoWrap"
+                                   Foreground="{Binding WidgetSecondaryTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
+                        <TextBlock x:Name="WeatherHumidityText"
+                                   Tag="Secondary"
+                                   FontSize="{StaticResource CardFont.Meta}"
+                                   TextWrapping="NoWrap"
+                                   Foreground="{Binding WidgetSecondaryTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
+                    </local:WholeCellRowPanel>
+                    <TextBlock Grid.Row="4"
                                x:Name="WeatherStatusText"
                                Margin="0,1,0,0"
-                               FontSize="11"
+                               FontSize="{StaticResource CardFont.Caption}"
                                TextWrapping="Wrap"
                                Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
                 </Grid>
@@ -224,7 +247,7 @@
                 IsHitTestVisible="False"/>
         <Button x:Name="SettingsButton"
                 AutomationProperties.Name="打开桌面信息设置"
-                Style="{StaticResource WidgetSettingsButtonStyle}"
+                Style="{StaticResource WidgetSelectedOnlySettingsButtonStyle}"
                 Width="30"
                 Height="28"
                 Margin="0,6,6,0"
@@ -233,7 +256,7 @@
                 VerticalAlignment="Top"
                 Background="Transparent"
                 BorderThickness="0"
-                FontSize="16"
+                FontSize="{StaticResource CardFont.Subhead}"
                 Content="•••"
                 ToolTip="设置"
                 Click="Settings_Click"/>

@@ -19,30 +19,45 @@
           ClipToBounds="True">
         <Grid>
             <Grid.RowDefinitions>
-                <RowDefinition Height="70"/>
+                <RowDefinition Height="48"/>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="*"/>
             </Grid.RowDefinitions>
 
             <Border x:Name="TitleBarSurface"
-                    Height="50"
-                    Margin="10,10,10,0"
+                    Height="48"
+                    Margin="0"
                     VerticalAlignment="Top"
-                    Background="{Binding WidgetHeaderBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
+                    Background="Transparent"
                     CornerRadius="{Binding HeaderCornerRadius, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}">
-                <Grid Margin="17,0,9,0">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="Auto"/>
-                        <ColumnDefinition Width="Auto"/>
-                    </Grid.ColumnDefinitions>
-                    <TextBox x:Name="TitleEditor"
-                             Style="{StaticResource DesktopContentTitleStyle}"
-                             Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
-                             FontFamily="{Binding WidgetTitleFontFamily, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
-                             FontWeight="{Binding WidgetTitleFontWeight, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
-                             FontStyle="{Binding WidgetTitleFontStyle, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
-                             TextChanged="TitleEditor_TextChanged"/>
+                <Grid>
+                    <Grid Margin="16,0,12,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <Grid Grid.Column="0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <Border x:Name="TitleAccentTag"
+                                    Width="4"
+                                    Height="16"
+                                    Margin="0,0,8,0"
+                                    VerticalAlignment="Center"
+                                    CornerRadius="2"
+                                    Background="{Binding WidgetHeaderBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
+                            <TextBox x:Name="TitleEditor"
+                                     Grid.Column="1"
+                                     Style="{StaticResource DesktopContentTitleStyle}"
+                                     Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
+                                     FontFamily="{Binding WidgetTitleFontFamily, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
+                                     FontWeight="{Binding WidgetTitleFontWeight, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
+                                     FontStyle="{Binding WidgetTitleFontStyle, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
+                                     TextChanged="TitleEditor_TextChanged"/>
+                        </Grid>
                     <Button Grid.Column="1"
                             x:Name="FormatToggle"
                             AutomationProperties.Name="正文样式"
@@ -53,7 +68,7 @@
                             Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
                             Background="Transparent"
                             BorderThickness="0"
-                            FontSize="13"
+                            FontSize="{StaticResource CardFont.Body}"
                             Content="Aa"
                             ToolTip="正文样式"
                             Click="FormatToggle_Click"/>
@@ -65,10 +80,17 @@
                             Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
                             Background="Transparent"
                             BorderThickness="0"
-                            FontSize="16"
+                            FontSize="{StaticResource CardFont.Subhead}"
                             Content="•••"
                             ToolTip="设置"
                             Click="Settings_Click"/>
+                    </Grid>
+                    <Border x:Name="TitleDivider"
+                            Height="1"
+                            Margin="16,0,16,0"
+                            VerticalAlignment="Bottom"
+                            IsHitTestVisible="False"
+                            Background="{Binding WidgetDividerBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
                 </Grid>
             </Border>
 
@@ -79,13 +101,55 @@
                     Padding="6,4"
                     Background="{DynamicResource WidgetItemSurfaceBrush}"
                     CornerRadius="{Binding ItemCornerRadius, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}">
+                <Border.Resources>
+                    <Style TargetType="ToggleButton">
+                        <Setter Property="BorderThickness" Value="1"/>
+                        <Setter Property="Template">
+                            <Setter.Value>
+                                <ControlTemplate TargetType="ToggleButton">
+                                    <Border x:Name="ToggleBorder"
+                                            Background="{TemplateBinding Background}"
+                                            BorderBrush="{TemplateBinding BorderBrush}"
+                                            BorderThickness="{TemplateBinding BorderThickness}"
+                                            CornerRadius="{StaticResource CardRadius.Control}"
+                                            Padding="{TemplateBinding Padding}">
+                                        <Grid>
+                                            <Border x:Name="StateOverlay"
+                                                    IsHitTestVisible="False"
+                                                    Background="Transparent"
+                                                    CornerRadius="{StaticResource CardRadius.Control}"/>
+                                            <ContentPresenter HorizontalAlignment="Center"
+                                                              VerticalAlignment="Center"/>
+                                        </Grid>
+                                    </Border>
+                                    <ControlTemplate.Triggers>
+                                        <Trigger Property="IsChecked" Value="True">
+                                            <Setter TargetName="ToggleBorder" Property="Background" Value="{DynamicResource CardInteractiveSelectedBrush}"/>
+                                            <Setter TargetName="ToggleBorder" Property="BorderBrush" Value="{DynamicResource CardSelectionBorderBrush}"/>
+                                        </Trigger>
+                                        <Trigger Property="IsMouseOver" Value="True">
+                                            <Setter TargetName="StateOverlay" Property="Background" Value="{DynamicResource CardInteractiveHoverBrush}"/>
+                                        </Trigger>
+                                        <Trigger Property="IsPressed" Value="True">
+                                            <Setter TargetName="StateOverlay" Property="Background" Value="{DynamicResource CardInteractivePressedBrush}"/>
+                                        </Trigger>
+                                        <Trigger Property="IsKeyboardFocused" Value="True">
+                                            <Setter TargetName="ToggleBorder" Property="BorderBrush" Value="{DynamicResource CardFocusBorderBrush}"/>
+                                            <Setter TargetName="ToggleBorder" Property="BorderThickness" Value="1.5"/>
+                                        </Trigger>
+                                    </ControlTemplate.Triggers>
+                                </ControlTemplate>
+                            </Setter.Value>
+                        </Setter>
+                    </Style>
+                </Border.Resources>
                 <WrapPanel VerticalAlignment="Center">
                     <ComboBox x:Name="BodyFontPicker"
                               Width="118"
                               Height="24"
                               Margin="0,2,4,2"
                               VerticalContentAlignment="Center"
-                              FontSize="11"
+                              FontSize="{StaticResource CardFont.Caption}"
                               ToolTip="正文字体"
                               SelectionChanged="BodyFontPicker_SelectionChanged"/>
                     <ComboBox x:Name="BodyFontSizePicker"
@@ -93,7 +157,7 @@
                               Height="24"
                               Margin="0,2,4,2"
                               VerticalContentAlignment="Center"
-                              FontSize="11"
+                              FontSize="{StaticResource CardFont.Caption}"
                               IsEditable="True"
                               ToolTip="字号"
                               SelectionChanged="BodyFontSizePicker_SelectionChanged"
@@ -104,9 +168,9 @@
                              Height="24"
                              Margin="0,2,4,2"
                              VerticalContentAlignment="Center"
-                             FontSize="11"
+                             FontSize="{StaticResource CardFont.Caption}"
                              Foreground="{DynamicResource WidgetInputTextBrush}"
-                             CaretBrush="#243146"
+                             CaretBrush="{DynamicResource WidgetInputTextBrush}"
                              ToolTip="正文颜色 #RRGGBB"
                              LostFocus="BodyColorEditor_LostFocus"
                              KeyDown="BodyColorEditor_KeyDown"/>
@@ -115,7 +179,7 @@
                                   Height="24"
                                   Margin="0,2,2,2"
                                   Padding="0"
-                                  FontSize="12"
+                                  FontSize="{StaticResource CardFont.Meta}"
                                   FontWeight="Bold"
                                   Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
                                   Background="{DynamicResource WidgetSubtleControlBrush}"
@@ -128,7 +192,7 @@
                                   Height="24"
                                   Margin="0,2,4,2"
                                   Padding="0"
-                                  FontSize="12"
+                                  FontSize="{StaticResource CardFont.Meta}"
                                   FontStyle="Italic"
                                   Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
                                   Background="{DynamicResource WidgetSubtleControlBrush}"
@@ -141,7 +205,7 @@
                                   Height="24"
                                   Margin="0,2,2,2"
                                   Padding="0"
-                                  FontSize="11"
+                                  FontSize="{StaticResource CardFont.Caption}"
                                   Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
                                   Background="{DynamicResource WidgetSubtleControlBrush}"
                                   BorderBrush="{DynamicResource WidgetSubtleControlBorderBrush}"
@@ -153,7 +217,7 @@
                                   Height="24"
                                   Margin="0,2,2,2"
                                   Padding="0"
-                                  FontSize="11"
+                                  FontSize="{StaticResource CardFont.Caption}"
                                   Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
                                   Background="{DynamicResource WidgetSubtleControlBrush}"
                                   BorderBrush="{DynamicResource WidgetSubtleControlBorderBrush}"
@@ -165,7 +229,7 @@
                                   Height="24"
                                   Margin="0,2,0,2"
                                   Padding="0"
-                                  FontSize="11"
+                                  FontSize="{StaticResource CardFont.Caption}"
                                   Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
                                   Background="{DynamicResource WidgetSubtleControlBrush}"
                                   BorderBrush="{DynamicResource WidgetSubtleControlBorderBrush}"
@@ -176,7 +240,7 @@
             </Border>
 
             <Border Grid.Row="2"
-                    Margin="10,9,10,10"
+                    Margin="10,6,10,10"
                     Padding="10,8"
                     Background="{DynamicResource WidgetItemSurfaceBrush}"
                     CornerRadius="{Binding ItemCornerRadius, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}">
@@ -185,8 +249,8 @@
                          TextWrapping="Wrap"
                          HorizontalScrollBarVisibility="Disabled"
                          VerticalScrollBarVisibility="Auto"
-                         CaretBrush="#243146"
-                         FontSize="14"
+                         CaretBrush="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
+                         FontSize="{StaticResource CardFont.Body}"
                          TextChanged="BodyEditor_TextChanged"
                          LostFocus="BodyEditor_LostFocus">
                     <TextBox.Resources>
@@ -197,8 +261,8 @@
         </Grid>
         <Border x:Name="Surface"
                 Background="Transparent"
-                BorderBrush="Transparent"
-                BorderThickness="0"
+                BorderBrush="{Binding WidgetBorderBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
+                BorderThickness="{Binding WidgetBorderThickness, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
                 CornerRadius="{Binding SurfaceCornerRadius, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
                 IsHitTestVisible="False"/>
     </Grid>

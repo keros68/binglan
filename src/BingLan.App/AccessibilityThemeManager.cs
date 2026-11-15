@@ -130,6 +130,24 @@ internal static class AccessibilityThemeManager
 
     private static void ApplyHighContrastPalette(ResourceDictionary resources)
     {
+        Set(resources, "CardMarkerAccentBrush", SystemColors.HighlightBrush);
+        Set(resources, "CardSelectionBorderBrush", SystemColors.HighlightBrush);
+        Set(resources, "CardTodayBorderBrush", SystemColors.HighlightBrush);
+        Set(resources, "CardRimSubtleBorderBrush", SystemColors.ControlTextBrush);
+        Set(resources, "CardDividerBrush", SystemColors.WindowTextBrush);
+        Set(resources, "CardInteractiveHoverBrush", SystemColors.ControlBrush);
+        Set(resources, "CardInteractivePressedBrush", SystemColors.HighlightBrush);
+        Set(resources, "CardInteractiveSelectedBrush", SystemColors.HighlightBrush);
+        Set(resources, "CardFocusBorderBrush", SystemColors.HighlightBrush);
+        Set(resources, "CardPopupSurfaceBrush", SystemColors.WindowBrush);
+        Set(resources, "CardPopupBorderBrush", SystemColors.WindowTextBrush);
+        Set(resources, "CardPopupHeaderBrush", SystemColors.ControlBrush);
+        Set(resources, "CardPopupTextBrush", SystemColors.WindowTextBrush);
+        Set(resources, "CardPopupHeaderTextBrush", SystemColors.ControlTextBrush);
+        Set(resources, "CardPopupMutedTextBrush", SystemColors.WindowTextBrush);
+        Set(resources, "CardPopupInputBrush", SystemColors.WindowBrush);
+        Set(resources, "CardPopupInputBorderBrush", SystemColors.WindowTextBrush);
+        Set(resources, "CardToastSurfaceBrush", SystemColors.WindowBrush);
         Set(resources, "PrimaryTextBrush", SystemColors.WindowTextBrush);
         Set(resources, "SecondaryTextBrush", SystemColors.WindowTextBrush);
         Set(resources, "AccentBrush", SystemColors.HighlightBrush);
@@ -222,6 +240,24 @@ internal static class AccessibilityThemeManager
 
     private static void ApplyIcePalette(ResourceDictionary resources)
     {
+        Set(resources, "CardMarkerAccentBrush", Brush("#FF3E77B5"));
+        Set(resources, "CardSelectionBorderBrush", Brush("#FF7FA8D9"));
+        Set(resources, "CardTodayBorderBrush", Brush("#D9A441"));
+        Set(resources, "CardRimSubtleBorderBrush", Brush("#66FFFFFF"));
+        Set(resources, "CardDividerBrush", Brush("#1F1E2B3C"));
+        Set(resources, "CardInteractiveHoverBrush", Brush("#24FFFFFF"));
+        Set(resources, "CardInteractivePressedBrush", Brush("#48FFFFFF"));
+        Set(resources, "CardInteractiveSelectedBrush", Brush("#4DFFFFFF"));
+        Set(resources, "CardFocusBorderBrush", Brush("#CC2B7CD3"));
+        Set(resources, "CardPopupSurfaceBrush", Brush("#FFF4F6FB"));
+        Set(resources, "CardPopupBorderBrush", Brush("#FFC9D2E6"));
+        Set(resources, "CardPopupHeaderBrush", Brush("#FFB8C4EA"));
+        Set(resources, "CardPopupTextBrush", Brush("#FF22303E"));
+        Set(resources, "CardPopupHeaderTextBrush", Brush("#FF243146"));
+        Set(resources, "CardPopupMutedTextBrush", Brush("#FF8A98A8"));
+        Set(resources, "CardPopupInputBrush", Brush("#FFFFFFFF"));
+        Set(resources, "CardPopupInputBorderBrush", Brush("#FFD8DEEC"));
+        Set(resources, "CardToastSurfaceBrush", Brush("#FFDCE4F7"));
         Set(resources, "PrimaryTextBrush", Brush("#F7FBFF"));
         Set(resources, "SecondaryTextBrush", Brush("#B8D4E7"));
         Set(resources, "AccentBrush", Brush("#A6B8FF"));
@@ -282,7 +318,7 @@ internal static class AccessibilityThemeManager
         Set(resources, "PerformanceAccentBrush", Brush("#F51EA9FF"));
         Set(resources, "TodoDueSoonBrush", Brush("#261EA9FF"));
         Set(resources, "DockRunningDotBrush", Brush("#C21F3A55"));
-        Set(resources, "WidgetItemSurfaceBrush", Brush("#7AFFFFFF"));
+        Set(resources, "WidgetItemSurfaceBrush", Brush("#52FFFFFF"));
         Set(resources, "WidgetCaretBrush", Brushes.White);
         Set(resources, "WidgetDefaultButtonBrush", Brush("#1FFFFFFF"));
         Set(resources, "WidgetDefaultButtonBorderBrush", Brush("#28FFFFFF"));
@@ -295,7 +331,7 @@ internal static class AccessibilityThemeManager
         Set(resources, "WidgetTileFocusBrush", Brush("#3DFFFFFF"));
         Set(resources, "WidgetTileSelectedBrush", Brush("#4DFFFFFF"));
         Set(resources, "WidgetTileBorderThickness", new Thickness(0));
-        Set(resources, "WidgetButtonHoverBrush", Brush("#32FFFFFF"));
+        Set(resources, "WidgetButtonHoverBrush", Brush("#24FFFFFF"));
         Set(resources, "WidgetButtonPressedBrush", Brush("#48FFFFFF"));
         Set(resources, "AppearanceInkBrush", Brush("#203047"));
         Set(resources, "AppearanceMutedInkBrush", Brush("#607386"));

@@ -354,6 +354,27 @@ public sealed class LocalStateStore
         };
     }
 
+    // Legacy default values persisted through AppState.SchemaVersion 45 prior to the v46 visual polish.
+    private const double LegacyV45CornerRadius = 15.5d;
+    private const double LegacyV45GlassDensity = 0.32d;
+    private const double LegacyV45ItemSurfaceStrength = 0.48d;
+    private const string LegacyV45HeaderColor = "#A0B4E1";
+    private const string LegacyV45IceTextColor = "#243146";
+    private const string LegacyV45DarkBackgroundColor = "#18222F";
+    private const string LegacyV45DarkHeaderColor = "#2C3E57";
+    private const double LegacyV45DarkHeaderOpacity = 0.82d;
+    private const double LegacyValueTolerance = 0.0001d;
+
+    private static readonly (string BodyColor, string LegacyTextColor, string CurrentTextColor)[] LegacyV45PaletteMappings =
+    [
+        (WidgetAppearanceRules.DefaultBackgroundColor, LegacyV45IceTextColor, WidgetAppearanceRules.DefaultTextColor),
+        ("#F6EBDD", "#4A3728", "#2E2118"),
+        ("#EEF5E6", "#2F4A2A", "#1F331B"),
+        ("#ECEFF4", "#2E3440", "#232933"),
+        ("#FBEDEF", "#4E2A33", "#331B22"),
+        ("#E8F7F2", "#1F4A40", "#16352D")
+    ];
+
     private static AppState DeserializeAndMigrate(string json, out int storedVersion)
     {
         var state = JsonSerializer.Deserialize<AppState>(json, JsonOptions)
@@ -740,6 +761,11 @@ public sealed class LocalStateStore
             }
             state.SchemaVersion = 45;
         }
+        if (state.SchemaVersion < 46)
+        {
+            MigrateLegacyV45Defaults(state);
+            state.SchemaVersion = 46;
+        }
         state.Updates ??= new UpdateState();
         state.QuickPlaces = QuickPlaceRules.Normalize(state.QuickPlaces);
         state.DismissedDesktopCategories = (state.DismissedDesktopCategories ?? [])
@@ -858,4 +884,126 @@ public sealed class LocalStateStore
         placement.Width = Math.Max(1d, placement.Width - legacyShadowInsets);
         placement.Height = Math.Max(1d, placement.Height - legacyShadowInsets);
     }
+
+    private static void MigrateLegacyV45Defaults(AppState state)
+    {
+        state.Style ??= new DesktopStyleState();
+        if (NearLegacyValue(state.Style.GlassDensity, LegacyV45GlassDensity))
+        {
+            state.Style.GlassDensity = DesktopStyleRules.DefaultGlassDensity;
+        }
+        if (NearLegacyValue(state.Style.ItemSurfaceStrength, LegacyV45ItemSurfaceStrength))
+        {
+            state.Style.ItemSurfaceStrength = DesktopStyleRules.DefaultItemSurfaceStrength;
+        }
+
+        foreach (var todo in state.TodoWidgets)
+        {
+            todo.CornerRadius = MigrateLegacyV45CornerRadius(todo.CornerRadius);
+            MigrateLegacyV45Appearance(todo.Appearance, state.Style);
+        }
+        foreach (var box in state.FileBoxes)
+        {
+            box.CornerRadius = MigrateLegacyV45CornerRadius(box.CornerRadius);
+            MigrateLegacyV45Appearance(box.Appearance, state.Style);
+        }
+        foreach (var note in state.NoteWidgets)
+        {
+            note.CornerRadius = MigrateLegacyV45CornerRadius(note.CornerRadius);
+            if (note.BodyTypography is not null)
+            {
+                note.BodyTypography.Color = MigrateLegacyV45TextColor(
+                    note.BodyTypography.Color,
+                    note.Appearance,
+                    state.Style);
+            }
+            MigrateLegacyV45Appearance(note.Appearance, state.Style);
+        }
+        foreach (var information in state.InformationWidgets)
+        {
+            information.CornerRadius = MigrateLegacyV45CornerRadius(information.CornerRadius);
+            MigrateLegacyV45Appearance(information.Appearance, state.Style);
+        }
+        foreach (var component in state.DesktopExperience?.Components ?? [])
+        {
+            component.CornerRadius = MigrateLegacyV45CornerRadius(component.CornerRadius);
+            MigrateLegacyV45Appearance(component.Appearance, state.Style);
+        }
+    }
+
+    private static double MigrateLegacyV45CornerRadius(double cornerRadius) =>
+        NearLegacyValue(cornerRadius, LegacyV45CornerRadius)
+            ? WidgetAppearanceRules.DefaultCornerRadius
+            : cornerRadius;
+
+    private static void MigrateLegacyV45Appearance(
+        WidgetAppearanceState? appearance,
+        DesktopStyleState style)
+    {
+        if (appearance is null)
+        {
+            return;
+        }
+
+        // Resolve text ink mapping before rewriting BackgroundColor / BackgroundOpacity so the card's
+        // palette association is evaluated against its saved v45 values.
+        appearance.TextColor = MigrateLegacyV45TextColor(appearance.TextColor, appearance, style);
+
+        var hadLegacyOpacity = NearLegacyValue(appearance.BackgroundOpacity, LegacyV45GlassDensity);
+        if (hadLegacyOpacity)
+        {
+            appearance.BackgroundOpacity = WidgetAppearanceRules.DefaultBackgroundOpacity;
+        }
+
+        if (string.Equals(appearance.HeaderColor, LegacyV45HeaderColor, StringComparison.OrdinalIgnoreCase))
+        {
+            appearance.HeaderColor = WidgetAppearanceRules.DefaultHeaderColor;
+        }
+
+        if (style.Glass == GlassMode.Dark
+            && string.Equals(appearance.BackgroundColor, LegacyV45DarkBackgroundColor, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(appearance.HeaderColor, LegacyV45DarkHeaderColor, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(appearance.TextColor, "#FFFFFF", StringComparison.OrdinalIgnoreCase))
+        {
+            appearance.BackgroundColor = "#16202C";
+            if (hadLegacyOpacity && NearLegacyValue(appearance.HeaderOpacity, LegacyV45DarkHeaderOpacity))
+            {
+                appearance.HeaderOpacity = WidgetAppearanceRules.DefaultHeaderOpacity;
+            }
+        }
+    }
+
+    private static string MigrateLegacyV45TextColor(
+        string currentTextColor,
+        WidgetAppearanceState? cardAppearance,
+        DesktopStyleState style)
+    {
+        if (cardAppearance is null)
+        {
+            return currentTextColor;
+        }
+
+        var isClear = cardAppearance.BackgroundOpacity <= WidgetAppearanceRules.MinimumBackgroundOpacity + 0.005d;
+        if (isClear)
+        {
+            return style.TextInk == TextInk.Dark
+                   && string.Equals(currentTextColor, LegacyV45IceTextColor, StringComparison.OrdinalIgnoreCase)
+                ? WidgetAppearanceRules.DefaultTextColor
+                : currentTextColor;
+        }
+
+        foreach (var mapping in LegacyV45PaletteMappings)
+        {
+            if (string.Equals(cardAppearance.BackgroundColor, mapping.BodyColor, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(currentTextColor, mapping.LegacyTextColor, StringComparison.OrdinalIgnoreCase))
+            {
+                return mapping.CurrentTextColor;
+            }
+        }
+
+        return currentTextColor;
+    }
+
+    private static bool NearLegacyValue(double actual, double legacy) =>
+        Math.Abs(actual - legacy) < LegacyValueTolerance;
 }

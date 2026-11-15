@@ -235,6 +235,7 @@ internal static class Program
         Run("顶端信息条的窗口样式、模块与点击深链", () => TopBarWindowTests.Run(ShowAndPump, Pump), failures);
         Run("搜索菜单对比度、右键与键盘操作", () => TopBarWindowTests.SearchResultContextMenuStaysOpen(ShowAndPump, Pump), failures);
         Run("主题导入对话框显示名称与预览图", TestThemeImportDialogShowsNameAndPreview, failures);
+        Run("三种材质与 0/12/32 圆角真实窗口无白边或锯齿", TestMaterialCornerEdgesNoWhiteHalo, failures);
 
         if (failures.Count > 0)
         {
@@ -249,7 +250,7 @@ internal static class Program
 
     private static void TestUnifiedCornerAndSettings()
     {
-        var state = new TodoWidgetState { CornerRadius = 15.5d };
+        var state = new TodoWidgetState { CornerRadius = 12d };
         var window = new TodoWidgetWindow(state);
         ShowAndPump(window);
         var appearancePanel = new WidgetAppearancePanel();
@@ -276,25 +277,27 @@ internal static class Program
                 GetDwmAttribute(handle, DwmwaWindowCornerPreference) == DwmWindowCornerDoNotRound,
                 "正式组件没有关闭第二层 DWM 圆角");
             AssertWindowRegionCleared(handle);
-            AssertLayeredClip(window, 15.5d, "默认圆角");
+            AssertLayeredClip(window, 12d, "默认圆角");
             AssertAntialiasedCorner(window);
 
             var surface = Require<Border>(window, "Surface");
             Assert(surface.Background == Brushes.Transparent, "可见描边不能再绘制第二层背景");
-            Assert(surface.BorderThickness == new Thickness(0), "逐像素外轮廓仍叠加白色描边");
-            Assert(surface.CornerRadius == new CornerRadius(15.5d), "默认描边圆角未复用宿主值");
+            Assert(surface.BorderThickness == window.WidgetBorderThickness &&
+                   surface.BorderThickness == new Thickness(1),
+                "默认毛玻璃表面应带 1px 描边");
+            Assert(surface.CornerRadius == new CornerRadius(12d), "默认描边圆角未复用宿主值");
             Assert(
                 Near(surface.ActualWidth, window.ActualWidth) &&
                 Near(surface.ActualHeight, window.ActualHeight),
                 "组件表面仍被旧阴影留白内缩");
             AssertAppearanceBrush(
                 window.WidgetBackgroundBrush,
-                Color.FromArgb(82, 255, 255, 255),
+                Color.FromArgb(168, 255, 255, 255),
                 SystemColors.WindowColor,
                 "Pogget 默认主体材质");
             AssertAppearanceBrush(
                 window.WidgetHeaderBrush,
-                Color.FromArgb(247, 160, 180, 225),
+                Color.FromArgb(247, 91, 155, 213),
                 SystemColors.ControlColor,
                 "Pogget 默认标题材质");
             var titleEditor = Require<TextBox>(window, "TitleEditor");
@@ -308,16 +311,21 @@ internal static class Program
                 "主体没有复用宿主材质 Brush");
             var titleBar = Require<Border>(window, "TitleBarSurface");
             Assert(
-                ReferenceEquals(titleBar.Background, window.WidgetHeaderBrush),
-                "标题栏没有复用宿主材质 Brush");
+                titleBar.Background == Brushes.Transparent &&
+                titleBar.Margin == new Thickness(0) &&
+                Near(titleBar.Height, 48d),
+                "标题行未并入 48 DIP 卡片本体");
+            var accentTag = Require<Border>(window, "TitleAccentTag");
+            Assert(
+                ReferenceEquals(accentTag.Background, window.WidgetHeaderBrush),
+                "标题色标没有复用宿主材质 Brush");
             Assert(
                 titleBar.CornerRadius == window.HeaderCornerRadius &&
-                Near(titleBar.CornerRadius.TopLeft, 9.2d),
-                "默认标题栏圆角没有按外圆角比例派生为 9.2 DIP");
+                Near(window.HeaderCornerRadius.TopLeft, 8d),
+                "默认标题区派生圆角未设为 8 DIP");
             Assert(
-                Near(window.ItemCornerRadius.TopLeft, 10d),
-                "默认内容卡片圆角没有按外圆角比例派生为 10 DIP");
-            Assert(titleBar.Margin == new Thickness(10, 10, 10, 0), "标题栏没有采用内嵌布局");
+                Near(window.ItemCornerRadius.TopLeft, 8d),
+                "默认内容项圆角未设为 8 DIP");
 
             var liveCapturePath = Environment.GetEnvironmentVariable("BINGLAN_UI_CAPTURE");
             if (!string.IsNullOrWhiteSpace(liveCapturePath))
@@ -357,9 +365,9 @@ internal static class Program
             Assert(state.Appearance.TextColor == "#FFFFFF", "卡片文字颜色没有实时写回状态");
             AssertAppearanceBrush(
                 window.WidgetBackgroundBrush,
-                Color.FromArgb(117, 193, 210, 227),
+                Color.FromArgb(117, 22, 32, 44),
                 SystemColors.WindowColor,
-                "实时主体材质");
+                "F3 浅底配白字实时整卡深色渲染");
             AssertAppearanceBrush(
                 window.WidgetHeaderBrush,
                 Color.FromArgb(189, 145, 162, 179),
@@ -374,10 +382,21 @@ internal static class Program
             blackTextButton.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
             Pump();
             Assert(state.Appearance.TextColor == "#000000", "黑色文字快捷项没有生效");
+            AssertAppearanceBrush(
+                window.WidgetBackgroundBrush,
+                Color.FromArgb(117, 193, 210, 227),
+                SystemColors.WindowColor,
+                "切回黑字后恢复用户选择的浅色底色");
             var whiteTextButton = Require<Button>(appearancePanel, "WhiteTextColorButton");
             whiteTextButton.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
             Pump();
             Assert(state.Appearance.TextColor == "#FFFFFF", "白色文字快捷项没有生效");
+            Assert(state.Appearance.BackgroundColor == "#C1D2E3", "F3 整卡深色渲染不应改写持久保存的浅色底色");
+            AssertAppearanceBrush(
+                window.WidgetBackgroundBrush,
+                Color.FromArgb(117, 22, 32, 44),
+                SystemColors.WindowColor,
+                "切回白字后实时恢复 F3 整卡深色渲染");
             Assert(ReferenceEquals(clipBeforeMaterialChange, window.Clip),
                 "调色不应生成第二份外轮廓");
             Assert(appearanceChangeNotified, "材质设置没有触发现有防抖保存链路");
@@ -414,8 +433,8 @@ internal static class Program
             Assert(state.CornerRadius == 3d, "圆角滑块没有写回待办状态");
             Assert(surface.CornerRadius == new CornerRadius(3d), "圆角滑块没有同步可见描边");
             Assert(
-                Near(titleBar.CornerRadius.TopLeft, 3d * 9.2d / 15.5d) &&
-                Near(window.ItemCornerRadius.TopLeft, 3d * 10d / 15.5d),
+                Near(titleBar.CornerRadius.TopLeft, 3d * 8d / 12d) &&
+                Near(window.ItemCornerRadius.TopLeft, 3d * 8d / 12d),
                 "圆角滑块没有按同一比例同步标题栏与内容卡片圆角");
             AssertLayeredClip(window, 3d, "3 DIP 圆角");
             AssertClipPoint(window, new Point(8, 8), true, "3 DIP 固定采样点");
@@ -425,11 +444,11 @@ internal static class Program
             resetAppearance.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
             Pump();
             window.CaptureState();
-            Assert(window.WidgetCornerRadius == 15.5d, "恢复默认圆角菜单没有工作");
-            Assert(state.CornerRadius == 15.5d, "默认圆角没有写回待办状态");
+            Assert(window.WidgetCornerRadius == 12d, "恢复默认圆角菜单没有工作");
+            Assert(state.CornerRadius == 12d, "默认圆角没有写回待办状态");
             Assert(state.Appearance.BackgroundColor == "#FFFFFF" &&
-                   state.Appearance.BackgroundOpacity == 0.32d &&
-                   state.Appearance.HeaderColor == "#A0B4E1" &&
+                   state.Appearance.BackgroundOpacity == 0.66d &&
+                   state.Appearance.HeaderColor == "#5B9BD5" &&
                    state.Appearance.HeaderOpacity == 0.97d &&
                    state.Appearance.TextColor == WidgetAppearanceRules.DefaultTextColor &&
                    state.Appearance.TitleFontFamily == WidgetAppearanceRules.DefaultTitleFontFamily &&
@@ -453,10 +472,10 @@ internal static class Program
             Assert(window.Clip is null, "直角模式没有移除逐像素圆角 Clip");
             Assert(surface.CornerRadius == new CornerRadius(0d), "直角模式仍保留 WPF 描边圆角");
 
-            window.WidgetCornerRadius = 15.5d;
+            window.WidgetCornerRadius = 12d;
             window.Width += 40d;
             Pump();
-            AssertLayeredClip(window, 15.5d, "调整大小后的圆角");
+            AssertLayeredClip(window, 12d, "调整大小后的圆角");
         }
         finally
         {
@@ -821,13 +840,13 @@ internal static class Program
                 .Single(x => Equals(x.Tag, "Interactive"));
             Assert(
                 todoCard.CornerRadius == window.ItemCornerRadius &&
-                Near(todoCard.CornerRadius.TopLeft, 10d),
+                Near(todoCard.CornerRadius.TopLeft, 8d),
                 "待办卡片没有复用宿主派生圆角");
             window.WidgetCornerRadius = 3d;
             Pump();
             Assert(
                 todoCard.CornerRadius == window.ItemCornerRadius &&
-                Near(todoCard.CornerRadius.TopLeft, 3d * 10d / 15.5d),
+                Near(todoCard.CornerRadius.TopLeft, 3d * 8d / 12d),
                 "待办卡片没有随外圆角同步变化");
             window.WidgetCornerRadius = WidgetAppearanceRules.DefaultCornerRadius;
             Pump();
@@ -1109,12 +1128,12 @@ internal static class Program
                     "退出模拟高对比度后统一主题状态没有恢复");
                 AssertAppearanceBrush(
                     todo.WidgetBackgroundBrush,
-                    Color.FromArgb(82, 255, 255, 255),
+                    Color.FromArgb(168, 255, 255, 255),
                     SystemColors.WindowColor,
                     "退出高对比度后的待办主体材质");
                 AssertAppearanceBrush(
                     todo.WidgetHeaderBrush,
-                    Color.FromArgb(247, 160, 180, 225),
+                    Color.FromArgb(247, 91, 155, 213),
                     SystemColors.ControlColor,
                     "退出高对比度后的待办标题材质");
                 AssertBrushColor(
@@ -1690,7 +1709,7 @@ internal static class Program
             Pump();
             window.SetCollapsed(true);
             Pump();
-            Assert(state.IsCollapsed && Math.Abs(window.ActualHeight - 72) < 1 && !list.IsVisible,
+            Assert(state.IsCollapsed && Math.Abs(window.ActualHeight - 48) < 1 && !list.IsVisible,
                 "折叠后分组盒只剩标题条");
             window.SetCollapsed(false);
             Pump();
@@ -1971,7 +1990,7 @@ internal static class Program
             Pump();
             Require<Button>(window, "CollapseButton").RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
             Pump();
-            Assert(Near(window.ActualHeight, 72), "收起后卡片应只剩标题条高度");
+            Assert(Near(window.ActualHeight, 48), "收起后卡片应只剩标题条高度");
             // 收起隐藏的是正文的整层 Grid，所以断言要考虑祖先的 IsVisible。
             Assert(!Require<ScrollViewer>(window, "ListHost").IsVisible, "收起后正文列表应隐藏");
             Assert(Require<Button>(window, "ViewModeButton").Visibility == Visibility.Collapsed, "收起后视图切换按钮应隐藏");
@@ -1992,7 +2011,7 @@ internal static class Program
         ShowAndPump(restored);
         try
         {
-            Assert(Near(restored.ActualHeight, 72), "重启后收起的卡片应以标题条打开");
+            Assert(Near(restored.ActualHeight, 48), "重启后收起的卡片应以标题条打开");
             Require<Button>(restored, "CollapseButton").RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
             Pump();
             Assert(Near(restored.ActualHeight, 336), "展开后应回到记住的展开高度");
@@ -2546,7 +2565,7 @@ internal static class Program
                 "文件项仍叠加常驻白色卡片");
             Assert(
                 tile.CornerRadius == window.ItemCornerRadius &&
-                Near(tile.CornerRadius.TopLeft, 3d * 10d / 15.5d),
+                Near(tile.CornerRadius.TopLeft, 3d * 8d / 12d),
                 "文件卡片没有随外圆角同步变化");
             var icon = FindVisualChildren<Image>(presenter).Single();
             Assert(Near(icon.Width, 43d) && Near(icon.Height, 43d),
@@ -2558,16 +2577,16 @@ internal static class Program
             Assert(
                 Near(
                     Require<Border>(window, "TitleBarSurface").CornerRadius.TopLeft,
-                    3d * 9.2d / 15.5d),
+                    3d * 8d / 12d),
                 "文件盒标题栏没有随外圆角同步变化");
             AssertAppearanceBrush(
                 window.WidgetBackgroundBrush,
-                Color.FromArgb(82, 255, 255, 255),
+                Color.FromArgb(168, 255, 255, 255),
                 SystemColors.WindowColor,
                 "文件盒默认主体材质");
             AssertAppearanceBrush(
                 window.WidgetHeaderBrush,
-                Color.FromArgb(247, 160, 180, 225),
+                Color.FromArgb(247, 91, 155, 213),
                 SystemColors.ControlColor,
                 "文件盒默认标题材质");
             var title = Require<TextBox>(window, "TitleEditor");
@@ -3637,12 +3656,12 @@ internal static class Program
             var list = Require<ItemsControl>(window, "TodoList");
             var plus = FindVisualChildren<Button>(window).Single(x => Equals(x.Content, "+"));
             double ListText() => FindVisualChildren<TextBox>(list).First(x => x.DataContext is TodoItemState).FontSize;
-            Assert(ListText() == 14 && plus.FontSize == 20, "100% 时列表待办应为原来的 14 号");
+            Assert(ListText() == 14 && plus.FontSize == 19, "100% 时列表待办应为原来的 14 号");
 
             window.SetContentFontScale(1.5);
             Pump();
             Assert(ListText() == 21, "字号缩放 150% 时列表待办应为 14×1.5");
-            Assert(plus.FontSize == 20, "按钮图标不随字号缩放（固定尺寸的框）");
+            Assert(plus.FontSize == 19, "按钮图标不随字号缩放（固定尺寸的框）");
 
             // 周历：格内任务、日期数字和星期表头一起按同一比例缩放，列表与周历的比例保持不变。
             Require<Button>(window, "ViewModeButton").RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
@@ -3907,8 +3926,8 @@ internal static class Program
         Directory.CreateDirectory(directory);
         foreach (var (background, opacity, text, itemSurface, label) in new (string, double, string, string, string)[]
                  {
-                     ("#ECEFF4", 0.26352941176470596, "#2E3440", "#7AFFFFFF", "当前外观"),
-                     ("#18222F", 0.32, "#FFFFFF", "#1FFFFFFF", "深色玻璃白字"),
+                     ("#FFFFFF", 0.66, "#1E2B3C", "#52FFFFFF", "当前外观"),
+                     ("#16202C", 0.66, "#FFFFFF", "#14FFFFFF", "深色玻璃白字"),
                      ("#FFFFFF", 0.01, "#FFFFFF", "#00FFFFFF", "无底板白字")
                  })
         {
@@ -6465,6 +6484,11 @@ internal static class Program
         var pixels = new byte[stride * height];
         bitmap.CopyPixels(pixels, stride, 0);
 
+        var expectedSurfaceAlpha = window.WidgetBackgroundBrush is SolidColorBrush surfaceBrush
+            ? surfaceBrush.Color.A
+            : byte.MaxValue;
+        var surfaceThreshold = Math.Max(1, expectedSurfaceAlpha - 12);
+        var partialCeiling = Math.Max(2, expectedSurfaceAlpha - 12);
         var sampleSize = Math.Min(
             Math.Min(width, height),
             (int)Math.Ceiling(window.WidgetCornerRadius) + 3);
@@ -6477,14 +6501,118 @@ internal static class Program
             {
                 var alpha = pixels[y * stride + x * 4 + 3];
                 hasTransparent |= alpha == 0;
-                hasPartialCoverage |= alpha is > 0 and < 200;
-                hasSurface |= alpha >= 230;
+                hasPartialCoverage |= alpha > 0 && alpha < partialCeiling;
+                hasSurface |= alpha >= surfaceThreshold;
             }
         }
 
         Assert(hasTransparent, "圆角外没有逐像素透明区域");
         Assert(hasPartialCoverage, "圆角边缘没有抗锯齿半透明覆盖像素");
         Assert(hasSurface, "圆角采样未覆盖组件主体");
+    }
+
+    private static void TestMaterialCornerEdgesNoWhiteHalo()
+    {
+        var materials = new (string Name, string Bg, double Opacity, string Text)[]
+        {
+            ("浅色玻璃", "#FFFFFF", 0.66d, "#1E2B3C"),
+            ("深色玻璃", "#16202C", 0.66d, "#FFFFFF"),
+            ("无底板", "#FFFFFF", 0.01d, "#FFFFFF")
+        };
+
+        foreach (var (name, bg, opacity, text) in materials)
+        foreach (var radius in new[] { 0d, 12d, 32d })
+        {
+            var isClear = opacity <= WidgetAppearanceRules.MinimumBackgroundOpacity + 0.005d;
+            var isDark = string.Equals(bg, "#16202C", StringComparison.OrdinalIgnoreCase);
+            var window = new TodoWidgetWindow(new TodoWidgetState
+            {
+                CornerRadius = radius,
+                Appearance = new WidgetAppearanceState
+                {
+                    BackgroundColor = bg,
+                    BackgroundOpacity = opacity,
+                    TextColor = text
+                }
+            });
+            ShowAndPump(window);
+            try
+            {
+                var surface = Require<Border>(window, "Surface");
+                Assert(
+                    surface.BorderThickness == (isClear ? new Thickness(0) : new Thickness(1)),
+                    $"{name} 圆角 {radius} 描边厚度不符");
+                var width = Math.Max(1, (int)Math.Ceiling(window.ActualWidth));
+                var height = Math.Max(1, (int)Math.Ceiling(window.ActualHeight));
+                var bitmap = new RenderTargetBitmap(width, height, 96, 96, PixelFormats.Pbgra32);
+                bitmap.Render(window);
+                var stride = width * 4;
+                var pixels = new byte[stride * height];
+                bitmap.CopyPixels(pixels, stride, 0);
+
+                if (radius <= 0d)
+                {
+                    Assert(window.Clip is null && surface.CornerRadius == new CornerRadius(0),
+                        $"{name} 直角应无圆角裁剪");
+                    Assert(pixels[3] > 0, $"{name} 直角顶点应覆盖窗口表面");
+                }
+                else
+                {
+                    Assert(pixels[3] == 0, $"{name} 圆角 {radius} 左上角外像素必须全透明");
+                    if (!isClear)
+                    {
+                        var interiorMax = (int)Math.Round(opacity * 255d);
+                        var box = Math.Min(Math.Min(width, height), (int)Math.Ceiling(radius) + 3);
+                        var hasAntialiased = false;
+                        for (var y = 0; y < box && !hasAntialiased; y++)
+                        for (var x = 0; x < box && !hasAntialiased; x++)
+                        {
+                            var alpha = pixels[y * stride + x * 4 + 3];
+                            if (alpha > 0 && alpha < Math.Max(2, interiorMax - 8))
+                            {
+                                hasAntialiased = true;
+                            }
+                        }
+
+                        Assert(hasAntialiased, $"{name} 圆角 {radius} 缺少平滑抗锯齿过渡像素");
+                    }
+                    else
+                    {
+                        byte maxClearAlpha = 0;
+                        for (var y = 0; y < 10; y++)
+                        for (var x = 0; x < 10; x++)
+                        {
+                            maxClearAlpha = Math.Max(maxClearAlpha, pixels[y * stride + x * 4 + 3]);
+                        }
+
+                        Assert(maxClearAlpha <= 6,
+                            $"{name} 圆角 {radius} 角落出现不应有的不透明白边或边框（alpha={maxClearAlpha}）");
+                    }
+
+                    if (isDark)
+                    {
+                        double maxCompositedChannel = 0d;
+                        for (var y = 0; y < 10; y++)
+                        for (var x = 0; x < 14; x++)
+                        {
+                            var offset = y * stride + x * 4;
+                            var alpha = pixels[offset + 3] / 255d;
+                            var b = 40d * (1d - alpha) + pixels[offset + 0];
+                            var g = 28d * (1d - alpha) + pixels[offset + 1];
+                            var r = 20d * (1d - alpha) + pixels[offset + 2];
+                            maxCompositedChannel = Math.Max(maxCompositedChannel, Math.Max(r, Math.Max(g, b)));
+                        }
+
+                        Assert(maxCompositedChannel <= 120d,
+                            $"{name} 圆角 {radius} 边缘存在亮白光晕（叠加后通道峰值 {maxCompositedChannel:F1}）");
+                    }
+                }
+            }
+            finally
+            {
+                Close(window);
+            }
+        }
     }
 
     private static void AssertWindowRegionCleared(nint handle)

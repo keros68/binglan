@@ -103,6 +103,14 @@ public partial class InformationWidgetWindow : WidgetWindowBase
     public InformationWidgetState State { get; }
     public DesktopComponentKind? ComponentKind => _componentKind;
 
+    protected override void OnAppearanceRefreshed()
+    {
+        if (_experience is not null && Surface is not null)
+        {
+            ApplyDesktopExperience(_experience);
+        }
+    }
+
     private static DesktopExperienceState CreateExperienceFromLegacyAppearance(
         InformationWidgetState state)
     {
@@ -158,6 +166,7 @@ public partial class InformationWidgetWindow : WidgetWindowBase
             : Visibility.Collapsed;
         WeatherCard.Visibility = showWeather ? Visibility.Visible : Visibility.Collapsed;
 
+        RenderedCardLook? isolatedRender = null;
         if (isolatedComponent is not null)
         {
             // A chosen font replaces the interface font for all of this card's text.
@@ -172,9 +181,20 @@ public partial class InformationWidgetWindow : WidgetWindowBase
             MinWidth = 180d;
             MinHeight = 72d;
             Title = DesktopExperienceRules.GetComponentName(isolatedComponent.Kind);
-            BodySurface.Background = CreateComponentBackgroundBrush(isolatedComponent);
+            isolatedRender = DesktopStyleRules.ResolveRenderedCard(isolatedComponent.Appearance, CurrentStyle);
+            BodySurface.Background = AccessibilityThemeManager.IsHighContrastEnabled
+                ? SystemColors.WindowBrush
+                : CreateBrush(isolatedRender.BackgroundColor, isolatedRender.BackgroundOpacity);
+            ApplyRenderedSurfaceOverrides(isolatedRender);
+            ApplyEffectiveCardShadow(isolatedRender.EffectiveShadow);
             WidgetCornerRadius = isolatedComponent.CornerRadius;
         }
+
+        var (surfaceBorderBrush, surfaceBorderThickness) = isolatedRender is not null
+            ? ResolveSurfaceBorder(isolatedRender.BackgroundColor, isolatedRender.BackgroundOpacity)
+            : (WidgetBorderBrush, WidgetBorderThickness);
+        Surface.BorderBrush = surfaceBorderBrush;
+        Surface.BorderThickness = surfaceBorderThickness;
 
         var bigClock = experience.ActivePreset == DesktopLayoutPreset.CenterClock
             && _componentKind == DesktopComponentKind.TimeDate;
@@ -189,7 +209,7 @@ public partial class InformationWidgetWindow : WidgetWindowBase
         DateText.TextAlignment = clockAlignment;
         DateText.FontSize = 13d * timeDate.FontScale;
         var isolatedGreeting = _componentKind == DesktopComponentKind.Greeting;
-        GreetingText.FontSize = (isolatedGreeting ? 34d : 14d) * greeting.FontScale;
+        GreetingText.FontSize = (isolatedGreeting ? 34d : 15d) * greeting.FontScale;
         var defaultGreetingWeight = isolatedGreeting ? FontWeights.Light : FontWeights.Normal;
         GreetingText.FontWeight = greeting.FontFamily is { } greetingFontName
             ? InstalledFontCatalog.WeightOf(InstalledFontCatalog.Resolve(greetingFontName), defaultGreetingWeight)
@@ -223,40 +243,90 @@ public partial class InformationWidgetWindow : WidgetWindowBase
         GreetingText.Foreground = GetComponentTextBrush(greeting);
         SettingsButton.Foreground = GetComponentTextBrush(isolatedComponent ?? timeDate);
 
-        ApplyTextBrush(PerformanceCard, GetComponentTextBrush(performance));
-        PerformanceCard.Background = _componentKind == DesktopComponentKind.Performance
+        ApplyTextBrush(PerformanceCard, GetComponentTextBrush(performance), GetComponentSecondaryTextBrush(performance));
+        var isIsolatedPerformance = _componentKind == DesktopComponentKind.Performance;
+        var performanceRender = isIsolatedPerformance
+            ? null
+            : DesktopStyleRules.ResolveRenderedCard(
+                _usesLegacyAppearance ? WidgetAppearance : performance.Appearance,
+                CurrentStyle);
+        PerformanceCard.Background = isIsolatedPerformance
             ? System.Windows.Media.Brushes.Transparent
-            : CreateComponentBackgroundBrush(performance);
+            : AccessibilityThemeManager.IsHighContrastEnabled
+                ? SystemColors.ControlBrush
+                : CreateBrush(performanceRender!.BackgroundColor, performanceRender.BackgroundOpacity);
+        var (performanceBorderBrush, performanceBorderThickness) = isIsolatedPerformance
+            ? (System.Windows.Media.Brushes.Transparent, new Thickness(0))
+            : ResolveSurfaceBorder(performanceRender!.BackgroundColor, performanceRender.BackgroundOpacity);
+        PerformanceCard.BorderBrush = performanceBorderBrush;
+        PerformanceCard.BorderThickness = performanceBorderThickness;
+        PerformanceCard.Effect = isIsolatedPerformance
+            || AccessibilityThemeManager.IsHighContrastEnabled
+            || BodySurface.Effect is not null
+            ? null
+            : CreateCardShadowEffect(performanceRender!.EffectiveShadow);
         PerformanceCard.CornerRadius = new CornerRadius(performance.CornerRadius);
         PerformanceCard.Padding = GetCardPadding(performance.Density, false);
-        CpuValueText.FontSize = 18d * performance.FontScale;
-        RamValueText.FontSize = 18d * performance.FontScale;
+        CpuValueText.FontSize = 19d * performance.FontScale;
+        RamValueText.FontSize = 19d * performance.FontScale;
         UploadValueText.FontSize = 12d * performance.FontScale;
         DownloadValueText.FontSize = 12d * performance.FontScale;
-        CpuLabelText.FontSize = 10d * performance.FontScale;
-        RamLabelText.FontSize = 10d * performance.FontScale;
-        NetworkLabelText.FontSize = 10d * performance.FontScale;
+        CpuLabelText.FontSize = 11d * performance.FontScale;
+        RamLabelText.FontSize = 11d * performance.FontScale;
+        NetworkLabelText.FontSize = 11d * performance.FontScale;
         UploadLabelText.FontSize = 12d * performance.FontScale;
         DownloadLabelText.FontSize = 12d * performance.FontScale;
 
-        ApplyTextBrush(WeatherCard, GetComponentTextBrush(weather));
-        WeatherCard.Background = _componentKind == DesktopComponentKind.Weather
+        ApplyTextBrush(WeatherCard, GetComponentTextBrush(weather), GetComponentSecondaryTextBrush(weather));
+        var isIsolatedWeather = _componentKind == DesktopComponentKind.Weather;
+        var weatherRender = isIsolatedWeather
+            ? null
+            : DesktopStyleRules.ResolveRenderedCard(
+                _usesLegacyAppearance ? WidgetAppearance : weather.Appearance,
+                CurrentStyle);
+        WeatherCard.Background = isIsolatedWeather
             ? System.Windows.Media.Brushes.Transparent
-            : CreateComponentBackgroundBrush(weather);
+            : AccessibilityThemeManager.IsHighContrastEnabled
+                ? SystemColors.ControlBrush
+                : CreateBrush(weatherRender!.BackgroundColor, weatherRender.BackgroundOpacity);
+        var (weatherBorderBrush, weatherBorderThickness) = isIsolatedWeather
+            ? (System.Windows.Media.Brushes.Transparent, new Thickness(0))
+            : ResolveSurfaceBorder(weatherRender!.BackgroundColor, weatherRender.BackgroundOpacity);
+        WeatherCard.BorderBrush = weatherBorderBrush;
+        WeatherCard.BorderThickness = weatherBorderThickness;
+        WeatherCard.Effect = isIsolatedWeather
+            || AccessibilityThemeManager.IsHighContrastEnabled
+            || BodySurface.Effect is not null
+            ? null
+            : CreateCardShadowEffect(weatherRender!.EffectiveShadow);
         WeatherCard.CornerRadius = new CornerRadius(weather.CornerRadius);
         WeatherCard.Padding = GetCardPadding(weather.Density, true);
-        WeatherCityText.FontSize = 16d * weather.FontScale;
+        WeatherCityText.FontSize = 15d * weather.FontScale;
         WeatherTempText.FontSize = 46d * weather.FontScale;
+        WeatherIconPath.Width = 24d * weather.FontScale;
+        WeatherIconPath.Height = 24d * weather.FontScale;
         WeatherConditionText.FontSize = 19d * weather.FontScale;
-        WeatherRangeText.FontSize = 13d * weather.FontScale;
-        WeatherUpdatedText.FontSize = 12d * weather.FontScale;
+        var weatherMetaSize = 12d * weather.FontScale;
+        WeatherHighText.FontSize = weatherMetaSize;
+        WeatherLowText.FontSize = weatherMetaSize;
+        WeatherHumidityText.FontSize = weatherMetaSize;
+        WeatherUpdatedText.FontSize = weatherMetaSize;
         WeatherStatusText.FontSize = 11d * weather.FontScale;
     }
 
     private Brush GetComponentTextBrush(DesktopComponentState component) =>
-        _usesLegacyAppearance
-            ? WidgetTextBrush
-            : CreateBrush(component.Appearance.TextColor, 1d);
+        AccessibilityThemeManager.IsHighContrastEnabled
+            ? SystemColors.WindowTextBrush
+            : _usesLegacyAppearance
+                ? WidgetTextBrush
+                : CreateBrush(component.Appearance.TextColor, 1d);
+
+    private Brush GetComponentSecondaryTextBrush(DesktopComponentState component) =>
+        AccessibilityThemeManager.IsHighContrastEnabled
+            ? SystemColors.WindowTextBrush
+            : _usesLegacyAppearance
+                ? WidgetSecondaryTextBrush
+                : CreateBrush(component.Appearance.TextColor, ColorContrastRules.SecondaryTextAlpha);
 
     private static SolidColorBrush CreateComponentBackgroundBrush(
         DesktopComponentState component) =>
@@ -288,7 +358,7 @@ public partial class InformationWidgetWindow : WidgetWindowBase
                 : new Thickness(12, 9, 12, 9)
         };
 
-    private static void ApplyTextBrush(DependencyObject root, Brush brush)
+    private static void ApplyTextBrush(DependencyObject root, Brush primaryBrush, Brush secondaryBrush)
     {
         for (var index = 0; index < VisualTreeHelper.GetChildrenCount(root); index++)
         {
@@ -297,14 +367,20 @@ public partial class InformationWidgetWindow : WidgetWindowBase
             {
                 case System.Windows.Controls.TextBlock { Tag: "Accent" }:
                     break;
+                case System.Windows.Controls.TextBlock { Tag: "Secondary" } secondaryBlock:
+                    secondaryBlock.Foreground = secondaryBrush;
+                    break;
                 case System.Windows.Controls.TextBlock textBlock:
-                    textBlock.Foreground = brush;
+                    textBlock.Foreground = primaryBrush;
                     break;
                 case System.Windows.Controls.Control control:
-                    control.Foreground = brush;
+                    control.Foreground = primaryBrush;
+                    break;
+                case System.Windows.Shapes.Path path:
+                    path.Stroke = primaryBrush;
                     break;
             }
-            ApplyTextBrush(child, brush);
+            ApplyTextBrush(child, primaryBrush, secondaryBrush);
         }
     }
 
@@ -553,12 +629,18 @@ public partial class InformationWidgetWindow : WidgetWindowBase
         {
             WeatherCityText.Text = "未设置城市";
             WeatherTempText.Text = "--";
+            WeatherIconPath.Data = Geometry.Parse(WeatherIconRules.GetPathData(WeatherIconKind.Unset));
             WeatherConditionText.Text = "";
-            WeatherRangeText.Text = "";
+            WeatherHighText.Text = "";
+            WeatherLowText.Text = "";
+            WeatherHumidityText.Text = "";
+            WeatherDetailsPanel.Visibility = Visibility.Collapsed;
             WeatherUpdatedText.Text = "";
             WeatherStatusText.Text = "";
             return;
         }
+
+        WeatherDetailsPanel.Visibility = Visibility.Visible;
 
         // "黑河 · 黑龙江 · 中国" reads as just "黑河"; the full place is in the tooltip.
         WeatherCityText.Text = snapshot.City.Split(" · ")[0];
@@ -566,11 +648,14 @@ public partial class InformationWidgetWindow : WidgetWindowBase
         WeatherTempText.Text = snapshot.TemperatureCelsius is { } temperature
             ? $"{temperature:0.#}°"
             : "--";
+        WeatherIconPath.Data = Geometry.Parse(WeatherIconRules.GetPathData(snapshot.Condition));
         WeatherConditionText.Text = snapshot.Condition;
         var high = snapshot.DailyHighCelsius is { } h ? $"{h:0.#}°" : "--";
         var low = snapshot.DailyLowCelsius is { } l ? $"{l:0.#}°" : "--";
         var humidity = snapshot.HumidityPercent is { } value ? $"{value}%" : "--";
-        WeatherRangeText.Text = $"最高 {high}  最低 {low}  湿度 {humidity}";
+        WeatherHighText.Text = $"最高 {high}";
+        WeatherLowText.Text = $"最低 {low}";
+        WeatherHumidityText.Text = $"湿度 {humidity}";
         WeatherUpdatedText.Text = snapshot.UpdatedAt is { } updatedAt
             ? $"更新于 {updatedAt.LocalDateTime.ToString("HH:mm", CultureInfo.InvariantCulture)}"
             : "";

@@ -2,17 +2,17 @@ namespace BingLan.Core.Models;
 
 public static class WidgetAppearanceRules
 {
-    public const double DefaultCornerRadius = 15.5d;
+    public const double DefaultCornerRadius = 12d;
     public const double MinimumCornerRadius = 0d;
     public const double MaximumCornerRadius = 32d;
     public const string DefaultBackgroundColor = "#FFFFFF";
-    public const double DefaultBackgroundOpacity = 0.32d;
+    public const double DefaultBackgroundOpacity = 0.66d;
     // A fully transparent pixel lets clicks fall through a layered window, so the body
     // never goes fully clear: at 1 % it is invisible but the card can still be dragged.
     public const double MinimumBackgroundOpacity = 0.01d;
-    public const string DefaultHeaderColor = "#A0B4E1";
+    public const string DefaultHeaderColor = "#5B9BD5";
     public const double DefaultHeaderOpacity = 0.97d;
-    public const string DefaultTextColor = "#243146";
+    public const string DefaultTextColor = "#1E2B3C";
     public const string DefaultTitleFontFamily = "Microsoft YaHei UI";
     public const bool DefaultTitleFontBold = true;
     public const bool DefaultTitleFontItalic = false;

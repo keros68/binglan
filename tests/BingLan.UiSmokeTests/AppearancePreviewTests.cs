@@ -199,11 +199,12 @@ internal static class AppearancePreviewTests
                 TextInk = ink, CustomTextColor = "#C79BEE" };
             sample.Update(style, lightBackground: density == DesktopStyleRules.MinimumGlassDensity);
             var look = DesktopStyleRules.Appearance(style);
+            var rendered = DesktopStyleRules.ResolveRenderedCard(style);
             var canvas = (Canvas)((Viewbox)sample.Content).Child;
             var weather = canvas.Children.OfType<Border>().First();
             var header = ((Grid)weather.Child).Children.OfType<Border>().First();
-            Check(weather.Background is SolidColorBrush body && body.Color == Parse(look.BackgroundColor)
-                && body.Opacity == look.BackgroundOpacity, "示例卡片底色及浓度应来自现有规则");
+            Check(weather.Background is SolidColorBrush body && body.Color == Parse(rendered.BackgroundColor)
+                && body.Opacity == rendered.BackgroundOpacity, "示例卡片底色及浓度应来自现有渲染规则");
             Check(header.Background is SolidColorBrush title && title.Color == Parse(look.HeaderColor)
                 && title.Opacity == look.HeaderOpacity, "示例标题底色应来自现有规则");
             Check(sample.DisplayedDock == DesktopStyleRules.Dock(style)

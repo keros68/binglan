@@ -63,6 +63,18 @@ public sealed record GlassAppearance(
     string ItemSurfaceColor);
 
 /// <summary>
+/// Resolved whole-card rendering look derived from a saved card appearance and global style
+/// without mutating persisted user settings.
+/// </summary>
+public sealed record RenderedCardLook(
+    string BackgroundColor,
+    double BackgroundOpacity,
+    string ItemSurfaceColor,
+    string SubtleControlColor,
+    string ControlColor,
+    CardShadow EffectiveShadow);
+
+/// <summary>
 /// Desktop-wide style shared by every card and the dock: card shadow, the gap cards keep
 /// when snapped next to each other, and how much the dock animates. Part of a theme.
 /// </summary>
@@ -134,6 +146,22 @@ public sealed class DesktopStyleState
 
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? ExtensionData { get; set; }
+
+    public DesktopStyleState Clone() => new()
+    {
+        CardShadow = CardShadow,
+        CardSpacing = CardSpacing,
+        GridSnap = GridSnap,
+        Motion = Motion,
+        Glass = Glass,
+        Palette = Palette,
+        TextInk = TextInk,
+        CustomTextColor = CustomTextColor,
+        AccentColor = AccentColor,
+        GlassDensity = GlassDensity,
+        ItemSurfaceTone = ItemSurfaceTone,
+        ItemSurfaceStrength = ItemSurfaceStrength
+    };
 }
 
 public static class DesktopStyleRules
@@ -150,18 +178,18 @@ public static class DesktopStyleRules
     public const double MaximumGlassDensity = 0.96d;
     public const double DefaultGlassDensity = WidgetAppearanceRules.DefaultBackgroundOpacity;
     public const string DefaultPalette = "ice";
-    public const double DefaultItemSurfaceStrength = 0.48d;
+    public const double DefaultItemSurfaceStrength = 0.32d;
     public const double MaximumItemSurfaceStrength = 0.8d;
 
     /// <summary>Light-glass palettes, the first being the original ice blue.</summary>
     public static IReadOnlyList<CardPalette> Palettes { get; } =
     [
         new("ice", "冰蓝", WidgetAppearanceRules.DefaultBackgroundColor, WidgetAppearanceRules.DefaultHeaderColor, WidgetAppearanceRules.DefaultTextColor),
-        new("milk-tea", "奶茶", "#F6EBDD", "#D9B99B", "#4A3728"),
-        new("matcha", "抹茶", "#EEF5E6", "#A9C79A", "#2F4A2A"),
-        new("nord", "北欧", "#ECEFF4", "#88A0BF", "#2E3440"),
-        new("rosy", "玫瑰", "#FBEDEF", "#E3A9B4", "#4E2A33"),
-        new("mint", "薄荷", "#E8F7F2", "#8FD1BE", "#1F4A40")
+        new("milk-tea", "奶茶", "#F6EBDD", "#D9B99B", "#2E2118"),
+        new("matcha", "抹茶", "#EEF5E6", "#A9C79A", "#1F331B"),
+        new("nord", "北欧", "#ECEFF4", "#88A0BF", "#232933"),
+        new("rosy", "玫瑰", "#FBEDEF", "#E3A9B4", "#331B22"),
+        new("mint", "薄荷", "#E8F7F2", "#8FD1BE", "#16352D")
     ];
 
     public static CardPalette GetPalette(string? key) =>
@@ -172,6 +200,13 @@ public static class DesktopStyleRules
             ? Math.Clamp(value, MinimumGlassDensity, MaximumGlassDensity)
             : DefaultGlassDensity;
 
+    private const string RenderedDarkBackgroundColor = "#16202C";
+    private const string RenderedDarkItemSurfaceColor = "#14FFFFFF";
+    private const string RenderedDarkSubtleControlColor = "#35FFFFFF";
+    private const string RenderedDarkControlColor = "#1CFFFFFF";
+    private const string DefaultLightControlColor = "#66FFFFFF";
+    private const string SurfaceToneDarkColor = "#1B2635";
+
     /// <summary>
     /// The colours the shared material gives a card. Only one layer is translucent: the
     /// card body. The title bar of the light and dark glass stays nearly solid, as before,
@@ -180,20 +215,129 @@ public static class DesktopStyleRules
     /// light glass, white on dark glass and on a clear card) unless white or dark was chosen.
     /// On light glass the row surface follows the chosen tone and strength.
     /// </summary>
-    public static GlassAppearance Appearance(DesktopStyleState style)
+    private static GlassAppearance ResolveBaseLook(DesktopStyleState style)
     {
-        ArgumentNullException.ThrowIfNull(style);
         var material = Material(style);
-        var look = style.TextInk switch
+        return style.TextInk switch
         {
             TextInk.White => material with { TextColor = "#FFFFFF" },
             TextInk.Dark => material with { TextColor = WidgetAppearanceRules.DefaultTextColor },
             TextInk.Custom => material with { TextColor = style.CustomTextColor },
             _ => material
         };
-        return style.Glass == GlassMode.Light
-            ? look with { ItemSurfaceColor = WithAlpha(SurfaceToneColor(style), style.ItemSurfaceStrength) }
-            : look;
+    }
+
+    public static GlassAppearance Appearance(DesktopStyleState style)
+    {
+        ArgumentNullException.ThrowIfNull(style);
+        var look = ResolveBaseLook(style);
+        if (style.Glass != GlassMode.Light)
+        {
+            return look;
+        }
+
+        return look with { ItemSurfaceColor = WithAlpha(SurfaceToneColor(style), style.ItemSurfaceStrength) };
+    }
+
+    /// <summary>
+    /// Resolves the rendered whole-card look for the shared style without altering saved user settings.
+    /// </summary>
+    public static RenderedCardLook ResolveRenderedCard(DesktopStyleState style)
+    {
+        ArgumentNullException.ThrowIfNull(style);
+        var look = ResolveBaseLook(style);
+        return ResolveRenderedCardCore(look.BackgroundColor, look.BackgroundOpacity, look.TextColor, style);
+    }
+
+    /// <summary>
+    /// Resolves the rendered whole-card look for a single card's saved appearance without mutating
+    /// its persisted material, tone, or strength. When light glass is paired with light text
+    /// (relative luminance &gt; 0.5), cards below 20% opacity keep their light backing with soft text
+    /// shadow and capped dark item surfaces (&lt;= 0.3), while cards at or above 20% render as a
+    /// unified dark-glass card using the user's saved opacity.
+    /// </summary>
+    public static RenderedCardLook ResolveRenderedCard(
+        WidgetAppearanceState cardAppearance,
+        DesktopStyleState style)
+    {
+        ArgumentNullException.ThrowIfNull(cardAppearance);
+        ArgumentNullException.ThrowIfNull(style);
+        return ResolveRenderedCardCore(
+            cardAppearance.BackgroundColor,
+            cardAppearance.BackgroundOpacity,
+            cardAppearance.TextColor,
+            style);
+    }
+
+    private static RenderedCardLook ResolveRenderedCardCore(
+        string backgroundColor,
+        double backgroundOpacity,
+        string textColor,
+        DesktopStyleState style)
+    {
+        if (backgroundOpacity <= WidgetAppearanceRules.MinimumBackgroundOpacity + 0.005d)
+        {
+            return new RenderedCardLook(
+                backgroundColor,
+                backgroundOpacity,
+                "#00FFFFFF",
+                "#00FFFFFF",
+                "#00FFFFFF",
+                style.CardShadow);
+        }
+
+        var isLightGlass = ColorContrastRules.RelativeLuminance(backgroundColor) >= 0.5d;
+        var isLightText = ColorContrastRules.RelativeLuminance(textColor) >
+            ColorContrastRules.LightTextLuminanceThreshold;
+        if (isLightGlass && isLightText)
+        {
+            if (backgroundOpacity < ColorContrastRules.NearClearBackgroundOpacityThreshold)
+            {
+                var shadow = style.CardShadow == CardShadow.None ? CardShadow.Soft : style.CardShadow;
+                var effectiveStrength = Math.Min(
+                    style.ItemSurfaceStrength,
+                    ColorContrastRules.NearClearMaxItemSurfaceStrength);
+                var darkSurface = WithAlpha(SurfaceToneDarkColor, effectiveStrength);
+                return new RenderedCardLook(
+                    backgroundColor,
+                    backgroundOpacity,
+                    darkSurface,
+                    WithAlpha(SurfaceToneDarkColor, effectiveStrength * SubtleControlRatio),
+                    darkSurface,
+                    shadow);
+            }
+
+            return new RenderedCardLook(
+                RenderedDarkBackgroundColor,
+                backgroundOpacity,
+                RenderedDarkItemSurfaceColor,
+                RenderedDarkSubtleControlColor,
+                RenderedDarkControlColor,
+                style.CardShadow);
+        }
+
+        if (ColorContrastRules.RelativeLuminance(backgroundColor) < 0.25d)
+        {
+            return new RenderedCardLook(
+                backgroundColor,
+                backgroundOpacity,
+                RenderedDarkItemSurfaceColor,
+                RenderedDarkSubtleControlColor,
+                RenderedDarkControlColor,
+                style.CardShadow);
+        }
+
+        var tone = SurfaceToneColor(style);
+        var controlColor = style.ItemSurfaceTone == SurfaceTone.Dark
+            ? WithAlpha(tone, style.ItemSurfaceStrength)
+            : DefaultLightControlColor;
+        return new RenderedCardLook(
+            backgroundColor,
+            backgroundOpacity,
+            WithAlpha(tone, style.ItemSurfaceStrength),
+            WithAlpha(tone, style.ItemSurfaceStrength * SubtleControlRatio),
+            controlColor,
+            style.CardShadow);
     }
 
     /// <summary>
@@ -204,16 +348,19 @@ public static class DesktopStyleRules
     public static string SubtleControlColor(DesktopStyleState style)
     {
         ArgumentNullException.ThrowIfNull(style);
-        return style.Glass == GlassMode.Light
-            ? WithAlpha(SurfaceToneColor(style), style.ItemSurfaceStrength * SubtleControlRatio)
-            : "#35FFFFFF";
+        return style.Glass switch
+        {
+            GlassMode.Clear => "#00FFFFFF",
+            GlassMode.Dark => RenderedDarkSubtleControlColor,
+            _ => WithAlpha(SurfaceToneColor(style), style.ItemSurfaceStrength * SubtleControlRatio)
+        };
     }
 
     // 0x35 / 0x7A: the original button fill against the original row surface.
     private const double SubtleControlRatio = 53d / 122d;
 
     private static string SurfaceToneColor(DesktopStyleState style) =>
-        style.ItemSurfaceTone == SurfaceTone.Dark ? "#1B2635" : "#FFFFFF";
+        style.ItemSurfaceTone == SurfaceTone.Dark ? SurfaceToneDarkColor : "#FFFFFF";
 
     public static double CoerceItemSurfaceStrength(double value) =>
         double.IsFinite(value)
@@ -226,7 +373,7 @@ public static class DesktopStyleRules
         return style.Glass switch
         {
             GlassMode.Dark => new GlassAppearance(
-                "#18222F", density, "#2C3E57", Math.Min(0.97d, density + 0.5d), "#FFFFFF", "#1FFFFFFF"),
+                RenderedDarkBackgroundColor, density, "#2C3E57", Math.Min(0.97d, density + 0.5d), "#FFFFFF", RenderedDarkItemSurfaceColor),
             GlassMode.Clear => new GlassAppearance(
                 "#FFFFFF",
                 WidgetAppearanceRules.MinimumBackgroundOpacity,
@@ -250,7 +397,7 @@ public static class DesktopStyleRules
         {
             return CustomDock(dock.SurfaceColor, dock.SurfaceOpacity);
         }
-        var alpha = Math.Min(0.96d, style.GlassDensity + 0.5d);
+        var alpha = Math.Clamp(0.82d + (style.GlassDensity - DefaultGlassDensity) * 0.45d, MinimumGlassDensity, 0.96d);
         return style.Glass switch
         {
             GlassMode.Dark => new DockGlass(WithAlpha("#18222F", alpha), "#33FFFFFF", "#E6FFFFFF"),
@@ -323,7 +470,7 @@ public static class DesktopStyleRules
         palette.Header,
         Math.Min(WidgetAppearanceRules.DefaultHeaderOpacity, density + 0.65d),
         palette.Text,
-        "#7AFFFFFF");
+        "#52FFFFFF");
 
     /// <summary>
     /// Text on surfaces that are plain text over the wallpaper (time, date, greeting):
@@ -395,6 +542,45 @@ public static class DesktopStyleRules
             && Math.Abs(appearance.BackgroundOpacity - glass.BackgroundOpacity) < 0.005d
             && Math.Abs(appearance.HeaderOpacity - glass.HeaderOpacity) < 0.005d;
     }
+
+    /// <summary>
+    /// Preserves a card's customized text color when the shared material changes,
+    /// while updating cards that still follow the previous shared ink.
+    /// </summary>
+    public static string ResolveTransitionTextColor(
+        string currentTextColor,
+        DesktopStyleState previousStyle,
+        DesktopStyleState nextStyle)
+    {
+        ArgumentNullException.ThrowIfNull(previousStyle);
+        ArgumentNullException.ThrowIfNull(nextStyle);
+        var previousInk = Appearance(previousStyle).TextColor;
+        var nextInk = Appearance(nextStyle).TextColor;
+        return string.Equals(currentTextColor, previousInk, StringComparison.OrdinalIgnoreCase)
+            ? nextInk
+            : currentTextColor;
+    }
+
+    public static string ResolveComponentTransitionTextColor(
+        DesktopComponentKind kind,
+        string currentTextColor,
+        DesktopStyleState previousStyle,
+        DesktopStyleState nextStyle,
+        double clearBarOpacity)
+    {
+        ArgumentNullException.ThrowIfNull(previousStyle);
+        ArgumentNullException.ThrowIfNull(nextStyle);
+        var previousInk = ComponentLook(kind, previousStyle, clearBarOpacity).TextColor;
+        var nextInk = ComponentLook(kind, nextStyle, clearBarOpacity).TextColor;
+        return string.Equals(currentTextColor, previousInk, StringComparison.OrdinalIgnoreCase)
+            ? nextInk
+            : currentTextColor;
+    }
+
+    public static string ResolveCardItemSurfaceColor(
+        WidgetAppearanceState cardAppearance,
+        DesktopStyleState globalStyle) =>
+        ResolveRenderedCard(cardAppearance, globalStyle).ItemSurfaceColor;
 
     public static double CoerceCardSpacing(double value) =>
         double.IsFinite(value)

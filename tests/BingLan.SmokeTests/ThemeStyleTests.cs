@@ -137,9 +137,15 @@ internal static class ThemeStyleTests
         style.Glass = GlassMode.Light;
         style.TextInk = TextInk.White;
         Check(DesktopStyleRules.Appearance(style).TextColor == "#FFFFFF", "文字颜色独立于外观：浅色玻璃也可用白字");
-        Check(DesktopStyleRules.Appearance(style).ItemSurfaceColor == "#7AFFFFFF"
-            && DesktopStyleRules.SubtleControlColor(style) == "#35FFFFFF",
-            "内部底色默认保持原来的浅色，不随文字颜色自动变化");
+        Check(DesktopStyleRules.Appearance(style).ItemSurfaceColor == "#52FFFFFF"
+            && DesktopStyleRules.SubtleControlColor(style) == "#23FFFFFF",
+            "全局浅色外观逻辑值保持用户设定的浅色调，不随文字颜色篡改持久配置");
+        var lightWhiteRendered = DesktopStyleRules.ResolveRenderedCard(style);
+        Check(lightWhiteRendered.BackgroundColor == "#16202C"
+            && lightWhiteRendered.ItemSurfaceColor == "#14FFFFFF"
+            && lightWhiteRendered.SubtleControlColor == "#35FFFFFF"
+            && lightWhiteRendered.ControlColor == "#1CFFFFFF",
+            "高密度浅色玻璃搭配白字时，整卡渲染切换为深色玻璃与对应高对比内嵌层");
         style.ItemSurfaceTone = SurfaceTone.Dark;
         style.ItemSurfaceStrength = 0.4;
         Check(DesktopStyleRules.Appearance(style).ItemSurfaceColor == "#661B2635"
@@ -153,8 +159,8 @@ internal static class ThemeStyleTests
         style.ItemSurfaceTone = SurfaceTone.Light;
         style.ItemSurfaceStrength = DesktopStyleRules.DefaultItemSurfaceStrength;
         style.TextInk = TextInk.Auto;
-        Check(DesktopStyleRules.Appearance(style).ItemSurfaceColor == "#7AFFFFFF"
-            && DesktopStyleRules.SubtleControlColor(style) == "#35FFFFFF", "浅色玻璃深字保持原来的浅色行底");
+        Check(DesktopStyleRules.Appearance(style).ItemSurfaceColor == "#52FFFFFF"
+            && DesktopStyleRules.SubtleControlColor(style) == "#23FFFFFF", "浅色玻璃深字保持浅色行底");
         Check(DesktopStyleRules.Appearance(style).TextColor == WidgetAppearanceRules.DefaultTextColor
             && DesktopStyleRules.NakedTextColor(style) == "#FFFFFF",
             "跟随外观时浅色玻璃为深字，壁纸上的时间和问候仍为白字");
@@ -411,6 +417,509 @@ internal static class ThemeStyleTests
         Check(!Read(Manifest(themeVersion: "abc")).Succeeded, "无效主题版本应被拒绝");
         Check(!Read(Manifest(minimum: "")).Succeeded, "缺少最低应用版本应被拒绝");
         Check(Read(Manifest()).Succeeded, "完整清单应被接受");
+    }
+
+    internal static void TestBuiltInMaterialReadabilityContrast()
+    {
+        // Reproduces the previous failures before WP3 readability fixes:
+        // 1) White ink over light #7AFFFFFF row on bright wallpaper (~1.18:1)
+        // 2) Legacy dark glass (#18222F @ 0.32) over bright wallpaper (< 4.5:1)
+        // 3) Legacy light glass (#FFFFFF @ 0.32) secondary ink (0.68) over dark wallpaper (< 3.0:1)
+        var oldLightWhiteRow = ColorContrastRules.CompositeLayers(
+            ColorContrastRules.BrightWallpaper,
+            ColorContrastRules.WithAlpha("#FFFFFF", 0.32d),
+            ColorContrastRules.ParseHex("#7AFFFFFF"));
+        Check(ColorContrastRules.ContrastRatio("#FFFFFF", "#FFFFFF") == 1d
+            && ColorContrastRules.ContrastRatio(ColorContrastRules.ParseHex("#FFFFFF"), oldLightWhiteRow) < 2d,
+            "旧浅色白字压浅白行应显著低于可读底线");
+
+        var oldDarkBody = ColorContrastRules.CompositeLayers(
+            ColorContrastRules.BrightWallpaper,
+            ColorContrastRules.WithAlpha("#18222F", 0.32d));
+        Check(ColorContrastRules.ContrastRatio(ColorContrastRules.ParseHex("#FFFFFF"), oldDarkBody) < 4.5d,
+            "旧深色玻璃 0.32 浓度在亮壁纸上白字对比度不足");
+
+        var oldLightDarkBody = ColorContrastRules.CompositeLayers(
+            ColorContrastRules.DarkWallpaper,
+            ColorContrastRules.WithAlpha("#FFFFFF", 0.32d));
+        Check(ColorContrastRules.ContrastRatio(
+                ColorContrastRules.WithAlpha("#243146", 0.68d), oldLightDarkBody) < 3d,
+            "旧浅色玻璃 0.32 在暗壁纸上次要文字对比度不足");
+
+        foreach (var wallpaper in new[] { ColorContrastRules.BrightWallpaper, ColorContrastRules.DarkWallpaper })
+        {
+            foreach (var palette in DesktopStyleRules.Palettes)
+            {
+                var style = new DesktopStyleState { Glass = GlassMode.Light, Palette = palette.Key };
+                var look = DesktopStyleRules.Appearance(style);
+                var bodyBg = ColorContrastRules.CompositeLayers(
+                    wallpaper,
+                    ColorContrastRules.WithAlpha(look.BackgroundColor, look.BackgroundOpacity));
+                var rowBg = ColorContrastRules.CompositeLayers(
+                    wallpaper,
+                    ColorContrastRules.WithAlpha(look.BackgroundColor, look.BackgroundOpacity),
+                    ColorContrastRules.ParseHex(look.ItemSurfaceColor));
+                var primary = ColorContrastRules.ParseHex(look.TextColor);
+                var secondary = ColorContrastRules.WithAlpha(look.TextColor, ColorContrastRules.SecondaryTextAlpha);
+
+                Check(ColorContrastRules.ContrastRatio(primary, bodyBg) >= ColorContrastRules.MinimumNormalTextContrast,
+                    $"{palette.Key} 在 {wallpaper} 下主体正文对比度不足");
+                Check(ColorContrastRules.ContrastRatio(secondary, bodyBg) >= ColorContrastRules.MinimumLargeTextContrast,
+                    $"{palette.Key} 在 {wallpaper} 下主体次要文字对比度不足");
+                Check(ColorContrastRules.ContrastRatio(primary, rowBg) >= ColorContrastRules.MinimumNormalTextContrast,
+                    $"{palette.Key} 在 {wallpaper} 下内嵌行正文对比度不足");
+                Check(ColorContrastRules.ContrastRatio(secondary, rowBg) >= ColorContrastRules.MinimumLargeTextContrast,
+                    $"{palette.Key} 在 {wallpaper} 下内嵌行次要文字对比度不足");
+            }
+
+            var darkStyle = new DesktopStyleState { Glass = GlassMode.Dark };
+            var darkLook = DesktopStyleRules.Appearance(darkStyle);
+            var darkBody = ColorContrastRules.CompositeLayers(
+                wallpaper,
+                ColorContrastRules.WithAlpha(darkLook.BackgroundColor, darkLook.BackgroundOpacity));
+            var darkRow = ColorContrastRules.CompositeLayers(
+                wallpaper,
+                ColorContrastRules.WithAlpha(darkLook.BackgroundColor, darkLook.BackgroundOpacity),
+                ColorContrastRules.ParseHex(darkLook.ItemSurfaceColor));
+            var whiteInk = ColorContrastRules.ParseHex(darkLook.TextColor);
+            var whiteSecondary = ColorContrastRules.WithAlpha(darkLook.TextColor, ColorContrastRules.SecondaryTextAlpha);
+
+            Check(ColorContrastRules.ContrastRatio(whiteInk, darkBody) >= ColorContrastRules.MinimumNormalTextContrast
+                && ColorContrastRules.ContrastRatio(whiteSecondary, darkBody) >= ColorContrastRules.MinimumLargeTextContrast
+                && ColorContrastRules.ContrastRatio(whiteInk, darkRow) >= ColorContrastRules.MinimumNormalTextContrast
+                && ColorContrastRules.ContrastRatio(whiteSecondary, darkRow) >= ColorContrastRules.MinimumLargeTextContrast,
+                $"深色玻璃在 {wallpaper} 下未满足对比度要求");
+
+            var lightWhiteStyle = new DesktopStyleState { Glass = GlassMode.Light, TextInk = TextInk.White };
+            var lightWhiteRendered = DesktopStyleRules.ResolveRenderedCard(lightWhiteStyle);
+            var renderedBody = ColorContrastRules.CompositeLayers(
+                wallpaper,
+                ColorContrastRules.WithAlpha(lightWhiteRendered.BackgroundColor, lightWhiteRendered.BackgroundOpacity));
+            var renderedRow = ColorContrastRules.CompositeLayers(
+                wallpaper,
+                ColorContrastRules.WithAlpha(lightWhiteRendered.BackgroundColor, lightWhiteRendered.BackgroundOpacity),
+                ColorContrastRules.ParseHex(lightWhiteRendered.ItemSurfaceColor));
+            var renderedControl = ColorContrastRules.CompositeLayers(
+                wallpaper,
+                ColorContrastRules.WithAlpha(lightWhiteRendered.BackgroundColor, lightWhiteRendered.BackgroundOpacity),
+                ColorContrastRules.ParseHex(lightWhiteRendered.ControlColor));
+            Check(lightWhiteRendered.BackgroundColor == "#16202C"
+                && Math.Abs(lightWhiteRendered.BackgroundOpacity - 0.66d) < 0.0001d
+                && lightWhiteStyle.Glass == GlassMode.Light
+                && ColorContrastRules.ContrastRatio(whiteInk, renderedBody) >= ColorContrastRules.MinimumNormalTextContrast
+                && ColorContrastRules.ContrastRatio(whiteSecondary, renderedBody) >= ColorContrastRules.MinimumLargeTextContrast
+                && ColorContrastRules.ContrastRatio(whiteInk, renderedRow) >= ColorContrastRules.MinimumNormalTextContrast
+                && ColorContrastRules.ContrastRatio(whiteSecondary, renderedRow) >= ColorContrastRules.MinimumLargeTextContrast
+                && ColorContrastRules.ContrastRatio(whiteInk, renderedControl) >= ColorContrastRules.MinimumNormalTextContrast,
+                $"浅色玻璃配白字（不低于 0.2）在 {wallpaper} 下整卡按深色玻璃渲染后应全区域对比度达标");
+        }
+
+        // F3: < 0.2 (near clear) keeps light backing with soft text shadow and dark interior surface capped at 0.3
+        var nearClearLightWhite = new DesktopStyleState
+        {
+            Glass = GlassMode.Light,
+            GlassDensity = 0.05d,
+            TextInk = TextInk.White,
+            ItemSurfaceTone = SurfaceTone.Light,
+            ItemSurfaceStrength = 0.48d
+        };
+        var nearClearRendered = DesktopStyleRules.ResolveRenderedCard(nearClearLightWhite);
+        Check(nearClearRendered.BackgroundColor == "#FFFFFF"
+            && Math.Abs(nearClearRendered.BackgroundOpacity - 0.05d) < 0.0001d
+            && nearClearRendered.ItemSurfaceColor == "#4C1B2635"
+            && nearClearRendered.ControlColor == "#4C1B2635"
+            && nearClearRendered.EffectiveShadow == CardShadow.Soft
+            && nearClearLightWhite.Glass == GlassMode.Light
+            && nearClearLightWhite.ItemSurfaceTone == SurfaceTone.Light
+            && Math.Abs(nearClearLightWhite.ItemSurfaceStrength - 0.48d) < 0.0001d,
+            "低浓度（< 0.2）浅色玻璃配白字应开启柔和文字阴影与 <=0.3 深色调行底，同时不改写持久配置");
+
+        // F3: >= 0.2 uses user opacity without clamping; >= 0.63 achieves >= 4.5:1 on both wallpapers, and 0.20..0.96 on dark wallpaper
+        foreach (var opacity in new[] { 0.20d, 0.46d })
+        {
+            var medium = DesktopStyleRules.ResolveRenderedCard(
+                new WidgetAppearanceState { BackgroundColor = "#FFFFFF", BackgroundOpacity = opacity, TextColor = "#FFFFFF" },
+                new DesktopStyleState());
+            var darkWallpaperBody = ColorContrastRules.CompositeLayers(
+                ColorContrastRules.DarkWallpaper,
+                ColorContrastRules.WithAlpha(medium.BackgroundColor, medium.BackgroundOpacity));
+            Check(medium.BackgroundColor == "#16202C"
+                && Math.Abs(medium.BackgroundOpacity - opacity) < 0.0001d
+                && ColorContrastRules.ContrastRatio(ColorContrastRules.ParseHex("#FFFFFF"), darkWallpaperBody) >= ColorContrastRules.MinimumNormalTextContrast,
+                $"浅字浅底 >= 0.2（{opacity}）在暗壁纸下应保持用户不透明度并可读");
+        }
+        foreach (var opacity in new[] { 0.63d, 0.66d })
+        {
+            var dense = DesktopStyleRules.ResolveRenderedCard(
+                new WidgetAppearanceState { BackgroundColor = "#FFFFFF", BackgroundOpacity = opacity, TextColor = "#FFFFFF" },
+                new DesktopStyleState());
+            foreach (var wallpaper in new[] { ColorContrastRules.BrightWallpaper, ColorContrastRules.DarkWallpaper })
+            {
+                var bg = ColorContrastRules.CompositeLayers(
+                    wallpaper,
+                    ColorContrastRules.WithAlpha(dense.BackgroundColor, dense.BackgroundOpacity));
+                Check(ColorContrastRules.ContrastRatio(ColorContrastRules.ParseHex("#FFFFFF"), bg) >= ColorContrastRules.MinimumNormalTextContrast,
+                    $"浅字浅底（{opacity}）在 {wallpaper} 下整卡应 >= 4.5:1");
+            }
+        }
+
+        var defaultDock = DesktopStyleRules.Dock(new DesktopStyleState());
+        Check(defaultDock.Surface == "#D1FFFFFF", "提升卡片默认玻璃浓度不应改变 Dock 默认表面不透明度");
+
+        var singleCustomDark = new WidgetAppearanceState
+        {
+            BackgroundColor = "#16202C",
+            BackgroundOpacity = 0.66d,
+            TextColor = "#FFFFFF"
+        };
+        Check(DesktopStyleRules.ResolveCardItemSurfaceColor(singleCustomDark, new DesktopStyleState()) == "#14FFFFFF",
+            "单卡单独切为深底白字时应解析出深底高对比行底色");
+
+        var singleCustomWhiteInk = new WidgetAppearanceState
+        {
+            BackgroundColor = "#FFFFFF",
+            BackgroundOpacity = 0.66d,
+            TextColor = "#FFFFFF"
+        };
+        var singleRendered = DesktopStyleRules.ResolveRenderedCard(singleCustomWhiteInk, new DesktopStyleState());
+        Check(singleRendered.BackgroundColor == "#16202C"
+            && singleRendered.ItemSurfaceColor == "#14FFFFFF"
+            && singleRendered.ControlColor == "#1CFFFFFF"
+            && singleCustomWhiteInk.BackgroundColor == "#FFFFFF",
+            "单卡单独设白字压浅色玻璃时应整卡切为深底高对比渲染且不改写单卡持久底色");
+    }
+
+    internal static void TestSchemaV46LegacyDefaultsMigration()
+    {
+        var temp = Path.Combine(Path.GetTempPath(), $"binglan-v46-migration-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(temp);
+        try
+        {
+            var store = new LocalStateStore(temp);
+
+            // 1) Legacy v45 default config -> migrated to v46 defaults & follows shared look + transitions to Dark ink.
+            File.WriteAllText(
+                store.StatePath,
+                """
+                {
+                  "SchemaVersion": 45,
+                  "Style": {
+                    "Glass": 0,
+                    "Palette": "ice",
+                    "TextInk": 0,
+                    "GlassDensity": 0.32,
+                    "ItemSurfaceTone": 0,
+                    "ItemSurfaceStrength": 0.48
+                  },
+                  "TodoWidgets": [
+                    {
+                      "Title": "待办",
+                      "CornerRadius": 15.5,
+                      "Appearance": {
+                        "BackgroundColor": "#FFFFFF",
+                        "BackgroundOpacity": 0.32,
+                        "HeaderColor": "#A0B4E1",
+                        "HeaderOpacity": 0.97,
+                        "TextColor": "#243146"
+                      }
+                    }
+                  ],
+                  "FileBoxes": [
+                    {
+                      "Title": "桌面",
+                      "CornerRadius": 15.5,
+                      "Appearance": {
+                        "BackgroundColor": "#FFFFFF",
+                        "BackgroundOpacity": 0.32,
+                        "HeaderColor": "#A0B4E1",
+                        "HeaderOpacity": 0.97,
+                        "TextColor": "#243146"
+                      }
+                    }
+                  ],
+                  "NoteWidgets": [
+                    {
+                      "Title": "便签",
+                      "CornerRadius": 15.5,
+                      "BodyTypography": { "Color": "#243146" },
+                      "Appearance": {
+                        "BackgroundColor": "#FFFFFF",
+                        "BackgroundOpacity": 0.32,
+                        "HeaderColor": "#A0B4E1",
+                        "HeaderOpacity": 0.97,
+                        "TextColor": "#243146"
+                      }
+                    }
+                  ],
+                  "InformationWidgets": [
+                    {
+                      "CornerRadius": 15.5,
+                      "Appearance": {
+                        "BackgroundColor": "#FFFFFF",
+                        "BackgroundOpacity": 0.32,
+                        "HeaderColor": "#A0B4E1",
+                        "HeaderOpacity": 0.97,
+                        "TextColor": "#243146"
+                      }
+                    }
+                  ],
+                  "DesktopExperience": {
+                    "ActivePreset": 0,
+                    "Components": [
+                      { "Kind": 0, "CornerRadius": 15.5, "Appearance": { "BackgroundColor": "#FFFFFF", "BackgroundOpacity": 0.01, "HeaderColor": "#A0B4E1", "HeaderOpacity": 0.97, "TextColor": "#FFFFFF" } },
+                      { "Kind": 1, "CornerRadius": 15.5, "Appearance": { "BackgroundColor": "#FFFFFF", "BackgroundOpacity": 0.01, "HeaderColor": "#A0B4E1", "HeaderOpacity": 0.97, "TextColor": "#FFFFFF" } },
+                      { "Kind": 2, "CornerRadius": 15.5, "Appearance": { "BackgroundColor": "#FFFFFF", "BackgroundOpacity": 0.32, "HeaderColor": "#A0B4E1", "HeaderOpacity": 0.97, "TextColor": "#243146" } },
+                      { "Kind": 3, "CornerRadius": 15.5, "Appearance": { "BackgroundColor": "#FFFFFF", "BackgroundOpacity": 0.32, "HeaderColor": "#A0B4E1", "HeaderOpacity": 0.97, "TextColor": "#243146" } },
+                      { "Kind": 4, "CornerRadius": 15.5, "Appearance": { "BackgroundColor": "#FFFFFF", "BackgroundOpacity": 0.32, "HeaderColor": "#A0B4E1", "HeaderOpacity": 0.97, "TextColor": "#243146" } },
+                      { "Kind": 5, "CornerRadius": 15.5, "Appearance": { "BackgroundColor": "#FFFFFF", "BackgroundOpacity": 0.32, "HeaderColor": "#A0B4E1", "HeaderOpacity": 0.97, "TextColor": "#243146" } },
+                      { "Kind": 6, "CornerRadius": 15.5, "Appearance": { "BackgroundColor": "#FFFFFF", "BackgroundOpacity": 0.32, "HeaderColor": "#A0B4E1", "HeaderOpacity": 0.97, "TextColor": "#243146" } }
+                    ]
+                  }
+                }
+                """);
+            var migrated = store.Load();
+            Check(migrated.SchemaVersion == 46, "v45 状态应迁移到 SchemaVersion 46");
+            Check(Math.Abs(migrated.Style.GlassDensity - 0.66d) < 0.0001d
+                && Math.Abs(migrated.Style.ItemSurfaceStrength - 0.32d) < 0.0001d,
+                "v45 默认玻璃浓度 0.32 与条目强度 0.48 应迁移到 0.66 与 0.32");
+
+            var todo = migrated.TodoWidgets.Single();
+            var box = migrated.FileBoxes.Single();
+            var note = migrated.NoteWidgets.Single();
+            var info = migrated.InformationWidgets.Single();
+            foreach (var (radius, app, label) in new (double, WidgetAppearanceState, string)[]
+                     {
+                         (todo.CornerRadius, todo.Appearance, "待办"),
+                         (box.CornerRadius, box.Appearance, "分组盒"),
+                         (note.CornerRadius, note.Appearance, "便签"),
+                         (info.CornerRadius, info.Appearance, "信息卡")
+                     })
+            {
+                Check(Math.Abs(radius - 12d) < 0.0001d
+                    && Math.Abs(app.BackgroundOpacity - 0.66d) < 0.0001d
+                    && app.HeaderColor == "#5B9BD5"
+                    && app.TextColor == "#1E2B3C"
+                    && DesktopStyleRules.FollowsSharedCardLook(app, migrated.Style),
+                    $"迁移后默认 {label} 应使用新默认值并被判定为跟随全局外观");
+            }
+            Check(note.BodyTypography.Color == "#1E2B3C", "便签正文旧默认墨色应同步迁移为 #1E2B3C");
+            foreach (var component in migrated.DesktopExperience.Components)
+            {
+                Check(Math.Abs(component.CornerRadius - 12d) < 0.0001d
+                    && DesktopStyleRules.FollowsSharedLook(component, migrated.Style, 0.18d),
+                    $"迁移后默认组件 {component.Kind} 应跟随全局外观");
+            }
+
+            var darkStyle = new DesktopStyleState { Glass = GlassMode.Dark };
+            Check(DesktopStyleRules.ResolveTransitionTextColor(todo.Appearance.TextColor, migrated.Style, darkStyle) == "#FFFFFF",
+                "迁移后的卡片从浅色切深色玻璃时，文字应跟随切换为 #FFFFFF");
+            foreach (var component in migrated.DesktopExperience.Components)
+            {
+                Check(DesktopStyleRules.ResolveComponentTransitionTextColor(
+                        component.Kind,
+                        component.Appearance.TextColor,
+                        migrated.Style,
+                        darkStyle,
+                        0.18d) == "#FFFFFF",
+                    $"迁移后的组件 {component.Kind} 从浅色切深色玻璃时，文字应跟随切换为 #FFFFFF");
+            }
+
+            store.Save(migrated);
+            var migrationBackups = Directory.GetFiles(store.BackupDirectory, "widgets-before-migration-*.json");
+            Check(migrationBackups.Length == 1
+                && File.ReadAllText(migrationBackups[0]).Contains("\"SchemaVersion\": 45", StringComparison.Ordinal),
+                "v45 升级到 v46 后首次保存应在备份目录留存含原 v45 内容的迁移前备份");
+
+            // 2) Remaining 5 light-glass palettes migrate only when paired with their palette body color.
+            File.WriteAllText(
+                store.StatePath,
+                """
+                {
+                  "SchemaVersion": 45,
+                  "Style": { "Glass": 0, "Palette": "milk-tea" },
+                  "TodoWidgets": [
+                    { "Appearance": { "BackgroundColor": "#F6EBDD", "TextColor": "#4A3728" } },
+                    { "Appearance": { "BackgroundColor": "#EEF5E6", "TextColor": "#2F4A2A" } },
+                    { "Appearance": { "BackgroundColor": "#ECEFF4", "TextColor": "#2E3440" } },
+                    { "Appearance": { "BackgroundColor": "#FBEDEF", "TextColor": "#4E2A33" } },
+                    { "Appearance": { "BackgroundColor": "#E8F7F2", "TextColor": "#1F4A40" } },
+                    { "Appearance": { "BackgroundColor": "#FFFFFF", "TextColor": "#4A3728" } }
+                  ]
+                }
+                """);
+            var palettesState = store.Load();
+            Check(palettesState.TodoWidgets[0].Appearance.TextColor == "#2E2118"
+                && palettesState.TodoWidgets[1].Appearance.TextColor == "#1F331B"
+                && palettesState.TodoWidgets[2].Appearance.TextColor == "#232933"
+                && palettesState.TodoWidgets[3].Appearance.TextColor == "#331B22"
+                && palettesState.TodoWidgets[4].Appearance.TextColor == "#16352D",
+                "五套配色的旧默认文字色应在底色对应时迁往新版深墨色");
+            Check(palettesState.TodoWidgets[5].Appearance.TextColor == "#4A3728",
+                "跨配色手选的同色值（#4A3728 配 #FFFFFF 底）不应被误替换");
+
+            // 3) Real user shape with customized density/text/radius preserves user fields and migrates only ItemSurfaceStrength 0.48 -> 0.32.
+            File.WriteAllText(
+                store.StatePath,
+                """
+                {
+                  "SchemaVersion": 45,
+                  "Style": {
+                    "Glass": 0,
+                    "Palette": "ice",
+                    "TextInk": 1,
+                    "GlassDensity": 0.05,
+                    "ItemSurfaceTone": 0,
+                    "ItemSurfaceStrength": 0.48
+                  },
+                  "TodoWidgets": [
+                    {
+                      "CornerRadius": 7.64,
+                      "Appearance": {
+                        "BackgroundColor": "#FFFFFF",
+                        "BackgroundOpacity": 0.05,
+                        "HeaderColor": "#5B9BD5",
+                        "HeaderOpacity": 0.97,
+                        "TextColor": "#FFFFFF"
+                      }
+                    }
+                  ]
+                }
+                """);
+            var realUser = store.Load();
+            var userTodo = realUser.TodoWidgets.Single();
+            Check(Math.Abs(realUser.Style.ItemSurfaceStrength - 0.32d) < 0.0001d
+                && Math.Abs(realUser.Style.GlassDensity - 0.05d) < 0.0001d
+                && realUser.Style.TextInk == TextInk.White
+                && Math.Abs(userTodo.CornerRadius - 7.64d) < 0.0001d
+                && Math.Abs(userTodo.Appearance.BackgroundOpacity - 0.05d) < 0.0001d
+                && userTodo.Appearance.HeaderColor == "#5B9BD5"
+                && userTodo.Appearance.TextColor == "#FFFFFF",
+                "实测用户形态只应迁移 0.48 -> 0.32，其余自定义浓度/白字/色标/圆角必须原样保留");
+
+            // 4) Reloading SchemaVersion 46 never re-runs v45 -> v46 default migration.
+            File.WriteAllText(
+                store.StatePath,
+                """
+                {
+                  "SchemaVersion": 46,
+                  "Style": { "GlassDensity": 0.32, "ItemSurfaceStrength": 0.48 },
+                  "TodoWidgets": [
+                    {
+                      "CornerRadius": 15.5,
+                      "Appearance": {
+                        "BackgroundColor": "#FFFFFF",
+                        "BackgroundOpacity": 0.32,
+                        "HeaderColor": "#A0B4E1",
+                        "TextColor": "#243146"
+                      }
+                    }
+                  ]
+                }
+                """);
+            var reloaded = store.Load();
+            var explicitTodo = reloaded.TodoWidgets.Single();
+            Check(Math.Abs(reloaded.Style.GlassDensity - 0.32d) < 0.0001d
+                && Math.Abs(reloaded.Style.ItemSurfaceStrength - 0.48d) < 0.0001d
+                && Math.Abs(explicitTodo.CornerRadius - 15.5d) < 0.0001d
+                && Math.Abs(explicitTodo.Appearance.BackgroundOpacity - 0.32d) < 0.0001d
+                && explicitTodo.Appearance.HeaderColor == "#A0B4E1"
+                && explicitTodo.Appearance.TextColor == "#243146",
+                "v46 状态再次读取不得重复触发 v45 默认值迁移");
+        }
+        finally
+        {
+            Directory.Delete(temp, true);
+        }
+    }
+
+    internal static void TestDockOpacityFormulaTable()
+    {
+        static double AlphaOf(string argb) => Convert.ToInt32(argb.Substring(1, 2), 16) / 255d;
+
+        var low = DesktopStyleRules.Dock(new DesktopStyleState { GlassDensity = 0.05d });
+        Check(Math.Abs(AlphaOf(low.Surface) - 0.545d) < 0.005d,
+            $"浓度 0.05 时 Dock 不透明度应约为 0.545，实际 {AlphaOf(low.Surface):F3}");
+
+        var current = DesktopStyleRules.Dock(new DesktopStyleState { GlassDensity = 0.66d });
+        Check(Math.Abs(AlphaOf(current.Surface) - 0.82d) < 0.005d,
+            $"浓度 0.66 时 Dock 不透明度应约为 0.82，实际 {AlphaOf(current.Surface):F3}");
+
+        var temp = Path.Combine(Path.GetTempPath(), $"binglan-dock-migrated-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(temp);
+        try
+        {
+            var store = new LocalStateStore(temp);
+            File.WriteAllText(store.StatePath, """{ "SchemaVersion": 45, "Style": { "GlassDensity": 0.32 } }""");
+            var migrated = store.Load();
+            var dockAfterMigration = DesktopStyleRules.Dock(migrated.Style);
+            Check(Math.Abs(AlphaOf(dockAfterMigration.Surface) - 0.82d) < 0.005d,
+                $"v45 默认状态迁移后 Dock 不透明度应仍约为 0.82，实际 {AlphaOf(dockAfterMigration.Surface):F3}");
+        }
+        finally
+        {
+            Directory.Delete(temp, true);
+        }
+    }
+
+    internal static void TestMaterialSwitchPreservesCustomTextColor()
+    {
+        var prev = new DesktopStyleState { Glass = GlassMode.Light, Palette = "ice" };
+        var next = new DesktopStyleState { Glass = GlassMode.Dark };
+
+        Check(DesktopStyleRules.ResolveTransitionTextColor(WidgetAppearanceRules.DefaultTextColor, prev, next) == "#FFFFFF",
+            "未自定义的卡片文字应跟随新材质切换为白色");
+        Check(DesktopStyleRules.ResolveTransitionTextColor("#336699", prev, next) == "#336699",
+            "用户自定义的卡片文字颜色在切换全局材质后必须保留");
+
+        Check(DesktopStyleRules.ResolveComponentTransitionTextColor(
+                DesktopComponentKind.Weather, WidgetAppearanceRules.DefaultTextColor, prev, next, 0.18d) == "#FFFFFF",
+            "未自定义的内嵌组件文字应跟随新材质");
+        Check(DesktopStyleRules.ResolveComponentTransitionTextColor(
+                DesktopComponentKind.Weather, "#AA2244", prev, next, 0.18d) == "#AA2244",
+            "用户自定义的天气文字颜色在切换全局材质后必须保留");
+        Check(DesktopStyleRules.ResolveComponentTransitionTextColor(
+                DesktopComponentKind.TimeDate, "#FFFFFF", prev, next, 0.18d) == "#FFFFFF",
+            "默认白色的裸时钟保持白色");
+    }
+
+    internal static void TestWeatherIconMapping()
+    {
+        var wmoCodes = new[]
+        {
+            0, 1, 2, 3, 45, 48, 51, 53, 55, 56, 57,
+            61, 63, 65, 66, 67, 71, 73, 75, 77, 80, 81, 82, 85, 86, 95, 96, 99, -1
+        };
+        foreach (var code in wmoCodes)
+        {
+            var condition = WeatherService.DescribeWeatherCode(code);
+            var kind = WeatherIconRules.FromCondition(condition);
+            var path = WeatherIconRules.GetPathData(kind);
+            Check(!string.IsNullOrWhiteSpace(path), $"WMO 天气码 {code}（{condition}）必须映射到非空矢量路径");
+        }
+
+        Check(WeatherIconRules.FromCondition("晴") == WeatherIconKind.Clear, "晴天映射");
+        Check(WeatherIconRules.FromCondition("大致晴") == WeatherIconKind.Clear, "大致晴映射");
+        Check(WeatherIconRules.FromCondition("局部多云") == WeatherIconKind.PartlyCloudy, "局部多云映射");
+        Check(WeatherIconRules.FromCondition("阴") == WeatherIconKind.Cloudy, "阴天映射");
+        Check(WeatherIconRules.FromCondition("雾") == WeatherIconKind.Fog, "雾天映射");
+        Check(WeatherIconRules.FromCondition("毛毛雨") == WeatherIconKind.Rain, "毛毛雨映射");
+        Check(WeatherIconRules.FromCondition("冻雨") == WeatherIconKind.Rain, "冻雨映射");
+        Check(WeatherIconRules.FromCondition("雪粒") == WeatherIconKind.Snow, "雪粒映射");
+        Check(WeatherIconRules.FromCondition("阵雪") == WeatherIconKind.Snow, "阵雪映射");
+        Check(WeatherIconRules.FromCondition("雷暴伴冰雹") == WeatherIconKind.Thunderstorm, "雷暴伴冰雹映射");
+        Check(WeatherIconRules.FromCondition("未设置") == WeatherIconKind.Unset
+            && WeatherIconRules.FromCondition(null) == WeatherIconKind.Unset
+            && !string.IsNullOrWhiteSpace(WeatherIconRules.GetPathData((string?)null)),
+            "未设置城市与空状态应提供稳定占位矢量图标");
+    }
+
+    internal static void TestDefaultRadiusAndHeaderTagDefaults()
+    {
+        Check(WidgetAppearanceRules.DefaultCornerRadius == 12d, "WP2 默认外圆角应为 12 DIP");
+        Check(WidgetAppearanceRules.DefaultHeaderColor == "#5B9BD5", "WP2 默认标题色标应为 #5B9BD5");
+        var style = new DesktopStyleState();
+        var light = DesktopStyleRules.Appearance(style);
+        Check(light.HeaderColor == "#5B9BD5", "浅色玻璃默认标题色标应与 WidgetAppearanceRules 一致");
     }
 
     private static ThemeReadResult Read(string manifest)

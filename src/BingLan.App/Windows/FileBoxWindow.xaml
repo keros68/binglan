@@ -89,10 +89,14 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="TileSurface" Property="Background" Value="{DynamicResource WidgetTileHoverBrush}"/>
+                                <Setter TargetName="TileSurface" Property="Background" Value="{DynamicResource CardInteractiveHoverBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="TileSurface" Property="Background" Value="{DynamicResource CardInteractivePressedBrush}"/>
                             </Trigger>
                             <Trigger Property="IsKeyboardFocused" Value="True">
-                                <Setter TargetName="TileSurface" Property="Background" Value="{DynamicResource WidgetTileFocusBrush}"/>
+                                <Setter TargetName="TileSurface" Property="BorderBrush" Value="{DynamicResource CardFocusBorderBrush}"/>
+                                <Setter TargetName="TileSurface" Property="BorderThickness" Value="1.5"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -105,8 +109,8 @@
                     <!-- 选中高亮垫在内容之下，与悬停/焦点背景互不争用同一属性。 -->
                     <Border x:Name="SelectionHighlight"
                             Grid.RowSpan="2"
-                            Background="{DynamicResource WidgetTileSelectedBrush}"
-                            BorderBrush="#FF7FA8D9"
+                            Background="{DynamicResource CardInteractiveSelectedBrush}"
+                            BorderBrush="{DynamicResource CardSelectionBorderBrush}"
                             BorderThickness="1.5"
                             CornerRadius="{Binding ItemCornerRadius, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
                             IsHitTestVisible="False"
@@ -120,7 +124,7 @@
                     <StackPanel Grid.Row="1" Margin="1,3,1,0">
                         <TextBlock HorizontalAlignment="Center"
                                    Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
-                                   FontSize="12.5"
+                                   FontSize="{StaticResource CardFont.Body}"
                                    TextAlignment="Center"
                                    TextTrimming="CharacterEllipsis"
                                    Text="{Binding Name}">
@@ -138,7 +142,7 @@
                         <TextBlock x:Name="InvalidLabel"
                                    HorizontalAlignment="Center"
                                    Foreground="{DynamicResource WidgetSecondaryTextBrush}"
-                                   FontSize="10"
+                                   FontSize="{StaticResource CardFont.Caption}"
                                    Text="已失效"
                                    Visibility="Collapsed"/>
                     </StackPanel>
@@ -183,10 +187,14 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="RowSurface" Property="Background" Value="{DynamicResource WidgetTileHoverBrush}"/>
+                                <Setter TargetName="RowSurface" Property="Background" Value="{DynamicResource CardInteractiveHoverBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="RowSurface" Property="Background" Value="{DynamicResource CardInteractivePressedBrush}"/>
                             </Trigger>
                             <Trigger Property="IsKeyboardFocused" Value="True">
-                                <Setter TargetName="RowSurface" Property="Background" Value="{DynamicResource WidgetTileFocusBrush}"/>
+                                <Setter TargetName="RowSurface" Property="BorderBrush" Value="{DynamicResource CardFocusBorderBrush}"/>
+                                <Setter TargetName="RowSurface" Property="BorderThickness" Value="1.5"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -194,8 +202,8 @@
                 <Grid>
                     <!-- 选中高亮垫在内容之下，与悬停/焦点背景互不争用同一属性。 -->
                     <Border x:Name="SelectionHighlight"
-                            Background="{DynamicResource WidgetTileSelectedBrush}"
-                            BorderBrush="#FF7FA8D9"
+                            Background="{DynamicResource CardInteractiveSelectedBrush}"
+                            BorderBrush="{DynamicResource CardSelectionBorderBrush}"
                             BorderThickness="1.5"
                             CornerRadius="{Binding ItemCornerRadius, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
                             IsHitTestVisible="False"
@@ -213,14 +221,14 @@
                         <TextBlock x:Name="RowInvalidLabel"
                                    DockPanel.Dock="Right"
                                    Foreground="{DynamicResource WidgetSecondaryTextBrush}"
-                                   FontSize="10"
+                                   FontSize="{StaticResource CardFont.Caption}"
                                    Text="已失效"
                                    VerticalAlignment="Center"
                                    Margin="8,0,0,0"
                                    Visibility="Collapsed"/>
                         <TextBlock VerticalAlignment="Center"
                                    Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
-                                   FontSize="12.5"
+                                   FontSize="{StaticResource CardFont.Body}"
                                    TextTrimming="CharacterEllipsis"
                                    Text="{Binding Name}">
                             <TextBlock.ToolTip>
@@ -254,33 +262,48 @@
           ClipToBounds="True">
         <Grid x:Name="BoxLayout">
             <Grid.RowDefinitions>
-                <RowDefinition Height="70"/>
+                <RowDefinition Height="48"/>
                 <RowDefinition Height="*"/>
                 <RowDefinition Height="44"/>
             </Grid.RowDefinitions>
 
             <Border x:Name="TitleBarSurface"
-                    Height="50"
-                    Margin="10,10,10,0"
+                    Height="48"
+                    Margin="0"
                     VerticalAlignment="Top"
-                    Background="{Binding WidgetHeaderBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
+                    Background="Transparent"
                     CornerRadius="{Binding HeaderCornerRadius, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}">
-                <Grid Margin="17,0,9,0">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="Auto"/>
-                        <ColumnDefinition Width="Auto"/>
-                        <ColumnDefinition Width="Auto"/>
-                        <ColumnDefinition Width="Auto"/>
-                    </Grid.ColumnDefinitions>
-                    <TextBox x:Name="TitleEditor"
-                             AutomationProperties.Name="分组盒标题"
-                             Style="{StaticResource DesktopContentTitleStyle}"
-                             Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
-                             FontFamily="{Binding WidgetTitleFontFamily, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
-                             FontWeight="{Binding WidgetTitleFontWeight, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
-                             FontStyle="{Binding WidgetTitleFontStyle, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
-                             Text="{Binding Title, Mode=OneTime}"/>
+                <Grid>
+                    <Grid Margin="16,0,12,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <Grid Grid.Column="0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <Border x:Name="TitleAccentTag"
+                                    Width="4"
+                                    Height="16"
+                                    Margin="0,0,8,0"
+                                    VerticalAlignment="Center"
+                                    CornerRadius="2"
+                                    Background="{Binding WidgetHeaderBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
+                            <TextBox x:Name="TitleEditor"
+                                     Grid.Column="1"
+                                     AutomationProperties.Name="分组盒标题"
+                                     Style="{StaticResource DesktopContentTitleStyle}"
+                                     Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
+                                     FontFamily="{Binding WidgetTitleFontFamily, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
+                                     FontWeight="{Binding WidgetTitleFontWeight, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
+                                     FontStyle="{Binding WidgetTitleFontStyle, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
+                                     Text="{Binding Title, Mode=OneTime}"/>
+                        </Grid>
                     <Button x:Name="AddButton"
                             Style="{StaticResource WidgetHeaderToolButtonStyle}"
                             AutomationProperties.Name="添加文件或文件夹映射"
@@ -291,7 +314,7 @@
                             Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
                             Background="Transparent"
                             BorderThickness="0"
-                            FontSize="18"
+                            FontSize="{StaticResource CardFont.Title}"
                             Content="+"
                             ToolTip="添加文件、文件夹或桌面项目"
                             Click="AddButton_Click">
@@ -321,7 +344,7 @@
                             Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
                             Background="Transparent"
                             BorderThickness="0"
-                            FontSize="16"
+                            FontSize="{StaticResource CardFont.Subhead}"
                             Content="↕"
                             ToolTip="排序映射"
                             Click="SortButton_Click">
@@ -344,7 +367,7 @@
                             Background="Transparent"
                             BorderThickness="0"
                             FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
-                            FontSize="12"
+                            FontSize="{StaticResource CardFont.Meta}"
                             Content="&#xE70E;"
                             ToolTip="折叠成标题条"
                             Click="CollapseButton_Click"/>
@@ -357,15 +380,22 @@
                             Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
                             Background="Transparent"
                             BorderThickness="0"
-                            FontSize="16"
+                            FontSize="{StaticResource CardFont.Subhead}"
                             Content="•••"
                             ToolTip="设置"
                             Click="Settings_Click"/>
+                    </Grid>
+                    <Border x:Name="TitleDivider"
+                            Height="1"
+                            Margin="16,0,16,0"
+                            VerticalAlignment="Bottom"
+                            IsHitTestVisible="False"
+                            Background="{Binding WidgetDividerBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
                 </Grid>
             </Border>
 
             <ScrollViewer Grid.Row="1"
-                          Margin="14,9,6,2"
+                          Margin="14,6,6,2"
                           Style="{StaticResource CardScrollViewerStyle}"
                           VerticalScrollBarVisibility="Auto"
                           HorizontalScrollBarVisibility="Disabled">
@@ -382,12 +412,12 @@
                 <StackPanel VerticalAlignment="Center">
                     <TextBlock x:Name="CountText"
                                Foreground="{Binding WidgetSecondaryTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
-                               FontSize="11"/>
+                               FontSize="{StaticResource CardFont.Caption}"/>
                     <TextBlock x:Name="StatusText"
                                AutomationProperties.LiveSetting="Polite"
                                Margin="0,1,8,0"
                                Foreground="{Binding WidgetSecondaryTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
-                               FontSize="9.5"
+                               FontSize="{StaticResource CardFont.Caption}"
                                Text=""
                                TextTrimming="CharacterEllipsis"/>
                 </StackPanel>
@@ -395,21 +425,21 @@
                         AutomationProperties.Name="自动整理桌面映射"
                         Grid.Column="1"
                         MinWidth="68"
-                        Padding="8,4"
+                        Padding="{StaticResource CardSpace.CompactPadding}"
                         VerticalAlignment="Center"
                         Content="自动整理"
                         Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
                         Background="{DynamicResource WidgetControlBrush}"
                         BorderBrush="{DynamicResource WidgetControlBorderBrush}"
-                        FontSize="11"
+                        FontSize="{StaticResource CardFont.Caption}"
                         ToolTip="把桌面项目放进分类盒，并清除已失效项"
                         Click="AutoOrganize_Click"/>
             </Grid>
         </Grid>
         <Border x:Name="Surface"
                 Background="Transparent"
-                BorderBrush="Transparent"
-                BorderThickness="0"
+                BorderBrush="{Binding WidgetBorderBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
+                BorderThickness="{Binding WidgetBorderThickness, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
                 CornerRadius="{Binding SurfaceCornerRadius, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
                 IsHitTestVisible="False"/>
     </Grid>

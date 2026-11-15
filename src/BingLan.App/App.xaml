@@ -1,9 +1,71 @@
 <Application x:Class="BingLan.App.App"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:sys="clr-namespace:System;assembly=System.Runtime"
              ShutdownMode="OnExplicitShutdown">
     <Application.Resources>
         <FontFamily x:Key="UiFont">Microsoft YaHei UI, Segoe UI</FontFamily>
+
+        <!-- 桌面卡片统一字阶（6 档 + 展示级） -->
+        <sys:Double x:Key="CardFont.Caption">11</sys:Double>
+        <sys:Double x:Key="CardFont.Meta">12</sys:Double>
+        <sys:Double x:Key="CardFont.Body">13</sys:Double>
+        <sys:Double x:Key="CardFont.Subhead">15</sys:Double>
+        <sys:Double x:Key="CardFont.Title">19</sys:Double>
+        <sys:Double x:Key="CardFont.DisplayClock">36</sys:Double>
+        <sys:Double x:Key="CardFont.DisplayWeather">46</sys:Double>
+
+        <!-- 桌面卡片统一圆角（3 档：控件 6 / 内嵌行 8 / 卡片 12 + 细进度条） -->
+        <sys:Double x:Key="CardRadius.ControlValue">6</sys:Double>
+        <sys:Double x:Key="CardRadius.ItemValue">8</sys:Double>
+        <sys:Double x:Key="CardRadius.CardValue">12</sys:Double>
+        <sys:Double x:Key="CardRadius.BarValue">1.5</sys:Double>
+        <CornerRadius x:Key="CardRadius.Control">6</CornerRadius>
+        <CornerRadius x:Key="CardRadius.Item">8</CornerRadius>
+        <CornerRadius x:Key="CardRadius.Card">12</CornerRadius>
+        <CornerRadius x:Key="CardRadius.PeekHeader">8,8,0,0</CornerRadius>
+        <CornerRadius x:Key="CardRadius.Pill">8</CornerRadius>
+
+        <!-- 桌面卡片间距令牌（4 的倍数） -->
+        <Thickness x:Key="CardSpace.CompactPadding">8,4</Thickness>
+        <Thickness x:Key="CardSpace.RowPadding">8,8</Thickness>
+        <Thickness x:Key="CardSpace.BodyPadding">12,8</Thickness>
+        <Thickness x:Key="CardSpace.HeaderMargin">16,0,12,0</Thickness>
+        <Thickness x:Key="CardSpace.SectionGap">0,8,0,0</Thickness>
+
+        <!-- 桌面卡片共享特效与语义画刷 -->
+        <DropShadowEffect x:Key="NakedTextContrastShadow"
+                          x:Shared="False"
+                          Color="#000000"
+                          Opacity="0.45"
+                          BlurRadius="10"
+                          ShadowDepth="1"
+                          Direction="270"/>
+        <DropShadowEffect x:Key="CardPopupDropShadow"
+                          x:Shared="False"
+                          Color="#FF3A4560"
+                          Opacity="0.25"
+                          BlurRadius="18"
+                          ShadowDepth="4"
+                          Direction="270"/>
+        <SolidColorBrush x:Key="CardMarkerAccentBrush" Color="#FF3E77B5"/>
+        <SolidColorBrush x:Key="CardSelectionBorderBrush" Color="#FF7FA8D9"/>
+        <SolidColorBrush x:Key="CardTodayBorderBrush" Color="#D9A441"/>
+        <SolidColorBrush x:Key="CardRimSubtleBorderBrush" Color="#66FFFFFF"/>
+        <SolidColorBrush x:Key="CardDividerBrush" Color="#1F1E2B3C"/>
+        <SolidColorBrush x:Key="CardInteractiveHoverBrush" Color="#24FFFFFF"/>
+        <SolidColorBrush x:Key="CardInteractivePressedBrush" Color="#48FFFFFF"/>
+        <SolidColorBrush x:Key="CardInteractiveSelectedBrush" Color="#4DFFFFFF"/>
+        <SolidColorBrush x:Key="CardFocusBorderBrush" Color="#CC2B7CD3"/>
+        <SolidColorBrush x:Key="CardPopupSurfaceBrush" Color="#FFF4F6FB"/>
+        <SolidColorBrush x:Key="CardPopupBorderBrush" Color="#FFC9D2E6"/>
+        <SolidColorBrush x:Key="CardPopupHeaderBrush" Color="#FFB8C4EA"/>
+        <SolidColorBrush x:Key="CardPopupTextBrush" Color="#FF22303E"/>
+        <SolidColorBrush x:Key="CardPopupHeaderTextBrush" Color="#FF243146"/>
+        <SolidColorBrush x:Key="CardPopupMutedTextBrush" Color="#FF8A98A8"/>
+        <SolidColorBrush x:Key="CardPopupInputBrush" Color="#FFFFFFFF"/>
+        <SolidColorBrush x:Key="CardPopupInputBorderBrush" Color="#FFD8DEEC"/>
+        <SolidColorBrush x:Key="CardToastSurfaceBrush" Color="#FFDCE4F7"/>
         <SolidColorBrush x:Key="PrimaryTextBrush" Color="#F7FBFF"/>
         <SolidColorBrush x:Key="SecondaryTextBrush" Color="#B8D4E7"/>
         <SolidColorBrush x:Key="AccentBrush" Color="#A6B8FF"/>
@@ -66,7 +128,7 @@
         <!-- The lively blue of the performance bars and download rate. -->
         <SolidColorBrush x:Key="PerformanceAccentBrush" Color="#F51EA9FF"/>
         <SolidColorBrush x:Key="DockRunningDotBrush" Color="#C21F3A55"/>
-        <SolidColorBrush x:Key="WidgetItemSurfaceBrush" Color="#7AFFFFFF"/>
+        <SolidColorBrush x:Key="WidgetItemSurfaceBrush" Color="#52FFFFFF"/>
         <SolidColorBrush x:Key="WidgetCaretBrush" Color="#FFFFFF"/>
         <SolidColorBrush x:Key="WidgetDefaultButtonBrush" Color="#1FFFFFFF"/>
         <SolidColorBrush x:Key="WidgetDefaultButtonBorderBrush" Color="#28FFFFFF"/>
@@ -81,7 +143,7 @@
              at rest, not only while hovered or focused. -->
         <SolidColorBrush x:Key="WidgetTileSelectedBrush" Color="#4DFFFFFF"/>
         <Thickness x:Key="WidgetTileBorderThickness">0</Thickness>
-        <SolidColorBrush x:Key="WidgetButtonHoverBrush" Color="#32FFFFFF"/>
+        <SolidColorBrush x:Key="WidgetButtonHoverBrush" Color="#24FFFFFF"/>
         <SolidColorBrush x:Key="WidgetButtonPressedBrush" Color="#48FFFFFF"/>
         <SolidColorBrush x:Key="AppearanceInkBrush" Color="#203047"/>
         <SolidColorBrush x:Key="AppearanceMutedInkBrush" Color="#607386"/>
@@ -121,17 +183,21 @@
                                 Background="{TemplateBinding Background}"
                                 BorderBrush="{TemplateBinding BorderBrush}"
                                 BorderThickness="{TemplateBinding BorderThickness}"
-                                CornerRadius="8"
+                                CornerRadius="{StaticResource CardRadius.Control}"
                                 Padding="{TemplateBinding Padding}">
                             <ContentPresenter HorizontalAlignment="Center"
                                               VerticalAlignment="Center"/>
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="ButtonBorder" Property="Background" Value="{DynamicResource WidgetButtonHoverBrush}"/>
+                                <Setter TargetName="ButtonBorder" Property="Background" Value="{DynamicResource CardInteractiveHoverBrush}"/>
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="ButtonBorder" Property="Background" Value="{DynamicResource WidgetButtonPressedBrush}"/>
+                                <Setter TargetName="ButtonBorder" Property="Background" Value="{DynamicResource CardInteractivePressedBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="ButtonBorder" Property="BorderBrush" Value="{DynamicResource CardFocusBorderBrush}"/>
+                                <Setter TargetName="ButtonBorder" Property="BorderThickness" Value="1.5"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -230,6 +296,18 @@
                 </DataTrigger>
                 <!-- The entry shows under the mouse; keyboard users select the card by focusing it. -->
                 <DataTrigger Binding="{Binding IsMouseOver, RelativeSource={RelativeSource AncestorType={x:Type Window}}}"
+                             Value="True">
+                    <Setter Property="Visibility" Value="Visible"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="WidgetSelectedOnlySettingsButtonStyle"
+               TargetType="Button"
+               BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="Visibility" Value="Collapsed"/>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsWidgetSelected, RelativeSource={RelativeSource AncestorType={x:Type Window}}}"
                              Value="True">
                     <Setter Property="Visibility" Value="Visible"/>
                 </DataTrigger>

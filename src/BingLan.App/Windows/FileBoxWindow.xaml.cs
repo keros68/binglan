@@ -127,7 +127,7 @@ public partial class FileBoxWindow : WidgetWindowBase
         State.IsLocked = locked;
     }
 
-    private const double CollapsedHeight = 72d;
+    private const double CollapsedHeight = 48d;
     private const double DefaultMinHeight = 166d;
 
     private void CollapseButton_Click(object sender, RoutedEventArgs e)
@@ -152,6 +152,7 @@ public partial class FileBoxWindow : WidgetWindowBase
         {
             element.Visibility = body;
         }
+        TitleDivider.Visibility = body;
         if (collapsed)
         {
             MinHeight = CollapsedHeight;

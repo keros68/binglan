@@ -61,6 +61,7 @@ public sealed class WidgetCoordinator : IDisposable
     private readonly string[] _launchArguments;
     private readonly bool _showOnboarding;
     private AppState _state;
+    private DesktopStyleState _lastAppliedStyle;
     private SettingsWindow? _settingsWindow;
     private bool _isExiting;
     private bool _exitRequested;
@@ -86,6 +87,7 @@ public sealed class WidgetCoordinator : IDisposable
             canModify: dataDirectory is null && Environment.ProcessPath is not null);
         _store = new LocalStateStore(dataDirectory);
         _state = _store.Load();
+        _lastAppliedStyle = _state.Style.Clone();
         _performanceSampler = new WindowsPerformanceSamplingService();
         _weatherService = new WeatherService();
         _citySearchService = new CityLookupService();
@@ -1668,7 +1670,12 @@ public sealed class WidgetCoordinator : IDisposable
             var look = DesktopStyleRules.ComponentLook(component.Kind, style, QuickPlacesWindow.ClearBarOpacity);
             component.Appearance.BackgroundColor = look.BackgroundColor;
             component.Appearance.BackgroundOpacity = look.BackgroundOpacity;
-            component.Appearance.TextColor = look.TextColor;
+            component.Appearance.TextColor = DesktopStyleRules.ResolveComponentTransitionTextColor(
+                component.Kind,
+                component.Appearance.TextColor,
+                _lastAppliedStyle,
+                style,
+                QuickPlacesWindow.ClearBarOpacity);
             if (component.Kind == DesktopComponentKind.Todo)
             {
                 component.Appearance.HeaderColor = glass.HeaderColor;
@@ -1681,7 +1688,10 @@ public sealed class WidgetCoordinator : IDisposable
             todoState.Appearance.BackgroundOpacity = glass.BackgroundOpacity;
             todoState.Appearance.HeaderColor = glass.HeaderColor;
             todoState.Appearance.HeaderOpacity = glass.HeaderOpacity;
-            todoState.Appearance.TextColor = glass.TextColor;
+            todoState.Appearance.TextColor = DesktopStyleRules.ResolveTransitionTextColor(
+                todoState.Appearance.TextColor,
+                _lastAppliedStyle,
+                style);
         }
         foreach (var window in _windows.Where(window => window is not InformationWidgetWindow))
         {
@@ -1689,13 +1699,18 @@ public sealed class WidgetCoordinator : IDisposable
             window.SetWidgetBackgroundOpacity(glass.BackgroundOpacity);
             window.SetWidgetHeaderColor(glass.HeaderColor);
             window.SetWidgetHeaderOpacity(glass.HeaderOpacity);
-            window.SetWidgetTextColor(glass.TextColor);
+            window.SetWidgetTextColor(DesktopStyleRules.ResolveTransitionTextColor(
+                window.WidgetAppearance.TextColor,
+                _lastAppliedStyle,
+                style));
+            window.ApplyStyle(style);
         }
         foreach (var note in _windows.OfType<NoteWidgetWindow>())
         {
-            note.SetBodyColor(glass.TextColor);
+            note.SetBodyColor(note.WidgetAppearance.TextColor);
         }
         ApplyDesktopExperienceWithSave(_state.DesktopExperience, saveImmediate: false);
+        _lastAppliedStyle = style.Clone();
     }
 
     // Rows inside cards (to-dos, the weather and performance panels) and the dock take the
@@ -1707,8 +1722,10 @@ public sealed class WidgetCoordinator : IDisposable
             return;
         }
         var resources = System.Windows.Application.Current.Resources;
-        resources["WidgetItemSurfaceBrush"] = Brush(DesktopStyleRules.Appearance(_state.Style).ItemSurfaceColor);
-        resources["WidgetSubtleControlBrush"] = Brush(DesktopStyleRules.SubtleControlColor(_state.Style));
+        var rendered = DesktopStyleRules.ResolveRenderedCard(_state.Style);
+        resources["WidgetItemSurfaceBrush"] = Brush(rendered.ItemSurfaceColor);
+        resources["WidgetSubtleControlBrush"] = Brush(rendered.SubtleControlColor);
+        resources["WidgetControlBrush"] = Brush(rendered.ControlColor);
         var dock = DesktopStyleRules.Dock(_state.Style, _state.Dock);
         resources["DockSurfaceBrush"] = Brush(dock.Surface);
         resources["DockSurfaceBorderBrush"] = Brush(dock.Border);
@@ -1996,6 +2013,7 @@ public sealed class WidgetCoordinator : IDisposable
         var taskbarBefore = _state.Taskbar.Mode;
         ThemeRules.ApplyStyle(package, _state.Style, _state.Taskbar);
         ApplyStyleSettings();
+        _lastAppliedStyle = _state.Style.Clone();
         if (_state.Taskbar.Mode != taskbarBefore)
         {
             _ = ApplyTaskbarModeAsync();

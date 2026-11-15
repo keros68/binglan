@@ -123,7 +123,7 @@
                     Tag="Interactive"
                     Margin="0,1"
                     Padding="4,3"
-                    CornerRadius="4"
+                    CornerRadius="{StaticResource CardRadius.Control}"
                     Background="Transparent"
                     ContextMenuOpening="PeekRow_ContextMenuOpening">
                 <Border.ContextMenu>
@@ -175,16 +175,16 @@
                                 Style="{StaticResource EventMarker}"
                                 VerticalAlignment="Top"
                                 Margin="2,1,5,0">
-                        <Ellipse Width="6" Height="6" VerticalAlignment="Center" Fill="#FF3E77B5"/>
+                        <Ellipse Width="6" Height="6" VerticalAlignment="Center" Fill="{DynamicResource CardMarkerAccentBrush}"/>
                         <TextBlock Style="{StaticResource EventTimeText}"
                                    FontSize="{DynamicResource TodoFont.PeekItem}"
-                                   Foreground="#FF3E77B5"/>
+                                   Foreground="{DynamicResource CardMarkerAccentBrush}"/>
                     </StackPanel>
                     <StackPanel Grid.Column="0"
                                 Style="{StaticResource CountdownMarker}"
                                 VerticalAlignment="Top"
                                 Margin="2,1,5,0">
-                        <Ellipse Width="6" Height="6" VerticalAlignment="Center" Fill="#FF3E77B5"/>
+                        <Ellipse Width="6" Height="6" VerticalAlignment="Center" Fill="{DynamicResource CardMarkerAccentBrush}"/>
                     </StackPanel>
                     <TextBox x:Name="PeekText"
                              ContextMenu="{Binding ContextMenu, RelativeSource={RelativeSource AncestorType=Border}}"
@@ -200,24 +200,24 @@
                              IsReadOnly="True"
                              Focusable="False"
                              Cursor="Arrow"
-                             CaretBrush="#FF3E77B5"
+                             CaretBrush="{DynamicResource CardMarkerAccentBrush}"
                              Text="{Binding Text, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                              PreviewMouseLeftButtonDown="PeekText_PreviewMouseDown"
                              PreviewKeyDown="PeekText_PreviewKeyDown"
                              LostFocus="PeekText_LostFocus">
                         <TextBox.Style>
                             <Style TargetType="TextBox">
-                                <Setter Property="Foreground" Value="#FF22303E"/>
+                                <Setter Property="Foreground" Value="{DynamicResource CardPopupTextBrush}"/>
                                 <Style.Triggers>
                                     <DataTrigger Binding="{Binding IsCompleted}" Value="True">
-                                        <Setter Property="Foreground" Value="#FF8A98A8"/>
+                                        <Setter Property="Foreground" Value="{DynamicResource CardPopupMutedTextBrush}"/>
                                         <Setter Property="TextDecorations" Value="Strikethrough"/>
                                     </DataTrigger>
                                 </Style.Triggers>
                             </Style>
                         </TextBox.Style>
                     </TextBox>
-                    <TextBlock Grid.Row="1" Grid.Column="1" Style="{StaticResource CountdownLabelText}" FontSize="{DynamicResource TodoFont.PeekItem}" Foreground="#FF3E77B5"/>
+                    <TextBlock Grid.Row="1" Grid.Column="1" Style="{StaticResource CountdownLabelText}" FontSize="{DynamicResource TodoFont.PeekItem}" Foreground="{DynamicResource CardMarkerAccentBrush}"/>
                     <Button Grid.Column="2"
                             AutomationProperties.Name="删除待办"
                             Width="18"
@@ -225,10 +225,10 @@
                             Margin="2,-2,-4,-2"
                             Padding="0"
                             VerticalAlignment="Top"
-                            Foreground="#FF8A98A8"
+                            Foreground="{DynamicResource CardPopupMutedTextBrush}"
                             Background="Transparent"
                             BorderThickness="0"
-                            FontSize="12"
+                            FontSize="{StaticResource CardFont.Meta}"
                             Content="×"
                             ToolTip="删除待办"
                             Click="DeleteTodo_Click">
@@ -250,10 +250,10 @@
             <Border Tag="Interactive"
                     Margin="0,0,0,2"
                     Padding="4,2"
-                    CornerRadius="5"
+                    CornerRadius="{StaticResource CardRadius.Control}"
                     MinHeight="17"
                     Background="{DynamicResource WidgetItemSurfaceBrush}"
-                    BorderBrush="#66FFFFFF"
+                    BorderBrush="{DynamicResource CardRimSubtleBorderBrush}"
                     BorderThickness="1"
                     ContextMenuOpening="PeekRow_ContextMenuOpening">
                 <Border.ContextMenu>
@@ -302,7 +302,7 @@
                     <StackPanel Style="{StaticResource EventMarker}"
                                 VerticalAlignment="Top"
                                 Margin="1,1,4,0">
-                        <Ellipse Width="5" Height="5" VerticalAlignment="Center" Fill="#FF3E77B5"/>
+                        <Ellipse Width="5" Height="5" VerticalAlignment="Center" Fill="{DynamicResource CardMarkerAccentBrush}"/>
                         <TextBlock Style="{StaticResource EventTimeText}"
                                    Margin="3,0,0,0"
                                    FontSize="{DynamicResource TodoFont.CellItem}"
@@ -311,7 +311,7 @@
                     <StackPanel Style="{StaticResource CountdownMarker}"
                                 VerticalAlignment="Top"
                                 Margin="1,1,4,0">
-                        <Ellipse Width="6" Height="6" VerticalAlignment="Center" Fill="#FF3E77B5"/>
+                        <Ellipse Width="6" Height="6" VerticalAlignment="Center" Fill="{DynamicResource CardMarkerAccentBrush}"/>
                     </StackPanel>
                     <TextBlock Grid.Column="1"
                                AutomationProperties.Name="{Binding Text}"
@@ -350,33 +350,47 @@
           ClipToBounds="True">
         <Grid x:Name="TodoLayout">
             <Grid.RowDefinitions>
-                <RowDefinition Height="70"/>
+                <RowDefinition Height="48"/>
                 <RowDefinition Height="*"/>
-                <RowDefinition Height="44"/>
             </Grid.RowDefinitions>
 
             <Border x:Name="TitleBarSurface"
-                    Height="50"
-                    Margin="10,10,10,0"
+                    Height="48"
+                    Margin="0"
                     VerticalAlignment="Top"
-                    Background="{Binding WidgetHeaderBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
+                    Background="Transparent"
                     CornerRadius="{Binding HeaderCornerRadius, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}">
-                <Grid Margin="17,0,9,0">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="Auto"/>
-                        <ColumnDefinition Width="Auto"/>
-                        <ColumnDefinition Width="Auto"/>
-                        <ColumnDefinition Width="Auto"/>
-                    </Grid.ColumnDefinitions>
-                    <TextBox x:Name="TitleEditor"
-                             AutomationProperties.Name="待办组件标题"
-                             Style="{StaticResource DesktopContentTitleStyle}"
-                             Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
-                             FontFamily="{Binding WidgetTitleFontFamily, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
-                             FontWeight="{Binding WidgetTitleFontWeight, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
-                             FontStyle="{Binding WidgetTitleFontStyle, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
-                             Text="{Binding Title, Mode=OneTime}"/>
+                <Grid>
+                    <Grid Margin="16,0,12,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <Grid Grid.Column="0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <Border x:Name="TitleAccentTag"
+                                    Width="4"
+                                    Height="16"
+                                    Margin="0,0,8,0"
+                                    VerticalAlignment="Center"
+                                    CornerRadius="2"
+                                    Background="{Binding WidgetHeaderBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
+                            <TextBox x:Name="TitleEditor"
+                                     Grid.Column="1"
+                                     AutomationProperties.Name="待办组件标题"
+                                     Style="{StaticResource DesktopContentTitleStyle}"
+                                     Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
+                                     FontFamily="{Binding WidgetTitleFontFamily, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
+                                     FontWeight="{Binding WidgetTitleFontWeight, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
+                                     FontStyle="{Binding WidgetTitleFontStyle, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
+                                     Text="{Binding Title, Mode=OneTime}"/>
+                        </Grid>
                     <Button x:Name="ViewModeButton"
                             Style="{StaticResource WidgetHeaderToolButtonStyle}"
                             Grid.Column="1"
@@ -387,7 +401,7 @@
                             Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
                             Background="{DynamicResource WidgetSubtleControlBrush}"
                             BorderBrush="{DynamicResource WidgetSubtleControlBorderBrush}"
-                            FontSize="11"
+                            FontSize="{StaticResource CardFont.Caption}"
                             Content="列表"
                             ToolTip="切换到周历"
                             Click="ToggleViewMode_Click"/>
@@ -402,7 +416,7 @@
                             Background="Transparent"
                             BorderThickness="0"
                             FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
-                            FontSize="12"
+                            FontSize="{StaticResource CardFont.Meta}"
                             Content="&#xE70E;"
                             ToolTip="收起成标题条"
                             Click="CollapseButton_Click"/>
@@ -416,7 +430,7 @@
                             Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
                             Background="Transparent"
                             BorderThickness="0"
-                            FontSize="16"
+                            FontSize="{StaticResource CardFont.Subhead}"
                             Content="•••"
                             ToolTip="设置"
                             Click="Settings_Click"/>
@@ -431,16 +445,24 @@
                             Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
                             Background="{DynamicResource WidgetSubtleControlBrush}"
                             BorderBrush="{DynamicResource WidgetSubtleControlBorderBrush}"
-                            FontSize="20"
+                            FontSize="{StaticResource CardFont.Title}"
                             Content="+"
                             ToolTip="新增待办"
                             Click="Add_Click"/>
+                    </Grid>
+                    <Border x:Name="TitleDivider"
+                            Height="1"
+                            Margin="16,0,16,0"
+                            VerticalAlignment="Bottom"
+                            IsHitTestVisible="False"
+                            Background="{Binding WidgetDividerBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
                 </Grid>
             </Border>
 
-            <Grid Grid.Row="1">
-                <ScrollViewer x:Name="ListHost"
-                              Margin="10,9,6,4"
+            <local:CompactFooterPanel x:Name="TodoBodyFooterPanel" Grid.Row="1">
+                <Grid>
+                    <ScrollViewer x:Name="ListHost"
+                              Margin="10,6,6,4"
                               VerticalScrollBarVisibility="Auto"
                               HorizontalScrollBarVisibility="Disabled"
                               MouseLeave="WeekPeekOverlay_MouseLeave"
@@ -450,9 +472,10 @@
                                   IsTabStop="False">
                     <ItemsControl.ItemTemplate>
                         <DataTemplate>
-                            <Border Tag="Interactive"
+                            <Border x:Name="TodoRowBorder"
+                                    Tag="Interactive"
                                     Margin="2,2,6,3"
-                                    Padding="8,8"
+                                    Padding="0"
                                     AllowDrop="True"
                                     PreviewDragOver="TodoRow_PreviewDragOver"
                                     PreviewDrop="TodoRow_PreviewDrop"
@@ -485,6 +508,38 @@
                                     </ContextMenu>
                                 </Border.ContextMenu>
                                 <Grid>
+                                    <Border IsHitTestVisible="False"
+                                            CornerRadius="{Binding ItemCornerRadius, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}">
+                                        <Border.Style>
+                                            <Style TargetType="Border">
+                                                <Setter Property="Background" Value="Transparent"/>
+                                                <Style.Triggers>
+                                                    <MultiDataTrigger>
+                                                        <MultiDataTrigger.Conditions>
+                                                            <Condition Binding="{Binding IsMouseOver, ElementName=TodoRowBorder}" Value="True"/>
+                                                            <Condition Binding="{Binding IsDueSoon}" Value="False"/>
+                                                        </MultiDataTrigger.Conditions>
+                                                        <Setter Property="Background" Value="{DynamicResource CardInteractiveHoverBrush}"/>
+                                                    </MultiDataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Border.Style>
+                                    </Border>
+                                    <Border IsHitTestVisible="False"
+                                            BorderThickness="1.5"
+                                            CornerRadius="{Binding ItemCornerRadius, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}">
+                                        <Border.Style>
+                                            <Style TargetType="Border">
+                                                <Setter Property="BorderBrush" Value="Transparent"/>
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsKeyboardFocusWithin, ElementName=TodoRowBorder}" Value="True">
+                                                        <Setter Property="BorderBrush" Value="{DynamicResource CardFocusBorderBrush}"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Border.Style>
+                                    </Border>
+                                    <Grid Margin="{StaticResource CardSpace.RowPadding}">
                                     <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="Auto" MinWidth="27"/>
@@ -500,7 +555,7 @@
                                     <StackPanel Style="{StaticResource EventMarker}"
                                                 VerticalAlignment="Center"
                                                 Margin="4,0,6,0">
-                                        <Ellipse Width="7" Height="7" VerticalAlignment="Center" Fill="#FF3E77B5"/>
+                                        <Ellipse Width="7" Height="7" VerticalAlignment="Center" Fill="{DynamicResource CardMarkerAccentBrush}"/>
                                         <TextBlock Style="{StaticResource EventTimeText}"
                                                    FontSize="{DynamicResource TodoFont.ListItem}"
                                                    Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
@@ -508,7 +563,7 @@
                                     <StackPanel Style="{StaticResource CountdownMarker}"
                                                 VerticalAlignment="Center"
                                                 Margin="4,0,6,0">
-                        <Ellipse Width="6" Height="6" VerticalAlignment="Center" Fill="#FF3E77B5"/>
+                        <Ellipse Width="6" Height="6" VerticalAlignment="Center" Fill="{DynamicResource CardMarkerAccentBrush}"/>
                     </StackPanel>
                                     <TextBox Grid.Column="1"
                                              ContextMenu="{Binding ContextMenu, RelativeSource={RelativeSource AncestorType=Border}}"
@@ -553,7 +608,7 @@
                                         </ItemsControl.ItemsPanel>
                                         <ItemsControl.ItemTemplate>
                                             <DataTemplate>
-                                                <Border CornerRadius="8"
+                                                <Border CornerRadius="{StaticResource CardRadius.Item}"
                                                         Margin="0,0,6,3"
                                                         Padding="8,2"
                                                         Background="{DynamicResource WidgetSubtleControlBrush}"
@@ -578,7 +633,7 @@
                                                                 Height="22"
                                                                 Padding="0"
                                                                 VerticalAlignment="Center"
-                                                                FontSize="10"
+                                                                FontSize="{StaticResource CardFont.Caption}"
                                                                 ToolTip="移除关联"
                                                                 Foreground="{Binding WidgetSecondaryTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
                                                     </StackPanel>
@@ -618,10 +673,11 @@
                                             Foreground="{Binding WidgetSecondaryTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
                                             Background="Transparent"
                                             BorderThickness="0"
-                                            FontSize="16"
+                                            FontSize="{StaticResource CardFont.Subhead}"
                                             Content="×"
                                             ToolTip="删除待办"
                                             Click="DeleteTodo_Click"/>
+                                    </Grid>
                                 </Grid>
                             </Border>
                         </DataTemplate>
@@ -653,7 +709,7 @@
                                 Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
                                 Background="{DynamicResource WidgetControlBrush}"
                                 BorderBrush="{DynamicResource WidgetControlBorderBrush}"
-                                FontSize="13"
+                                FontSize="{StaticResource CardFont.Body}"
                                 Content="←"
                                 ToolTip="上一周"
                                 Click="WeekPrev_Click"/>
@@ -667,7 +723,7 @@
                                 Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
                                 Background="{DynamicResource WidgetControlBrush}"
                                 BorderBrush="{DynamicResource WidgetControlBorderBrush}"
-                                FontSize="11"
+                                FontSize="{StaticResource CardFont.Caption}"
                                 Click="WeekToday_Click"/>
                         <Button x:Name="WeekNextButton"
                                 DockPanel.Dock="Right"
@@ -678,7 +734,7 @@
                                 Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
                                 Background="{DynamicResource WidgetControlBrush}"
                                 BorderBrush="{DynamicResource WidgetControlBorderBrush}"
-                                FontSize="13"
+                                FontSize="{StaticResource CardFont.Body}"
                                 Content="→"
                                 ToolTip="下一周"
                                 Click="WeekNext_Click"/>
@@ -741,7 +797,7 @@
                                                 <DataTemplate>
                                                     <Border Margin="1,1,1,2"
                                                             Padding="5,3,5,3"
-                                                            CornerRadius="4"
+                                                            CornerRadius="{StaticResource CardRadius.Control}"
                                                             Background="Transparent"
                                                             Tag="Interactive"
                                                             MouseLeftButtonDown="WeekCellSurface_Click"
@@ -752,11 +808,11 @@
                                                                 <Setter Property="BorderThickness" Value="1"/>
                                                                 <Style.Triggers>
                                                                     <DataTrigger Binding="{Binding IsSelected}" Value="True">
-                                                                        <Setter Property="BorderBrush" Value="#FF7FA8D9"/>
+                                                                        <Setter Property="BorderBrush" Value="{DynamicResource CardSelectionBorderBrush}"/>
                                                                         <Setter Property="BorderThickness" Value="1.5"/>
                                                                     </DataTrigger>
                                                                     <DataTrigger Binding="{Binding IsToday}" Value="True">
-                                                                        <Setter Property="BorderBrush" Value="#D9A441"/>
+                                                                        <Setter Property="BorderBrush" Value="{DynamicResource CardTodayBorderBrush}"/>
                                                                         <Setter Property="BorderThickness" Value="1.5"/>
                                                                     </DataTrigger>
                                                                 </Style.Triggers>
@@ -765,7 +821,7 @@
                                                         <Grid>
                                                             <!-- Fill layer: every day reads as one card; weekdays carry
                                                                  the schedule so they stay at full strength, weekends fade. -->
-                                                            <Border CornerRadius="3" IsHitTestVisible="False">
+                                                            <Border CornerRadius="{StaticResource CardRadius.Control}" IsHitTestVisible="False">
                                                                 <Border.Style>
                                                                     <Style TargetType="Border">
                                                                         <Setter Property="Background" Value="{DynamicResource WidgetSubtleControlBrush}"/>
@@ -815,9 +871,9 @@
                                                                     <Border Grid.Column="1"
                                                                             VerticalAlignment="Top"
                                                                             Padding="5,0"
-                                                                            CornerRadius="7"
+                                                                            CornerRadius="{StaticResource CardRadius.Control}"
                                                                             Background="{DynamicResource WidgetItemSurfaceBrush}"
-                                                                            BorderBrush="#66FFFFFF"
+                                                                            BorderBrush="{DynamicResource CardRimSubtleBorderBrush}"
                                                                             BorderThickness="1"
                                                                             Cursor="Hand"
                                                                             Tag="Interactive"
@@ -876,23 +932,21 @@
                         <Border x:Name="WeekPeekPanel"
                                 SizeChanged="DayPeek_SizeChanged"
                                 Width="320"
-                                CornerRadius="8"
-                                Background="#FFF4F6FB"
-                                BorderBrush="#FFC9D2E6"
+                                CornerRadius="{StaticResource CardRadius.Item}"
+                                Background="{DynamicResource CardPopupSurfaceBrush}"
+                                BorderBrush="{DynamicResource CardPopupBorderBrush}"
                                 BorderThickness="1"
+                                Effect="{StaticResource CardPopupDropShadow}"
                                 MouseLeftButtonDown="WeekPeekPanel_Click">
-                            <Border.Effect>
-                                <DropShadowEffect BlurRadius="18" ShadowDepth="4" Opacity="0.25" Color="#FF3A4560"/>
-                            </Border.Effect>
                             <Grid>
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="Auto"/>
                                     <RowDefinition Height="*"/>
                                     <RowDefinition Height="Auto"/>
                                 </Grid.RowDefinitions>
-                                <Border Padding="12,8"
-                                        CornerRadius="8,8,0,0"
-                                        Background="#FFB8C4EA">
+                                <Border Padding="{StaticResource CardSpace.BodyPadding}"
+                                        CornerRadius="{StaticResource CardRadius.PeekHeader}"
+                                        Background="{DynamicResource CardPopupHeaderBrush}">
                                     <Grid>
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="*"/>
@@ -906,16 +960,16 @@
                                                     Padding="0"
                                                     Background="Transparent"
                                                     BorderThickness="0"
-                                                    FontSize="11"
+                                                    FontSize="{StaticResource CardFont.Caption}"
                                                     Content="◀"
-                                                    Foreground="#FF243146"
+                                                    Foreground="{DynamicResource CardPopupHeaderTextBrush}"
                                                     Click="WeekPeekPrevDay_Click"/>
                                             <TextBlock x:Name="WeekPeekTitle"
                                                        Margin="6,0"
                                                        VerticalAlignment="Center"
                                                        FontSize="{DynamicResource TodoFont.PeekTitle}"
                                                        FontWeight="SemiBold"
-                                                       Foreground="#FF243146"/>
+                                                       Foreground="{DynamicResource CardPopupHeaderTextBrush}"/>
                                             <Button x:Name="WeekPeekNextDay"
                                                     AutomationProperties.Name="后一天"
                                                     Width="22"
@@ -923,9 +977,9 @@
                                                     Padding="0"
                                                     Background="Transparent"
                                                     BorderThickness="0"
-                                                    FontSize="11"
+                                                    FontSize="{StaticResource CardFont.Caption}"
                                                     Content="▶"
-                                                    Foreground="#FF243146"
+                                                    Foreground="{DynamicResource CardPopupHeaderTextBrush}"
                                                     Click="WeekPeekNextDay_Click"/>
                                         </StackPanel>
                                         <Button Grid.Column="1"
@@ -936,9 +990,9 @@
                                                 VerticalAlignment="Center"
                                                 Background="Transparent"
                                                 BorderThickness="0"
-                                                FontSize="12"
+                                                FontSize="{StaticResource CardFont.Meta}"
                                                 Content="✕"
-                                                Foreground="#FF243146"
+                                                Foreground="{DynamicResource CardPopupHeaderTextBrush}"
                                                 Click="WeekPeekClose_Click"/>
                                     </Grid>
                                 </Border>
@@ -956,9 +1010,9 @@
                                 <Border Grid.Row="2"
                                         Margin="8,6,8,8"
                                         Padding="6,4"
-                                        CornerRadius="6"
-                                        Background="#FFFFFFFF"
-                                        BorderBrush="#FFD8DEEC"
+                                        CornerRadius="{StaticResource CardRadius.Control}"
+                                        Background="{DynamicResource CardPopupInputBrush}"
+                                        BorderBrush="{DynamicResource CardPopupInputBorderBrush}"
                                         BorderThickness="1">
                                     <TextBox x:Name="WeekPeekInput"
                                              AutomationProperties.Name="添加当日待办"
@@ -968,13 +1022,13 @@
                                              Padding="2,0"
                                              BorderThickness="0"
                                              Background="Transparent"
-                                             CaretBrush="#FF3E77B5"
+                                             CaretBrush="{DynamicResource CardMarkerAccentBrush}"
                                              TextWrapping="NoWrap"
                                              AcceptsReturn="False"
                                              KeyDown="WeekPeekInput_KeyDown">
                                         <TextBox.Style>
                                             <Style TargetType="TextBox">
-                                                <Setter Property="Foreground" Value="#FF22303E"/>
+                                                <Setter Property="Foreground" Value="{DynamicResource CardPopupTextBrush}"/>
                                             </Style>
                                         </TextBox.Style>
                                     </TextBox>
@@ -986,9 +1040,9 @@
                             Grid.Row="0" Grid.RowSpan="3"
                             Margin="0,40,0,0"
                             Padding="10,6"
-                            CornerRadius="6"
-                            Background="#FFDCE4F7"
-                            BorderBrush="#FFB8C4EA"
+                            CornerRadius="{StaticResource CardRadius.Control}"
+                            Background="{DynamicResource CardToastSurfaceBrush}"
+                            BorderBrush="{DynamicResource CardPopupHeaderBrush}"
                             BorderThickness="1"
                             VerticalAlignment="Top"
                             HorizontalAlignment="Center"
@@ -1001,17 +1055,17 @@
                             <TextBlock x:Name="MoveToastText"
                                        VerticalAlignment="Center"
                                        FontSize="{DynamicResource TodoFont.Status}"
-                                       Foreground="#FF243146"
+                                       Foreground="{DynamicResource CardPopupHeaderTextBrush}"
                                        TextWrapping="Wrap"/>
                             <Button Grid.Column="1"
                                     AutomationProperties.Name="撤销移动"
                                     Margin="10,0,0,0"
                                     Padding="6,2"
                                     Content="撤销"
-                                    FontSize="11"
+                                    FontSize="{StaticResource CardFont.Caption}"
                                     Background="Transparent"
                                     BorderThickness="0"
-                                    Foreground="#FF243146"
+                                    Foreground="{DynamicResource CardPopupHeaderTextBrush}"
                                     Click="ToastUndo_Click"/>
                         </Grid>
                     </Border>
@@ -1019,7 +1073,8 @@
                     </Grid>
                 </Grid>
 
-            <Grid Grid.Row="2" Margin="17,0,17,7">
+                <Border Height="44" Padding="17,0,17,7">
+                    <Grid>
                 <TextBlock x:Name="SummaryText"
                            AutomationProperties.LiveSetting="Polite"
                            VerticalAlignment="Center"
@@ -1043,29 +1098,31 @@
                     <Button x:Name="ClearCompletedButton"
                             AutomationProperties.Name="清理已完成的待办"
                             Margin="0,0,6,0"
-                            Padding="9,3"
+                            Padding="{StaticResource CardSpace.CompactPadding}"
                             Content="清理已完成"
                             Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
                             Background="{DynamicResource WidgetControlBrush}"
                             BorderBrush="{DynamicResource WidgetControlBorderBrush}"
-                            FontSize="11"
+                            FontSize="{StaticResource CardFont.Caption}"
                             Click="ClearCompleted_Click"/>
                     <Button x:Name="CompletedVisibilityButton"
                             AutomationProperties.Name="切换已完成待办的显示状态"
-                            Padding="9,3"
+                            Padding="{StaticResource CardSpace.CompactPadding}"
                             Content="隐藏已完成"
                             Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
                             Background="{DynamicResource WidgetControlBrush}"
                             BorderBrush="{DynamicResource WidgetControlBorderBrush}"
-                            FontSize="11"
+                            FontSize="{StaticResource CardFont.Caption}"
                             Click="ToggleCompletedVisibility_Click"/>
-                </StackPanel>
-            </Grid>
+                    </StackPanel>
+                    </Grid>
+                </Border>
+            </local:CompactFooterPanel>
         </Grid>
         <Border x:Name="Surface"
                 Background="Transparent"
-                BorderBrush="Transparent"
-                BorderThickness="0"
+                BorderBrush="{Binding WidgetBorderBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
+                BorderThickness="{Binding WidgetBorderThickness, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
                 CornerRadius="{Binding SurfaceCornerRadius, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
                 IsHitTestVisible="False"/>
     </Grid>

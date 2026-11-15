@@ -1390,11 +1390,12 @@
                                                 <Button Margin="6,0,0,0" Content="蓝" Tag="#A0B4E1" AutomationProperties.Name="玻璃颜色设为蓝色" Click="QuickBackgroundColor_Click"/>
                                             </StackPanel>
                                         </local:SettingsRow>
-                                        <!-- 只有待办卡片有标题栏；其余信息卡是裸文字表面，
+                                        <!-- 只有待办卡片有标题色标；其余信息卡是裸文字表面，
                                              隐藏在这里调不出来的选项。 -->
                                         <StackPanel x:Name="SelectedComponentHeaderRows"
                                                     Visibility="Collapsed">
-                                            <local:SettingsRow Header="标题栏颜色">
+                                            <local:SettingsRow Header="标题色标"
+                                                               local:SettingsSearch.Keywords="标题栏颜色 标题栏">
                                                 <StackPanel Orientation="Horizontal">
                                                     <Border x:Name="SelectedComponentHeaderChip"
                                                             Width="30"
@@ -1406,22 +1407,23 @@
                                                     <TextBox x:Name="SelectedComponentHeaderColorEditor"
                                                              Width="110"
                                                              Margin="8,0,0,0"
-                                                             AutomationProperties.Name="标题栏颜色"
+                                                             AutomationProperties.Name="标题色标"
                                                              TextChanged="ComponentEditor_TextChanged"/>
                                                     <Button Margin="8,0,0,0"
                                                             Content="选择颜色…"
                                                             Tag="Header"
-                                                            AutomationProperties.Name="选择卡片标题栏颜色"
+                                                            AutomationProperties.Name="选择卡片标题色标"
                                                             Click="ComponentColorPicker_Click"/>
-                                                    <Button Margin="6,0,0,0" Content="白" Tag="#FFFFFF" AutomationProperties.Name="标题栏颜色设为白色" Click="QuickHeaderColor_Click"/>
-                                                    <Button Margin="6,0,0,0" Content="蓝" Tag="#A0B4E1" AutomationProperties.Name="标题栏颜色设为冰蓝" Click="QuickHeaderColor_Click"/>
+                                                    <Button Margin="6,0,0,0" Content="白" Tag="#FFFFFF" AutomationProperties.Name="标题色标设为白色" Click="QuickHeaderColor_Click"/>
+                                                    <Button Margin="6,0,0,0" Content="蓝" Tag="#5B9BD5" AutomationProperties.Name="标题色标设为冰蓝" Click="QuickHeaderColor_Click"/>
                                                 </StackPanel>
                                             </local:SettingsRow>
-                                            <local:SettingsRow Header="标题栏不透明度">
+                                            <local:SettingsRow Header="色标不透明度"
+                                                               local:SettingsSearch.Keywords="标题栏不透明度 标题栏">
                                                 <StackPanel Orientation="Horizontal">
                                                     <Slider x:Name="SelectedComponentHeaderOpacitySlider"
                                                             Width="190"
-                                                            AutomationProperties.Name="标题栏不透明度"
+                                                            AutomationProperties.Name="色标不透明度"
                                                             Minimum="0"
                                                             Maximum="1"
                                                             TickFrequency="0.04"

@@ -58,8 +58,8 @@ public class WidgetWindowBase : Window
     private const double SnapReachDip = 64d;
     private const int DragStartPixels = 3;
     private const double ResizeBandDip = 8d;
-    private const double DefaultHeaderCornerRadius = 9.2d;
-    private const double DefaultItemCornerRadius = 10d;
+    private const double DefaultHeaderCornerRadius = 8d;
+    private const double DefaultItemCornerRadius = 8d;
 
     private static readonly DependencyPropertyKey SurfaceCornerRadiusPropertyKey =
         DependencyProperty.RegisterReadOnly(
@@ -133,6 +133,46 @@ public class WidgetWindowBase : Window
 
     public static readonly DependencyProperty WidgetSecondaryTextBrushProperty =
         WidgetSecondaryTextBrushPropertyKey.DependencyProperty;
+
+    private static readonly DependencyPropertyKey WidgetDisabledTextBrushPropertyKey =
+        DependencyProperty.RegisterReadOnly(
+            nameof(WidgetDisabledTextBrush),
+            typeof(Brush),
+            typeof(WidgetWindowBase),
+            new FrameworkPropertyMetadata(Brushes.Gray));
+
+    public static readonly DependencyProperty WidgetDisabledTextBrushProperty =
+        WidgetDisabledTextBrushPropertyKey.DependencyProperty;
+
+    private static readonly DependencyPropertyKey WidgetBorderBrushPropertyKey =
+        DependencyProperty.RegisterReadOnly(
+            nameof(WidgetBorderBrush),
+            typeof(Brush),
+            typeof(WidgetWindowBase),
+            new FrameworkPropertyMetadata(Brushes.Transparent));
+
+    public static readonly DependencyProperty WidgetBorderBrushProperty =
+        WidgetBorderBrushPropertyKey.DependencyProperty;
+
+    private static readonly DependencyPropertyKey WidgetBorderThicknessPropertyKey =
+        DependencyProperty.RegisterReadOnly(
+            nameof(WidgetBorderThickness),
+            typeof(Thickness),
+            typeof(WidgetWindowBase),
+            new FrameworkPropertyMetadata(new Thickness(0)));
+
+    public static readonly DependencyProperty WidgetBorderThicknessProperty =
+        WidgetBorderThicknessPropertyKey.DependencyProperty;
+
+    private static readonly DependencyPropertyKey WidgetDividerBrushPropertyKey =
+        DependencyProperty.RegisterReadOnly(
+            nameof(WidgetDividerBrush),
+            typeof(Brush),
+            typeof(WidgetWindowBase),
+            new FrameworkPropertyMetadata(Brushes.Transparent));
+
+    public static readonly DependencyProperty WidgetDividerBrushProperty =
+        WidgetDividerBrushPropertyKey.DependencyProperty;
 
     private static readonly DependencyPropertyKey WidgetTitleFontFamilyPropertyKey =
         DependencyProperty.RegisterReadOnly(
@@ -234,6 +274,12 @@ public class WidgetWindowBase : Window
     // The arrangement of monitors the spot above belongs to; another arrangement drops it.
     private string? _displacedLayout;
     private bool _isApplyingReservedEdges;
+    private DesktopStyleState _currentStyle = new();
+    private Brush? _managedItemSurfaceBrush;
+    private Brush? _managedSubtleControlBrush;
+    private Brush? _managedControlBrush;
+
+    protected DesktopStyleState CurrentStyle => _currentStyle;
 
     public WidgetWindowBase()
     {
@@ -419,6 +465,18 @@ public class WidgetWindowBase : Window
     public Brush WidgetSecondaryTextBrush =>
         (Brush)GetValue(WidgetSecondaryTextBrushProperty);
 
+    public Brush WidgetDisabledTextBrush =>
+        (Brush)GetValue(WidgetDisabledTextBrushProperty);
+
+    public Brush WidgetBorderBrush =>
+        (Brush)GetValue(WidgetBorderBrushProperty);
+
+    public Thickness WidgetBorderThickness =>
+        (Thickness)GetValue(WidgetBorderThicknessProperty);
+
+    public Brush WidgetDividerBrush =>
+        (Brush)GetValue(WidgetDividerBrushProperty);
+
     public FontFamily WidgetTitleFontFamily =>
         (FontFamily)GetValue(WidgetTitleFontFamilyProperty);
 
@@ -559,22 +617,61 @@ public class WidgetWindowBase : Window
         }
     }
 
+    internal static (Brush Brush, Thickness Thickness) ResolveSurfaceBorder(
+        WidgetAppearanceState appearance) =>
+        ResolveSurfaceBorder(appearance.BackgroundColor, appearance.BackgroundOpacity);
+
+    internal static (Brush Brush, Thickness Thickness) ResolveSurfaceBorder(
+        string backgroundColor,
+        double backgroundOpacity)
+    {
+        if (AccessibilityThemeManager.IsHighContrastEnabled)
+        {
+            return (SystemColors.WindowTextBrush, new Thickness(1));
+        }
+
+        if (backgroundOpacity <= WidgetAppearanceRules.MinimumBackgroundOpacity + 0.005d)
+        {
+            return (Brushes.Transparent, new Thickness(0));
+        }
+
+        var isDark = ColorContrastRules.RelativeLuminance(backgroundColor) < 0.25d;
+        var top = (Color)System.Windows.Media.ColorConverter.ConvertFromString(isDark ? "#38FFFFFF" : "#99FFFFFF")!;
+        var bottom = (Color)System.Windows.Media.ColorConverter.ConvertFromString(isDark ? "#18FFFFFF" : "#4DFFFFFF")!;
+        var brush = new LinearGradientBrush(top, bottom, new Point(0, 0), new Point(0, 1));
+        brush.Freeze();
+        return (brush, new Thickness(1));
+    }
+
     private void RefreshAppearanceBrushes()
     {
         if (AccessibilityThemeManager.IsHighContrastEnabled)
         {
+            SetValue(WidgetBorderBrushPropertyKey, SystemColors.WindowTextBrush);
+            SetValue(WidgetBorderThicknessPropertyKey, new Thickness(1));
             SetValue(WidgetBackgroundBrushPropertyKey, SystemColors.WindowBrush);
             SetValue(WidgetHeaderBrushPropertyKey, SystemColors.ControlBrush);
             SetValue(WidgetTextBrushPropertyKey, SystemColors.WindowTextBrush);
             SetValue(WidgetSecondaryTextBrushPropertyKey, SystemColors.WindowTextBrush);
+            SetValue(WidgetDisabledTextBrushPropertyKey, SystemColors.WindowTextBrush);
+            SetValue(WidgetDividerBrushPropertyKey, SystemColors.WindowTextBrush);
+            ClearManagedSurfaceOverrides();
+            ApplyEffectiveCardShadow(CardShadow.None);
+            OnAppearanceRefreshed();
             return;
         }
 
+        var rendered = DesktopStyleRules.ResolveRenderedCard(WidgetAppearance, _currentStyle);
+        var (borderBrush, borderThickness) = ResolveSurfaceBorder(
+            rendered.BackgroundColor,
+            rendered.BackgroundOpacity);
+        SetValue(WidgetBorderBrushPropertyKey, borderBrush);
+        SetValue(WidgetBorderThicknessPropertyKey, borderThickness);
         SetValue(
             WidgetBackgroundBrushPropertyKey,
             CreateAppearanceBrush(
-                WidgetAppearance.BackgroundColor,
-                WidgetAppearance.BackgroundOpacity));
+                rendered.BackgroundColor,
+                rendered.BackgroundOpacity));
         SetValue(
             WidgetHeaderBrushPropertyKey,
             CreateAppearanceBrush(
@@ -585,7 +682,101 @@ public class WidgetWindowBase : Window
             CreateAppearanceBrush(WidgetAppearance.TextColor, 1d));
         SetValue(
             WidgetSecondaryTextBrushPropertyKey,
-            CreateAppearanceBrush(WidgetAppearance.TextColor, 0.68d));
+            CreateAppearanceBrush(WidgetAppearance.TextColor, ColorContrastRules.SecondaryTextAlpha));
+        SetValue(
+            WidgetDisabledTextBrushPropertyKey,
+            CreateAppearanceBrush(WidgetAppearance.TextColor, ColorContrastRules.DisabledTextAlpha));
+        var isClear = rendered.BackgroundOpacity <= WidgetAppearanceRules.MinimumBackgroundOpacity + 0.005d;
+        SetValue(
+            WidgetDividerBrushPropertyKey,
+            isClear ? Brushes.Transparent : CreateAppearanceBrush(WidgetAppearance.TextColor, 0.14d));
+        ApplyRenderedSurfaceOverrides(rendered);
+        ApplyEffectiveCardShadow(rendered.EffectiveShadow);
+        OnAppearanceRefreshed();
+    }
+
+    protected void ApplyRenderedSurfaceOverrides(RenderedCardLook rendered)
+    {
+        if (AccessibilityThemeManager.IsHighContrastEnabled)
+        {
+            ClearManagedSurfaceOverrides();
+            return;
+        }
+
+        var global = DesktopStyleRules.ResolveRenderedCard(_currentStyle);
+        RefreshManagedBrushOverride(
+            ref _managedItemSurfaceBrush,
+            "WidgetItemSurfaceBrush",
+            rendered.ItemSurfaceColor,
+            global.ItemSurfaceColor);
+        RefreshManagedBrushOverride(
+            ref _managedSubtleControlBrush,
+            "WidgetSubtleControlBrush",
+            rendered.SubtleControlColor,
+            global.SubtleControlColor);
+        RefreshManagedBrushOverride(
+            ref _managedControlBrush,
+            "WidgetControlBrush",
+            rendered.ControlColor,
+            global.ControlColor);
+    }
+
+    private void RefreshManagedBrushOverride(
+        ref Brush? managedBrush,
+        string resourceKey,
+        string resolvedColor,
+        string globalColor)
+    {
+        if (Resources.Contains(resourceKey)
+            && !ReferenceEquals(Resources[resourceKey], managedBrush))
+        {
+            return;
+        }
+
+        var parsedResolved = (Color)System.Windows.Media.ColorConverter.ConvertFromString(resolvedColor)!;
+        var matchesAppResource =
+            System.Windows.Application.Current?.TryFindResource(resourceKey) is SolidColorBrush appBrush
+            && appBrush.Color == parsedResolved;
+
+        if (string.Equals(resolvedColor, globalColor, StringComparison.OrdinalIgnoreCase)
+            && matchesAppResource)
+        {
+            ClearManagedBrushOverride(ref managedBrush, resourceKey);
+            return;
+        }
+
+        managedBrush = CreateHexBrush(resolvedColor);
+        Resources[resourceKey] = managedBrush;
+    }
+
+    private void ClearManagedSurfaceOverrides()
+    {
+        ClearManagedBrushOverride(ref _managedItemSurfaceBrush, "WidgetItemSurfaceBrush");
+        ClearManagedBrushOverride(ref _managedSubtleControlBrush, "WidgetSubtleControlBrush");
+        ClearManagedBrushOverride(ref _managedControlBrush, "WidgetControlBrush");
+    }
+
+    private void ClearManagedBrushOverride(ref Brush? managedBrush, string resourceKey)
+    {
+        if (managedBrush is not null
+            && Resources.Contains(resourceKey)
+            && ReferenceEquals(Resources[resourceKey], managedBrush))
+        {
+            Resources.Remove(resourceKey);
+        }
+        managedBrush = null;
+    }
+
+    private static Brush CreateHexBrush(string value)
+    {
+        var color = (Color)System.Windows.Media.ColorConverter.ConvertFromString(value)!;
+        var brush = new SolidColorBrush(color);
+        brush.Freeze();
+        return brush;
+    }
+
+    protected virtual void OnAppearanceRefreshed()
+    {
     }
 
     private void AccessibilityThemeManager_HighContrastChanged(object? sender, EventArgs e)
@@ -952,18 +1143,19 @@ public class WidgetWindowBase : Window
     }
 
     /// <summary>
-    /// Applies the desktop-wide card shadow. Each card is its own window clipped to its
-    /// rounded shape, so the shadow gives the text and icons inside the card depth rather
-    /// than drawing outside the card edge.
+    /// Applies the desktop-wide card shadow (and near-clear readability shadow when light text
+    /// sits on near-clear light glass). Each card is its own window clipped to its rounded
+    /// shape, so the shadow gives the text and icons inside the card depth rather than drawing
+    /// outside the card edge.
     /// </summary>
     internal void ApplyStyle(DesktopStyleState style)
     {
-        if (Content is not UIElement content)
-        {
-            return;
-        }
+        _currentStyle = style.Clone();
+        RefreshAppearanceBrushes();
+    }
 
-        content.Effect = style.CardShadow switch
+    internal static System.Windows.Media.Effects.DropShadowEffect? CreateCardShadowEffect(CardShadow shadow) =>
+        shadow switch
         {
             CardShadow.Soft => new System.Windows.Media.Effects.DropShadowEffect
             {
@@ -981,6 +1173,17 @@ public class WidgetWindowBase : Window
             },
             _ => null
         };
+
+    protected void ApplyEffectiveCardShadow(CardShadow shadow)
+    {
+        if (Content is not UIElement content)
+        {
+            return;
+        }
+
+        content.Effect = AccessibilityThemeManager.IsHighContrastEnabled
+            ? null
+            : CreateCardShadowEffect(shadow);
     }
 
     private void UpdateLayeredClip()

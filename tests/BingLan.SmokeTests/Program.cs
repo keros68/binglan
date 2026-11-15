@@ -79,6 +79,12 @@ Run("空状态文件从备份恢复且不覆盖备份", CleanDesktopTests.TestEm
 Run("整体风格迁移与取值范围", ThemeStyleTests.TestStyleMigrationAndLimits);
 Run("卡片外观配色与居中时钟布局", ThemeStyleTests.TestGlassAndCenterClockPreset);
 Run("内置卡片是否跟随全局外观", ThemeStyleTests.TestComponentLookFollowsSharedMaterial);
+Run("内置材质在亮暗壁纸上的墨色对比度", ThemeStyleTests.TestBuiltInMaterialReadabilityContrast);
+Run("切换全局材质时保留自定义文字颜色", ThemeStyleTests.TestMaterialSwitchPreservesCustomTextColor);
+Run("天气矢量图标覆盖全部 WMO 描述", ThemeStyleTests.TestWeatherIconMapping);
+Run("统一圆角与标题色标默认值", ThemeStyleTests.TestDefaultRadiusAndHeaderTagDefaults);
+Run("Schema v46 旧默认值精确迁移", ThemeStyleTests.TestSchemaV46LegacyDefaultsMigration);
+Run("Dock 不透明度对照与迁移后一致性", ThemeStyleTests.TestDockOpacityFormulaTable);
 Run("四种竖屏预设边界、最小尺寸与横屏坐标", ThemeStyleTests.TestPortraitPresets);
 Run("任务栏只在两角唤出时底边细条的位置", ThemeStyleTests.TestTaskbarCornerStrip);
 Run("主题包整体风格与自定义图标往返", ThemeStyleTests.TestStyleAndIconsRoundTrip);
@@ -1385,8 +1391,8 @@ static void TestCornerRadiusMigration()
     Assert(directBox.CornerRadius == 32, "过大圆角应钳制为 32");
     directTodo.CornerRadius = double.NaN;
     directBox.CornerRadius = double.PositiveInfinity;
-    Assert(directTodo.CornerRadius == 15.5, "NaN 圆角应恢复默认值");
-    Assert(directBox.CornerRadius == 15.5, "无限圆角应恢复默认值");
+    Assert(directTodo.CornerRadius == 12, "NaN 圆角应恢复默认值");
+    Assert(directBox.CornerRadius == 12, "无限圆角应恢复默认值");
 
     var temp = Path.Combine(Path.GetTempPath(), $"BingLan-migration-{Guid.NewGuid():N}");
     Directory.CreateDirectory(temp);
@@ -1418,8 +1424,8 @@ static void TestCornerRadiusMigration()
         var migrated = store.Load();
         Assert(migrated.SchemaVersion == AppState.CurrentSchemaVersion,
             "v1 状态未迁移到当前版本");
-        Assert(migrated.TodoWidgets.Single().CornerRadius == 15.5, "旧待办未获得默认圆角");
-        Assert(migrated.FileBoxes.Single().CornerRadius == 15.5, "旧文件盒未获得默认圆角");
+        Assert(migrated.TodoWidgets.Single().CornerRadius == 12, "旧待办未获得默认圆角");
+        Assert(migrated.FileBoxes.Single().CornerRadius == 12, "旧文件盒未获得默认圆角");
         Assert(
             migrated.TodoWidgets.Single().Placement.Left == 92 &&
             migrated.TodoWidgets.Single().Placement.Width == 286 &&
@@ -1497,10 +1503,10 @@ static void TestAppearanceMigration()
 {
     var appearance = new WidgetAppearanceState();
     Assert(appearance.BackgroundColor == "#FFFFFF", "主体颜色默认值错误");
-    Assert(appearance.BackgroundOpacity == 0.32, "主体透明度默认值错误");
-    Assert(appearance.HeaderColor == "#A0B4E1", "标题栏颜色默认值错误");
+    Assert(appearance.BackgroundOpacity == 0.66, "主体透明度默认值错误");
+    Assert(appearance.HeaderColor == "#5B9BD5", "标题栏颜色默认值错误");
     Assert(appearance.HeaderOpacity == 0.97, "标题栏透明度默认值错误");
-    Assert(appearance.TextColor == "#243146", "卡片文字颜色默认值错误");
+    Assert(appearance.TextColor == "#1E2B3C", "卡片文字颜色默认值错误");
     Assert(appearance.TitleFontFamily == "Microsoft YaHei UI", "标题字体默认值错误");
     Assert(appearance.TitleFontBold, "标题默认应为粗体");
     Assert(!appearance.TitleFontItalic, "标题默认不应为斜体");
@@ -1516,8 +1522,8 @@ static void TestAppearanceMigration()
     appearance.HeaderColor = "#GGGGGG";
     appearance.TextColor = "black";
     Assert(appearance.BackgroundColor == "#FFFFFF", "非法主体颜色未回退默认值");
-    Assert(appearance.HeaderColor == "#A0B4E1", "非法标题栏颜色未回退默认值");
-    Assert(appearance.TextColor == "#243146", "非法文字颜色未回退默认值");
+    Assert(appearance.HeaderColor == "#5B9BD5", "非法标题栏颜色未回退默认值");
+    Assert(appearance.TextColor == "#1E2B3C", "非法文字颜色未回退默认值");
 
     appearance.BackgroundOpacity = -0.1;
     appearance.HeaderOpacity = 1.1;
@@ -1527,7 +1533,7 @@ static void TestAppearanceMigration()
     Assert(appearance.HeaderOpacity == 1, "标题栏透明度未钳制到 1");
     appearance.BackgroundOpacity = double.NaN;
     appearance.HeaderOpacity = double.PositiveInfinity;
-    Assert(appearance.BackgroundOpacity == 0.32, "NaN 主体透明度未回退默认值");
+    Assert(appearance.BackgroundOpacity == 0.66, "NaN 主体透明度未回退默认值");
     Assert(appearance.HeaderOpacity == 0.97, "无限标题栏透明度未回退默认值");
 
     appearance.TitleFontFamily = "  Segoe UI Variable Display  ";
@@ -1571,20 +1577,20 @@ static void TestAppearanceMigration()
             "v3 状态未迁移到当前版本");
         Assert(
             todo.Appearance.BackgroundColor == "#FFFFFF" &&
-            todo.Appearance.BackgroundOpacity == 0.32 &&
-            todo.Appearance.HeaderColor == "#A0B4E1" &&
+            todo.Appearance.BackgroundOpacity == 0.66 &&
+            todo.Appearance.HeaderColor == "#5B9BD5" &&
             todo.Appearance.HeaderOpacity == 0.97 &&
-            todo.Appearance.TextColor == "#243146" &&
+            todo.Appearance.TextColor == "#1E2B3C" &&
             todo.Appearance.TitleFontFamily == "Microsoft YaHei UI" &&
             todo.Appearance.TitleFontBold &&
             !todo.Appearance.TitleFontItalic,
             "v3 待办未获得 Pogget 材质默认值");
         Assert(
             box.Appearance.BackgroundColor == "#FFFFFF" &&
-            box.Appearance.BackgroundOpacity == 0.32 &&
-            box.Appearance.HeaderColor == "#A0B4E1" &&
+            box.Appearance.BackgroundOpacity == 0.66 &&
+            box.Appearance.HeaderColor == "#5B9BD5" &&
             box.Appearance.HeaderOpacity == 0.97 &&
-            box.Appearance.TextColor == "#243146" &&
+            box.Appearance.TextColor == "#1E2B3C" &&
             box.Appearance.TitleFontFamily == "Microsoft YaHei UI" &&
             box.Appearance.TitleFontBold &&
             !box.Appearance.TitleFontItalic,

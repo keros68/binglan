@@ -573,6 +573,8 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         panel.Resources["WidgetDefaultButtonBorderBrush"] = FindResource("SettingsButtonBorderBrush");
         panel.Resources["WidgetButtonHoverBrush"] = FindResource("SettingsControlHoverBrush");
         panel.Resources["WidgetButtonPressedBrush"] = FindResource("SettingsPreviewBrush");
+        panel.Resources["CardInteractiveHoverBrush"] = FindResource("SettingsControlHoverBrush");
+        panel.Resources["CardInteractivePressedBrush"] = FindResource("SettingsPreviewBrush");
         timeBox.TextChanged += (_, _) => error.Visibility = Visibility.Collapsed;
         panel.Children.Add(new System.Windows.Controls.TextBlock
         {
@@ -953,7 +955,7 @@ public partial class TodoWidgetWindow : WidgetWindowBase
     }
 
     // 与分组盒一致：收起成一条标题栏，展开时回到记住的高度。
-    private const double CollapsedHeight = 72d;
+    private const double CollapsedHeight = 48d;
 
     private void CollapseButton_Click(object sender, RoutedEventArgs e)
     {
@@ -979,6 +981,7 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         {
             element.Visibility = body;
         }
+        TitleDivider.Visibility = body;
         // 标题条上只留标题、收起按钮和设置入口：切换视图和新增都要在展开的正文上才有意义。
         ViewModeButton.Visibility = body;
         AddTodoButton.Visibility = body;
@@ -2401,6 +2404,7 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         SchedulePruneBlankItems();
         ListHost.Visibility = State.WeeklyView ? Visibility.Collapsed : Visibility.Visible;
         WeekHost.Visibility = State.WeeklyView ? Visibility.Visible : Visibility.Collapsed;
+        TodoBodyFooterPanel.FillBody = State.WeeklyView;
         // 按钮标出当前所处视图，点击才切换到另一个；文案跟状态走，不显示切换目标。
         ViewModeButton.Content = State.WeeklyView ? "周历" : "列表";
         ViewModeButton.ToolTip = State.WeeklyView ? "切换到今日列表" : "切换到周历";

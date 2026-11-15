@@ -128,7 +128,7 @@ internal static class WidgetWindowTests
             AssertEqual("北京", Require<TextBlock>(window, "WeatherCityText").Text, "天气城市");
             AssertEqual("局部多云", Require<TextBlock>(window, "WeatherConditionText").Text, "天气现象");
             Assert(
-                Require<TextBlock>(window, "WeatherRangeText").Text.Contains("湿度 62%"),
+                Require<TextBlock>(window, "WeatherHumidityText").Text.Contains("湿度 62%"),
                 "湿度显示");
             Assert(
                 Require<TextBlock>(window, "WeatherUpdatedText").Text.Contains("更新于"),
@@ -259,7 +259,22 @@ internal static class WidgetWindowTests
                 () => Require<TextBlock>(window, "WeatherTempText").Text.Contains("31.5"),
                 TimeSpan.FromSeconds(5),
                 "完整天气数据写入窗口");
+            var temp = Require<TextBlock>(window, "WeatherTempText");
+            var detailsPanel = Require<WholeCellRowPanel>(window, "WeatherDetailsPanel");
+            var high = Require<TextBlock>(window, "WeatherHighText");
+            var low = Require<TextBlock>(window, "WeatherLowText");
+            var humidity = Require<TextBlock>(window, "WeatherHumidityText");
             var updated = Require<TextBlock>(window, "WeatherUpdatedText");
+            Assert(detailsPanel.IsVisible, "天气细节行默认应可见");
+            Assert(high.IsVisible && high.ActualWidth > 0 && high.Text.Contains("34.2"), "最高温度格应完整显示");
+            Assert(low.IsVisible && low.ActualWidth > 0 && low.Text.Contains("24.8"), "最低温度格应完整显示");
+            Assert(humidity.IsVisible && humidity.ActualWidth > 0 && humidity.Text.Contains("62%"),
+                "默认宽度下湿度格应完整显示，不整格省略");
+            var tempBottom = temp.TranslatePoint(new Point(0d, temp.ActualHeight), window).Y;
+            var detailsTop = detailsPanel.TranslatePoint(new Point(0d, 0d), window).Y;
+            var humidityRight = humidity.TranslatePoint(new Point(humidity.ActualWidth, 0d), window).X;
+            Assert(detailsTop >= tempBottom - 2d, "天气高低温与湿度行应位于温度下方并占满宽度");
+            Assert(humidityRight <= window.ActualWidth - 4d, "湿度格应落在默认卡片宽度内");
             Assert(updated.Text.Contains("更新于"), "天气更新时间常驻显示");
             Assert(window.FindName("WeatherSourceText") is null, "天气卡片不包含供应商说明");
             var detailsBottom = updated
@@ -569,9 +584,9 @@ internal static class WidgetWindowTests
         try
         {
             AssertEqual(19.5, Require<TextBlock>(window, "DateText").FontSize, "日期跟随时间组件的缩放");
-            AssertEqual(15d, Require<TextBlock>(window, "CpuLabelText").FontSize, "CPU 标签跟随缩放");
-            AssertEqual(15d, Require<TextBlock>(window, "RamLabelText").FontSize, "RAM 标签跟随缩放");
-            AssertEqual(15d, Require<TextBlock>(window, "NetworkLabelText").FontSize, "NETWORK 标签跟随缩放");
+            AssertEqual(16.5, Require<TextBlock>(window, "CpuLabelText").FontSize, "CPU 标签跟随缩放");
+            AssertEqual(16.5, Require<TextBlock>(window, "RamLabelText").FontSize, "RAM 标签跟随缩放");
+            AssertEqual(16.5, Require<TextBlock>(window, "NetworkLabelText").FontSize, "NETWORK 标签跟随缩放");
             AssertEqual(18d, Require<TextBlock>(window, "UploadLabelText").FontSize, "UP 标签跟随缩放");
             AssertEqual(18d, Require<TextBlock>(window, "DownloadLabelText").FontSize, "DN 标签跟随缩放");
             AssertEqual(16.5, Require<TextBlock>(window, "WeatherStatusText").FontSize, "天气状态文字跟随缩放");
