@@ -58,6 +58,8 @@ Run("隐藏的应用不出现在 Dock 且可恢复", TestDockHiddenApps);
 Run("搜索会话持有前台时 Dock 评估借用前原窗口", TestDockForegroundRules);
 Run("文件夹与文件固定项：识别、去重、不匹配运行窗口", TestPathPins);
 Run("文件夹与文件固定项保存往返且不进入主题导出", TestPathPinsPersistAndStayOutOfThemes);
+Run("拖拽文件到应用判定是否直接打开及收集有效目标", TestDockFileDropCanOpenFilesAndDecide);
+Run("拖拽文件命令行参数转义与悬停 500ms 唤起状态机", TestDockFileDropLaunchArgumentsAndHoverState);
 
 if (failures.Count > 0)
 {
@@ -1629,6 +1631,208 @@ static void TestDockForegroundRules()
     Assert(
         DockForegroundRules.EffectiveForeground(50, 40, 40) == 50,
         "会话从桌面自身开始（借用者即顶栏）时不替换");
+}
+
+static void TestDockFileDropCanOpenFilesAndDecide()
+{
+    var temp = Path.Combine(Path.GetTempPath(), $"BingLan-dock-drop-{Guid.NewGuid():N}");
+    Directory.CreateDirectory(temp);
+    try
+    {
+        var sampleFile = Path.Combine(temp, "notes.txt");
+        File.WriteAllText(sampleFile, "hello");
+
+        var pinnedExe = new DockPinnedApp
+        {
+            DisplayName = "Photoshop",
+            ExecutablePath = @"C:\Apps\Photoshop.exe"
+        };
+        var pinnedAumid = new DockPinnedApp
+        {
+            DisplayName = "Photos",
+            AppUserModelId = "Microsoft.Windows.Photos_8wekyb3d8bbwe!App"
+        };
+        var pinnedFrameHostOnly = new DockPinnedApp
+        {
+            DisplayName = "宿主",
+            ExecutablePath = @"C:\Windows\System32\ApplicationFrameHost.exe"
+        };
+        var pinnedFolder = DockPinRules.CreateFromPath(temp, "临时目录")!;
+        var pinnedFile = DockPinRules.CreateFromPath(sampleFile, "笔记")!;
+
+        var runningExeWindow = Window(10, 100, "画布", null, @"C:\Apps\Gimp.exe");
+        var runningUwpWindow = Window(
+            11,
+            200,
+            "计算器",
+            "Microsoft.WindowsCalculator_8wekyb3d8bbwe!App",
+            @"C:\Windows\System32\ApplicationFrameHost.exe");
+        var bareFrameHostWindow = Window(
+            12,
+            300,
+            "未知宿主",
+            null,
+            @"C:\Windows\System32\ApplicationFrameHost.exe");
+
+        var items = DockItemComposer.Compose(
+            [pinnedExe, pinnedAumid, pinnedFolder, pinnedFile],
+            WindowGrouping.Group([runningExeWindow, runningUwpWindow]));
+
+        var psItem = items[0];
+        var photosItem = items[1];
+        var folderItem = items[2];
+        var fileItem = items[3];
+        var gimpItem = items[4];
+        var calcItem = items[5];
+        var barePinnedHostItem = DockItemComposer.Compose([pinnedFrameHostOnly], [])[0];
+        var bareRunningHostItem = DockItemComposer.Compose(
+            [],
+            WindowGrouping.Group([bareFrameHostWindow]))[0];
+
+        Assert(!DockFileDropRules.CanOpenFiles(null), "空目标（空白区域或功能按钮）不可作为打开目标");
+        Assert(DockFileDropRules.CanOpenFiles(psItem), "固定桌面应用可接收拖拽文件打开");
+        Assert(DockFileDropRules.CanOpenFiles(photosItem), "固定商店应用（AUMID）可接收拖拽文件打开");
+        Assert(!DockFileDropRules.CanOpenFiles(barePinnedHostItem), "仅有 ApplicationFrameHost 而无 AUMID 的固定项不能打开文件");
+        Assert(!DockFileDropRules.CanOpenFiles(folderItem), "固定文件夹不能接收拖拽文件打开");
+        Assert(!DockFileDropRules.CanOpenFiles(fileItem), "固定文件不能接收拖拽文件打开");
+        Assert(DockFileDropRules.CanOpenFiles(gimpItem), "仅运行中的桌面应用可接收拖拽文件打开");
+        Assert(DockFileDropRules.CanOpenFiles(calcItem), "运行中的商店应用有 AUMID 时可接收拖拽文件打开");
+        Assert(!DockFileDropRules.CanOpenFiles(bareRunningHostItem), "无 AUMID 的 ApplicationFrameHost 运行分组不能打开文件");
+
+        var imageDrop = new DroppedPathInfo(@"C:\Pics\hero.psd", @"C:\Pics\hero.psd", false, false);
+        var shortcutToImage = new DroppedPathInfo(@"C:\Desktop\hero.lnk", @"D:\Art\hero.psd", false, false);
+        var duplicateCaseDrop = new DroppedPathInfo(@"d:/Art/HERO.PSD", @"d:/Art/HERO.PSD", false, false);
+        var exeDrop = new DroppedPathInfo(@"C:\Tools\tool.exe", @"C:\Tools\tool.exe", false, true);
+        var storeShortcutDrop = new DroppedPathInfo(@"C:\Desktop\App.lnk", string.Empty, false, true);
+        var dirDrop = new DroppedPathInfo(@"C:\Projects", @"C:\Projects", true, false);
+
+        AssertEqual(
+            DockFileDropAction.None,
+            DockFileDropRules.Decide(psItem, []),
+            "无有效拖入路径时应返回 None");
+        AssertEqual(
+            DockFileDropAction.OpenWithApp,
+            DockFileDropRules.Decide(psItem, [imageDrop]),
+            "图片拖到 Photoshop 上应判定为打开文件");
+        AssertEqual(
+            DockFileDropAction.OpenWithApp,
+            DockFileDropRules.Decide(psItem, [shortcutToImage]),
+            "指向文件的快捷方式拖到应用上应按目标文件判定为打开");
+        AssertEqual(
+            DockFileDropAction.PinToDock,
+            DockFileDropRules.Decide(psItem, [exeDrop]),
+            "程序拖到应用图标上仍应保留固定到 Dock 语义");
+        AssertEqual(
+            DockFileDropAction.PinToDock,
+            DockFileDropRules.Decide(psItem, [storeShortcutDrop]),
+            "不可解析目标路径的程序快捷方式不应尝试当文档打开");
+        AssertEqual(
+            DockFileDropAction.PinToDock,
+            DockFileDropRules.Decide(psItem, [dirDrop]),
+            "目录拖到应用图标上仍应保留固定语义");
+        AssertEqual(
+            DockFileDropAction.PinToDock,
+            DockFileDropRules.Decide(null, [imageDrop]),
+            "拖到 Dock 空白处/分隔线/功能按钮应保留固定");
+        AssertEqual(
+            DockFileDropAction.PinToDock,
+            DockFileDropRules.Decide(folderItem, [imageDrop]),
+            "拖到固定文件夹上应保留固定语义");
+
+        IReadOnlyList<DroppedPathInfo> mixedDrops =
+        [
+            shortcutToImage,
+            duplicateCaseDrop,
+            dirDrop,
+            exeDrop,
+            imageDrop
+        ];
+        AssertEqual(
+            DockFileDropAction.OpenWithApp,
+            DockFileDropRules.Decide(psItem, mixedDrops),
+            "混合拖拽包含可打开文件与目录/程序时应选择打开可打开的文件");
+
+        var targets = DockFileDropRules.SelectOpenTargets(mixedDrops);
+        AssertEqual(2, targets.Count, "应过滤程序和目录并按路径去重");
+        AssertEqual(Path.GetFullPath(@"D:\Art\hero.psd"), targets[0], "快捷方式应提取解析后的真实路径");
+        AssertEqual(Path.GetFullPath(@"C:\Pics\hero.psd"), targets[1], "普通文件应规范化并保留顺序");
+    }
+    finally
+    {
+        if (Directory.Exists(temp))
+        {
+            Directory.Delete(temp, true);
+        }
+    }
+}
+
+static void TestDockFileDropLaunchArgumentsAndHoverState()
+{
+    AssertEqual(
+        "\"C:\\Pics\\a.png\"",
+        DockFileDropRules.QuoteArgument(@"C:\Pics\a.png"),
+        "普通路径应加引号");
+    AssertEqual(
+        "\"C:\\My Pics\\hero photo.psd\"",
+        DockFileDropRules.QuoteArgument(@"C:\My Pics\hero photo.psd"),
+        "含空格路径应保持完整参数");
+    AssertEqual(
+        "\"D:\\\\\"",
+        DockFileDropRules.QuoteArgument(@"D:\"),
+        "结尾反斜杠应在闭合引号前成倍转义");
+    AssertEqual(
+        "\"a\\\\\\\"b\\\\\"",
+        DockFileDropRules.QuoteArgument("a\\\"b\\"),
+        "内部引号与反斜杠应按 CommandLineToArgvW 规则转义");
+
+    AssertEqual(
+        "\"C:\\a.png\" \"C:\\My Docs\\b.psd\"",
+        DockFileDropRules.BuildLaunchArguments(null, [@"C:\a.png", @"C:\My Docs\b.psd"]),
+        "多文件应依次加引号并空格拼接");
+    AssertEqual(
+        "--new-window \"C:\\a.png\"",
+        DockFileDropRules.BuildLaunchArguments("  --new-window  ", [@"C:\a.png"]),
+        "快捷方式原有参数应保留在文件路径之前");
+    AssertEqual(
+        "--flag",
+        DockFileDropRules.BuildLaunchArguments("--flag", []),
+        "无文件目标时只保留修剪后的原有参数");
+
+    var hover = new DockDragHoverState();
+    var t0 = new DateTimeOffset(2026, 1, 1, 12, 0, 0, TimeSpan.Zero);
+
+    Assert(!hover.Hover("exe:ps.exe", isRunning: true, t0), "刚进入运行应用图标不应立即抬起窗口");
+    AssertEqual("exe:ps.exe", hover.HoveredKey, "应记录当前悬停的应用键");
+    Assert(
+        !hover.Hover("exe:ps.exe", isRunning: true, t0 + TimeSpan.FromMilliseconds(499)),
+        "未满 500ms 不应触发窗口抬起");
+    Assert(
+        hover.Hover("exe:ps.exe", isRunning: true, t0 + DockDragHoverState.RaiseDelay),
+        "悬停满 500ms 应触发一次窗口抬起");
+    Assert(
+        !hover.Hover("EXE:PS.EXE", isRunning: true, t0 + TimeSpan.FromMilliseconds(650)),
+        "同一次连续悬停不应重复触发窗口抬起");
+
+    Assert(
+        !hover.Hover("exe:edge.exe", isRunning: true, t0 + TimeSpan.FromMilliseconds(800)),
+        "切换到另一个运行应用应重新计时");
+    AssertEqual("exe:edge.exe", hover.HoveredKey, "切换后应更新悬停键");
+    Assert(
+        !hover.Hover("exe:edge.exe", isRunning: true, t0 + TimeSpan.FromMilliseconds(1299)),
+        "新应用未满 500ms 不应触发");
+    Assert(
+        hover.Hover("exe:edge.exe", isRunning: true, t0 + TimeSpan.FromMilliseconds(1300)),
+        "新应用悬停满 500ms 应触发");
+
+    Assert(!hover.Hover("exe:pinned-only.exe", isRunning: false, t0 + TimeSpan.FromSeconds(2)), "未运行的固定项不应保持悬停计时");
+    Assert(hover.HoveredKey is null, "未运行项应清空悬停状态");
+
+    Assert(!hover.Hover("exe:ps.exe", isRunning: true, t0 + TimeSpan.FromSeconds(3)), "重新进入运行项应从头计时");
+    Assert(hover.Hover("exe:ps.exe", isRunning: true, t0 + TimeSpan.FromSeconds(3.5)), "满 500ms 后应触发");
+    hover.Clear();
+    Assert(hover.HoveredKey is null, "Clear 应清除悬停记录");
+    Assert(!hover.Hover("exe:ps.exe", isRunning: true, t0 + TimeSpan.FromSeconds(4)), "Clear 后再次悬停应重新计时");
+    Assert(hover.Hover("exe:ps.exe", isRunning: true, t0 + TimeSpan.FromSeconds(4.5)), "Clear 后再次满 500ms 应允许触发");
 }
 
 static void Assert(bool condition, string message)

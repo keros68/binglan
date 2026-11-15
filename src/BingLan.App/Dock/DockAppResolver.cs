@@ -104,11 +104,7 @@ internal static class DockAppResolver
     internal static string AppsFolderPath(string appUserModelId) => AppsFolderPrefix + appUserModelId;
 
     internal static bool IsFrameHost(string? executablePath) =>
-        executablePath is not null
-        && string.Equals(
-            Path.GetFileName(executablePath),
-            "ApplicationFrameHost.exe",
-            StringComparison.OrdinalIgnoreCase);
+        DockFileDropRules.IsFrameHostPath(executablePath);
 
     // Store app binaries live in a protected, versioned folder that users cannot open
     // and that changes on every update; such apps are identified by app model ID.
@@ -129,7 +125,7 @@ internal static class DockAppResolver
         }
     }
 
-    private static string? GetGroupAppUserModelId(WindowGroup? group) =>
+    internal static string? GetGroupAppUserModelId(WindowGroup? group) =>
         group is not null && group.Key.StartsWith("aumid:", StringComparison.OrdinalIgnoreCase)
             ? group.Key["aumid:".Length..]
             : null;

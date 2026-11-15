@@ -101,6 +101,13 @@ public partial class IceBlueDockWindow : Window
     private bool _dragging;
     private Point? _dragStart;
     private DockItem? _dragItem;
+    private readonly DockDragHoverState _dragHover = new();
+    private readonly DispatcherTimer _dragHoverTimer;
+    private DockButtonParts? _hoveredDragParts;
+    private bool _hoveredDragOpensWithApp;
+    private bool _externalDragActive;
+    private string[]? _cachedDragPaths;
+    private IReadOnlyList<DroppedPathInfo> _cachedDragInfos = [];
 
     internal IceBlueDockWindow(DockState state)
     {
@@ -147,9 +154,16 @@ public partial class IceBlueDockWindow : Window
             _yieldHideTimer.Stop();
             if (!_closing && _suppressedBySystemMenu && IsVisible) CompleteSmartHideImmediately();
         };
+        _dragHoverTimer = new DispatcherTimer(
+            TimeSpan.FromMilliseconds(100),
+            DispatcherPriority.Input,
+            (_, _) => OnDragHoverTick(),
+            Dispatcher);
+        _dragHoverTimer.Stop();
         SourceInitialized += OnSourceInitialized;
         Closing += OnClosing;
-        DockSurface.DragOver += OnDragOver;
+        DockSurface.DragOver += OnSurfaceDragOver;
+        DockSurface.DragLeave += OnSurfaceDragLeave;
         DockSurface.Drop += OnDropOnSurface;
         // When the row overflows, the wheel scrolls it sideways instead of doing nothing.
         ItemScroller.PreviewMouseWheel += (sender, e) =>
@@ -361,6 +375,7 @@ public partial class IceBlueDockWindow : Window
     private void OnClosing(object? sender, CancelEventArgs e)
     {
         _closing = true;
+        EndExternalDrag();
         _glass.Dispose();
         _morph.Snap();
         if (_handle != 0)
@@ -472,6 +487,7 @@ public partial class IceBlueDockWindow : Window
             return;
         }
 
+        ClearDragTargetVisual();
         _lastStructureKey = structureKey;
         _itemButtons.Clear();
         ItemPanel.Children.Clear();
@@ -714,7 +730,12 @@ public partial class IceBlueDockWindow : Window
         return divider;
     }
 
-    private sealed record DockButtonParts(Button Button, Image Icon, Grid IconHost, Border Dot);
+    private sealed record DockButtonParts(
+        Button Button,
+        Image Icon,
+        Grid IconHost,
+        Border Dot,
+        ScaleTransform IconScale);
 
     private DockButtonParts BuildItem(DockItem item)
     {
@@ -770,7 +791,7 @@ public partial class IceBlueDockWindow : Window
                 LaunchNewInstance(current, DisplayNameOf(current));
             }
         };
-        AddHoverZoom(button, icon);
+        var iconScale = AddHoverZoom(button, icon);
         button.MouseRightButtonUp += (_, eventArgs) =>
         {
             if (button.Tag is not DockItem current) return;
@@ -785,13 +806,16 @@ public partial class IceBlueDockWindow : Window
             _dragItem = current;
         };
         button.PreviewMouseMove += OnItemMouseMove;
-        button.DragOver += OnDragOver;
+
+        var parts = new DockButtonParts(button, icon, iconHost, dot, iconScale);
+        button.DragOver += (_, eventArgs) => OnItemDragOver(parts, eventArgs);
         button.Drop += (_, eventArgs) =>
         {
-            if (button.Tag is DockItem current) DropPin(eventArgs, current);
+            if (parts.Button.Tag is DockItem current)
+            {
+                OnItemDrop(current, eventArgs);
+            }
         };
-
-        var parts = new DockButtonParts(button, icon, iconHost, dot);
         UpdateItemButton(parts, item);
         return parts;
     }
@@ -927,7 +951,7 @@ public partial class IceBlueDockWindow : Window
             : new WindowCommandResult(false, $"{name} 不支持从 Dock 启动新实例"));
     }
 
-    private static void AddHoverZoom(Button button, UIElement icon)
+    private static ScaleTransform AddHoverZoom(Button button, UIElement icon)
     {
         var scale = new ScaleTransform(1, 1);
         icon.RenderTransformOrigin = new Point(0.5, 1);
@@ -936,6 +960,7 @@ public partial class IceBlueDockWindow : Window
             scale,
             DesktopStyleRules.HoverZoom(Motion, SystemParameters.ClientAreaAnimation));
         button.MouseLeave += (_, _) => Zoom(scale, 1);
+        return scale;
     }
 
     private static void Zoom(ScaleTransform scale, double target)
@@ -1119,14 +1144,219 @@ public partial class IceBlueDockWindow : Window
         }
     }
 
-    private static void OnDragOver(object sender, DragEventArgs e)
+    private void OnSurfaceDragOver(object sender, DragEventArgs e)
     {
-        e.Effects = e.Data.GetDataPresent(PinDragFormat) || e.Data.GetDataPresent(RunningDragFormat)
-            ? DragDropEffects.Move
-            : e.Data.GetDataPresent(System.Windows.DataFormats.FileDrop)
+        ClearDragTargetVisual();
+        _dragHover.Clear();
+
+        if (e.Data.GetDataPresent(PinDragFormat) || e.Data.GetDataPresent(RunningDragFormat))
+        {
+            e.Effects = (e.AllowedEffects & DragDropEffects.Move) != 0
+                ? DragDropEffects.Move
+                : DragDropEffects.None;
+            e.Handled = true;
+            return;
+        }
+
+        if (e.Data.GetDataPresent(System.Windows.DataFormats.FileDrop))
+        {
+            _externalDragActive = true;
+            if (!_dragHoverTimer.IsEnabled)
+            {
+                _dragHoverTimer.Start();
+            }
+            e.Effects = (e.AllowedEffects & DragDropEffects.Link) != 0
                 ? DragDropEffects.Link
                 : DragDropEffects.None;
+            e.Handled = true;
+            return;
+        }
+
+        e.Effects = DragDropEffects.None;
         e.Handled = true;
+    }
+
+    private void OnItemDragOver(DockButtonParts parts, DragEventArgs e)
+    {
+        if (e.Data.GetDataPresent(PinDragFormat) || e.Data.GetDataPresent(RunningDragFormat))
+        {
+            ClearDragTargetVisual();
+            _dragHover.Clear();
+            e.Effects = (e.AllowedEffects & DragDropEffects.Move) != 0
+                ? DragDropEffects.Move
+                : DragDropEffects.None;
+            e.Handled = true;
+            return;
+        }
+
+        if (parts.Button.Tag is not DockItem current
+            || e.Data.GetData(System.Windows.DataFormats.FileDrop) is not string[] files)
+        {
+            ClearDragTargetVisual();
+            _dragHover.Clear();
+            e.Effects = DragDropEffects.None;
+            e.Handled = true;
+            return;
+        }
+
+        _externalDragActive = true;
+        if (!_dragHoverTimer.IsEnabled)
+        {
+            _dragHoverTimer.Start();
+        }
+
+        var action = DockFileDropRules.Decide(current, GetCachedDroppedPathInfos(files));
+        if (action == DockFileDropAction.OpenWithApp)
+        {
+            e.Effects = (e.AllowedEffects & DragDropEffects.Copy) != 0
+                ? DragDropEffects.Copy
+                : e.AllowedEffects & DragDropEffects.Link;
+            SetDragTargetVisual(parts, opensWithApp: true);
+        }
+        else
+        {
+            e.Effects = (e.AllowedEffects & DragDropEffects.Link) != 0
+                ? DragDropEffects.Link
+                : DragDropEffects.None;
+            SetDragTargetVisual(parts, opensWithApp: false);
+        }
+
+        TryHoverRaise(current);
+        e.Handled = true;
+    }
+
+    private void OnSurfaceDragLeave(object sender, DragEventArgs e)
+    {
+        if (!IsCursorInsideDockWindow())
+        {
+            EndExternalDrag();
+        }
+    }
+
+    private void OnDragHoverTick()
+    {
+        if (_closing
+            || !IsVisible
+            || !ShellSurfaceNativeMethods.IsAnyMouseButtonPressed()
+            || !IsCursorInsideDockWindow())
+        {
+            EndExternalDrag();
+            return;
+        }
+
+        if (_hoveredDragParts?.Button.Tag is DockItem item)
+        {
+            TryHoverRaise(item);
+        }
+    }
+
+    private void TryHoverRaise(DockItem item)
+    {
+        if (_dragHover.Hover(item.Key, item.IsRunning, DateTimeOffset.UtcNow)
+            && item.Group is { } group)
+        {
+            WindowCommandService.RaiseForDrag(group);
+        }
+    }
+
+    private IReadOnlyList<DroppedPathInfo> GetCachedDroppedPathInfos(string[] paths)
+    {
+        if (_cachedDragPaths is not null && _cachedDragPaths.SequenceEqual(paths, StringComparer.Ordinal))
+        {
+            return _cachedDragInfos;
+        }
+
+        _cachedDragPaths = paths;
+        _cachedDragInfos = paths
+            .Select(path => DockShortcuts.InspectDroppedPath(path, allowUncDiskProbe: false))
+            .ToArray();
+        return _cachedDragInfos;
+    }
+
+    private void SetDragTargetVisual(DockButtonParts parts, bool opensWithApp)
+    {
+        if (ReferenceEquals(_hoveredDragParts, parts) && _hoveredDragOpensWithApp == opensWithApp)
+        {
+            return;
+        }
+
+        ClearDragTargetVisual();
+        _hoveredDragParts = parts;
+        _hoveredDragOpensWithApp = opensWithApp;
+        if (!opensWithApp)
+        {
+            return;
+        }
+
+        Zoom(parts.IconScale, DesktopStyleRules.HoverZoom(Motion, SystemParameters.ClientAreaAnimation));
+        parts.Button.SetResourceReference(Button.BackgroundProperty, "WidgetTileHoverBrush");
+        parts.Button.SetResourceReference(Button.BorderBrushProperty, "DockActiveDotBrush");
+    }
+
+    private void ClearDragTargetVisual()
+    {
+        if (_hoveredDragParts is null)
+        {
+            return;
+        }
+
+        if (_hoveredDragOpensWithApp)
+        {
+            Zoom(_hoveredDragParts.IconScale, 1);
+            _hoveredDragParts.Button.ClearValue(Button.BackgroundProperty);
+            _hoveredDragParts.Button.ClearValue(Button.BorderBrushProperty);
+        }
+        _hoveredDragParts = null;
+        _hoveredDragOpensWithApp = false;
+    }
+
+    private void EndExternalDrag()
+    {
+        _externalDragActive = false;
+        _dragHoverTimer.Stop();
+        _dragHover.Clear();
+        ClearDragTargetVisual();
+        _cachedDragPaths = null;
+        _cachedDragInfos = [];
+    }
+
+    private bool IsCursorInsideDockWindow()
+    {
+        if (_handle == 0 || !IsVisible)
+        {
+            return false;
+        }
+
+        return DockNativeMethods.GetCursorPos(out var cursor)
+            && DockNativeMethods.GetWindowRect(_handle, out var rect)
+            && cursor.X >= rect.Left && cursor.X < rect.Right
+            && cursor.Y >= rect.Top && cursor.Y < rect.Bottom;
+    }
+
+    private async Task OpenFilesWithItemAsync(DockItem item, IReadOnlyList<string> paths) =>
+        Report(await WindowCommandService.OpenFilesAsync(item, DisplayNameOf(item), paths));
+
+    private void OnItemDrop(DockItem target, DragEventArgs e)
+    {
+        EndExternalDrag();
+        if (e.Data.GetData(System.Windows.DataFormats.FileDrop) is string[] files)
+        {
+            e.Handled = true;
+            var infos = files
+                .Select(path => DockShortcuts.InspectDroppedPath(path, allowUncDiskProbe: false))
+                .ToArray();
+            if (DockFileDropRules.Decide(target, infos) == DockFileDropAction.OpenWithApp)
+            {
+                _ = OpenFilesWithItemAsync(target, files);
+            }
+            else
+            {
+                PinFiles(files);
+            }
+            return;
+        }
+
+        DropPin(e, target);
     }
 
     private void PickAppToPin()
@@ -1197,6 +1427,7 @@ public partial class IceBlueDockWindow : Window
 
     private void OnDropOnSurface(object sender, DragEventArgs e)
     {
+        EndExternalDrag();
         if (!e.Handled && e.Data.GetData(System.Windows.DataFormats.FileDrop) is string[] files)
         {
             e.Handled = true;
@@ -1425,7 +1656,7 @@ public partial class IceBlueDockWindow : Window
                     monitor.Bounds,
                     revealDepth),
             PointerOverDock: pointerOverDock,
-            InteractionActive: _menuOpen || _dragging || DateTimeOffset.UtcNow < _attentionRevealUntil,
+            InteractionActive: _menuOpen || _dragging || _externalDragActive || DateTimeOffset.UtcNow < _attentionRevealUntil,
             OverlapIsMaximizedWindow: maximizedOnDockMonitor);
         if (_trueFullScreenForeground && _morph.IsCollapsing)
         {
@@ -1772,6 +2003,20 @@ public partial class IceBlueDockWindow : Window
             _state.HiddenHandleLeftDip = (rect.Left - monitor.Bounds.Left) / scale;
             _state.HiddenHandleTopDip = (rect.Top - monitor.Bounds.Top) / scale;
             DockStateChanged?.Invoke();
+        };
+        _handleWindow.FileDragEntered += () =>
+        {
+            if (!_closing)
+            {
+                UpdateForForeground();
+            }
+        };
+        _handleWindow.FilesDropped += files =>
+        {
+            if (!_closing)
+            {
+                PinFiles(files);
+            }
         };
         // Create the HWND now so the handle is already positioned when it first shows.
         _ = new WindowInteropHelper(_handleWindow).EnsureHandle();

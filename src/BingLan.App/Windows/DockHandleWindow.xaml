@@ -11,7 +11,10 @@
         AllowsTransparency="True"
         Background="Transparent"
         Topmost="True"
+        AllowDrop="True"
         FontFamily="{StaticResource UiFont}"
+        DragOver="OnHandleDragOver"
+        Drop="OnHandleDrop"
         MouseLeftButtonUp="OnHandleMouseLeftButtonUp"
         MouseMove="OnHandleMouseMove"
         LostMouseCapture="OnHandleLostMouseCapture">

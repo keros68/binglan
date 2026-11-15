@@ -51,6 +51,101 @@ internal static class WindowCommandService
     internal static WindowCommandResult Focus(TrackedWindow window) =>
         Focus(window, DockNativeMethods.IsIconic(window.Handle), window.Title);
 
+    /// <summary>
+    /// Restores and brings a running window forward during drag hover without flashing
+    /// the taskbar if Windows refuses foreground focus transfer.
+    /// </summary>
+    internal static void RaiseForDrag(WindowGroup group)
+    {
+        if (group.Windows.Count == 0)
+        {
+            return;
+        }
+
+        var target = group.Windows.FirstOrDefault(window => !DockNativeMethods.IsIconic(window.Handle))
+            ?? group.Windows[0];
+        if (DockNativeMethods.IsIconic(target.Handle))
+        {
+            DockNativeMethods.ShowWindowAsync(target.Handle, DockNativeMethods.SwRestore);
+        }
+
+        if (DockNativeMethods.SetForegroundWindow(target.Handle))
+        {
+            return;
+        }
+
+        // Only nudge the window to the top of normal windows; leave already-topmost
+        // windows untouched so we do not strip WS_EX_TOPMOST from them.
+        if ((NativeMethods.GetExStyleOf(target.Handle) & NativeMethods.WsExTopmost) != 0)
+        {
+            return;
+        }
+
+        const uint flags = NativeMethods.SwpNoMove
+            | NativeMethods.SwpNoSize
+            | NativeMethods.SwpNoActivate
+            | DockNativeMethods.SwpAsyncWindowPos;
+        NativeMethods.SetWindowPos(target.Handle, DockNativeMethods.HwndTopmost, 0, 0, 0, 0, flags);
+        NativeMethods.SetWindowPos(target.Handle, DockNativeMethods.HwndNoTopmost, 0, 0, 0, 0, flags);
+    }
+
+    internal static async Task<WindowCommandResult> OpenFilesAsync(
+        DockItem item,
+        string displayName,
+        IReadOnlyList<string> rawPaths)
+    {
+        var existingFiles = await Task.Run(() =>
+        {
+            var infos = rawPaths
+                .Select(path => DockShortcuts.InspectDroppedPath(path, allowUncDiskProbe: true))
+                .ToArray();
+            return DockFileDropRules.SelectOpenTargets(infos).Where(File.Exists).ToArray();
+        });
+        if (existingFiles.Length == 0)
+        {
+            return new WindowCommandResult(false, "所拖入的文件已不存在");
+        }
+
+        var executablePath = ResolveDesktopExecutable(item);
+        if (executablePath is not null)
+        {
+            var result = await LaunchWithFilesAsync(item, executablePath, displayName, existingFiles);
+            if (result.Succeeded && item.Group is { Windows.Count: > 0 } group)
+            {
+                RaiseForDrag(group);
+            }
+            return result;
+        }
+
+        var appUserModelId = item.Pinned?.AppUserModelId ?? DockAppResolver.GetGroupAppUserModelId(item.Group);
+        if (!string.IsNullOrWhiteSpace(appUserModelId))
+        {
+            if (await Task.Run(() => ActivatePackagedAppForFiles(appUserModelId, existingFiles)))
+            {
+                if (item.Group is { Windows.Count: > 0 } group)
+                {
+                    RaiseForDrag(group);
+                }
+                return new WindowCommandResult(true, $"已用 {displayName} 打开所拖入的文件");
+            }
+
+            var fallbackExe = ResolveFallbackExecutable(item);
+            if (fallbackExe is not null)
+            {
+                var fallback = await LaunchWithFilesAsync(item, fallbackExe, displayName, existingFiles);
+                if (fallback.Succeeded && item.Group is { Windows.Count: > 0 } group)
+                {
+                    RaiseForDrag(group);
+                }
+                return fallback;
+            }
+
+            return new WindowCommandResult(false, $"无法用 {displayName} 打开所拖入的文件");
+        }
+
+        return new WindowCommandResult(false, $"找不到 {displayName} 的程序文件");
+    }
+
     // A pinned app closed to the tray still runs with its windows hidden, but those
     // windows must NOT be shown from outside: the app still believes they are hidden,
     // so forcing SW_SHOW yields a blank or input-dead shell (verified with WeChat 4.x
@@ -280,6 +375,103 @@ internal static class WindowCommandService
     private const ushort VkControl = 0x11;
     private const ushort VkMenu = 0x12;
     private const ushort VkLeftWindows = 0x5B;
+
+    private static string? ResolveDesktopExecutable(DockItem item) =>
+        CandidateExecutables(item).FirstOrDefault(path =>
+            !DockAppResolver.IsFrameHost(path)
+            && !DockAppResolver.IsPackagedPath(path)
+            && File.Exists(path));
+
+    private static string? ResolveFallbackExecutable(DockItem item) =>
+        CandidateExecutables(item).FirstOrDefault(path =>
+            !DockAppResolver.IsFrameHost(path)
+            && File.Exists(path));
+
+    private static IEnumerable<string> CandidateExecutables(DockItem item)
+    {
+        if (!string.IsNullOrWhiteSpace(item.Pinned?.ExecutablePath))
+        {
+            yield return item.Pinned.ExecutablePath;
+        }
+
+        if (item.Group is not null)
+        {
+            foreach (var window in item.Group.Windows)
+            {
+                if (!string.IsNullOrWhiteSpace(window.ExecutablePath))
+                {
+                    yield return window.ExecutablePath;
+                }
+            }
+        }
+    }
+
+    private static Task<WindowCommandResult> LaunchWithFilesAsync(
+        DockItem item,
+        string executablePath,
+        string displayName,
+        IReadOnlyList<string> filePaths)
+    {
+        var arguments = DockFileDropRules.BuildLaunchArguments(item.Pinned?.Arguments, filePaths);
+        var workingDirectory = item.Pinned?.WorkingDirectory is { } folder && Directory.Exists(folder)
+            ? folder
+            : Path.GetDirectoryName(executablePath);
+        return StartAsync(executablePath, displayName, arguments, workingDirectory);
+    }
+
+    private static bool ActivatePackagedAppForFiles(string appUserModelId, IReadOnlyList<string> files)
+    {
+        var pidls = new List<nint>(files.Count);
+        DockNativeMethods.IShellItemArray? itemArray = null;
+        object? managerObject = null;
+        try
+        {
+            foreach (var file in files)
+            {
+                if (DockNativeMethods.SHParseDisplayName(file, 0, out var pidl, 0, out _) != 0 || pidl == 0)
+                {
+                    return false;
+                }
+                pidls.Add(pidl);
+            }
+
+            if (pidls.Count == 0
+                || DockNativeMethods.SHCreateShellItemArrayFromIDLists(
+                    (uint)pidls.Count,
+                    [.. pidls],
+                    out itemArray) != 0)
+            {
+                return false;
+            }
+
+            managerObject = new DockNativeMethods.ApplicationActivationManager();
+            var manager = (DockNativeMethods.IApplicationActivationManager)managerObject;
+            var hr = manager.ActivateForFile(appUserModelId, itemArray, null, out _);
+            return hr >= 0;
+        }
+        catch (Exception exception) when (exception is COMException or InvalidCastException)
+        {
+            return false;
+        }
+        finally
+        {
+            if (itemArray is not null && Marshal.IsComObject(itemArray))
+            {
+                Marshal.FinalReleaseComObject(itemArray);
+            }
+            if (managerObject is not null && Marshal.IsComObject(managerObject))
+            {
+                Marshal.FinalReleaseComObject(managerObject);
+            }
+            foreach (var pidl in pidls)
+            {
+                if (pidl != 0)
+                {
+                    DockNativeMethods.ILFree(pidl);
+                }
+            }
+        }
+    }
 
     private static async Task<WindowCommandResult> StartAsync(
         string target,

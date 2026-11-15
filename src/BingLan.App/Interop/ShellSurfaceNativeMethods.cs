@@ -12,6 +12,9 @@ internal static class ShellSurfaceNativeMethods
     private const ushort ControlKey = 0x11;
     private const ushort EscapeKey = 0x1B;
     private const ushort WindowsKey = 0x5B;
+    private const int VkLButton = 0x01;
+    private const int VkRButton = 0x02;
+    private const int VkMButton = 0x04;
     private const nint ScTaskList = 0xF130;
     private const uint TokenQuery = 0x0008;
     private const int TokenElevationClass = 20;
@@ -89,6 +92,11 @@ internal static class ShellSurfaceNativeMethods
 
     internal static bool HasHeldModifier() =>
         new[] { 0x10, 0x11, 0x12, 0x5B, 0x5C }.Any(key => (GetAsyncKeyState(key) & 0x8000) != 0);
+
+    internal static bool IsAnyMouseButtonPressed() =>
+        (GetAsyncKeyState(VkLButton) & 0x8000) != 0
+        || (GetAsyncKeyState(VkRButton) & 0x8000) != 0
+        || (GetAsyncKeyState(VkMButton) & 0x8000) != 0;
 
     internal static bool IsSystemMenuForeground()
     {

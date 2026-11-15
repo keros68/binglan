@@ -6,6 +6,8 @@ using BingLan.App.Interop;
 using BingLan.App.Dock;
 using BingLan.Core.Dock;
 using BingLan.Core.Models;
+using DragDropEffects = System.Windows.DragDropEffects;
+using DragEventArgs = System.Windows.DragEventArgs;
 using MouseEventArgs = System.Windows.Input.MouseEventArgs;
 
 namespace BingLan.App.Windows;
@@ -40,6 +42,12 @@ public partial class DockHandleWindow : Window
 
     /// <summary>Raised on release after a real drag: the owner clamps and persists the position.</summary>
     internal event Action? DragEnded;
+
+    /// <summary>Raised while external files are dragged over the handle so the dock can expand.</summary>
+    internal event Action? FileDragEntered;
+
+    /// <summary>Raised when external files are dropped directly onto the handle.</summary>
+    internal event Action<string[]>? FilesDropped;
 
     internal PixelRect CurrentRect
     {
@@ -163,6 +171,31 @@ public partial class DockHandleWindow : Window
         }
 
         return 0;
+    }
+
+    private void OnHandleDragOver(object sender, DragEventArgs e)
+    {
+        if (e.Data.GetDataPresent(System.Windows.DataFormats.FileDrop))
+        {
+            e.Effects = (e.AllowedEffects & DragDropEffects.Link) != 0
+                ? DragDropEffects.Link
+                : e.AllowedEffects & DragDropEffects.Copy;
+            e.Handled = true;
+            FileDragEntered?.Invoke();
+            return;
+        }
+
+        e.Effects = DragDropEffects.None;
+        e.Handled = true;
+    }
+
+    private void OnHandleDrop(object sender, DragEventArgs e)
+    {
+        if (e.Data.GetData(System.Windows.DataFormats.FileDrop) is string[] files)
+        {
+            e.Handled = true;
+            FilesDropped?.Invoke(files);
+        }
     }
 
     private void OnHandleMouseLeftButtonDown(object sender, MouseButtonEventArgs e)

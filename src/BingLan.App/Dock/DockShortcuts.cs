@@ -97,6 +97,64 @@ internal static class DockShortcuts
         return apps.Values.OrderBy(app => app.DisplayName, StringComparer.CurrentCultureIgnoreCase).ToArray();
     }
 
+    /// <summary>
+    /// Classifies a dropped file-system path for dock drag-and-drop without blocking on
+    /// slow network shares when <paramref name="allowUncDiskProbe"/> is false.
+    /// </summary>
+    internal static DroppedPathInfo InspectDroppedPath(string path, bool allowUncDiskProbe)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return new DroppedPathInfo(string.Empty, string.Empty, IsDirectory: false, IsProgram: false);
+        }
+
+        var trimmed = path.Trim();
+        if (DockFileDropRules.IsExecutablePath(trimmed))
+        {
+            return new DroppedPathInfo(path, trimmed, IsDirectory: false, IsProgram: true);
+        }
+
+        if (!allowUncDiskProbe && IsUncPath(trimmed))
+        {
+            return new DroppedPathInfo(path, trimmed, LooksLikeDirectory(trimmed), IsProgram: false);
+        }
+
+        if (string.Equals(Path.GetExtension(trimmed), ".lnk", StringComparison.OrdinalIgnoreCase))
+        {
+            var resolved = ResolveShortcut(trimmed);
+            if (resolved is null || DockFileDropRules.IsExecutablePath(resolved.TargetPath))
+            {
+                return new DroppedPathInfo(
+                    path,
+                    resolved?.TargetPath ?? trimmed,
+                    IsDirectory: false,
+                    IsProgram: true);
+            }
+
+            var targetIsDirectory = !allowUncDiskProbe && IsUncPath(resolved.TargetPath)
+                ? LooksLikeDirectory(resolved.TargetPath)
+                : Directory.Exists(resolved.TargetPath);
+            return new DroppedPathInfo(path, resolved.TargetPath, targetIsDirectory, IsProgram: false);
+        }
+
+        return new DroppedPathInfo(path, trimmed, Directory.Exists(trimmed), IsProgram: false);
+    }
+
+    private static bool IsUncPath(string path) =>
+        path.StartsWith(@"\\", StringComparison.Ordinal)
+        || path.StartsWith("//", StringComparison.Ordinal);
+
+    private static bool LooksLikeDirectory(string path)
+    {
+        if (path.EndsWith(Path.DirectorySeparatorChar) || path.EndsWith(Path.AltDirectorySeparatorChar))
+        {
+            return true;
+        }
+
+        var trimmedEnd = path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        return string.IsNullOrEmpty(Path.GetExtension(trimmedEnd));
+    }
+
     /// <summary>A pin for a program or a shortcut to one, or null for anything else.</summary>
     internal static DockPinnedApp? CreatePin(string path)
     {

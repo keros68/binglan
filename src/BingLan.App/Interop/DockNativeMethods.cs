@@ -62,8 +62,10 @@ internal static class DockNativeMethods
     internal const int ShilJumbo = 4;
     internal const uint IldTransparent = 0x00000001;
 
+    internal static readonly nint HwndNoTopmost = -2;
     internal static readonly nint HwndBottom = 1;
     internal static readonly nint HwndTopmost = -1;
+    internal const uint SwpAsyncWindowPos = 0x4000;
 
     internal const uint MonitorDefaultToNearest = 2;
     internal const uint MonitorInfoPrimary = 1;
@@ -194,6 +196,43 @@ internal static class DockNativeMethods
         [PreserveSig]
         int Commit();
     }
+
+    [ComImport]
+    [Guid("B63EA76D-1F85-456F-A19C-48159EFA858B")]
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    internal interface IShellItemArray
+    {
+    }
+
+    [ComImport]
+    [Guid("2E941141-7F97-4756-BA1D-9DECDE894A3D")]
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    internal interface IApplicationActivationManager
+    {
+        [PreserveSig]
+        int ActivateApplication(
+            [MarshalAs(UnmanagedType.LPWStr)] string appUserModelId,
+            [MarshalAs(UnmanagedType.LPWStr)] string? arguments,
+            uint options,
+            out uint processId);
+
+        [PreserveSig]
+        int ActivateForFile(
+            [MarshalAs(UnmanagedType.LPWStr)] string appUserModelId,
+            [MarshalAs(UnmanagedType.Interface)] IShellItemArray itemArray,
+            [MarshalAs(UnmanagedType.LPWStr)] string? verb,
+            out uint processId);
+
+        [PreserveSig]
+        int ActivateForProtocol(
+            [MarshalAs(UnmanagedType.LPWStr)] string appUserModelId,
+            [MarshalAs(UnmanagedType.Interface)] IShellItemArray itemArray,
+            out uint processId);
+    }
+
+    [ComImport]
+    [Guid("45BA127D-10A8-46EA-8AB7-56EA9078943C")]
+    internal sealed class ApplicationActivationManager;
 
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
@@ -406,6 +445,12 @@ internal static class DockNativeMethods
 
     [DllImport("shell32.dll")]
     internal static extern void ILFree(nint itemIdList);
+
+    [DllImport("shell32.dll")]
+    internal static extern int SHCreateShellItemArrayFromIDLists(
+        uint count,
+        [In] nint[] itemIdLists,
+        [MarshalAs(UnmanagedType.Interface)] out IShellItemArray itemArray);
 
     [DllImport("shell32.dll")]
     internal static extern int SHGetImageList(int imageList, in Guid interfaceId, out nint list);
