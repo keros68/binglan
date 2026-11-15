@@ -131,6 +131,7 @@
         <SolidColorBrush x:Key="PerformanceAccentBrush" Color="#F51EA9FF"/>
         <SolidColorBrush x:Key="DockRunningDotBrush" Color="#C21F3A55"/>
         <SolidColorBrush x:Key="WidgetItemSurfaceBrush" Color="#52FFFFFF"/>
+        <SolidColorBrush x:Key="WidgetNoteBodySurfaceBrush" Color="#52FFFFFF"/>
         <SolidColorBrush x:Key="WidgetCaretBrush" Color="#FFFFFF"/>
         <SolidColorBrush x:Key="WidgetDefaultButtonBrush" Color="#1FFFFFFF"/>
         <SolidColorBrush x:Key="WidgetDefaultButtonBorderBrush" Color="#28FFFFFF"/>

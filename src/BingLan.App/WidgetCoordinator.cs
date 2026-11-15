@@ -1724,6 +1724,7 @@ public sealed class WidgetCoordinator : IDisposable
         var resources = System.Windows.Application.Current.Resources;
         var rendered = DesktopStyleRules.ResolveRenderedCard(_state.Style);
         resources["WidgetItemSurfaceBrush"] = Brush(rendered.ItemSurfaceColor);
+        resources["WidgetNoteBodySurfaceBrush"] = Brush(rendered.NoteBodySurfaceColor);
         resources["WidgetSubtleControlBrush"] = Brush(rendered.SubtleControlColor);
         resources["WidgetControlBrush"] = Brush(rendered.ControlColor);
         var dock = DesktopStyleRules.Dock(_state.Style, _state.Dock);

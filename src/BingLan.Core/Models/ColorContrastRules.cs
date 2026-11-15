@@ -27,9 +27,11 @@ public static class ColorContrastRules
 
     /// <summary>
     /// Upper bound on dark item-row tint opacity for near-clear (&lt; 20% opacity) light-glass
-    /// cards so rows gain definition without becoming heavy black blocks on nearly clear cards.
+    /// cards. Kept at 0.16 (~40/255 ≈ 15.7% alpha, subtle controls at ~7% alpha) so interactive
+    /// rows and footer buttons retain subtle separation without looking like solid gray patches
+    /// over bright photo wallpapers when the outer card frame has nearly vanished.
     /// </summary>
-    public const double NearClearMaxItemSurfaceStrength = 0.3d;
+    public const double NearClearMaxItemSurfaceStrength = 0.16d;
 
     public const double MinimumNormalTextContrast = 4.5d;
     public const double MinimumLargeTextContrast = 3.0d;

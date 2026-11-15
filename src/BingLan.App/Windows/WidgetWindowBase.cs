@@ -279,6 +279,7 @@ public class WidgetWindowBase : Window
     private double? _savedHeightBelowMin;
     private DesktopStyleState _currentStyle = new();
     private Brush? _managedItemSurfaceBrush;
+    private Brush? _managedNoteBodySurfaceBrush;
     private Brush? _managedSubtleControlBrush;
     private Brush? _managedControlBrush;
 
@@ -799,6 +800,11 @@ public class WidgetWindowBase : Window
             rendered.ItemSurfaceColor,
             global.ItemSurfaceColor);
         RefreshManagedBrushOverride(
+            ref _managedNoteBodySurfaceBrush,
+            "WidgetNoteBodySurfaceBrush",
+            rendered.NoteBodySurfaceColor,
+            global.NoteBodySurfaceColor);
+        RefreshManagedBrushOverride(
             ref _managedSubtleControlBrush,
             "WidgetSubtleControlBrush",
             rendered.SubtleControlColor,
@@ -841,6 +847,7 @@ public class WidgetWindowBase : Window
     private void ClearManagedSurfaceOverrides()
     {
         ClearManagedBrushOverride(ref _managedItemSurfaceBrush, "WidgetItemSurfaceBrush");
+        ClearManagedBrushOverride(ref _managedNoteBodySurfaceBrush, "WidgetNoteBodySurfaceBrush");
         ClearManagedBrushOverride(ref _managedSubtleControlBrush, "WidgetSubtleControlBrush");
         ClearManagedBrushOverride(ref _managedControlBrush, "WidgetControlBrush");
     }

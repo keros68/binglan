@@ -72,7 +72,8 @@ public sealed record RenderedCardLook(
     string ItemSurfaceColor,
     string SubtleControlColor,
     string ControlColor,
-    CardShadow EffectiveShadow);
+    CardShadow EffectiveShadow,
+    string NoteBodySurfaceColor);
 
 /// <summary>
 /// Desktop-wide style shared by every card and the dock: card shadow, the gap cards keep
@@ -253,9 +254,9 @@ public static class DesktopStyleRules
     /// Resolves the rendered whole-card look for a single card's saved appearance without mutating
     /// its persisted material, tone, or strength. When light glass is paired with light text
     /// (relative luminance &gt; 0.5), cards below 20% opacity keep their light backing with soft text
-    /// shadow and capped dark item surfaces (&lt;= 0.3), while cards at or above 20% render as a
-    /// unified dark-glass card using the user's saved opacity and add soft text shadow whenever
-    /// contrast against bright wallpaper falls below 4.5:1.
+    /// shadow, capped dark item surfaces (&lt;= 0.16), and a transparent note body surface, while cards
+    /// at or above 20% render as a unified dark-glass card using the user's saved opacity and add soft
+    /// text shadow whenever contrast against bright wallpaper falls below 4.5:1.
     /// </summary>
     public static RenderedCardLook ResolveRenderedCard(
         WidgetAppearanceState cardAppearance,
@@ -310,7 +311,8 @@ public static class DesktopStyleRules
                 "#00FFFFFF",
                 hasOwnNakedContrastShadow
                     ? CardShadow.None
-                    : ResolveContrastShadow(backgroundColor, backgroundOpacity, textColor, style.CardShadow));
+                    : ResolveContrastShadow(backgroundColor, backgroundOpacity, textColor, style.CardShadow),
+                "#00FFFFFF");
         }
 
         var isLightGlass = ColorContrastRules.RelativeLuminance(backgroundColor) >= 0.5d;
@@ -328,14 +330,21 @@ public static class DesktopStyleRules
                 var effectiveStrength = Math.Min(
                     style.ItemSurfaceStrength,
                     ColorContrastRules.NearClearMaxItemSurfaceStrength);
-                var darkSurface = WithAlpha(SurfaceToneDarkColor, effectiveStrength);
+                var darkSurface = WithCappedAlpha(
+                    SurfaceToneDarkColor,
+                    effectiveStrength,
+                    ColorContrastRules.NearClearMaxItemSurfaceStrength);
                 return new RenderedCardLook(
                     backgroundColor,
                     backgroundOpacity,
                     darkSurface,
-                    WithAlpha(SurfaceToneDarkColor, effectiveStrength * SubtleControlRatio),
+                    WithCappedAlpha(
+                        SurfaceToneDarkColor,
+                        effectiveStrength * SubtleControlRatio,
+                        ColorContrastRules.NearClearMaxItemSurfaceStrength * SubtleControlRatio),
                     darkSurface,
-                    nearClearShadow);
+                    nearClearShadow,
+                    "#00FFFFFF");
             }
 
             var shadow = ResolveContrastShadow(
@@ -350,7 +359,8 @@ public static class DesktopStyleRules
                 RenderedDarkItemSurfaceColor,
                 RenderedDarkSubtleControlColor,
                 RenderedDarkControlColor,
-                shadow);
+                shadow,
+                RenderedDarkItemSurfaceColor);
         }
 
         if (ColorContrastRules.RelativeLuminance(backgroundColor) < 0.25d)
@@ -361,20 +371,23 @@ public static class DesktopStyleRules
                 RenderedDarkItemSurfaceColor,
                 RenderedDarkSubtleControlColor,
                 RenderedDarkControlColor,
-                ResolveContrastShadow(backgroundColor, backgroundOpacity, textColor, style.CardShadow));
+                ResolveContrastShadow(backgroundColor, backgroundOpacity, textColor, style.CardShadow),
+                RenderedDarkItemSurfaceColor);
         }
 
         var tone = SurfaceToneColor(style);
         var controlColor = style.ItemSurfaceTone == SurfaceTone.Dark
             ? WithAlpha(tone, style.ItemSurfaceStrength)
             : DefaultLightControlColor;
+        var itemSurface = WithAlpha(tone, style.ItemSurfaceStrength);
         return new RenderedCardLook(
             backgroundColor,
             backgroundOpacity,
-            WithAlpha(tone, style.ItemSurfaceStrength),
+            itemSurface,
             WithAlpha(tone, style.ItemSurfaceStrength * SubtleControlRatio),
             controlColor,
-            style.CardShadow);
+            style.CardShadow,
+            itemSurface);
     }
 
     private static CardShadow ResolveContrastShadow(
@@ -522,6 +535,15 @@ public static class DesktopStyleRules
 
     private static string WithAlpha(string rgb, double alpha) =>
         $"#{(int)Math.Round(Math.Clamp(alpha, 0d, 1d) * 255):X2}{rgb.TrimStart('#')}";
+
+    // Floors the upper bound so 8-bit quantization never rounds a capped surface strength past maxAlpha.
+    private static string WithCappedAlpha(string rgb, double alpha, double maxAlpha)
+    {
+        var byteAlpha = Math.Min(
+            (int)Math.Round(Math.Clamp(alpha, 0d, 1d) * 255),
+            (int)Math.Floor(Math.Clamp(maxAlpha, 0d, 1d) * 255));
+        return $"#{Math.Clamp(byteAlpha, 0, 255):X2}{rgb.TrimStart('#')}";
+    }
 
     /// <summary>The light-glass colours of one palette at a body opacity.</summary>
     public static GlassAppearance FromPalette(CardPalette palette, double density) => new(

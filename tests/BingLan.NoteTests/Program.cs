@@ -35,6 +35,7 @@ internal static class Program
         Run("去抖变更通知与失焦立即提交", TestDebounceAndLostFocusCommit, failures);
         Run("正文排版控件写回独立状态", TestTypographyControls, failures);
         Run("锁定后不可缩放但仍可编辑", TestLockBehavior, failures);
+        Run("接近透明浅色玻璃下便签正文不铺底块", TestNearClearBodySurfaceTransparent, failures);
 
         if (failures.Count > 0)
         {
@@ -372,6 +373,52 @@ internal static class Program
             Pump();
             Assert(state.Content == "锁定后仍可编辑", "锁定后正文不应失去编辑能力");
             Assert(body.IsEnabled && !body.IsReadOnly, "锁定后正文编辑框不应被禁用");
+        }
+        finally
+        {
+            Close(window);
+        }
+    }
+
+    private static void TestNearClearBodySurfaceTransparent()
+    {
+        var look = DesktopStyleRules.Appearance(new DesktopStyleState
+        {
+            Glass = GlassMode.Light,
+            GlassDensity = 0.05d,
+            TextInk = TextInk.White
+        });
+        var state = new NoteWidgetState
+        {
+            Placement = new WindowPlacement { Left = 140, Top = 120, Width = 320, Height = 300 },
+            Appearance = new WidgetAppearanceState
+            {
+                BackgroundColor = look.BackgroundColor,
+                BackgroundOpacity = look.BackgroundOpacity,
+                HeaderColor = look.HeaderColor,
+                HeaderOpacity = look.HeaderOpacity,
+                TextColor = look.TextColor
+            }
+        };
+
+        var window = new NoteWidgetWindow(state);
+        try
+        {
+            ShowAndPump(window);
+            var body = Require<TextBox>(window, "BodyEditor");
+            var bodyBorder = body.Parent as Border ??
+                throw new InvalidOperationException("找不到便签正文底板容器");
+            var clearBodyBrush = bodyBorder.Background as SolidColorBrush ??
+                throw new InvalidOperationException("接近透明时便签正文底板不是纯色 Brush");
+            Assert(clearBodyBrush.Color.A == 0,
+                $"接近透明浅色玻璃下便签正文底板应全透明：实际 {clearBodyBrush.Color}");
+
+            window.SetWidgetBackgroundOpacity(0.20d);
+            Pump();
+            var solidBodyBrush = bodyBorder.Background as SolidColorBrush ??
+                throw new InvalidOperationException("高于接近透明区间时便签正文底板不是纯色 Brush");
+            Assert(solidBodyBrush.Color.A > 0,
+                $"浓度不低于 0.20 时便签正文应保留条目底板：实际 {solidBodyBrush.Color}");
         }
         finally
         {

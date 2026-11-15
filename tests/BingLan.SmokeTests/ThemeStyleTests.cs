@@ -540,7 +540,9 @@ internal static class ThemeStyleTests
                 $"浅色玻璃配白字（不低于 0.2）在 {wallpaper} 下整卡按深色玻璃渲染后应全区域对比度达标");
         }
 
-        // F3: < 0.2 (near clear) keeps light backing with soft text shadow and dark interior surface capped at 0.3
+        // T1: < 0.2 (near clear) keeps light backing with soft text shadow, dark interior surface <= 0.16, and transparent note body
+        Check(Math.Abs(ColorContrastRules.NearClearMaxItemSurfaceStrength - 0.16d) < 0.0001d,
+            "接近透明条目底板上限应为 0.16");
         var nearClearLightWhite = new DesktopStyleState
         {
             Glass = GlassMode.Light,
@@ -550,15 +552,36 @@ internal static class ThemeStyleTests
             ItemSurfaceStrength = 0.48d
         };
         var nearClearRendered = DesktopStyleRules.ResolveRenderedCard(nearClearLightWhite);
+        var nearClearItemAlpha = ColorContrastRules.ParseHex(nearClearRendered.ItemSurfaceColor).A;
+        var nearClearControlAlpha = ColorContrastRules.ParseHex(nearClearRendered.ControlColor).A;
+        var nearClearSubtleAlpha = ColorContrastRules.ParseHex(nearClearRendered.SubtleControlColor).A;
         Check(nearClearRendered.BackgroundColor == "#FFFFFF"
             && Math.Abs(nearClearRendered.BackgroundOpacity - 0.05d) < 0.0001d
-            && nearClearRendered.ItemSurfaceColor == "#4C1B2635"
-            && nearClearRendered.ControlColor == "#4C1B2635"
+            && nearClearRendered.ItemSurfaceColor == "#281B2635"
+            && nearClearRendered.ControlColor == "#281B2635"
+            && nearClearItemAlpha <= ColorContrastRules.NearClearMaxItemSurfaceStrength
+            && nearClearControlAlpha <= ColorContrastRules.NearClearMaxItemSurfaceStrength
+            && nearClearSubtleAlpha > 0d
+            && nearClearSubtleAlpha < nearClearItemAlpha
+            && nearClearRendered.NoteBodySurfaceColor == "#00FFFFFF"
             && nearClearRendered.EffectiveShadow == CardShadow.Soft
             && nearClearLightWhite.Glass == GlassMode.Light
             && nearClearLightWhite.ItemSurfaceTone == SurfaceTone.Light
             && Math.Abs(nearClearLightWhite.ItemSurfaceStrength - 0.48d) < 0.0001d,
-            "低浓度（< 0.2）浅色玻璃配白字应开启柔和文字阴影与 <=0.3 深色调行底，同时不改写持久配置");
+            "低浓度（< 0.2）浅色玻璃配白字应开启柔和文字阴影、<=0.16 深色调条目底板与透明便签正文，同时不改写持久配置");
+
+        // When ItemSurfaceStrength is lower (e.g. 0.10), subtle controls stay proportionally lighter inside the 0.16 ceiling
+        var nearClearPerCard = new WidgetAppearanceState
+        {
+            BackgroundColor = "#EDF6FF",
+            BackgroundOpacity = 0.05d,
+            TextColor = "#FFFFFF"
+        };
+        var nearClearCardRendered = DesktopStyleRules.ResolveRenderedCard(nearClearPerCard, nearClearLightWhite);
+        Check(nearClearCardRendered.NoteBodySurfaceColor == "#00FFFFFF"
+            && ColorContrastRules.ParseHex(nearClearCardRendered.ItemSurfaceColor).A <= ColorContrastRules.NearClearMaxItemSurfaceStrength
+            && Math.Abs(nearClearPerCard.BackgroundOpacity - 0.05d) < 0.0001d,
+            "单卡低浓度（< 0.2）浅色玻璃配白字时便签正文底色应为透明且条纹底板不超过 0.16");
 
         // R2/F3: >= 0.2 uses user opacity without clamping; 0.20..0.95 either hits >= 4.5:1 on both wallpapers or enables soft text shadow
         foreach (var textHex in new[] { "#FFFFFF", "#DCE6F2" })
@@ -604,6 +627,7 @@ internal static class ThemeStyleTests
 
                     Check(rendered.BackgroundColor == "#16202C"
                         && Math.Abs(rendered.BackgroundOpacity - opacity) < 0.0001d
+                        && rendered.NoteBodySurfaceColor == rendered.ItemSurfaceColor
                         && globalStyle.Glass == GlassMode.Light
                         && Math.Abs(globalStyle.GlassDensity - opacity) < 0.0001d
                         && Math.Abs(perCard.BackgroundOpacity - opacity) < 0.0001d,
