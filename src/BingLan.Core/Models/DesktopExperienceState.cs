@@ -198,6 +198,95 @@ public static class DesktopExperienceRules
         return Math.Clamp(value, MinimumFontScale, MaximumFontScale);
     }
 
+    private const double WeatherOuterVerticalMargin = 14d;
+    private const double WeatherRuleHeight = 8d;
+    private const double WeatherRefreshButtonHeight = 22d;
+    private const double WeatherDetailsTopMargin = 2d;
+    private const double WeatherSafetyBuffer = 3d;
+    private const double PerformanceOuterVerticalMargin = 10d;
+    private const double TypographicLineHeightFactor = 1.38d;
+
+    public static double GetWeatherVerticalPadding(DesktopInformationDensity density) => density switch
+    {
+        DesktopInformationDensity.Comfortable => 20d,
+        DesktopInformationDensity.Compact => 10d,
+        _ => 14d
+    };
+
+    public static double GetPerformanceVerticalPadding(DesktopInformationDensity density) => density switch
+    {
+        DesktopInformationDensity.Comfortable => 22d,
+        DesktopInformationDensity.Compact => 12d,
+        _ => 18d
+    };
+
+    /// <summary>
+    /// Computes the minimum DIP height needed by an isolated weather card from its font scale
+    /// and density so the bottom detail row stays unclipped without shrinking below content bounds.
+    /// </summary>
+    public static double CalculateWeatherMinHeight(
+        double fontScale,
+        DesktopInformationDensity density = DesktopInformationDensity.Standard)
+    {
+        var scale = CoerceFontScale(fontScale);
+        var headerRow = Math.Max(WeatherRefreshButtonHeight, 15d * scale * TypographicLineHeightFactor);
+        var temperatureRow = 46d * scale * TypographicLineHeightFactor;
+        var detailsRow = WeatherDetailsTopMargin + 12d * scale * TypographicLineHeightFactor;
+        var contentHeight = WeatherOuterVerticalMargin
+            + GetWeatherVerticalPadding(density)
+            + WeatherRuleHeight
+            + headerRow
+            + temperatureRow
+            + detailsRow
+            + WeatherSafetyBuffer;
+        return Math.Ceiling(contentHeight);
+    }
+
+    public static double CalculateCombinedInformationMinHeight(DesktopExperienceState experience)
+    {
+        ArgumentNullException.ThrowIfNull(experience);
+        var timeDate = experience.GetComponent(DesktopComponentKind.TimeDate);
+        var greeting = experience.GetComponent(DesktopComponentKind.Greeting);
+        var performance = experience.GetComponent(DesktopComponentKind.Performance);
+        var weather = experience.GetComponent(DesktopComponentKind.Weather);
+        var lowChrome = experience.ActivePreset != DesktopLayoutPreset.GlacierWorkbench;
+
+        var total = 0d;
+        if (timeDate.IsVisible || greeting.IsVisible)
+        {
+            total += 8d;
+            if (timeDate.IsVisible)
+            {
+                var timeScale = CoerceFontScale(timeDate.FontScale);
+                total += 36d * (lowChrome ? 1.3d : 1d) * timeScale * TypographicLineHeightFactor;
+                total += 13d * timeScale * TypographicLineHeightFactor;
+                if (timeDate.ShowDivider)
+                {
+                    total += 20d + timeDate.DividerThickness;
+                }
+            }
+            if (greeting.IsVisible)
+            {
+                total += 3d + 15d * CoerceFontScale(greeting.FontScale) * TypographicLineHeightFactor;
+            }
+        }
+        if (performance.IsVisible)
+        {
+            var perfScale = CoerceFontScale(performance.FontScale);
+            var barColumn = 30d * perfScale * TypographicLineHeightFactor + 8d;
+            var networkColumn = 35d * perfScale * TypographicLineHeightFactor + 3d;
+            total += PerformanceOuterVerticalMargin
+                + GetPerformanceVerticalPadding(performance.Density)
+                + Math.Max(barColumn, networkColumn);
+        }
+        if (weather.IsVisible)
+        {
+            total += CalculateWeatherMinHeight(weather.FontScale, weather.Density);
+        }
+
+        return Math.Ceiling(Math.Max(72d, total));
+    }
+
     public static string GetPresetName(DesktopLayoutPreset preset) => preset switch
     {
         DesktopLayoutPreset.QuietInformation => "静谧信息层",

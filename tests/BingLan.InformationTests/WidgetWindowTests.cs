@@ -283,6 +283,16 @@ internal static class WidgetWindowTests
             Assert(
                 detailsBottom <= window.ActualHeight - 8d,
                 $"默认高度下天气内容被裁切：底部 {detailsBottom:0.#}，窗口 {window.ActualHeight:0.#}");
+            if (window.FindName("WeatherDetailsPanel") is FrameworkElement weatherDetailsRow
+                && weatherDetailsRow.Visibility == Visibility.Visible)
+            {
+                var detailsRowBottom = weatherDetailsRow
+                    .TranslatePoint(new Point(0d, weatherDetailsRow.ActualHeight), window)
+                    .Y;
+                Assert(
+                    detailsRowBottom <= window.ActualHeight - 8d,
+                    $"默认高度下天气详情行被裁切：底部 {detailsRowBottom:0.#}，窗口 {window.ActualHeight:0.#}");
+            }
         }
         finally
         {
@@ -290,6 +300,106 @@ internal static class WidgetWindowTests
             window.Close();
             Pump();
         }
+    }
+
+    public static void ScaledWeatherMinHeightKeepsDetailsInsideCard()
+    {
+        var experience = DesktopExperienceRules.CreateDefault();
+        var weatherComponent = experience.GetComponent(DesktopComponentKind.Weather);
+        weatherComponent.IsVisible = true;
+        weatherComponent.FontScale = 1.296d;
+        weatherComponent.Density = DesktopInformationDensity.Standard;
+        weatherComponent.Placement.Width = 370d;
+        weatherComponent.Placement.Height = 154d;
+
+        var state = new InformationWidgetState
+        {
+            WeatherCity = "杭州",
+            WeatherLatitude = 30.25d,
+            WeatherLongitude = 120.16d,
+            Placement = new WindowPlacement
+            {
+                Left = weatherComponent.Placement.Left,
+                Top = weatherComponent.Placement.Top,
+                Width = 370d,
+                Height = 154d
+            }
+        };
+
+        using var sampler = new R1StubPerformanceSampler();
+        using var handler = new R1StubWeatherHandler();
+        var weather = new WeatherService(handler);
+        weather.RefreshAsync("杭州", 30.25d, 120.16d).GetAwaiter().GetResult();
+
+        var window = new InformationWidgetWindow(
+            state,
+            sampler,
+            weather,
+            experience,
+            DesktopComponentKind.Weather);
+        try
+        {
+            window.ApplyPlacement(weatherComponent.Placement, false);
+            window.Show();
+            Pump();
+            window.UpdateLayout();
+            Pump();
+            window.CaptureState();
+
+            var expectedMinHeight = DesktopExperienceRules.CalculateWeatherMinHeight(
+                weatherComponent.FontScale,
+                weatherComponent.Density);
+            Assert(
+                window.ActualHeight >= expectedMinHeight - 0.5d,
+                $"字号 1.296 天气卡片实际高度 {window.ActualHeight:0.#} 不应低于计算最小高度 {expectedMinHeight:0.#}");
+            Assert(
+                Math.Abs(weatherComponent.Placement.Height - 154d) < 0.01d,
+                $"加载与显示不应改写用户保存的天气卡片高度 154，实际为 {weatherComponent.Placement.Height:0.##}");
+
+            var detailsPanel = window.FindName("WeatherDetailsPanel") as FrameworkElement
+                ?? throw new InvalidOperationException("找不到 WeatherDetailsPanel");
+            Assert(
+                detailsPanel.Visibility == Visibility.Visible && detailsPanel.ActualHeight > 0d,
+                "天气详情行应正常显示");
+            var detailsBottom = detailsPanel
+                .TranslatePoint(new Point(0d, detailsPanel.ActualHeight), window)
+                .Y;
+            Assert(
+                detailsBottom <= window.ActualHeight - 8d,
+                $"字号 1.296、宽 370、保存高度 154 时底部详情行被裁切：底部 {detailsBottom:0.#}，窗口 {window.ActualHeight:0.#}");
+        }
+        finally
+        {
+            window.CanClose = true;
+            window.Close();
+            Pump();
+        }
+    }
+
+    private sealed class R1StubPerformanceSampler : IPerformanceSamplingService
+    {
+        public event Action<PerformanceSnapshot>? Sampled { add { } remove { } }
+        public bool IsRunning => false;
+        public PerformanceSamplingMode Mode => PerformanceSamplingMode.Normal;
+        public TimeSpan CurrentInterval => TimeSpan.FromSeconds(1);
+        public void Start() { }
+        public void SetMode(PerformanceSamplingMode mode) { }
+        public void Stop() { }
+        public void Dispose() { }
+    }
+
+    private sealed class R1StubWeatherHandler : System.Net.Http.HttpMessageHandler
+    {
+        protected override Task<System.Net.Http.HttpResponseMessage> SendAsync(
+            System.Net.Http.HttpRequestMessage request,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(new System.Net.Http.HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            {
+                Content = new System.Net.Http.StringContent(
+                    """{"current":{"temperature_2m":23.4,"relative_humidity_2m":58,"weather_code":1},"daily":{"temperature_2m_max":[27.2],"temperature_2m_min":[16.8]}}""",
+                    System.Text.Encoding.UTF8,
+                    "application/json")
+            });
     }
 
     public static void CitySettingsEntryRaisesRequest()

@@ -534,33 +534,74 @@ internal static class ThemeStyleTests
             && Math.Abs(nearClearLightWhite.ItemSurfaceStrength - 0.48d) < 0.0001d,
             "低浓度（< 0.2）浅色玻璃配白字应开启柔和文字阴影与 <=0.3 深色调行底，同时不改写持久配置");
 
-        // F3: >= 0.2 uses user opacity without clamping; >= 0.63 achieves >= 4.5:1 on both wallpapers, and 0.20..0.96 on dark wallpaper
-        foreach (var opacity in new[] { 0.20d, 0.46d })
+        // R2/F3: >= 0.2 uses user opacity without clamping; 0.20..0.95 either hits >= 4.5:1 on both wallpapers or enables soft text shadow
+        foreach (var textHex in new[] { "#FFFFFF", "#DCE6F2" })
         {
-            var medium = DesktopStyleRules.ResolveRenderedCard(
-                new WidgetAppearanceState { BackgroundColor = "#FFFFFF", BackgroundOpacity = opacity, TextColor = "#FFFFFF" },
-                new DesktopStyleState());
-            var darkWallpaperBody = ColorContrastRules.CompositeLayers(
-                ColorContrastRules.DarkWallpaper,
-                ColorContrastRules.WithAlpha(medium.BackgroundColor, medium.BackgroundOpacity));
-            Check(medium.BackgroundColor == "#16202C"
-                && Math.Abs(medium.BackgroundOpacity - opacity) < 0.0001d
-                && ColorContrastRules.ContrastRatio(ColorContrastRules.ParseHex("#FFFFFF"), darkWallpaperBody) >= ColorContrastRules.MinimumNormalTextContrast,
-                $"浅字浅底 >= 0.2（{opacity}）在暗壁纸下应保持用户不透明度并可读");
-        }
-        foreach (var opacity in new[] { 0.63d, 0.66d })
-        {
-            var dense = DesktopStyleRules.ResolveRenderedCard(
-                new WidgetAppearanceState { BackgroundColor = "#FFFFFF", BackgroundOpacity = opacity, TextColor = "#FFFFFF" },
-                new DesktopStyleState());
-            foreach (var wallpaper in new[] { ColorContrastRules.BrightWallpaper, ColorContrastRules.DarkWallpaper })
+            var ink = ColorContrastRules.ParseHex(textHex);
+            var sawShadowTier = false;
+            var sawUnshadowedTier = false;
+            for (var step = 20; step <= 95; step++)
             {
-                var bg = ColorContrastRules.CompositeLayers(
-                    wallpaper,
-                    ColorContrastRules.WithAlpha(dense.BackgroundColor, dense.BackgroundOpacity));
-                Check(ColorContrastRules.ContrastRatio(ColorContrastRules.ParseHex("#FFFFFF"), bg) >= ColorContrastRules.MinimumNormalTextContrast,
-                    $"浅字浅底（{opacity}）在 {wallpaper} 下整卡应 >= 4.5:1");
+                var opacity = step / 100d;
+                var globalStyle = new DesktopStyleState
+                {
+                    Glass = GlassMode.Light,
+                    GlassDensity = opacity,
+                    TextInk = TextInk.Custom,
+                    CustomTextColor = textHex,
+                    CardShadow = CardShadow.None
+                };
+                var perCard = new WidgetAppearanceState
+                {
+                    BackgroundColor = "#FFFFFF",
+                    BackgroundOpacity = opacity,
+                    TextColor = textHex
+                };
+
+                foreach (var (rendered, isGlobal) in new[]
+                         {
+                             (DesktopStyleRules.ResolveRenderedCard(globalStyle), true),
+                             (DesktopStyleRules.ResolveRenderedCard(perCard, new DesktopStyleState { CardShadow = CardShadow.None }), false)
+                         })
+                {
+                    var brightBackdrop = ColorContrastRules.CompositeLayers(
+                        ColorContrastRules.BrightWallpaper,
+                        ColorContrastRules.WithAlpha(rendered.BackgroundColor, rendered.BackgroundOpacity));
+                    var darkBackdrop = ColorContrastRules.CompositeLayers(
+                        ColorContrastRules.DarkWallpaper,
+                        ColorContrastRules.WithAlpha(rendered.BackgroundColor, rendered.BackgroundOpacity));
+                    var brightContrast = ColorContrastRules.ContrastRatio(ink, brightBackdrop);
+                    var darkContrast = ColorContrastRules.ContrastRatio(ink, darkBackdrop);
+                    var meetsContrast = brightContrast >= ColorContrastRules.MinimumNormalTextContrast
+                        && darkContrast >= ColorContrastRules.MinimumNormalTextContrast;
+                    var hasShadow = rendered.EffectiveShadow != CardShadow.None;
+
+                    Check(rendered.BackgroundColor == "#16202C"
+                        && Math.Abs(rendered.BackgroundOpacity - opacity) < 0.0001d
+                        && globalStyle.Glass == GlassMode.Light
+                        && Math.Abs(globalStyle.GlassDensity - opacity) < 0.0001d
+                        && Math.Abs(perCard.BackgroundOpacity - opacity) < 0.0001d,
+                        $"浅字({textHex})浅底({opacity:0.00}, {(isGlobal ? "全局" : "单卡")})应按深底渲染并原样保留不透明度");
+                    Check(meetsContrast || hasShadow,
+                        $"浅字({textHex})浅底({opacity:0.00}, {(isGlobal ? "全局" : "单卡")})对比度不足 4.5:1 时必须启用文字阴影");
+
+                    if (brightContrast < ColorContrastRules.MinimumNormalTextContrast)
+                    {
+                        Check(rendered.EffectiveShadow == CardShadow.Soft,
+                            $"浅字({textHex})浅底({opacity:0.00})亮壁纸对比度 {brightContrast:0.00} < 4.5 时应加柔和文字阴影");
+                        sawShadowTier = true;
+                    }
+                    else
+                    {
+                        Check(rendered.EffectiveShadow == CardShadow.None,
+                            $"浅字({textHex})浅底({opacity:0.00})亮壁纸对比度 {brightContrast:0.00} >= 4.5 时不应强加文字阴影");
+                        sawUnshadowedTier = true;
+                    }
+                }
             }
+
+            Check(sawShadowTier && sawUnshadowedTier,
+                $"浅字({textHex})在 0.20..0.95 区间应动态区分需要阴影与无需阴影的档位");
         }
 
         var defaultDock = DesktopStyleRules.Dock(new DesktopStyleState());
@@ -920,6 +961,49 @@ internal static class ThemeStyleTests
         var style = new DesktopStyleState();
         var light = DesktopStyleRules.Appearance(style);
         Check(light.HeaderColor == "#5B9BD5", "浅色玻璃默认标题色标应与 WidgetAppearanceRules 一致");
+    }
+
+    internal static void TestWeatherCardMinimumHeightScalesWithFontAndDensity()
+    {
+        var scales = new[] { 1d, 1.3d, DesktopExperienceRules.MaximumFontScale };
+        var densities = new[]
+        {
+            DesktopInformationDensity.Comfortable,
+            DesktopInformationDensity.Compact
+        };
+
+        foreach (var density in densities)
+        {
+            var previousHeight = 0d;
+            var padding = DesktopExperienceRules.GetWeatherVerticalPadding(density);
+            foreach (var scale in scales)
+            {
+                var calculated = DesktopExperienceRules.CalculateWeatherMinHeight(scale, density);
+                var requiredContentHeight = 14d
+                    + padding
+                    + 8d
+                    + Math.Max(22d, 15d * scale * 1.38d)
+                    + 46d * scale * 1.38d
+                    + 2d
+                    + 12d * scale * 1.38d;
+                Check(calculated >= requiredContentHeight,
+                    $"天气最小高度（字号 {scale:0.###}，疏密 {density}）计算值 {calculated} 不得小于内容所需高度 {requiredContentHeight:0.##}");
+                Check(calculated > previousHeight,
+                    $"天气最小高度应随字号单调递增（{density}：{scale:0.###} -> {calculated} <= {previousHeight}）");
+                previousHeight = calculated;
+            }
+        }
+
+        Check(DesktopExperienceRules.CalculateWeatherMinHeight(1.296d, DesktopInformationDensity.Standard) > 154d,
+            "标准疏密下字号 1.296 的天气最小高度应高于历史默认高度 154");
+
+        var experience = DesktopExperienceRules.CreateDefault();
+        experience.GetComponent(DesktopComponentKind.Weather).FontScale = 1.3d;
+        experience.GetComponent(DesktopComponentKind.Weather).Density = DesktopInformationDensity.Comfortable;
+        var combinedMin = DesktopExperienceRules.CalculateCombinedInformationMinHeight(experience);
+        var weatherMin = DesktopExperienceRules.CalculateWeatherMinHeight(1.3d, DesktopInformationDensity.Comfortable);
+        Check(combinedMin > weatherMin,
+            $"合并信息卡最小高度（{combinedMin}）应大于其中天气区自身最小高度（{weatherMin}）");
     }
 
     private static ThemeReadResult Read(string manifest)

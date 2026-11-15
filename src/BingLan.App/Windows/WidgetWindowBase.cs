@@ -274,6 +274,9 @@ public class WidgetWindowBase : Window
     // The arrangement of monitors the spot above belongs to; another arrangement drops it.
     private string? _displacedLayout;
     private bool _isApplyingReservedEdges;
+    private bool _isApplyingMinimumFloor;
+    private double? _savedWidthBelowMin;
+    private double? _savedHeightBelowMin;
     private DesktopStyleState _currentStyle = new();
     private Brush? _managedItemSurfaceBrush;
     private Brush? _managedSubtleControlBrush;
@@ -299,6 +302,21 @@ public class WidgetWindowBase : Window
         LocationChanged += (_, _) => PlacementChanged();
         SizeChanged += (_, _) =>
         {
+            if (!_isApplyingMinimumFloor && !_isApplyingTaskbarSafeBounds && !_isUpdatingNativeWindowShape)
+            {
+                if (_savedWidthBelowMin is not null
+                    && double.IsFinite(Width)
+                    && (MinWidth <= 0d || Width >= MinWidth + 1d))
+                {
+                    _savedWidthBelowMin = null;
+                }
+                if (_savedHeightBelowMin is not null
+                    && double.IsFinite(Height)
+                    && (MinHeight <= 0d || Height >= MinHeight + 1d))
+                {
+                    _savedHeightBelowMin = null;
+                }
+            }
             PlacementChanged();
             RefreshNativeWindowShape();
         };
@@ -503,14 +521,63 @@ public class WidgetWindowBase : Window
         var top = placement.Top;
         var width = Math.Max(MinWidth, placement.Width);
         var height = Math.Max(MinHeight, placement.Height);
+        _savedWidthBelowMin = MinWidth > 0d && placement.Width < MinWidth ? placement.Width : null;
+        _savedHeightBelowMin = MinHeight > 0d && placement.Height < MinHeight ? placement.Height : null;
         _placement = placement;
         Left = left;
         Top = top;
-        Width = width;
-        Height = height;
+        _isApplyingMinimumFloor = true;
+        try
+        {
+            Width = width;
+            Height = height;
+        }
+        finally
+        {
+            _isApplyingMinimumFloor = false;
+        }
         IsWidgetLocked = isLocked;
         OnLockChanged(isLocked);
         EnsureTaskbarSafeBounds();
+    }
+
+    protected void RefreshMinimumSizeFloor()
+    {
+        if (_placement is { } placement)
+        {
+            _savedWidthBelowMin = MinWidth > 0d && placement.Width < MinWidth ? placement.Width : null;
+            _savedHeightBelowMin = MinHeight > 0d && placement.Height < MinHeight ? placement.Height : null;
+        }
+        var floorWidth = MinWidth > 0d ? MinWidth : 0d;
+        var floorHeight = MinHeight > 0d ? MinHeight : 0d;
+        var currentWidth = double.IsFinite(Width) ? Width : floorWidth;
+        var currentHeight = double.IsFinite(Height) ? Height : floorHeight;
+        var nextWidth = _placement is { } pw
+            ? (_savedWidthBelowMin is not null
+                ? floorWidth
+                : Math.Max(floorWidth, pw.Width > 0d && pw.Width >= floorWidth && currentWidth > pw.Width ? pw.Width : currentWidth))
+            : Math.Max(floorWidth, currentWidth);
+        var nextHeight = _placement is { } ph
+            ? (_savedHeightBelowMin is not null
+                ? floorHeight
+                : Math.Max(floorHeight, ph.Height > 0d && ph.Height >= floorHeight && currentHeight > ph.Height ? ph.Height : currentHeight))
+            : Math.Max(floorHeight, currentHeight);
+        _isApplyingMinimumFloor = true;
+        try
+        {
+            if (double.IsFinite(nextWidth) && Math.Abs(currentWidth - nextWidth) >= 0.5d)
+            {
+                Width = nextWidth;
+            }
+            if (double.IsFinite(nextHeight) && Math.Abs(currentHeight - nextHeight) >= 0.5d)
+            {
+                Height = nextHeight;
+            }
+        }
+        finally
+        {
+            _isApplyingMinimumFloor = false;
+        }
     }
 
     private bool _selectedByFocus;
@@ -549,8 +616,30 @@ public class WidgetWindowBase : Window
         }
         placement.Left = Left;
         placement.Top = Top;
-        placement.Width = Width;
-        placement.Height = Height;
+        placement.Width = _savedWidthBelowMin ?? Width;
+        placement.Height = _savedHeightBelowMin ?? Height;
+        if ((_savedWidthBelowMin is not null || _savedHeightBelowMin is not null)
+            && _source?.Handle is { } handle
+            && handle != 0
+            && DockNativeMethods.GetWindowRect(handle, out var native))
+        {
+            var scale = VisualTreeHelper.GetDpi(this);
+            var rememberedWidth = _savedWidthBelowMin is { } savedWidth
+                ? Math.Max(1, (int)Math.Round(savedWidth * scale.DpiScaleX))
+                : native.Right - native.Left;
+            var rememberedHeight = _savedHeightBelowMin is { } savedHeight
+                ? Math.Max(1, (int)Math.Round(savedHeight * scale.DpiScaleY))
+                : native.Bottom - native.Top;
+            WindowScreenRecovery.RememberLayout(
+                this,
+                placement,
+                new BingLan.Core.Dock.PixelRect(
+                    native.Left,
+                    native.Top,
+                    native.Left + rememberedWidth,
+                    native.Top + rememberedHeight));
+            return;
+        }
         WindowScreenRecovery.RememberLayout(this, placement);
     }
 
@@ -1713,6 +1802,14 @@ public class WidgetWindowBase : Window
         var top = start.Top;
         var right = start.Right;
         var bottom = start.Bottom;
+        if (drag.Edges.HasFlag(ResizeEdges.Left) || drag.Edges.HasFlag(ResizeEdges.Right))
+        {
+            _savedWidthBelowMin = null;
+        }
+        if (drag.Edges.HasFlag(ResizeEdges.Top) || drag.Edges.HasFlag(ResizeEdges.Bottom))
+        {
+            _savedHeightBelowMin = null;
+        }
         if (drag.Edges.HasFlag(ResizeEdges.Left))
         {
             left = Math.Min(start.Left + dx, right - minimumWidth);

@@ -961,7 +961,16 @@ public partial class SettingsWindow : Window
         }
 
         var component = _desktopExperience.GetComponent(kind);
-        var (minimumWidth, minimumHeight) = GetMinimumComponentSize(kind);
+        var density = SelectedComponentDensitySelector.SelectedIndex switch
+        {
+            0 => DesktopInformationDensity.Comfortable,
+            2 => DesktopInformationDensity.Compact,
+            _ => DesktopInformationDensity.Standard
+        };
+        var (minimumWidth, minimumHeight) = GetMinimumComponentSize(
+            kind,
+            SelectedComponentFontScaleSlider.Value,
+            density);
         var fontFamily = SelectedComponentFontPicker.SelectedItem is string font && font != DefaultFontLabel
             ? font
             : null;
@@ -1036,17 +1045,15 @@ public partial class SettingsWindow : Window
                 component.Placement.Width,
                 minimumWidth,
                 1600d);
-            component.Placement.Height = ParseSize(
-                SelectedComponentHeightEditor.Text,
-                component.Placement.Height,
-                minimumHeight,
-                1200d);
-            component.Density = SelectedComponentDensitySelector.SelectedIndex switch
+            if (ShouldApplyEditedHeight(SelectedComponentHeightEditor.Text, component.Placement.Height))
             {
-                0 => DesktopInformationDensity.Comfortable,
-                2 => DesktopInformationDensity.Compact,
-                _ => DesktopInformationDensity.Standard
-            };
+                component.Placement.Height = ParseSize(
+                    SelectedComponentHeightEditor.Text,
+                    component.Placement.Height,
+                    minimumHeight,
+                    1200d);
+            }
+            component.Density = density;
             if (_selectedComponentEntry.Window is { } targetWindow)
             {
                 // 先应用组件状态、再应用锁定：ApplyWidgetLock 会触发窗口状态回写，
@@ -3685,9 +3692,28 @@ public partial class SettingsWindow : Window
             : DesktopLayoutPreset.QuietInformation;
     }
 
+    private static bool ShouldApplyEditedHeight(string editorText, double currentHeight)
+    {
+        var trimmed = editorText.Trim();
+        if (string.IsNullOrEmpty(trimmed))
+        {
+            return false;
+        }
+
+        return !string.Equals(trimmed, currentHeight.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal)
+            && !string.Equals(trimmed, currentHeight.ToString("0", System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal);
+    }
+
     private static (double Width, double Height) GetMinimumComponentSize(
-        DesktopComponentKind kind) =>
-        kind == DesktopComponentKind.Todo ? (226d, 166d) : (180d, 72d);
+        DesktopComponentKind kind,
+        double fontScale = 1d,
+        DesktopInformationDensity density = DesktopInformationDensity.Standard) =>
+        kind switch
+        {
+            DesktopComponentKind.Todo => (226d, 166d),
+            DesktopComponentKind.Weather => (180d, DesktopExperienceRules.CalculateWeatherMinHeight(fontScale, density)),
+            _ => (180d, 72d)
+        };
 
     private static double ParseSize(
         string value,

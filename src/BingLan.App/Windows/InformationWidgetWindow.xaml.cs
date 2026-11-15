@@ -179,7 +179,9 @@ public partial class InformationWidgetWindow : WidgetWindowBase
                 ClearValue(FontFamilyProperty);
             }
             MinWidth = 180d;
-            MinHeight = 72d;
+            MinHeight = isolatedComponent.Kind == DesktopComponentKind.Weather
+                ? DesktopExperienceRules.CalculateWeatherMinHeight(weather.FontScale, weather.Density)
+                : 72d;
             Title = DesktopExperienceRules.GetComponentName(isolatedComponent.Kind);
             isolatedRender = DesktopStyleRules.ResolveRenderedCard(isolatedComponent.Appearance, CurrentStyle);
             BodySurface.Background = AccessibilityThemeManager.IsHighContrastEnabled
@@ -188,6 +190,11 @@ public partial class InformationWidgetWindow : WidgetWindowBase
             ApplyRenderedSurfaceOverrides(isolatedRender);
             ApplyEffectiveCardShadow(isolatedRender.EffectiveShadow);
             WidgetCornerRadius = isolatedComponent.CornerRadius;
+        }
+        else
+        {
+            MinWidth = 250d;
+            MinHeight = DesktopExperienceRules.CalculateCombinedInformationMinHeight(experience);
         }
 
         var (surfaceBorderBrush, surfaceBorderThickness) = isolatedRender is not null
@@ -312,6 +319,7 @@ public partial class InformationWidgetWindow : WidgetWindowBase
         WeatherHumidityText.FontSize = weatherMetaSize;
         WeatherUpdatedText.FontSize = weatherMetaSize;
         WeatherStatusText.FontSize = 11d * weather.FontScale;
+        RefreshMinimumSizeFloor();
     }
 
     private Brush GetComponentTextBrush(DesktopComponentState component) =>
@@ -555,9 +563,9 @@ public partial class InformationWidgetWindow : WidgetWindowBase
                 State.WeatherLatitude!.Value,
                 State.WeatherLongitude!.Value))
         {
-            WeatherStatusText.Text = _weather.NextRetryAt is { } retryAt
+            SetWeatherStatusText(_weather.NextRetryAt is { } retryAt
                 ? $"上次刷新失败，{retryAt.LocalDateTime.ToString("HH:mm", CultureInfo.InvariantCulture)} 后重试"
-                : "上次刷新失败，稍后重试";
+                : "上次刷新失败，稍后重试");
             return;
         }
         // 只有成功后才等满刷新间隔；失败后的重试时机由服务的退避决定。
@@ -569,7 +577,7 @@ public partial class InformationWidgetWindow : WidgetWindowBase
         }
 
         _weatherInFlight = true;
-        WeatherStatusText.Text = "更新中…";
+        SetWeatherStatusText("更新中…");
         _ = RefreshWeatherAsync();
     }
 
@@ -636,7 +644,7 @@ public partial class InformationWidgetWindow : WidgetWindowBase
             WeatherHumidityText.Text = "";
             WeatherDetailsPanel.Visibility = Visibility.Collapsed;
             WeatherUpdatedText.Text = "";
-            WeatherStatusText.Text = "";
+            SetWeatherStatusText("");
             return;
         }
 
@@ -659,12 +667,20 @@ public partial class InformationWidgetWindow : WidgetWindowBase
         WeatherUpdatedText.Text = snapshot.UpdatedAt is { } updatedAt
             ? $"更新于 {updatedAt.LocalDateTime.ToString("HH:mm", CultureInfo.InvariantCulture)}"
             : "";
-        WeatherStatusText.Text = snapshot.Status switch
+        SetWeatherStatusText(snapshot.Status switch
         {
             WeatherStatus.Fresh => "",
             WeatherStatus.CachedFallback => $"刷新失败（{snapshot.ErrorMessage}），显示缓存数据",
             WeatherStatus.Failed => $"刷新失败：{snapshot.ErrorMessage}",
             _ => ""
-        };
+        });
+    }
+
+    private void SetWeatherStatusText(string text)
+    {
+        WeatherStatusText.Text = text;
+        WeatherStatusText.Visibility = string.IsNullOrEmpty(text)
+            ? Visibility.Collapsed
+            : Visibility.Visible;
     }
 }

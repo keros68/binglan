@@ -84,13 +84,22 @@ internal static class WindowScreenRecovery
             return false;
         }
 
+        var scale = System.Windows.Media.VisualTreeHelper.GetDpi(window);
+        var minWidth = window.MinWidth > 0d ? (int)Math.Ceiling(window.MinWidth * scale.DpiScaleX) : 1;
+        var minHeight = window.MinHeight > 0d ? (int)Math.Ceiling(window.MinHeight * scale.DpiScaleY) : 1;
+        var clampedTarget = new PixelRect(
+            target.Left,
+            target.Top,
+            target.Left + Math.Max(target.Width, minWidth),
+            target.Top + Math.Max(target.Height, minHeight));
+
         var moved = false;
         // Moving onto a monitor with other scaling resizes the window for that scaling;
         // the second pass puts back the size remembered on it.
         for (var attempt = 0; attempt < 2; attempt++)
         {
             if (!DockNativeMethods.GetWindowRect(handle, out var native)
-                || new PixelRect(native.Left, native.Top, native.Right, native.Bottom) == target)
+                || new PixelRect(native.Left, native.Top, native.Right, native.Bottom) == clampedTarget)
             {
                 break;
             }
@@ -98,10 +107,10 @@ internal static class WindowScreenRecovery
             moved |= NativeMethods.SetWindowPos(
                 handle,
                 0,
-                target.Left,
-                target.Top,
-                target.Width,
-                target.Height,
+                clampedTarget.Left,
+                clampedTarget.Top,
+                clampedTarget.Width,
+                clampedTarget.Height,
                 NativeMethods.SwpNoZOrder | NativeMethods.SwpNoActivate);
         }
         return moved;

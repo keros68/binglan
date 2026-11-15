@@ -254,7 +254,8 @@ public static class DesktopStyleRules
     /// its persisted material, tone, or strength. When light glass is paired with light text
     /// (relative luminance &gt; 0.5), cards below 20% opacity keep their light backing with soft text
     /// shadow and capped dark item surfaces (&lt;= 0.3), while cards at or above 20% render as a
-    /// unified dark-glass card using the user's saved opacity.
+    /// unified dark-glass card using the user's saved opacity and add soft text shadow whenever
+    /// contrast against bright wallpaper falls below 4.5:1.
     /// </summary>
     public static RenderedCardLook ResolveRenderedCard(
         WidgetAppearanceState cardAppearance,
@@ -293,7 +294,7 @@ public static class DesktopStyleRules
         {
             if (backgroundOpacity < ColorContrastRules.NearClearBackgroundOpacityThreshold)
             {
-                var shadow = style.CardShadow == CardShadow.None ? CardShadow.Soft : style.CardShadow;
+                var nearClearShadow = style.CardShadow == CardShadow.None ? CardShadow.Soft : style.CardShadow;
                 var effectiveStrength = Math.Min(
                     style.ItemSurfaceStrength,
                     ColorContrastRules.NearClearMaxItemSurfaceStrength);
@@ -304,8 +305,19 @@ public static class DesktopStyleRules
                     darkSurface,
                     WithAlpha(SurfaceToneDarkColor, effectiveStrength * SubtleControlRatio),
                     darkSurface,
-                    shadow);
+                    nearClearShadow);
             }
+
+            var renderedBackdrop = ColorContrastRules.CompositeLayers(
+                ColorContrastRules.BrightWallpaper,
+                ColorContrastRules.WithAlpha(RenderedDarkBackgroundColor, backgroundOpacity));
+            var contrast = ColorContrastRules.ContrastRatio(
+                ColorContrastRules.ParseHex(textColor),
+                renderedBackdrop);
+            var shadow = contrast < ColorContrastRules.MinimumNormalTextContrast
+                && style.CardShadow == CardShadow.None
+                    ? CardShadow.Soft
+                    : style.CardShadow;
 
             return new RenderedCardLook(
                 RenderedDarkBackgroundColor,
@@ -313,7 +325,7 @@ public static class DesktopStyleRules
                 RenderedDarkItemSurfaceColor,
                 RenderedDarkSubtleControlColor,
                 RenderedDarkControlColor,
-                style.CardShadow);
+                shadow);
         }
 
         if (ColorContrastRules.RelativeLuminance(backgroundColor) < 0.25d)
