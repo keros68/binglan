@@ -275,6 +275,8 @@ public class WidgetWindowBase : Window
     private string? _displacedLayout;
     private bool _isApplyingReservedEdges;
     private bool _isApplyingMinimumFloor;
+    private bool _isApplyingPlacement;
+    private bool _isRecoveringPlacement;
     private double? _savedWidthBelowMin;
     private double? _savedHeightBelowMin;
     private DesktopStyleState _currentStyle = new();
@@ -300,10 +302,20 @@ public class WidgetWindowBase : Window
         SnapsToDevicePixels = true;
 
         SourceInitialized += OnSourceInitialized;
+        IsVisibleChanged += (_, e) =>
+        {
+            if (e.NewValue is true && _source is { IsDisposed: false })
+            {
+                RecoverPlacementOnShow();
+            }
+        };
         LocationChanged += (_, _) => PlacementChanged();
         SizeChanged += (_, _) =>
         {
-            if (!_isApplyingMinimumFloor && !_isApplyingTaskbarSafeBounds && !_isUpdatingNativeWindowShape)
+            if (!_isApplyingMinimumFloor
+                && !_isApplyingTaskbarSafeBounds
+                && !_isUpdatingNativeWindowShape
+                && !_isRecoveringPlacement)
             {
                 if (_savedWidthBelowMin is not null
                     && double.IsFinite(Width)
@@ -525,17 +537,25 @@ public class WidgetWindowBase : Window
         _savedWidthBelowMin = MinWidth > 0d && placement.Width < MinWidth ? placement.Width : null;
         _savedHeightBelowMin = MinHeight > 0d && placement.Height < MinHeight ? placement.Height : null;
         _placement = placement;
-        Left = left;
-        Top = top;
-        _isApplyingMinimumFloor = true;
+        _isApplyingPlacement = true;
         try
         {
-            Width = width;
-            Height = height;
+            Left = left;
+            Top = top;
+            _isApplyingMinimumFloor = true;
+            try
+            {
+                Width = width;
+                Height = height;
+            }
+            finally
+            {
+                _isApplyingMinimumFloor = false;
+            }
         }
         finally
         {
-            _isApplyingMinimumFloor = false;
+            _isApplyingPlacement = false;
         }
         IsWidgetLocked = isLocked;
         OnLockChanged(isLocked);
@@ -1156,7 +1176,7 @@ public class WidgetWindowBase : Window
 
     private void PlacementChanged()
     {
-        if (_isApplyingReservedEdges)
+        if (_isApplyingReservedEdges || (_isApplyingPlacement && !IsVisible))
         {
             return;
         }
@@ -1192,6 +1212,46 @@ public class WidgetWindowBase : Window
 
         RefreshNativeWindowShape();
         RefreshBackdrop();
+        RecoverPlacementOnShow();
+    }
+
+    private void RecoverPlacementOnShow()
+    {
+        if (_isRecoveringPlacement
+            || WindowScreenRecovery.IsShowRecoveryDeferred
+            || _source is null
+            || _source.IsDisposed
+            || WindowState != WindowState.Normal)
+        {
+            return;
+        }
+
+        bool moved;
+        _isRecoveringPlacement = true;
+        try
+        {
+            moved = WindowScreenRecovery.RecoverOnShow(this, _placement);
+            EnsureTaskbarSafeBounds();
+        }
+        finally
+        {
+            _isRecoveringPlacement = false;
+        }
+
+        if (moved)
+        {
+            _displacedFrom = null;
+            if (_placement is not null)
+            {
+                CopyPlacementTo(_placement);
+            }
+            if (IsLoaded)
+            {
+                WidgetChanged?.Invoke(this);
+            }
+        }
+
+        ApplyReservedEdges(WindowScreenRecovery.ReservedEdgeTarget);
     }
 
     private void RefreshNativeWindowShape()

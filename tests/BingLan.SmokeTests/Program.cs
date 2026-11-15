@@ -35,6 +35,7 @@ Run("文件盒系统入口、失效判定与重新定位", FileBoxRuleTests.Run)
 Run("位置、尺寸和内容重启保留", TestPersistence);
 Run("卡片按显示器排列记住位置", DisplayLayoutTests.TestPositionPerArrangement);
 Run("按排列记住的位置保存与 v21 迁移", DisplayLayoutTests.TestPersistenceAndMigration);
+Run("隐藏卡片重新显示时按工作区收拢越界位置", DisplayLayoutTests.TestResolveShownBounds);
 Run("圆角规则与 v1-v2 状态迁移", TestCornerRadiusMigration);
 Run("材质、文字颜色与标题字体规则及 v3-v9 状态迁移", TestAppearanceMigration);
 Run("普通便签持久化与 v6-v9 状态迁移", TestNotePersistenceAndMigration);

@@ -1,8 +1,11 @@
 using System.Net;
 using System.Net.Http;
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Interop;
 using BingLan.App.Windows;
+using BingLan.Core.Dock;
 using BingLan.Core.Models;
 using BingLan.Core.Services;
 using static BingLan.InformationTests.TestSupport;
@@ -850,5 +853,123 @@ internal static class WidgetWindowTests
             Pump();
         }
     }
+
+    public static void OffScreenHiddenComponentRecoversOnShow()
+    {
+        const string earlierLayout = "earlier-layout";
+        var savedDualSpot = new PixelRect(2400, 300, 2960, 500);
+        foreach (var (kind, width, height) in new[]
+                 {
+                     (DesktopComponentKind.TimeDate, 560d, 200d),
+                     (DesktopComponentKind.Greeting, 640d, 84d)
+                 })
+        {
+            var experience = DesktopExperienceRules.CreateDefault();
+            var component = experience.GetComponent(kind);
+            component.IsVisible = true;
+            component.Placement = new WindowPlacement
+            {
+                Left = 20000d,
+                Top = 15000d,
+                Width = width,
+                Height = height
+            };
+            DisplayLayoutRules.Remember(component.Placement, earlierLayout, savedDualSpot);
+
+            var window = new InformationWidgetWindow(
+                new InformationWidgetState(),
+                new FakeSamplingService(),
+                new WeatherService(new StubHttpMessageHandler()),
+                experience,
+                kind);
+            try
+            {
+                window.ApplyPlacement(component.Placement, component.IsLocked);
+                ShowAndPump(window);
+
+                AssertWindowInsideWorkArea(window, $"{kind} 首次显示越界位置");
+                Assert(
+                    DisplayLayoutRules.TryRecall(component.Placement, earlierLayout, out var preserved)
+                    && preserved == savedDualSpot,
+                    $"{kind} 收拢回工作区不应丢弃其他显示器排列的记忆位置");
+
+                window.Hide();
+                Pump();
+                var overhang = new WindowPlacement
+                {
+                    Left = SystemParameters.WorkArea.Right - 90d,
+                    Top = SystemParameters.WorkArea.Bottom - 30d,
+                    Width = width,
+                    Height = height
+                };
+                DisplayLayoutRules.Remember(overhang, earlierLayout, savedDualSpot);
+                window.ApplyPlacement(overhang, component.IsLocked);
+                ShowAndPump(window);
+
+                AssertWindowInsideWorkArea(window, $"{kind} 隐藏后再显示边缘越界位置");
+                Assert(
+                    DisplayLayoutRules.TryRecall(overhang, earlierLayout, out preserved)
+                    && preserved == savedDualSpot,
+                    $"{kind} 隐藏后再显示不应破坏其他显示器排列记忆");
+            }
+            finally
+            {
+                window.CanClose = true;
+                window.Close();
+                Pump();
+            }
+        }
+    }
+
+    private static void AssertWindowInsideWorkArea(Window window, string label)
+    {
+        var handle = new WindowInteropHelper(window).Handle;
+        Assert(handle != 0, $"{label} 缺少窗口句柄");
+        Assert(GetWindowRect(handle, out var rect), $"{label} 无法读取窗口矩形");
+        var monitor = MonitorFromWindow(handle, 2);
+        var info = new MonitorInfo
+        {
+            Size = (uint)Marshal.SizeOf<MonitorInfo>(),
+            DeviceName = string.Empty
+        };
+        Assert(monitor != 0 && GetMonitorInfoW(monitor, ref info), $"{label} 无法读取所属显示器工作区");
+        var workArea = info.WorkArea;
+        Assert(
+            rect.Left >= workArea.Left
+            && rect.Right <= workArea.Right
+            && rect.Top >= workArea.Top
+            && rect.Bottom <= workArea.Bottom,
+            $"{label} 应完整落在工作区内：窗口 ({rect.Left},{rect.Top})-({rect.Right},{rect.Bottom})，工作区 ({workArea.Left},{workArea.Top})-({workArea.Right},{workArea.Bottom})");
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativeRect
+    {
+        public int Left;
+        public int Top;
+        public int Right;
+        public int Bottom;
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct MonitorInfo
+    {
+        public uint Size;
+        public NativeRect Monitor;
+        public NativeRect WorkArea;
+        public uint Flags;
+
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)]
+        public string DeviceName;
+    }
+
+    [DllImport("user32.dll")]
+    private static extern bool GetWindowRect(nint hwnd, out NativeRect rect);
+
+    [DllImport("user32.dll")]
+    private static extern nint MonitorFromWindow(nint hwnd, uint flags);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern bool GetMonitorInfoW(nint monitor, ref MonitorInfo info);
 
 }

@@ -1,3 +1,5 @@
+using BingLan.Core.Models;
+
 namespace BingLan.Core.Dock;
 
 /// <summary>
@@ -31,10 +33,68 @@ public static class PlacementResolver
             return desired;
         }
 
-        PixelRect target;
+        var target = SelectTargetWorkArea(desired, validWorkAreas, fallback);
+        return ClampInside(desired, target);
+    }
+
+    /// <summary>
+    /// Resolves the bounds a card should occupy when shown: recalls a remembered spot for the
+    /// live monitor arrangement when present (keeping at least a minimum part on screen), or
+    /// pulls an unremembered out-of-bounds card cleanly into the nearest work area.
+    /// </summary>
+    public static PixelRect ResolveShownBounds(
+        PixelRect currentBounds,
+        WindowPlacement? placement,
+        string? currentLayout,
+        IReadOnlyList<PixelRect> workAreas,
+        PixelRect fallback,
+        int minimumWidth = 1,
+        int minimumHeight = 1,
+        int minimumVisiblePixels = 64)
+    {
+        ArgumentNullException.ThrowIfNull(workAreas);
+        if (!currentBounds.HasArea)
+        {
+            return currentBounds;
+        }
+
+        var minWidth = Math.Max(1, minimumWidth);
+        var minHeight = Math.Max(1, minimumHeight);
+        if (placement is not null
+            && !string.IsNullOrEmpty(currentLayout)
+            && DisplayLayoutRules.TryRecall(placement, currentLayout, out var remembered))
+        {
+            var recalled = new PixelRect(
+                remembered.Left,
+                remembered.Top,
+                remembered.Left + Math.Max(remembered.Width, minWidth),
+                remembered.Top + Math.Max(remembered.Height, minHeight));
+            return EnsureVisible(recalled, workAreas, fallback, minimumVisiblePixels);
+        }
+
+        var validWorkAreas = workAreas.Where(area => area.HasArea).ToList();
+        var sized = new PixelRect(
+            currentBounds.Left,
+            currentBounds.Top,
+            currentBounds.Left + Math.Max(currentBounds.Width, minWidth),
+            currentBounds.Top + Math.Max(currentBounds.Height, minHeight));
+        if (validWorkAreas.Any(area => FitsInside(sized, area)))
+        {
+            return sized;
+        }
+
+        var target = SelectTargetWorkArea(sized, validWorkAreas, fallback);
+        return ClampInside(sized, target);
+    }
+
+    private static PixelRect SelectTargetWorkArea(
+        PixelRect desired,
+        List<PixelRect> validWorkAreas,
+        PixelRect fallback)
+    {
         if (validWorkAreas.Count > 0)
         {
-            target = validWorkAreas
+            return validWorkAreas
                 .Select((area, index) => new
                 {
                     Area = area,
@@ -46,19 +106,22 @@ public static class PlacementResolver
                 .First()
                 .Area;
         }
-        else if (fallback.HasArea)
+
+        if (fallback.HasArea)
         {
-            target = fallback;
-        }
-        else
-        {
-            throw new ArgumentException(
-                "At least one work area or a valid fallback must have a positive area.",
-                nameof(workAreas));
+            return fallback;
         }
 
-        return ClampInside(desired, target);
+        throw new ArgumentException(
+            "At least one work area or a valid fallback must have a positive area.",
+            nameof(validWorkAreas));
     }
+
+    private static bool FitsInside(PixelRect bounds, PixelRect area) =>
+        bounds.Left >= area.Left
+        && bounds.Right <= area.Right
+        && bounds.Top >= area.Top
+        && bounds.Bottom <= area.Bottom;
 
     /// <summary>
     /// Moves a window out of the screen edges the taskbar or a dock has reserved: the

@@ -165,47 +165,50 @@ public sealed class WidgetCoordinator : IDisposable
     public void Start()
     {
         _trayIcon.Visible = true;
-        var informationVisible = HasVisibleInformationComponent();
-        foreach (var information in _state.InformationWidgets.ToList())
+        using (WindowScreenRecovery.DeferShowRecovery())
         {
-            if (informationVisible)
+            var informationVisible = HasVisibleInformationComponent();
+            foreach (var information in _state.InformationWidgets.ToList())
             {
-                foreach (var kind in InformationComponentKinds.Where(
-                             kind => _state.DesktopExperience.GetComponent(kind).IsVisible))
+                if (informationVisible)
                 {
-                    ShowInformation(information, kind);
+                    foreach (var kind in InformationComponentKinds.Where(
+                                 kind => _state.DesktopExperience.GetComponent(kind).IsVisible))
+                    {
+                        ShowInformation(information, kind);
+                    }
                 }
             }
-        }
-        ApplyQuickPlaces();
-        var todoVisible = _state.DesktopExperience
-            .GetComponent(DesktopComponentKind.Todo)
-            .IsVisible;
-        var todoComponent = _state.DesktopExperience.GetComponent(DesktopComponentKind.Todo);
-        foreach (var todo in _state.TodoWidgets.ToList())
-        {
-            if (todoVisible)
+            ApplyQuickPlaces();
+            var todoVisible = _state.DesktopExperience
+                .GetComponent(DesktopComponentKind.Todo)
+                .IsVisible;
+            var todoComponent = _state.DesktopExperience.GetComponent(DesktopComponentKind.Todo);
+            foreach (var todo in _state.TodoWidgets.ToList())
             {
-                if (ReferenceEquals(todo, _state.TodoWidgets.FirstOrDefault()))
+                if (todoVisible)
                 {
-                    todo.Placement = todoComponent.Placement;
-                    todo.IsLocked = todoComponent.IsLocked;
+                    if (ReferenceEquals(todo, _state.TodoWidgets.FirstOrDefault()))
+                    {
+                        todo.Placement = todoComponent.Placement;
+                        todo.IsLocked = todoComponent.IsLocked;
+                    }
+                    ShowTodo(todo);
                 }
-                ShowTodo(todo);
             }
-        }
-        foreach (var note in _state.NoteWidgets.ToList())
-        {
-            ShowNote(note);
-        }
-        foreach (var box in _state.FileBoxes.ToList())
-        {
-            ShowFileBox(box);
-        }
+            foreach (var note in _state.NoteWidgets.ToList())
+            {
+                ShowNote(note);
+            }
+            foreach (var box in _state.FileBoxes.ToList())
+            {
+                ShowFileBox(box);
+            }
 
-        if (_windows.Count == 0)
-        {
-            AddTodo();
+            if (_windows.Count == 0)
+            {
+                AddTodo();
+            }
         }
         ApplyDisplayRecovery();
         WindowScreenRecovery.SettleLayout();
@@ -819,7 +822,7 @@ public sealed class WidgetCoordinator : IDisposable
     private bool IsPrimaryTodo(TodoWidgetState state) =>
         _state.TodoWidgets.FirstOrDefault()?.Id == state.Id;
 
-    private TodoWidgetWindow ShowTodo(TodoWidgetState state)
+    private TodoWidgetWindow CreateTodoWindow(TodoWidgetState state)
     {
         SanitizePlacement(state.Placement);
         var window = new TodoWidgetWindow(state)
@@ -834,6 +837,12 @@ public sealed class WidgetCoordinator : IDisposable
         }
         Wire(window);
         _windows.Add(window);
+        return window;
+    }
+
+    private TodoWidgetWindow ShowTodo(TodoWidgetState state)
+    {
+        var window = CreateTodoWindow(state);
         window.Show();
         return window;
     }
@@ -874,7 +883,17 @@ public sealed class WidgetCoordinator : IDisposable
             Left = source.Placement.Left,
             Top = source.Placement.Top,
             Width = source.Placement.Width,
-            Height = source.Placement.Height
+            Height = source.Placement.Height,
+            DisplayLayouts = (source.Placement.DisplayLayouts ?? [])
+                .Select(entry => new DisplayLayoutPlacement
+                {
+                    Layout = entry.Layout,
+                    Left = entry.Left,
+                    Top = entry.Top,
+                    Right = entry.Right,
+                    Bottom = entry.Bottom
+                })
+                .ToList()
         };
         component.IsLocked = source.IsLocked;
         component.Appearance.BackgroundColor = source.Appearance.BackgroundColor;
@@ -920,7 +939,7 @@ public sealed class WidgetCoordinator : IDisposable
         window.Show();
     }
 
-    private InformationWidgetWindow ShowInformation(
+    private InformationWidgetWindow CreateInformationWindow(
         InformationWidgetState state,
         DesktopComponentKind componentKind)
     {
@@ -935,9 +954,18 @@ public sealed class WidgetCoordinator : IDisposable
         {
             ShowInTaskbar = false
         };
-        window.ApplyPlacement(component.Placement, component.IsLocked);
         Wire(window);
         _windows.Add(window);
+        return window;
+    }
+
+    private InformationWidgetWindow ShowInformation(
+        InformationWidgetState state,
+        DesktopComponentKind componentKind)
+    {
+        var component = _state.DesktopExperience.GetComponent(componentKind);
+        var window = CreateInformationWindow(state, componentKind);
+        window.ApplyPlacement(component.Placement, component.IsLocked);
         window.Show();
         return window;
     }
@@ -1438,7 +1466,7 @@ public sealed class WidgetCoordinator : IDisposable
                     }
                     if (window is null)
                     {
-                        window = ShowInformation(state, kind);
+                        window = CreateInformationWindow(state, kind);
                     }
                     window.ApplyDesktopExperience(experience);
                     window.ApplyPlacement(component.Placement, component.IsLocked);
@@ -1463,10 +1491,11 @@ public sealed class WidgetCoordinator : IDisposable
                     .FirstOrDefault(candidate => candidate.State.Id == state.Id);
                 if (window is null)
                 {
-                    window = ShowTodo(state);
+                    window = CreateTodoWindow(state);
                 }
                 if (IsPrimaryTodo(state))
                 {
+                    SanitizePlacement(todoComponent.Placement);
                     CopyTodoLookFromComponent(state, todoComponent);
                     ApplyTodoComponent(window, todoComponent);
                     state.IsLocked = todoComponent.IsLocked;

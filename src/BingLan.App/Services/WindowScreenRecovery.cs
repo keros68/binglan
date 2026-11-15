@@ -20,6 +20,30 @@ internal static class WindowScreenRecovery
     // being handled and moves made by Windows or by the recovery are not remembered.
     private static string? _settledLayout;
     private static bool _layoutChangeRaised;
+    private static int _deferShowRecoveryDepth;
+
+    internal static bool IsShowRecoveryDeferred => _deferShowRecoveryDepth > 0;
+
+    internal static IDisposable DeferShowRecovery()
+    {
+        _deferShowRecoveryDepth++;
+        return new ShowRecoveryDeferralScope();
+    }
+
+    private sealed class ShowRecoveryDeferralScope : IDisposable
+    {
+        private bool _disposed;
+
+        public void Dispose()
+        {
+            if (_disposed)
+            {
+                return;
+            }
+            _disposed = true;
+            _deferShowRecoveryDepth = Math.Max(0, _deferShowRecoveryDepth - 1);
+        }
+    }
 
     /// <summary>
     /// Raised once when a card moves on an arrangement of monitors that has not been
@@ -245,6 +269,75 @@ internal static class WindowScreenRecovery
             target.Width,
             target.Height,
             NativeMethods.SwpNoZOrder | NativeMethods.SwpNoActivate);
+    }
+
+    /// <summary>
+    /// Recovers a card's position when it becomes visible: restores a remembered spot on the
+    /// live monitor arrangement or gathers an out-of-bounds spot inside the nearest work area.
+    /// </summary>
+    internal static bool RecoverOnShow(Window window, WindowPlacement? placement)
+    {
+        if (IsShowRecoveryDeferred || window.WindowState != WindowState.Normal)
+        {
+            return false;
+        }
+
+        var handle = new WindowInteropHelper(window).Handle;
+        if (handle == 0 || !DockNativeMethods.GetWindowRect(handle, out var native))
+        {
+            return false;
+        }
+
+        var current = new PixelRect(native.Left, native.Top, native.Right, native.Bottom);
+        if (!current.HasArea)
+        {
+            return false;
+        }
+
+        var monitors = MonitorCatalog.GetAll();
+        if (monitors.Count == 0)
+        {
+            return false;
+        }
+
+        var primary = monitors.FirstOrDefault(monitor => monitor.IsPrimary) ?? monitors[0];
+        var scale = System.Windows.Media.VisualTreeHelper.GetDpi(window);
+        var minWidth = window.MinWidth > 0d ? (int)Math.Ceiling(window.MinWidth * scale.DpiScaleX) : 1;
+        var minHeight = window.MinHeight > 0d ? (int)Math.Ceiling(window.MinHeight * scale.DpiScaleY) : 1;
+        var target = PlacementResolver.ResolveShownBounds(
+            current,
+            placement,
+            CurrentLayout(),
+            monitors.Select(monitor => monitor.WorkingArea).ToArray(),
+            primary.WorkingArea,
+            minWidth,
+            minHeight,
+            MinimumVisiblePixels);
+        if (target == current)
+        {
+            return false;
+        }
+
+        var moved = false;
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            if (!DockNativeMethods.GetWindowRect(handle, out var updated)
+                || new PixelRect(updated.Left, updated.Top, updated.Right, updated.Bottom) == target)
+            {
+                break;
+            }
+
+            moved |= NativeMethods.SetWindowPos(
+                handle,
+                0,
+                target.Left,
+                target.Top,
+                target.Width,
+                target.Height,
+                NativeMethods.SwpNoZOrder | NativeMethods.SwpNoActivate);
+        }
+
+        return moved;
     }
 
     /// <summary>

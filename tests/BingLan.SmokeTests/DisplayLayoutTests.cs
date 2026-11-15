@@ -84,6 +84,94 @@ internal static class DisplayLayoutTests
         }
     }
 
+    internal static void TestResolveShownBounds()
+    {
+        var workArea = new PixelRect(0, 0, 1138, 711);
+        var currentLayout = DisplayLayoutRules.Key([(workArea, 144u)]);
+        var dualLayout = DisplayLayoutRules.Key([(Laptop, 144u), (External, 96u)]);
+
+        var placementWithOtherLayout = new WindowPlacement();
+        DisplayLayoutRules.Remember(placementWithOtherLayout, dualLayout, new PixelRect(2400, 300, 2800, 700));
+
+        // 越界到右侧、底边外、仅露出角位，以及来自断开副屏的位置都应完整收拢进工作区。
+        var rightEdge = PlacementResolver.ResolveShownBounds(
+            new PixelRect(818, 27, 1378, 227),
+            placementWithOtherLayout,
+            currentLayout,
+            [workArea],
+            workArea);
+        Check(rightEdge == new PixelRect(578, 27, 1138, 227),
+            $"右侧越界位置应完整收拢到工作区内，实际 {rightEdge}");
+
+        var bottomEdge = PlacementResolver.ResolveShownBounds(
+            new PixelRect(707, 898, 1347, 982),
+            placementWithOtherLayout,
+            currentLayout,
+            [workArea],
+            workArea);
+        Check(bottomEdge == new PixelRect(498, 627, 1138, 711),
+            $"底边越界位置应完整收拢到工作区内，实际 {bottomEdge}");
+
+        var sliver = PlacementResolver.ResolveShownBounds(
+            new PixelRect(1058, 651, 1618, 851),
+            placementWithOtherLayout,
+            currentLayout,
+            [workArea],
+            workArea);
+        Check(sliver == new PixelRect(578, 511, 1138, 711),
+            $"只露出小角时也应完整收拢到工作区内，实际 {sliver}");
+
+        var disconnected = PlacementResolver.ResolveShownBounds(
+            new PixelRect(2400, 300, 2800, 500),
+            placementWithOtherLayout,
+            currentLayout,
+            [workArea],
+            workArea);
+        Check(FitsInside(disconnected, workArea)
+            && DisplayLayoutRules.TryRecall(placementWithOtherLayout, dualLayout, out var recalledDual)
+            && recalledDual == new PixelRect(2400, 300, 2800, 700),
+            "断开的副屏位置应收拢到当前工作区且不破坏其他排列记录");
+
+        // 本来就在工作区内的位置原样返回。
+        var inArea = new PixelRect(120, 80, 480, 280);
+        var preserved = PlacementResolver.ResolveShownBounds(
+            inArea,
+            placementWithOtherLayout,
+            currentLayout,
+            [workArea],
+            workArea);
+        Check(preserved == inArea, $"本就在工作区内的位置应原样返回，实际 {preserved}");
+
+        // 当前排列已有记忆位置时，可见则按记忆取回，记忆本身越界时拉回工作区。
+        var rememberedVisible = new WindowPlacement();
+        DisplayLayoutRules.Remember(rememberedVisible, currentLayout, new PixelRect(140, 100, 500, 300));
+        var recalled = PlacementResolver.ResolveShownBounds(
+            new PixelRect(2400, 300, 2800, 500),
+            rememberedVisible,
+            currentLayout,
+            [workArea],
+            workArea);
+        Check(recalled == new PixelRect(140, 100, 500, 300),
+            $"当前排列下的可见记忆位置应被恢复，实际 {recalled}");
+
+        var rememberedOffscreen = new WindowPlacement();
+        DisplayLayoutRules.Remember(rememberedOffscreen, currentLayout, new PixelRect(2400, 300, 2800, 500));
+        var clampedRecalled = PlacementResolver.ResolveShownBounds(
+            new PixelRect(2400, 300, 2800, 500),
+            rememberedOffscreen,
+            currentLayout,
+            [workArea],
+            workArea);
+        Check(FitsInside(clampedRecalled, workArea),
+            $"当前排列下越界的记忆位置也应收拢到工作区内，实际 {clampedRecalled}");
+    }
+
+    private static bool FitsInside(PixelRect bounds, PixelRect area) =>
+        bounds.Left >= area.Left
+        && bounds.Right <= area.Right
+        && bounds.Top >= area.Top
+        && bounds.Bottom <= area.Bottom;
+
     private static void Check(bool condition, string message)
     {
         if (!condition)

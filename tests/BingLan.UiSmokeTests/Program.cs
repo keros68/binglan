@@ -17,6 +17,7 @@ using BingLan.App.Services;
 using BingLan.App.Taskbar;
 using BingLan.App.Themes;
 using BingLan.App.Windows;
+using BingLan.Core.Dock;
 using BingLan.Core.Models;
 using BingLan.Core.Services;
 using BingLan.Core.Themes;
@@ -161,6 +162,7 @@ internal static class Program
         Run("任务栏 XAML 恢复边界与取消", TestTaskbarXamlRecovery, failures);
         Run("工作区变化后卡片让出任务栏或 Dock 占用的边缘", TestCardLeavesReservedEdge, failures);
         Run("隐藏期间丢失显示器后卡片在显示前被拉回", TestHiddenCardRecoversFromLostMonitor, failures);
+        Run("隐藏卡片带着越界位置重新显示时自动收拢到工作区", TestReShownCardRecoversIntoWorkArea, failures);
         Run("预设布局在同步状态捕获时完整应用", TestApplyPlacementDuringCapture, failures);
         Run("窗口位置尺寸关闭后重载", TestWindowPersistence, failures);
         Run("桌面分组盒导入入口、排序和图标网格", TestFileBoxWindow, failures);
@@ -2008,6 +2010,63 @@ internal static class Program
                 monitor.WorkingArea.Left < rect.Right && rect.Left < monitor.WorkingArea.Right
                 && monitor.WorkingArea.Top < rect.Bottom && rect.Top < monitor.WorkingArea.Bottom);
             Assert(recovered, "隐藏期间丢失显示器后，卡片在显示前就应被拉回工作区");
+        }
+        finally
+        {
+            Close(window);
+        }
+    }
+
+    private static void TestReShownCardRecoversIntoWorkArea()
+    {
+        var state = new TodoWidgetState
+        {
+            Placement = new WindowPlacement { Left = 140, Top = 120, Width = 300, Height = 240 }
+        };
+        DisplayLayoutRules.Remember(state.Placement, "other-arrangement", new PixelRect(2400, 300, 2700, 540));
+        var window = new TodoWidgetWindow(state);
+        ShowAndPump(window);
+        try
+        {
+            var handle = new WindowInteropHelper(window).Handle;
+            Assert(GetWindowRect(handle, out var initial), "应能读取卡片初始位置");
+            Assert(
+                MonitorCatalog.GetAll().Any(monitor =>
+                    initial.Left >= monitor.WorkingArea.Left
+                    && initial.Right <= monitor.WorkingArea.Right
+                    && initial.Top >= monitor.WorkingArea.Top
+                    && initial.Bottom <= monitor.WorkingArea.Bottom),
+                "本就在工作区内的卡片首次显示不应越界");
+
+            window.HideFromApp();
+            Pump();
+            Assert(!window.IsVisible, "卡片应已隐藏");
+
+            var offscreenPlacement = new WindowPlacement
+            {
+                Left = SystemParameters.WorkArea.Right + 400d,
+                Top = SystemParameters.WorkArea.Bottom + 300d,
+                Width = 300,
+                Height = 240
+            };
+            DisplayLayoutRules.Remember(offscreenPlacement, "other-arrangement", new PixelRect(2400, 300, 2700, 540));
+            window.ApplyPlacement(offscreenPlacement, isLocked: false);
+            window.Show();
+            Pump();
+
+            Assert(window.IsVisible, "隐藏卡片应重新显示");
+            Assert(GetWindowRect(handle, out var recovered), "重新显示后应能读取卡片位置");
+            var insideWorkArea = MonitorCatalog.GetAll().Any(monitor =>
+                recovered.Left >= monitor.WorkingArea.Left
+                && recovered.Right <= monitor.WorkingArea.Right
+                && recovered.Top >= monitor.WorkingArea.Top
+                && recovered.Bottom <= monitor.WorkingArea.Bottom);
+            Assert(insideWorkArea,
+                $"带越界位置的隐藏卡片重新显示后应完整落入工作区，实际 ({recovered.Left},{recovered.Top})-({recovered.Right},{recovered.Bottom})");
+            Assert(
+                DisplayLayoutRules.TryRecall(offscreenPlacement, "other-arrangement", out var kept)
+                && kept == new PixelRect(2400, 300, 2700, 540),
+                "重新显示时的工作区收拢不应丢弃其他显示器排列的记忆位置");
         }
         finally
         {
