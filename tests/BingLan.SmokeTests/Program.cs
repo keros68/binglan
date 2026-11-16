@@ -85,6 +85,7 @@ Run("天气卡片最小高度随字号与疏密缩放", ThemeStyleTests.TestWeat
 Run("卡片折叠与条目增删动效规格", ThemeStyleTests.TestWp6CardMotionRules);
 Run("设置窗口尺寸与最小尺寸不超过显示器工作区", ThemeStyleTests.TestSettingsWindowSizingRules);
 Run("时钟排版预设、Schema v47 迁移与 0.2.66 降级缺字段回退", ThemeStyleTests.TestClockLayoutPresetsAndMigration);
+Run("无底板与接近透明时钟预设的日期与数字可读性", ThemeStyleTests.TestUnbackedClockReadability);
 Run("切换全局材质时保留自定义文字颜色", ThemeStyleTests.TestMaterialSwitchPreservesCustomTextColor);
 Run("天气矢量图标覆盖全部 WMO 描述", ThemeStyleTests.TestWeatherIconMapping);
 Run("统一圆角与标题色标默认值", ThemeStyleTests.TestDefaultRadiusAndHeaderTagDefaults);

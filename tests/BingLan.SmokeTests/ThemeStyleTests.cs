@@ -1395,6 +1395,93 @@ internal static class ThemeStyleTests
         }
     }
 
+    public static void TestUnbackedClockReadability()
+    {
+        foreach (var lowBackingOpacity in new[] { WidgetAppearanceRules.MinimumBackgroundOpacity, 0.05d, 0.15d })
+        {
+            foreach (var preset in ClockLayoutRules.AllPresets)
+            {
+                var spec = ClockLayoutRules.ResolveTypography(
+                    preset,
+                    userFontFamily: null,
+                    1d,
+                    "#FFFFFF",
+                    backgroundOpacity: lowBackingOpacity);
+                Check(spec.DateUsesPrimaryInk,
+                    $"底不透明度 {lowBackingOpacity:0.00} 下预设 {preset} 的日期必须使用主文字墨色");
+            }
+        }
+
+        foreach (var backedOpacity in new[] { 0.20d, 0.66d })
+        {
+            foreach (var preset in new[] { ClockLayoutPreset.MinimalDigits, ClockLayoutPreset.VerticalDigits })
+            {
+                var spec = ClockLayoutRules.ResolveTypography(
+                    preset,
+                    userFontFamily: null,
+                    1d,
+                    "#1E2B3C",
+                    backgroundOpacity: backedOpacity);
+                Check(!spec.DateUsesPrimaryInk,
+                    $"有底板不透明度 {backedOpacity:0.00} 下预设 {preset} 应保留次级墨色日期");
+            }
+
+            foreach (var preset in new[] { ClockLayoutPreset.Classic, ClockLayoutPreset.DatePoster })
+            {
+                var spec = ClockLayoutRules.ResolveTypography(
+                    preset,
+                    userFontFamily: null,
+                    1d,
+                    "#1E2B3C",
+                    backgroundOpacity: backedOpacity);
+                Check(spec.DateUsesPrimaryInk,
+                    $"有底板不透明度 {backedOpacity:0.00} 下预设 {preset} 的日期保持主墨色");
+            }
+        }
+
+        var unbackedMinimal = ClockLayoutRules.ResolveTypography(
+            ClockLayoutPreset.MinimalDigits,
+            userFontFamily: null,
+            1d,
+            "#FFFFFF",
+            backgroundOpacity: WidgetAppearanceRules.MinimumBackgroundOpacity);
+        Check(unbackedMinimal.EffectiveTimeFontFamily == "Jost 细" && unbackedMinimal.TimeFontWeightOpenType == 300,
+            "无底板极简大数字应将时间字重提高一档为 Jost 细 (300)");
+
+        foreach (var backedMinimalOpacity in new[] { 0.05d, 0.66d })
+        {
+            var backedMinimal = ClockLayoutRules.ResolveTypography(
+                ClockLayoutPreset.MinimalDigits,
+                userFontFamily: null,
+                1d,
+                "#1E2B3C",
+                backgroundOpacity: backedMinimalOpacity);
+            Check(backedMinimal.EffectiveTimeFontFamily == "Jost 极细" && backedMinimal.TimeFontWeightOpenType == 200,
+                $"底不透明度 {backedMinimalOpacity:0.00} 下极简大数字应保持 Jost 极细 (200)");
+        }
+
+        var unbackedVertical = ClockLayoutRules.ResolveTypography(
+            ClockLayoutPreset.VerticalDigits,
+            userFontFamily: null,
+            1d,
+            "#FFFFFF",
+            backgroundOpacity: WidgetAppearanceRules.MinimumBackgroundOpacity);
+        Check(unbackedVertical.TimeFontWeightOpenType == 700 && unbackedVertical.DateUsesPrimaryInk,
+            "无底板纵向数字应保持加粗数字字重并在日期上使用主墨色");
+
+        var customUnbackedMinimal = ClockLayoutRules.ResolveTypography(
+            ClockLayoutPreset.MinimalDigits,
+            userFontFamily: "Segoe UI",
+            1.2d,
+            "#FFEEAA",
+            backgroundOpacity: WidgetAppearanceRules.MinimumBackgroundOpacity);
+        Check(customUnbackedMinimal.EffectiveTimeFontFamily == "Segoe UI"
+            && customUnbackedMinimal.EffectiveDateFontFamily == "Segoe UI"
+            && customUnbackedMinimal.DateUsesPrimaryInk
+            && customUnbackedMinimal.EffectiveTextColor == "#FFEEAA",
+            "无底板规则不得覆盖用户自定义字体或自定义文字颜色");
+    }
+
     private static void Check(bool condition, string message)
     {
         if (!condition)

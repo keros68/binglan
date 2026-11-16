@@ -134,7 +134,8 @@ public static class ClockLayoutRules
         double fontScale,
         string textColor,
         bool centerClockPreset = false,
-        bool lowChrome = true)
+        bool lowChrome = true,
+        double backgroundOpacity = DesktopStyleRules.DefaultGlassDensity)
     {
         var safePreset = CoercePreset(preset);
         var scale = DesktopExperienceRules.CoerceFontScale(fontScale);
@@ -142,15 +143,18 @@ public static class ClockLayoutRules
             ? null
             : WidgetAppearanceRules.CoerceTitleFontFamily(userFontFamily);
         var effectiveColor = WidgetAppearanceRules.CoerceTextColor(textColor);
+        var safeOpacity = WidgetAppearanceRules.CoerceBackgroundOpacity(backgroundOpacity);
+        var isUnbacked = safeOpacity < DesktopStyleRules.MinimumGlassDensity;
+        var lowBackingPrimaryDate = safeOpacity < ColorContrastRules.NearClearBackgroundOpacityThreshold;
 
         return safePreset switch
         {
             ClockLayoutPreset.MinimalDigits => BuildMinimalDigits(
-                customFont, scale, effectiveColor, centerClockPreset),
+                customFont, scale, effectiveColor, centerClockPreset, isUnbacked, lowBackingPrimaryDate),
             ClockLayoutPreset.DatePoster => BuildDatePoster(
                 customFont, scale, effectiveColor, centerClockPreset),
             ClockLayoutPreset.VerticalDigits => BuildVerticalDigits(
-                customFont, scale, effectiveColor, centerClockPreset),
+                customFont, scale, effectiveColor, centerClockPreset, lowBackingPrimaryDate),
             _ => BuildClassic(
                 customFont, scale, effectiveColor, centerClockPreset, lowChrome)
         };
@@ -228,23 +232,25 @@ public static class ClockLayoutRules
         string? customFont,
         double scale,
         string effectiveColor,
-        bool centerClockPreset)
+        bool centerClockPreset,
+        bool isUnbacked,
+        bool lowBackingPrimaryDate)
     {
         var timeSize = (centerClockPreset ? 104d : 68d) * scale;
         var dateSize = (centerClockPreset ? 14d : 12.5d) * scale;
         return new ClockTypographySpec(
             ClockLayoutPreset.MinimalDigits,
             ClockDateArrangement.MinimalCentered,
-            customFont ?? "Jost 极细",
+            customFont ?? (isUnbacked ? "Jost 细" : "Jost 极细"),
             customFont ?? "Quicksand 细",
-            200,
+            isUnbacked ? 300 : 200,
             300,
             timeSize,
             dateSize,
             dateSize,
             Math.Round(timeSize * 1.04d, 2),
             CenterHorizontally: true,
-            DateUsesPrimaryInk: false,
+            DateUsesPrimaryInk: lowBackingPrimaryDate,
             effectiveColor);
     }
 
@@ -277,7 +283,8 @@ public static class ClockLayoutRules
         string? customFont,
         double scale,
         string effectiveColor,
-        bool centerClockPreset)
+        bool centerClockPreset,
+        bool lowBackingPrimaryDate)
     {
         var timeSize = (centerClockPreset ? 68d : 54d) * scale;
         var dateSize = (centerClockPreset ? 15d : 13d) * scale;
@@ -294,7 +301,7 @@ public static class ClockLayoutRules
             periodSize,
             Math.Round(timeSize * 0.94d, 2),
             CenterHorizontally: centerClockPreset,
-            DateUsesPrimaryInk: false,
+            DateUsesPrimaryInk: lowBackingPrimaryDate,
             effectiveColor);
     }
 }

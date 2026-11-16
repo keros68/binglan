@@ -1001,11 +1001,30 @@ internal static class WidgetWindowTests
             var dateRect = dateText.TransformToAncestor(window).TransformBounds(new Rect(0, 0, dateText.ActualWidth, dateText.ActualHeight));
             Assert(timeRect.Top < dateRect.Top, "经典版式时间应位于日期上方");
 
-            // MinimalDigits: centered horizontal alignment + large thin numerals.
+            // MinimalDigits: centered horizontal alignment + large numerals; unbacked lifts weight to Light and uses primary ink for date.
             SelectLayout(ClockLayoutPreset.MinimalDigits);
             AssertEqual(TextAlignment.Center, timeText.TextAlignment, "极简大数字应居中排版");
-            Assert(timeText.FontSize >= 60d && timeText.FontWeight == FontWeights.ExtraLight,
-                "极简大数字默认应使用 Jost 极细大字号");
+            Assert(timeText.FontSize >= 60d && timeText.FontWeight == FontWeights.Light,
+                "无底板下极简大数字应将数字字重提高一档为 Light");
+            AssertEqual(byte.MaxValue, ((System.Windows.Media.SolidColorBrush)dateText.Foreground).Color.A,
+                "无底板下极简大数字日期应使用主墨色");
+
+            // With visible card backing, MinimalDigits keeps ExtraLight and secondary-ink date, while VerticalDigits keeps secondary-ink date.
+            clockComponent.Appearance.BackgroundOpacity = 0.66d;
+            window.ApplyDesktopExperience(experience);
+            Pump();
+            AssertEqual(FontWeights.ExtraLight, timeText.FontWeight,
+                "有底板时极简大数字应保持 ExtraLight 字重");
+            Assert(((System.Windows.Media.SolidColorBrush)dateText.Foreground).Color.A < byte.MaxValue,
+                "有底板时极简大数字日期应保留次级墨色");
+
+            SelectLayout(ClockLayoutPreset.VerticalDigits);
+            Assert(((System.Windows.Media.SolidColorBrush)dateText.Foreground).Color.A < byte.MaxValue,
+                "有底板时纵向数字日期应保留次级墨色");
+
+            clockComponent.Appearance.BackgroundOpacity = WidgetAppearanceRules.MinimumBackgroundOpacity;
+            window.ApplyDesktopExperience(experience);
+            Pump();
 
             // DatePoster: date sits above time; 12h period renders beside date.
             SelectLayout(ClockLayoutPreset.DatePoster);
@@ -1016,9 +1035,11 @@ internal static class WidgetWindowTests
             Assert(dateRect.Top < timeRect.Top, "日期海报版式日期应位于时间上方");
             AssertEqual(Visibility.Visible, periodText.Visibility, "非经典版式在 12 小时制下应显示上午/下午标记");
 
-            // VerticalDigits: stacked HH/MM digits sit left of date block.
+            // VerticalDigits: stacked HH/MM digits sit left of date block and use primary ink when unbacked.
             SelectLayout(ClockLayoutPreset.VerticalDigits);
             Assert(timeText.Text.Contains('\n'), "纵向数字版式时间应按时/分两行纵向排列");
+            AssertEqual(byte.MaxValue, ((System.Windows.Media.SolidColorBrush)dateText.Foreground).Color.A,
+                "无底板下纵向数字日期应使用主墨色");
             timeRect = timeText.TransformToAncestor(window).TransformBounds(new Rect(0, 0, timeText.ActualWidth, timeText.ActualHeight));
             dateRect = dateText.TransformToAncestor(window).TransformBounds(new Rect(0, 0, dateText.ActualWidth, dateText.ActualHeight));
             Assert(timeRect.Left < dateRect.Left, "纵向数字版式日期应位于纵向数字右侧");

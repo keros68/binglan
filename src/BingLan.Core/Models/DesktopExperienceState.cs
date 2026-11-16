@@ -275,7 +275,8 @@ public static class DesktopExperienceRules
                     timeDate.FontScale,
                     timeDate.Appearance.TextColor,
                     centerClockPreset: false,
-                    lowChrome: lowChrome);
+                    lowChrome: lowChrome,
+                    backgroundOpacity: timeDate.Appearance.BackgroundOpacity);
                 var timeLineHeight = spec.TimeLineHeight ?? (spec.TimeFontSize * TypographicLineHeightFactor);
                 var timeHeight = clockPreset == ClockLayoutPreset.VerticalDigits
                     ? timeLineHeight * 2d

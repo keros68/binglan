@@ -307,13 +307,17 @@ public partial class InformationWidgetWindow : WidgetWindowBase
         var bigClock = _experience.ActivePreset == DesktopLayoutPreset.CenterClock
             && isIsolatedTimeDate;
         var preset = ClockLayoutRules.CoercePreset(State.ClockLayout);
+        var effectiveBackgroundOpacity = isIsolatedTimeDate
+            ? timeDate.Appearance.BackgroundOpacity
+            : (_usesLegacyAppearance ? WidgetAppearance.BackgroundOpacity : WidgetAppearanceRules.MinimumBackgroundOpacity);
         var spec = ClockLayoutRules.ResolveTypography(
             preset,
             timeDate.FontFamily,
             timeDate.FontScale,
             timeDate.Appearance.TextColor,
             bigClock,
-            lowChrome);
+            lowChrome,
+            effectiveBackgroundOpacity);
         var hasCustomFont = !string.IsNullOrWhiteSpace(timeDate.FontFamily);
 
         ApplyClockElementFont(TimeText, spec.EffectiveTimeFontFamily, hasCustomFont, spec.TimeFontWeightOpenType, allowUiFallback: false);
@@ -446,9 +450,10 @@ public partial class InformationWidgetWindow : WidgetWindowBase
 
         var primaryBrush = GetComponentTextBrush(timeDate);
         var secondaryBrush = GetComponentSecondaryTextBrush(timeDate);
+        var dateBrush = spec.DateUsesPrimaryInk ? primaryBrush : secondaryBrush;
         TimeText.Foreground = primaryBrush;
-        DateText.Foreground = spec.DateUsesPrimaryInk ? primaryBrush : secondaryBrush;
-        TimePeriodText.Foreground = secondaryBrush;
+        DateText.Foreground = dateBrush;
+        TimePeriodText.Foreground = dateBrush;
         GreetingText.Foreground = GetComponentTextBrush(greeting);
 
         ClockDivider.Visibility = timeDate.ShowDivider && showTimeDate ? Visibility.Visible : Visibility.Collapsed;
