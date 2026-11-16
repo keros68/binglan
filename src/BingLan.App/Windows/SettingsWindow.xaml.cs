@@ -504,12 +504,22 @@ public partial class SettingsWindow : Window
 
         var panel = new WidgetAppearancePanel { SharedStyle = _maintenance.Style };
         panel.Attach(entry.Window);
-        LoadFileBoxViewMode(entry.Window as FileBoxWindow);
-        LoadFileBoxCollect(entry.Window as FileBoxWindow);
+        panel.AppearanceEdited += () =>
+        {
+            if (ReferenceEquals(_selectedComponentEntry?.Window, entry.Window))
+            {
+                UpdateSelectedWidgetOwnLookSummary(entry.Window);
+                RefreshAppearanceOverrides();
+            }
+        };
+        var fileBox = entry.Window as FileBoxWindow;
+        LoadFileBoxViewMode(fileBox);
+        LoadFileBoxCollect(fileBox);
         LoadTodoSettings(entry.Window as TodoWidgetWindow);
         SelectedWidgetAppearanceHost.Content = panel;
         SelectedWidgetHeadingText.Text = entry.Name;
         SelectedWidgetLockedCheckBox.IsChecked = entry.Window.IsWidgetLocked;
+        SelectedWidgetOwnLookFold.IsExpanded = UpdateSelectedWidgetOwnLookSummary(entry.Window);
         BuiltInComponentEditorPanel.Visibility = Visibility.Collapsed;
         SelectedWidgetEditorPanel.Visibility = Visibility.Visible;
         DisplayContentSettingsCard.Visibility = Visibility.Collapsed;
@@ -1252,7 +1262,33 @@ public partial class SettingsWindow : Window
             ? "已独立设置颜色，不跟随全局外观"
             : "跟随全局外观，展开后可为这张卡片独立设置";
         ComponentFollowSharedLookRow.Visibility = own ? Visibility.Visible : Visibility.Collapsed;
+        ComponentQuickFollowGlobalButton.Visibility = own ? Visibility.Visible : Visibility.Collapsed;
+        ComponentUnifiedLookGuideRow.Description = FormatUnifiedLookGuideDescription(
+            own,
+            "时间、问候、天气等桌面组件");
         return own;
+    }
+
+    private bool UpdateSelectedWidgetOwnLookSummary(WidgetWindowBase window)
+    {
+        var own = !DesktopStyleRules.FollowsSharedCardLook(window.WidgetAppearance, _maintenance.Style);
+        SelectedWidgetOwnLookSummaryText.Text = own
+            ? "已独立设置颜色，不跟随全局外观"
+            : "跟随全局外观，展开后可为这张卡片独立设置";
+        SelectedWidgetFollowSharedLookRow.Visibility = own ? Visibility.Visible : Visibility.Collapsed;
+        SelectedWidgetQuickFollowGlobalButton.Visibility = own ? Visibility.Visible : Visibility.Collapsed;
+        SelectedWidgetUnifiedLookGuideRow.Description = FormatUnifiedLookGuideDescription(
+            own,
+            "所有卡片");
+        return own;
+    }
+
+    private string FormatUnifiedLookGuideDescription(bool own, string scopeNoun)
+    {
+        var summary = DesktopStyleRules.DescribeSharedLookSummary(_maintenance.Style);
+        return own
+            ? $"已单独设置颜色，不随全局变化（当前全局：{summary}）。可点右侧恢复跟随，或前往调整全局统一配色"
+            : $"当前跟随全局（{summary}）。{scopeNoun}可在“外观样式”页统一改色；单独定制此卡片请展开下方“独立外观”";
     }
 
     private bool HasOwnLook(DesktopComponentKind kind) => !DesktopStyleRules.FollowsSharedLook(
@@ -1286,14 +1322,23 @@ public partial class SettingsWindow : Window
         RefreshAppearanceOverrides();
     }
 
-    private void FollowSecondaryTodoSharedLook(TodoWidgetWindow todoWindow)
+    private void ApplySharedCardAppearanceToWindow(WidgetWindowBase window)
     {
         var glass = DesktopStyleRules.Appearance(_maintenance.Style);
-        todoWindow.SetWidgetBackgroundColor(glass.BackgroundColor);
-        todoWindow.SetWidgetBackgroundOpacity(glass.BackgroundOpacity);
-        todoWindow.SetWidgetHeaderColor(glass.HeaderColor);
-        todoWindow.SetWidgetHeaderOpacity(glass.HeaderOpacity);
-        todoWindow.SetWidgetTextColor(glass.TextColor);
+        window.SetWidgetBackgroundColor(glass.BackgroundColor);
+        window.SetWidgetBackgroundOpacity(glass.BackgroundOpacity);
+        window.SetWidgetHeaderColor(glass.HeaderColor);
+        window.SetWidgetHeaderOpacity(glass.HeaderOpacity);
+        window.SetWidgetTextColor(glass.TextColor);
+        if (window is NoteWidgetWindow note)
+        {
+            note.SetBodyColor(glass.TextColor);
+        }
+    }
+
+    private void FollowSecondaryTodoSharedLook(TodoWidgetWindow todoWindow)
+    {
+        ApplySharedCardAppearanceToWindow(todoWindow);
         if (ReferenceEquals(_selectedComponentEntry?.Window, todoWindow))
         {
             _componentApplyTimer.Stop();
@@ -1301,6 +1346,21 @@ public partial class SettingsWindow : Window
             UpdateOwnLookSummary(DesktopComponentKind.Todo);
         }
         ComponentSettingsStatusText.Text = $"“{todoWindow.State.Title}”已恢复跟随全局外观";
+        RefreshAppearanceOverrides();
+    }
+
+    private void FollowWidgetSharedLook(WidgetWindowBase window)
+    {
+        ApplySharedCardAppearanceToWindow(window);
+        if (ReferenceEquals(_selectedComponentEntry?.Window, window))
+        {
+            if (SelectedWidgetAppearanceHost.Content is WidgetAppearancePanel panel)
+            {
+                panel.RefreshValues();
+            }
+            UpdateSelectedWidgetOwnLookSummary(window);
+        }
+        ComponentSettingsStatusText.Text = $"“{GetWidgetName(window)}”已恢复跟随全局外观";
         RefreshAppearanceOverrides();
     }
 
@@ -1316,6 +1376,20 @@ public partial class SettingsWindow : Window
         {
             FollowSharedLook(kind);
         }
+    }
+
+    private void SelectedWidgetFollowSharedLook_Click(object sender, RoutedEventArgs e)
+    {
+        if (_selectedComponentEntry?.Window is { } window && _selectedComponentEntry.Kind is null)
+        {
+            FollowWidgetSharedLook(window);
+        }
+    }
+
+    private void GoToUnifiedAppearance_Click(object sender, RoutedEventArgs e)
+    {
+        SelectNavigationPage("Appearance");
+        AppearancePage.ScrollToTop();
     }
 
     public void ShowWidgetSettings(WidgetWindowBase window)
@@ -1389,11 +1463,26 @@ public partial class SettingsWindow : Window
             var list = box.State.ViewMode == FileBoxViewMode.List;
             FileBoxTilesRadio.IsChecked = !list;
             FileBoxListRadio.IsChecked = list;
+            FileBoxAutoCollapseCheckBox.IsChecked = box.State.AutoCollapse;
         }
         finally
         {
             _loadingViewMode = false;
         }
+    }
+
+    private void FileBoxAutoCollapse_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_loadingViewMode || _selectedComponentEntry?.Window is not FileBoxWindow box)
+        {
+            return;
+        }
+
+        var enabled = FileBoxAutoCollapseCheckBox.IsChecked == true;
+        box.SetAutoCollapse(enabled);
+        ComponentSettingsStatusText.Text = enabled
+            ? $"“{box.State.Title}”已开启鼠标离开 5 秒后自动收起"
+            : $"“{box.State.Title}”已关闭自动收起";
     }
 
     private void FileBoxViewMode_Changed(object sender, RoutedEventArgs e)
@@ -1905,6 +1994,14 @@ public partial class SettingsWindow : Window
         if (_selectedComponentEntry?.Kind is { } kind)
         {
             UpdateOwnLookSummary(kind);
+        }
+        else if (_selectedComponentEntry?.Window is { } selectedWidget)
+        {
+            if (SelectedWidgetAppearanceHost.Content is WidgetAppearancePanel panel)
+            {
+                panel.RefreshValues();
+            }
+            UpdateSelectedWidgetOwnLookSummary(selectedWidget);
         }
     }
 
@@ -2829,6 +2926,19 @@ public partial class SettingsWindow : Window
                     RevealElement(ComponentOwnLookFold);
                 }, () => FollowSecondaryTodoSharedLook(target));
             }
+        }
+        foreach (var widget in _widgetProvider()
+                     .Where(w => w is FileBoxWindow or NoteWidgetWindow
+                         && !DesktopStyleRules.FollowsSharedCardLook(w.WidgetAppearance, _maintenance.Style)))
+        {
+            var target = widget;
+            AddOverride(GetWidgetName(target), "已独立设置颜色", () =>
+            {
+                SelectNavigationPage("Components");
+                RefreshComponentList(target);
+                SelectedWidgetOwnLookFold.IsExpanded = true;
+                RevealElement(SelectedWidgetOwnLookFold);
+            }, () => FollowWidgetSharedLook(target));
         }
         if (AppearanceOverridesGroup.Items.Count == 0)
         {

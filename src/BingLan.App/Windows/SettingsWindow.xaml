@@ -1053,6 +1053,26 @@
                                     </local:SettingsRow>
                                 </local:SettingsGroup>
 
+                                <TextBlock Style="{StaticResource SectionHeaderStyle}" Text="外观与配色"/>
+                                <local:SettingsGroup>
+                                    <local:SettingsRow x:Name="ComponentUnifiedLookGuideRow"
+                                                       Header="统一外观与配色"
+                                                       local:SettingsSearch.Keywords="配色 颜色 统一 全局 浅色 深色 无底板">
+                                        <StackPanel Orientation="Horizontal">
+                                            <Button x:Name="ComponentQuickFollowGlobalButton"
+                                                    Margin="0,0,8,0"
+                                                    Visibility="Collapsed"
+                                                    Content="恢复跟随"
+                                                    AutomationProperties.Name="恢复跟随全局统一配色"
+                                                    Click="ComponentFollowSharedLook_Click"/>
+                                            <Button x:Name="GoToUnifiedAppearanceButton"
+                                                    Content="统一配色设置 →"
+                                                    AutomationProperties.Name="前往外观样式页调整全局统一配色"
+                                                    Click="GoToUnifiedAppearance_Click"/>
+                                        </StackPanel>
+                                    </local:SettingsRow>
+                                </local:SettingsGroup>
+
                                 <StackPanel x:Name="DisplayContentSettingsCard"
                                             Visibility="Collapsed"
                                             local:SettingsSearch.Scope="Kind:TimeDate"
@@ -1542,6 +1562,25 @@
                                         </StackPanel>
                                     </local:SettingsRow>
                                 </local:SettingsGroup>
+                                <TextBlock Style="{StaticResource SectionHeaderStyle}" Text="外观与配色"/>
+                                <local:SettingsGroup>
+                                    <local:SettingsRow x:Name="SelectedWidgetUnifiedLookGuideRow"
+                                                       Header="统一外观与配色"
+                                                       local:SettingsSearch.Keywords="配色 颜色 统一 全局 浅色 深色 无底板">
+                                        <StackPanel Orientation="Horizontal">
+                                            <Button x:Name="SelectedWidgetQuickFollowGlobalButton"
+                                                    Margin="0,0,8,0"
+                                                    Visibility="Collapsed"
+                                                    Content="恢复跟随"
+                                                    AutomationProperties.Name="这张卡片快捷恢复跟随全局统一配色"
+                                                    Click="SelectedWidgetFollowSharedLook_Click"/>
+                                            <Button x:Name="GoToWidgetUnifiedAppearanceButton"
+                                                    Content="统一配色设置 →"
+                                                    AutomationProperties.Name="前往外观样式页调整全局统一配色"
+                                                    Click="GoToUnifiedAppearance_Click"/>
+                                        </StackPanel>
+                                    </local:SettingsRow>
+                                </local:SettingsGroup>
                                 <StackPanel x:Name="FileBoxViewModePanel"
                                             Visibility="Collapsed"
                                             local:SettingsSearch.Scope="FileBox"
@@ -1565,6 +1604,15 @@
                                                                  Content="列表"/>
                                                 </StackPanel>
                                             </Border>
+                                        </local:SettingsRow>
+                                        <local:SettingsRow Header="鼠标离开 5 秒后自动收起"
+                                                           Description="开启后展开分组盒，鼠标移开满 5 秒自动收起成标题条；在盒内悬停、打开菜单或对话框时不收起，收起后点标题条即可展开"
+                                                           local:SettingsSearch.Keywords="自动收起 折叠 抽屉 5秒">
+                                            <CheckBox x:Name="FileBoxAutoCollapseCheckBox"
+                                                      AutomationProperties.Name="鼠标离开 5 秒后自动收起"
+                                                      Style="{StaticResource ToggleSwitchStyle}"
+                                                      Checked="FileBoxAutoCollapse_Changed"
+                                                      Unchecked="FileBoxAutoCollapse_Changed"/>
                                         </local:SettingsRow>
                                     </local:SettingsGroup>
                                 </StackPanel>
@@ -1632,12 +1680,22 @@
                                     <Expander.Header>
                                         <StackPanel>
                                             <TextBlock Style="{StaticResource FoldTitleStyle}" Text="独立外观"/>
-                                            <TextBlock Style="{StaticResource CaptionStyle}" Text="这张卡片自己的颜色、圆角、尺寸和标题字体"/>
+                                            <TextBlock x:Name="SelectedWidgetOwnLookSummaryText" Style="{StaticResource CaptionStyle}"/>
                                         </StackPanel>
                                     </Expander.Header>
-                                    <Border Padding="18,4,18,14">
-                                        <ContentControl x:Name="SelectedWidgetAppearanceHost" Focusable="False"/>
-                                    </Border>
+                                    <StackPanel>
+                                        <local:SettingsRow x:Name="SelectedWidgetFollowSharedLookRow"
+                                                           Header="恢复跟随全局外观"
+                                                           Description="这张卡片的颜色改回外观样式页的设置">
+                                            <Button x:Name="SelectedWidgetFollowSharedLookButton"
+                                                    Content="恢复跟随"
+                                                    AutomationProperties.Name="这张卡片恢复跟随全局外观"
+                                                    Click="SelectedWidgetFollowSharedLook_Click"/>
+                                        </local:SettingsRow>
+                                        <Border Padding="18,4,18,14">
+                                            <ContentControl x:Name="SelectedWidgetAppearanceHost" Focusable="False"/>
+                                        </Border>
+                                    </StackPanel>
                                 </Expander>
                             </StackPanel>
 

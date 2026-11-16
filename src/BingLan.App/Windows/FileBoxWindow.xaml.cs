@@ -29,8 +29,16 @@ public partial class FileBoxWindow : WidgetWindowBase
     private readonly HashSet<Guid> _selectedIds = [];
     private readonly CancellationTokenSource _closeCts = new();
     private readonly CardFoldAnimator _foldAnimator;
+    private readonly System.Windows.Threading.DispatcherTimer _autoCollapseTimer = new()
+    {
+        Interval = FileBoxAutoCollapseRules.IdleDelay
+    };
     private Guid? _selectionAnchor;
     private bool _initialIconLoadStarted;
+    private int _modalDialogDepth;
+    private bool _isTileOrFileDragActive;
+    private bool _externalDragOver;
+    private (int X, int Y)? _foldedTitlePressPoint;
 
     public FileBoxWindow(FileBoxState state)
     {
@@ -52,9 +60,25 @@ public partial class FileBoxWindow : WidgetWindowBase
         {
             SetCollapsed(true);
         }
+        _autoCollapseTimer.Tick += (_, _) => OnAutoCollapseTimerTick();
+        HookAutoCollapseContextMenus();
+        MouseEnter += (_, _) => RefreshAutoCollapseTimer();
+        MouseLeave += (_, _) => RefreshAutoCollapseTimer();
+        DragEnter += (_, _) =>
+        {
+            _externalDragOver = true;
+            RefreshAutoCollapseTimer();
+        };
+        DragLeave += (_, _) =>
+        {
+            _externalDragOver = false;
+            RefreshAutoCollapseTimer();
+        };
         Loaded += FileBoxWindow_Loaded;
         PreviewKeyDown += FileBoxWindow_PreviewKeyDown;
         PreviewMouseLeftButtonDown += FileBoxWindow_BackgroundPointerDown;
+        PreviewMouseLeftButtonDown += FileBoxWindow_TitleBarPointerDown;
+        PreviewMouseLeftButtonUp += FileBoxWindow_TitleBarPointerUp;
     }
 
     public FileBoxState State { get; }
@@ -63,12 +87,33 @@ public partial class FileBoxWindow : WidgetWindowBase
 
     internal bool InitialProbeCompleted { get; private set; }
 
+    internal bool IsAutoCollapseTimerRunning => _autoCollapseTimer.IsEnabled;
+
+    public void SetAutoCollapse(bool enabled)
+    {
+        if (State.AutoCollapse == enabled)
+        {
+            RefreshAutoCollapseTimer();
+            return;
+        }
+        State.AutoCollapse = enabled;
+        RefreshAutoCollapseTimer();
+        NotifyStateChanged();
+    }
+
+    internal void TriggerAutoCollapseTickForTesting() => OnAutoCollapseTimerTick();
+
     protected override void OnClosed(EventArgs e)
     {
+        _autoCollapseTimer.Stop();
         _closeCts.Cancel();
         _closeCts.Dispose();
         base.OnClosed(e);
     }
+
+    protected override void OnTitleEditingChanged(bool isEditing) => RefreshAutoCollapseTimer();
+
+    protected override void OnDragEnded() => RefreshAutoCollapseTimer();
 
     /// <summary>The other open boxes a mapping can be transferred to.</summary>
     internal Func<IReadOnlyList<FileBoxWindow>> OtherBoxes { get; set; } = () => [];
@@ -215,6 +260,7 @@ public partial class FileBoxWindow : WidgetWindowBase
                 _foldAnimator.Snap();
             }
         }
+        RefreshAutoCollapseTimer();
     }
 
     private async void FileBoxWindow_Loaded(object sender, RoutedEventArgs e)
@@ -223,6 +269,7 @@ public partial class FileBoxWindow : WidgetWindowBase
         {
             SetCollapsed(true);
         }
+        RefreshAutoCollapseTimer();
         if (_initialIconLoadStarted)
         {
             return;
@@ -258,7 +305,7 @@ public partial class FileBoxWindow : WidgetWindowBase
             CheckFileExists = true,
             Multiselect = true
         };
-        if (dialog.ShowDialog(this) == true)
+        if (RunModalInteraction(() => dialog.ShowDialog(this) == true))
         {
             await AddMappingsWithStatusAsync(dialog.FileNames);
         }
@@ -270,7 +317,7 @@ public partial class FileBoxWindow : WidgetWindowBase
         {
             Title = "选择要映射到桌面分组盒的文件夹"
         };
-        if (dialog.ShowDialog(this) == true)
+        if (RunModalInteraction(() => dialog.ShowDialog(this) == true))
         {
             await AddMappingsWithStatusAsync([dialog.FolderName]);
         }
@@ -357,6 +404,8 @@ public partial class FileBoxWindow : WidgetWindowBase
 
     private async void Window_Drop(object sender, System.Windows.DragEventArgs e)
     {
+        _externalDragOver = false;
+        RefreshAutoCollapseTimer();
         if (e.Data.GetData(System.Windows.DataFormats.FileDrop) is not string[] paths)
         {
             return;
@@ -400,12 +449,22 @@ public partial class FileBoxWindow : WidgetWindowBase
 
         _tileDragStart = null;
         _singleClickFileTiles.Remove(button);
-        DragDrop.DoDragDrop(
-            button,
-            new System.Windows.DataObject(System.Windows.DataFormats.FileDrop, paths),
-            // Copy lets a folder or chat window receive the file itself; Move is never
-            // offered, so dragging out cannot take the original away.
-            System.Windows.DragDropEffects.Copy | System.Windows.DragDropEffects.Link);
+        _isTileOrFileDragActive = true;
+        RefreshAutoCollapseTimer();
+        try
+        {
+            DragDrop.DoDragDrop(
+                button,
+                new System.Windows.DataObject(System.Windows.DataFormats.FileDrop, paths),
+                // Copy lets a folder or chat window receive the file itself; Move is never
+                // offered, so dragging out cannot take the original away.
+                System.Windows.DragDropEffects.Copy | System.Windows.DragDropEffects.Link);
+        }
+        finally
+        {
+            _isTileOrFileDragActive = false;
+            RefreshAutoCollapseTimer();
+        }
     }
 
     private void FileTile_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
@@ -713,7 +772,7 @@ public partial class FileBoxWindow : WidgetWindowBase
         {
             Owner = this
         };
-        if (dialog.ShowDialog() == true)
+        if (RunModalInteraction(() => dialog.ShowDialog() == true))
         {
             RenameMapping(tile, dialog.Value);
         }
@@ -786,7 +845,7 @@ public partial class FileBoxWindow : WidgetWindowBase
         {
             Title = "选择用于重新定位的文件夹"
         };
-        if (dialog.ShowDialog(this) == true)
+        if (RunModalInteraction(() => dialog.ShowDialog(this) == true))
         {
             ApplyRelink(tile, dialog.FolderName);
         }
@@ -799,7 +858,7 @@ public partial class FileBoxWindow : WidgetWindowBase
             Title = "选择用于重新定位的文件",
             CheckFileExists = true
         };
-        if (dialog.ShowDialog(this) == true)
+        if (RunModalInteraction(() => dialog.ShowDialog(this) == true))
         {
             ApplyRelink(tile, dialog.FileName);
         }
@@ -1115,7 +1174,7 @@ public partial class FileBoxWindow : WidgetWindowBase
             return false;
         }
 
-        if (!ConfirmDeleteOriginal(tile))
+        if (!RunModalInteraction(() => ConfirmDeleteOriginal(tile)))
         {
             return false;
         }
@@ -1197,7 +1256,7 @@ public partial class FileBoxWindow : WidgetWindowBase
             return 0;
         }
 
-        if (!ConfirmDeleteOriginals(eligible))
+        if (!RunModalInteraction(() => ConfirmDeleteOriginals(eligible)))
         {
             return 0;
         }
@@ -1588,6 +1647,158 @@ public partial class FileBoxWindow : WidgetWindowBase
             FileBoxEmptyState.BeginAnimation(UIElement.OpacityProperty, null);
             FileBoxEmptyState.Opacity = 1d;
         }
+    }
+
+    private void HookAutoCollapseContextMenus()
+    {
+        System.Windows.Controls.ContextMenu?[] menus =
+        [
+            ContextMenu,
+            AddButton.ContextMenu,
+            SortButton.ContextMenu,
+            TryFindResource("FileTileContextMenu") as System.Windows.Controls.ContextMenu,
+            TryFindResource("FileTileBatchContextMenu") as System.Windows.Controls.ContextMenu
+        ];
+        foreach (var menu in menus)
+        {
+            if (menu is null)
+            {
+                continue;
+            }
+            menu.Opened += (_, _) => RefreshAutoCollapseTimer();
+            menu.Closed += (_, _) => RefreshAutoCollapseTimer();
+        }
+    }
+
+    private bool HasOpenContextMenu() =>
+        ContextMenu is { IsOpen: true }
+        || AddButton.ContextMenu is { IsOpen: true }
+        || SortButton.ContextMenu is { IsOpen: true }
+        || TryFindResource("FileTileContextMenu") is System.Windows.Controls.ContextMenu { IsOpen: true }
+        || TryFindResource("FileTileBatchContextMenu") is System.Windows.Controls.ContextMenu { IsOpen: true };
+
+    private T RunModalInteraction<T>(Func<T> action)
+    {
+        _modalDialogDepth++;
+        RefreshAutoCollapseTimer();
+        try
+        {
+            return action();
+        }
+        finally
+        {
+            _modalDialogDepth = Math.Max(0, _modalDialogDepth - 1);
+            RefreshAutoCollapseTimer();
+        }
+    }
+
+    private void RefreshAutoCollapseTimer()
+    {
+        var shouldRun = FileBoxAutoCollapseRules.ShouldRunCountdown(
+            State.AutoCollapse,
+            State.IsCollapsed,
+            IsMouseOver,
+            IsTitleEditing,
+            _modalDialogDepth > 0 || _isTileOrFileDragActive || _externalDragOver || HasOpenContextMenu(),
+            IsDraggingOrResizing);
+        if (shouldRun)
+        {
+            _autoCollapseTimer.Stop();
+            _autoCollapseTimer.Start();
+        }
+        else
+        {
+            _autoCollapseTimer.Stop();
+        }
+    }
+
+    private void OnAutoCollapseTimerTick()
+    {
+        _autoCollapseTimer.Stop();
+        if (!FileBoxAutoCollapseRules.ShouldRunCountdown(
+                State.AutoCollapse,
+                State.IsCollapsed,
+                IsMouseOver,
+                IsTitleEditing,
+                _modalDialogDepth > 0 || _isTileOrFileDragActive || _externalDragOver || HasOpenContextMenu(),
+                IsDraggingOrResizing))
+        {
+            return;
+        }
+
+        SetCollapsed(true, animate: true);
+        NotifyStateChanged();
+    }
+
+    private void FileBoxWindow_TitleBarPointerDown(object sender, MouseButtonEventArgs e)
+    {
+        if (e.ClickCount != 1
+            || !DockNativeMethods.GetCursorPos(out var screenPt))
+        {
+            _foldedTitlePressPoint = null;
+            return;
+        }
+        TryBeginFoldedTitleBarClick(e.GetPosition(this), e.ClickCount, screenPt.X, screenPt.Y);
+    }
+
+    private void FileBoxWindow_TitleBarPointerUp(object sender, MouseButtonEventArgs e)
+    {
+        if (_foldedTitlePressPoint is null
+            || !DockNativeMethods.GetCursorPos(out var screenPt))
+        {
+            _foldedTitlePressPoint = null;
+            return;
+        }
+        CompleteFoldedTitleBarClick(screenPt.X, screenPt.Y);
+    }
+
+    internal bool TryBeginFoldedTitleBarClick(
+        System.Windows.Point windowPoint,
+        int clickCount,
+        int screenX,
+        int screenY)
+    {
+        _foldedTitlePressPoint = null;
+        if (!State.AutoCollapse
+            || !State.IsCollapsed
+            || IsTitleEditing
+            || clickCount != 1
+            || TitleBarSurface.ActualHeight <= 0
+            || windowPoint.X < 0
+            || windowPoint.X > ActualWidth
+            || windowPoint.Y < 0
+            || windowPoint.Y > TitleBarSurface.ActualHeight
+            || ResizeEdgesAt(windowPoint) != ResizeEdges.None
+            || IsInteractive(windowPoint))
+        {
+            return false;
+        }
+
+        _foldedTitlePressPoint = (screenX, screenY);
+        return true;
+    }
+
+    internal bool CompleteFoldedTitleBarClick(int screenX, int screenY)
+    {
+        if (_foldedTitlePressPoint is not { } press)
+        {
+            return false;
+        }
+        _foldedTitlePressPoint = null;
+
+        if (!FileBoxAutoCollapseRules.CanClickTitleBarToExpand(
+                State.AutoCollapse,
+                State.IsCollapsed,
+                IsTitleEditing,
+                screenX - press.X,
+                screenY - press.Y))
+        {
+            return false;
+        }
+
+        SetCollapsed(false, animate: true);
+        NotifyStateChanged();
+        return true;
     }
 
     public sealed class FileTile : INotifyPropertyChanged

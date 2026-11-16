@@ -58,7 +58,22 @@
                                      FontStyle="{Binding WidgetTitleFontStyle, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
                                      TextChanged="TitleEditor_TextChanged"/>
                         </Grid>
-                    <Button Grid.Column="1"
+                    <Button x:Name="SettingsButton"
+                            Grid.Column="1"
+                            AutomationProperties.Name="打开便签设置"
+                            Style="{StaticResource WidgetSettingsButtonStyle}"
+                            Width="30"
+                            Height="28"
+                            Margin="0,0,2,0"
+                            Padding="0"
+                            Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
+                            Background="Transparent"
+                            BorderThickness="0"
+                            FontSize="{StaticResource CardFont.Subhead}"
+                            Content="•••"
+                            ToolTip="设置"
+                            Click="Settings_Click"/>
+                    <Button Grid.Column="2"
                             x:Name="FormatToggle"
                             AutomationProperties.Name="正文样式"
                             Style="{StaticResource WidgetSettingsButtonStyle}"
@@ -72,18 +87,6 @@
                             Content="Aa"
                             ToolTip="正文样式"
                             Click="FormatToggle_Click"/>
-                    <Button Grid.Column="2"
-                            Style="{StaticResource WidgetSettingsButtonStyle}"
-                            Width="30"
-                            Height="28"
-                            Padding="0"
-                            Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
-                            Background="Transparent"
-                            BorderThickness="0"
-                            FontSize="{StaticResource CardFont.Subhead}"
-                            Content="•••"
-                            ToolTip="设置"
-                            Click="Settings_Click"/>
                     </Grid>
                     <Border x:Name="TitleDivider"
                             Height="1"

@@ -775,6 +775,10 @@ public sealed class LocalStateStore
             }
             state.SchemaVersion = 47;
         }
+        if (state.SchemaVersion < 48)
+        {
+            state.SchemaVersion = 48;
+        }
         state.Updates ??= new UpdateState();
         state.QuickPlaces = QuickPlaceRules.Normalize(state.QuickPlaces);
         state.DismissedDesktopCategories = (state.DismissedDesktopCategories ?? [])
