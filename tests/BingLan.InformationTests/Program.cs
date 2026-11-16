@@ -71,6 +71,7 @@ internal static class Program
         Run("通用页显示新版本", SettingsWindowTests.UpdatePageShowsFoundRelease, failures);
         Run("卸载入口只在安装版显示", SettingsWindowTests.UninstallEntryFollowsInstallation, failures);
         Run("顶端信息条设置页开关与写入", SettingsWindowTests.TopBarSettingsPage, failures);
+        Run("无底板推荐效果一键应用并保留自定义文字色", SettingsWindowTests.RecommendedClearLookAppliesAndPreservesCustomInk, failures);
 
         if (failures.Count > 0)
         {

@@ -537,4 +537,55 @@ internal static class SettingsWindowTests
             Pump();
         }
     }
+
+    public static void RecommendedClearLookAppliesAndPreservesCustomInk()
+    {
+        var style = new DesktopStyleState
+        {
+            Glass = GlassMode.Light,
+            TextInk = TextInk.Auto,
+            CardShadow = CardShadow.None
+        };
+        var glassCalls = 0;
+        var window = new SettingsWindow(
+            new CityLookupService(new CitySearchService(new StubHttpMessageHandler()), CityLibrary.Empty),
+            new InformationWidgetState(),
+            DesktopExperienceRules.CreateDefault(),
+            (_, _) => { },
+            _ => { },
+            _ => { },
+            maintenance: new SettingsMaintenance
+            {
+                Style = style,
+                ApplyGlass = () => glassCalls++
+            });
+        ShowAndPump(window);
+        try
+        {
+            Click(Require<Button>(window, "RecommendedClearLookButton"));
+            Pump();
+            AssertEqual(GlassMode.Clear, style.Glass, "点击推荐效果应将材质设为无底板");
+            AssertEqual(CardShadow.Soft, style.CardShadow, "点击推荐效果应开启柔和文字阴影");
+            AssertEqual(TextInk.White, style.TextInk, "未自定义文字色时应将文字色设为白色");
+            AssertEqual(1, glassCalls, "应通知宿主统一应用到卡片");
+            AssertEqual(true, Require<RadioButton>(window, "GlassClearRadio").IsChecked, "材质单选应切到无底板");
+            AssertEqual(true, Require<RadioButton>(window, "TextInkWhiteRadio").IsChecked, "文字颜色单选应切到白色");
+
+            style.Glass = GlassMode.Light;
+            style.CardShadow = CardShadow.None;
+            style.TextInk = TextInk.Custom;
+            style.CustomTextColor = "#E6A23C";
+            Click(Require<Button>(window, "RecommendedClearLookButton"));
+            Pump();
+            AssertEqual(GlassMode.Clear, style.Glass, "自定义文字色下仍应切到无底板");
+            AssertEqual(CardShadow.Soft, style.CardShadow, "自定义文字色下仍应开启柔和阴影");
+            AssertEqual(TextInk.Custom, style.TextInk, "自定义文字色下不应重置 TextInk");
+            AssertEqual("#E6A23C", style.CustomTextColor, "自定义文字色应保留原色值");
+        }
+        finally
+        {
+            window.Close();
+            Pump();
+        }
+    }
 }

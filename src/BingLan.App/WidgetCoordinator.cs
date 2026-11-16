@@ -1691,54 +1691,71 @@ public sealed class WidgetCoordinator : IDisposable
         {
             // Text straight on the wallpaper needs a shadow to stay readable.
             style.CardShadow = CardShadow.Soft;
-            ApplyStyleSettings();
         }
 
+        ApplyStyleSettings();
         var glass = DesktopStyleRules.Appearance(style);
         ApplyItemSurface();
         foreach (var component in _state.DesktopExperience.Components)
         {
-            var look = DesktopStyleRules.ComponentLook(component.Kind, style, QuickPlacesWindow.ClearBarOpacity);
-            component.Appearance.BackgroundColor = look.BackgroundColor;
-            component.Appearance.BackgroundOpacity = look.BackgroundOpacity;
-            component.Appearance.TextColor = DesktopStyleRules.ResolveComponentTransitionTextColor(
-                component.Kind,
-                component.Appearance.TextColor,
+            DesktopStyleRules.ApplySharedComponentLook(
+                component,
                 _lastAppliedStyle,
                 style,
                 QuickPlacesWindow.ClearBarOpacity);
-            if (component.Kind == DesktopComponentKind.Todo)
-            {
-                component.Appearance.HeaderColor = glass.HeaderColor;
-                component.Appearance.HeaderOpacity = glass.HeaderOpacity;
-            }
         }
-        foreach (var todoState in _state.TodoWidgets)
+
+        var openWindowAppearances = new HashSet<WidgetAppearanceState>(ReferenceEqualityComparer.Instance);
+        var openNotes = new HashSet<NoteWidgetState>(ReferenceEqualityComparer.Instance);
+        foreach (var window in _windows.Where(window => window is TodoWidgetWindow or FileBoxWindow or NoteWidgetWindow))
         {
-            todoState.Appearance.BackgroundColor = glass.BackgroundColor;
-            todoState.Appearance.BackgroundOpacity = glass.BackgroundOpacity;
-            todoState.Appearance.HeaderColor = glass.HeaderColor;
-            todoState.Appearance.HeaderOpacity = glass.HeaderOpacity;
-            todoState.Appearance.TextColor = DesktopStyleRules.ResolveTransitionTextColor(
-                todoState.Appearance.TextColor,
+            openWindowAppearances.Add(window.WidgetAppearance);
+            var nextTextColor = DesktopStyleRules.ResolveTransitionTextColor(
+                window.WidgetAppearance.TextColor,
                 _lastAppliedStyle,
                 style);
-        }
-        foreach (var window in _windows.Where(window => window is not InformationWidgetWindow))
-        {
             window.SetWidgetBackgroundColor(glass.BackgroundColor);
             window.SetWidgetBackgroundOpacity(glass.BackgroundOpacity);
             window.SetWidgetHeaderColor(glass.HeaderColor);
             window.SetWidgetHeaderOpacity(glass.HeaderOpacity);
-            window.SetWidgetTextColor(DesktopStyleRules.ResolveTransitionTextColor(
-                window.WidgetAppearance.TextColor,
-                _lastAppliedStyle,
-                style));
+            window.SetWidgetTextColor(nextTextColor);
             window.ApplyStyle(style);
+            if (window is NoteWidgetWindow note)
+            {
+                openNotes.Add(note.State);
+                note.SetBodyColor(DesktopStyleRules.ResolveTransitionTextColor(
+                    note.State.BodyTypography.Color,
+                    _lastAppliedStyle,
+                    style));
+            }
         }
-        foreach (var note in _windows.OfType<NoteWidgetWindow>())
+        foreach (var todoState in _state.TodoWidgets)
         {
-            note.SetBodyColor(note.WidgetAppearance.TextColor);
+            if (!openWindowAppearances.Contains(todoState.Appearance))
+            {
+                DesktopStyleRules.ApplySharedCardLook(todoState.Appearance, _lastAppliedStyle, style);
+            }
+        }
+        foreach (var boxState in _state.FileBoxes)
+        {
+            if (!openWindowAppearances.Contains(boxState.Appearance))
+            {
+                DesktopStyleRules.ApplySharedCardLook(boxState.Appearance, _lastAppliedStyle, style);
+            }
+        }
+        foreach (var noteState in _state.NoteWidgets)
+        {
+            if (!openWindowAppearances.Contains(noteState.Appearance))
+            {
+                DesktopStyleRules.ApplySharedCardLook(noteState.Appearance, _lastAppliedStyle, style);
+            }
+            if (!openNotes.Contains(noteState))
+            {
+                noteState.BodyTypography.Color = DesktopStyleRules.ResolveTransitionTextColor(
+                    noteState.BodyTypography.Color,
+                    _lastAppliedStyle,
+                    style);
+            }
         }
         ApplyDesktopExperienceWithSave(_state.DesktopExperience, saveImmediate: false);
         _lastAppliedStyle = style.Clone();

@@ -503,6 +503,15 @@
                                 </StackPanel>
                             </Border>
                         </local:SettingsRow>
+                        <local:SettingsRow x:Name="RecommendedClearLookRow"
+                                           Header="无底板推荐效果"
+                                           Description="材质切到无底板并开启柔和文字阴影；未自定义文字色时设为白色"
+                                           local:SettingsSearch.Keywords="透明 裸文字 投影 一键">
+                            <Button x:Name="RecommendedClearLookButton"
+                                    Content="使用无底板推荐效果"
+                                    AutomationProperties.Name="使用无底板推荐效果"
+                                    Click="RecommendedClearLook_Click"/>
+                        </local:SettingsRow>
                         <local:SettingsRow x:Name="GlassPalettePanel" Style="{StaticResource NestedSettingsRowStyle}" Header="配色"
                                            local:SettingsSearch.Keywords="颜色 主题色">
                             <WrapPanel x:Name="GlassPaletteSwatches"/>

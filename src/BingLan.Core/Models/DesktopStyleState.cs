@@ -659,6 +659,71 @@ public static class DesktopStyleRules
             : currentTextColor;
     }
 
+    /// <summary>
+    /// Applies the recommended frameless card look: Clear material with soft text shadow,
+    /// setting the shared text ink to white while keeping any user-customized text colour.
+    /// </summary>
+    public static void ApplyRecommendedClearLook(DesktopStyleState style)
+    {
+        ArgumentNullException.ThrowIfNull(style);
+        style.Glass = GlassMode.Clear;
+        style.CardShadow = CardShadow.Soft;
+        if (style.TextInk != TextInk.Custom)
+        {
+            style.TextInk = TextInk.White;
+        }
+    }
+
+    /// <summary>
+    /// Applies the shared look from <paramref name="nextStyle"/> to a card's appearance,
+    /// keeping a text colour the user customized relative to <paramref name="previousStyle"/>.
+    /// </summary>
+    public static void ApplySharedCardLook(
+        WidgetAppearanceState appearance,
+        DesktopStyleState previousStyle,
+        DesktopStyleState nextStyle)
+    {
+        ArgumentNullException.ThrowIfNull(appearance);
+        ArgumentNullException.ThrowIfNull(previousStyle);
+        ArgumentNullException.ThrowIfNull(nextStyle);
+        var glass = Appearance(nextStyle);
+        appearance.BackgroundColor = glass.BackgroundColor;
+        appearance.BackgroundOpacity = glass.BackgroundOpacity;
+        appearance.HeaderColor = glass.HeaderColor;
+        appearance.HeaderOpacity = glass.HeaderOpacity;
+        appearance.TextColor = ResolveTransitionTextColor(appearance.TextColor, previousStyle, nextStyle);
+    }
+
+    /// <summary>
+    /// Applies the shared look from <paramref name="nextStyle"/> to a built-in component,
+    /// keeping a text colour the user customized relative to <paramref name="previousStyle"/>.
+    /// </summary>
+    public static void ApplySharedComponentLook(
+        DesktopComponentState component,
+        DesktopStyleState previousStyle,
+        DesktopStyleState nextStyle,
+        double clearBarOpacity)
+    {
+        ArgumentNullException.ThrowIfNull(component);
+        ArgumentNullException.ThrowIfNull(previousStyle);
+        ArgumentNullException.ThrowIfNull(nextStyle);
+        var look = ComponentLook(component.Kind, nextStyle, clearBarOpacity);
+        component.Appearance.BackgroundColor = look.BackgroundColor;
+        component.Appearance.BackgroundOpacity = look.BackgroundOpacity;
+        component.Appearance.TextColor = ResolveComponentTransitionTextColor(
+            component.Kind,
+            component.Appearance.TextColor,
+            previousStyle,
+            nextStyle,
+            clearBarOpacity);
+        if (component.Kind == DesktopComponentKind.Todo)
+        {
+            var glass = Appearance(nextStyle);
+            component.Appearance.HeaderColor = glass.HeaderColor;
+            component.Appearance.HeaderOpacity = glass.HeaderOpacity;
+        }
+    }
+
     public static string ResolveCardItemSurfaceColor(
         WidgetAppearanceState cardAppearance,
         DesktopStyleState globalStyle) =>

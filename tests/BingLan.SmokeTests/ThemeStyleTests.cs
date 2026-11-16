@@ -1482,6 +1482,111 @@ internal static class ThemeStyleTests
             "无底板规则不得覆盖用户自定义字体或自定义文字颜色");
     }
 
+    public static void TestWp9RecommendedClearLook()
+    {
+        // 1) 未自定义文字色（Auto / Dark）：一键切到无底板 + 柔和阴影 + 白色文字；已自定义单卡文字保留原色。
+        foreach (var initialInk in new[] { TextInk.Auto, TextInk.Dark })
+        {
+            var prev = new DesktopStyleState
+            {
+                Glass = GlassMode.Light,
+                Palette = "ice",
+                GlassDensity = 0.66d,
+                TextInk = initialInk,
+                CardShadow = CardShadow.None
+            };
+            var next = prev.Clone();
+            DesktopStyleRules.ApplyRecommendedClearLook(next);
+
+            Check(next.Glass == GlassMode.Clear
+                && next.CardShadow == CardShadow.Soft
+                && next.TextInk == TextInk.White,
+                $"初始 {initialInk} 应用无底板推荐效果后应切到 Clear / Soft / White");
+
+            var defaultCard = new WidgetAppearanceState
+            {
+                BackgroundColor = DesktopStyleRules.Appearance(prev).BackgroundColor,
+                BackgroundOpacity = DesktopStyleRules.Appearance(prev).BackgroundOpacity,
+                HeaderColor = DesktopStyleRules.Appearance(prev).HeaderColor,
+                HeaderOpacity = DesktopStyleRules.Appearance(prev).HeaderOpacity,
+                TextColor = DesktopStyleRules.Appearance(prev).TextColor
+            };
+            var customCard = new WidgetAppearanceState
+            {
+                BackgroundColor = "#FFFFFF",
+                BackgroundOpacity = 0.66d,
+                TextColor = "#2B4C7E"
+            };
+
+            DesktopStyleRules.ApplySharedCardLook(defaultCard, prev, next);
+            DesktopStyleRules.ApplySharedCardLook(customCard, prev, next);
+
+            Check(defaultCard.TextColor == "#FFFFFF"
+                && Math.Abs(defaultCard.BackgroundOpacity - WidgetAppearanceRules.MinimumBackgroundOpacity) < 0.0001d
+                && DesktopStyleRules.ResolveRenderedCard(defaultCard, next).EffectiveShadow == CardShadow.Soft,
+                $"初始 {initialInk} 未自定义文字色的卡片应改为白色无底板并启用柔和阴影");
+            Check(customCard.TextColor == "#2B4C7E"
+                && Math.Abs(customCard.BackgroundOpacity - WidgetAppearanceRules.MinimumBackgroundOpacity) < 0.0001d
+                && DesktopStyleRules.ResolveRenderedCard(customCard, next).EffectiveShadow == CardShadow.Soft,
+                $"初始 {initialInk} 下单卡已自定义文字色应保留原色并切到无底板");
+
+            var experience = DesktopExperienceRules.CreateDefault();
+            var weatherComp = experience.GetComponent(DesktopComponentKind.Weather);
+            var perfComp = experience.GetComponent(DesktopComponentKind.Performance);
+            perfComp.Appearance.TextColor = "#D8A438";
+            foreach (var comp in experience.Components)
+            {
+                DesktopStyleRules.ApplySharedComponentLook(comp, prev, next, clearBarOpacity: 0.18d);
+            }
+            Check(weatherComp.Appearance.TextColor == "#FFFFFF"
+                && Math.Abs(weatherComp.Appearance.BackgroundOpacity - WidgetAppearanceRules.MinimumBackgroundOpacity) < 0.0001d,
+                "未自定义文字色的内置信息组件应改为白色无底板");
+            Check(perfComp.Appearance.TextColor == "#D8A438"
+                && Math.Abs(perfComp.Appearance.BackgroundOpacity - WidgetAppearanceRules.MinimumBackgroundOpacity) < 0.0001d,
+                "已自定义文字色的内置信息组件应保留原文字色并切到无底板");
+
+            // 撤回：通过现有外观控件恢复浅色玻璃 + 跟随外观 + 无阴影。
+            var reverted = next.Clone();
+            reverted.Glass = GlassMode.Light;
+            reverted.TextInk = TextInk.Auto;
+            reverted.CardShadow = CardShadow.None;
+            DesktopStyleRules.ApplySharedCardLook(defaultCard, next, reverted);
+            Check(defaultCard.TextColor == WidgetAppearanceRules.DefaultTextColor
+                && Math.Abs(defaultCard.BackgroundOpacity - WidgetAppearanceRules.DefaultBackgroundOpacity) < 0.0001d
+                && DesktopStyleRules.ResolveRenderedCard(defaultCard, reverted).EffectiveShadow == CardShadow.None,
+                "通过现有外观控件恢复浅色玻璃后应能撤回推荐效果");
+        }
+
+        // 2) 全局已自定义文字色（TextInk.Custom）：保留全局自定义文字色与单卡自定义色，只切无底板和柔和阴影。
+        var customPrev = new DesktopStyleState
+        {
+            Glass = GlassMode.Light,
+            Palette = "nord",
+            GlassDensity = 0.66d,
+            TextInk = TextInk.Custom,
+            CustomTextColor = "#E6A23C",
+            CardShadow = CardShadow.None
+        };
+        var customNext = customPrev.Clone();
+        DesktopStyleRules.ApplyRecommendedClearLook(customNext);
+        Check(customNext.Glass == GlassMode.Clear
+            && customNext.CardShadow == CardShadow.Soft
+            && customNext.TextInk == TextInk.Custom
+            && customNext.CustomTextColor == "#E6A23C",
+            "全局已自定义文字色时应用无底板推荐效果不得覆盖自定义颜色设置");
+
+        var globalCustomFollowingCard = new WidgetAppearanceState
+        {
+            BackgroundColor = "#ECEFF4",
+            BackgroundOpacity = 0.66d,
+            TextColor = "#E6A23C"
+        };
+        DesktopStyleRules.ApplySharedCardLook(globalCustomFollowingCard, customPrev, customNext);
+        Check(globalCustomFollowingCard.TextColor == "#E6A23C"
+            && Math.Abs(globalCustomFollowingCard.BackgroundOpacity - WidgetAppearanceRules.MinimumBackgroundOpacity) < 0.0001d,
+            "全局已自定义文字色时跟随全局的卡片应保留自定义文字色并切到无底板");
+    }
+
     private static void Check(bool condition, string message)
     {
         if (!condition)

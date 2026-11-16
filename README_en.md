@@ -26,7 +26,7 @@ BingLan Desktop (冰蓝桌面) is a Windows 11 desktop companion built with .NET
 - **Taskbar**: default, transparent, blurred, or auto-hide. The original state comes back on exit or after a crash.
 - **Top bar**: a full-width status bar at the top of the screen showing time, to-do summary, weather, performance, battery, volume, network, and input method, with a search field. Searches desktop entries, Start-menu apps, and files indexed by Windows; supports pinyin initials and a global hotkey (Ctrl+Alt+F by default); Everything integration is optional. An optional "Apple-style" desktop mode is available.
 - **Multiple monitors**: cards remember a position for each monitor setup. When an external monitor is unplugged, cards move onto the remaining screens and return to their places when it is plugged back in.
-- **Look**: light glass, dark glass, or no backing; four layout presets for landscape and portrait; optional grid snapping; read-only import of fonts and colours from a Rainmeter skin. Themes can be exported and shared without names, cities, to-dos, or file paths.
+- **Look**: light glass, dark glass, or no backing with a one-click recommended clear look; four layout presets for landscape and portrait; optional grid snapping; read-only import of fonts and colours from a Rainmeter skin. Themes can be exported and shared without names, cities, to-dos, or file paths.
 - **Settings**: five pages (Desktop scheme, Appearance, Desktop components, Top & bottom bars, General) with search (Ctrl+F).
 
 See the [user guide (Chinese)](docs/USER-GUIDE.md) for details.

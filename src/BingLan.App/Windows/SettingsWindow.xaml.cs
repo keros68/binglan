@@ -1939,6 +1939,14 @@ public partial class SettingsWindow : Window
         LoadStyle();
     }
 
+    private void RecommendedClearLook_Click(object sender, RoutedEventArgs e)
+    {
+        DesktopStyleRules.ApplyRecommendedClearLook(_maintenance.Style);
+        _maintenance.ApplyGlass();
+        _maintenance.ApplyStyle();
+        LoadStyle();
+    }
+
     // Reads a skin's look, shows what will change and applies it after a yes.
     private async void ImportRainmeterLook_Click(object sender, RoutedEventArgs e)
     {
