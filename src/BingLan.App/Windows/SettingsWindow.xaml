@@ -1566,6 +1566,15 @@
                                                 </StackPanel>
                                             </Border>
                                         </local:SettingsRow>
+                                        <local:SettingsRow Header="鼠标离开 5 秒后自动收起"
+                                                           Description="开启后展开分组盒，鼠标移开满 5 秒自动收起成标题条；在盒内悬停、打开菜单或对话框时不收起，收起后点标题条即可展开"
+                                                           local:SettingsSearch.Keywords="自动收起 折叠 抽屉 5秒">
+                                            <CheckBox x:Name="FileBoxAutoCollapseCheckBox"
+                                                      AutomationProperties.Name="鼠标离开 5 秒后自动收起"
+                                                      Style="{StaticResource ToggleSwitchStyle}"
+                                                      Checked="FileBoxAutoCollapse_Changed"
+                                                      Unchecked="FileBoxAutoCollapse_Changed"/>
+                                        </local:SettingsRow>
                                     </local:SettingsGroup>
                                 </StackPanel>
                                 <StackPanel x:Name="FileBoxCollectPanel"

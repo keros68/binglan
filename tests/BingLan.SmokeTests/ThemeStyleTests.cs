@@ -1325,7 +1325,7 @@ internal static class ThemeStyleTests
             var migrated = store.Load();
             var info = migrated.InformationWidgets.Single();
             Check(migrated.SchemaVersion == AppState.CurrentSchemaVersion
-                && AppState.CurrentSchemaVersion == 47
+                && AppState.CurrentSchemaVersion >= 47
                 && info.ClockLayout == ClockLayoutPreset.Classic
                 && info.ShowDate
                 && info.GreetingName == "林汐"
@@ -1754,6 +1754,85 @@ internal static class ThemeStyleTests
                 && !DesktopStyleRules.ResolveRenderedCard(lightWhiteCard, lightStyle).SecondaryTextUsesPrimaryInk
                 && !DesktopStyleRules.ResolveRenderedCard(darkCard, lightStyle).SecondaryTextUsesPrimaryInk,
                 $"渲染不透明度 {backedOpacity:0.##} 不低于 0.2 时四类外观次要文字应保留次级不透明度");
+        }
+    }
+
+    public static void TestFileBoxAutoCollapseRulesAndSchemaV48Migration()
+    {
+        Check(FileBoxAutoCollapseRules.IdleDelay == TimeSpan.FromSeconds(5),
+            "自动收起无操作延时应为 5 秒");
+        Check(FileBoxAutoCollapseRules.ShouldRunCountdown(true, false, false, false, false, false),
+            "开启自动收起且展开、未悬停、无遮挡/编辑/拖动时应运行倒计时");
+        Check(!FileBoxAutoCollapseRules.ShouldRunCountdown(false, false, false, false, false, false),
+            "关闭自动收起时不应运行倒计时");
+        Check(!FileBoxAutoCollapseRules.ShouldRunCountdown(true, true, false, false, false, false),
+            "已收起状态不应运行倒计时");
+        Check(!FileBoxAutoCollapseRules.ShouldRunCountdown(true, false, true, false, false, false),
+            "鼠标在分组盒内悬停时应暂停倒计时");
+        Check(!FileBoxAutoCollapseRules.ShouldRunCountdown(true, false, false, true, false, false),
+            "编辑标题时应暂停倒计时");
+        Check(!FileBoxAutoCollapseRules.ShouldRunCountdown(true, false, false, false, true, false),
+            "打开菜单、对话框或拖放期间应暂停倒计时");
+        Check(!FileBoxAutoCollapseRules.ShouldRunCountdown(true, false, false, false, false, true),
+            "正在拖动或缩放分组盒时应暂停倒计时");
+
+        Check(FileBoxAutoCollapseRules.CanClickTitleBarToExpand(true, true, false, 3, 2),
+            "小幅点击折叠后开启自动收起的标题条应展开");
+        Check(!FileBoxAutoCollapseRules.CanClickTitleBarToExpand(true, true, false, 6, 0),
+            "拖动标题条超过阈值不应视作点击展开");
+        Check(!FileBoxAutoCollapseRules.CanClickTitleBarToExpand(false, true, false, 0, 0),
+            "关闭自动收起时单击标题条空白不自动展开");
+        Check(!FileBoxAutoCollapseRules.CanClickTitleBarToExpand(true, false, false, 0, 0),
+            "已展开时不重复按折叠态点击处理");
+
+        var temp = Path.Combine(Path.GetTempPath(), $"BingLanAutoCollapse-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(temp);
+        try
+        {
+            var store = new LocalStateStore(temp);
+            File.WriteAllText(
+                store.StatePath,
+                """
+                {
+                  "SchemaVersion": 47,
+                  "FileBoxes": [
+                    { "Title": "桌面文件" }
+                  ]
+                }
+                """);
+
+            var migrated = store.Load();
+            Check(migrated.SchemaVersion == AppState.CurrentSchemaVersion && AppState.CurrentSchemaVersion >= 48,
+                "v47 状态应迁移到含自动收起字段的当前 SchemaVersion");
+            Check(!migrated.FileBoxes.Single().AutoCollapse,
+                "旧配置与缺省字段加载后分组盒自动收起应默认关闭");
+
+            migrated.FileBoxes.Single().AutoCollapse = true;
+            store.Save(migrated);
+
+            var reloaded = store.Load();
+            Check(reloaded.FileBoxes.Single().AutoCollapse,
+                "分组盒 AutoCollapse=true 应正确持久化往返");
+
+            var json = File.ReadAllText(store.StatePath);
+            var root = System.Text.Json.Nodes.JsonNode.Parse(json)!.AsObject();
+            root["SchemaVersion"] = 47;
+            root["FileBoxes"]!.AsArray()[0]!.AsObject().Remove("AutoCollapse");
+            File.WriteAllText(store.StatePath, root.ToJsonString());
+
+            var downgraded = store.Load();
+            Check(!downgraded.FileBoxes.Single().AutoCollapse && downgraded.FileBoxes.Single().Title == "桌面文件",
+                "缺少 AutoCollapse 字段时应安全回退为关闭并保留标题");
+
+            var exported = ThemeRules.Export(migrated, "测试主题", Area, AppVersion);
+            var exportedJson = System.Text.Json.JsonSerializer.Serialize(exported);
+            Check(!exportedJson.Contains("AutoCollapse", StringComparison.Ordinal)
+                && !exportedJson.Contains("桌面文件", StringComparison.Ordinal),
+                "主题包导出不应包含分组盒个人数据或自动收起开关");
+        }
+        finally
+        {
+            Directory.Delete(temp, true);
         }
     }
 

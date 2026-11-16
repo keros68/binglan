@@ -959,6 +959,7 @@ public class WidgetWindowBase : Window
 
         _titleBeforeEdit = editor.Text;
         SetValue(IsTitleEditingPropertyKey, true);
+        OnTitleEditingChanged(true);
         Activate();
         editor.Focus();
         editor.SelectAll();
@@ -978,6 +979,7 @@ public class WidgetWindowBase : Window
             editor.Text = _titleBeforeEdit;
         }
         CommitTitleEdit();
+        OnTitleEditingChanged(false);
         if (editor.IsKeyboardFocused)
         {
             Keyboard.ClearFocus();
@@ -1135,7 +1137,23 @@ public class WidgetWindowBase : Window
 
     protected void RequestAppSettings() => OpenAppSettingsRequested?.Invoke(this);
 
+    internal bool IsDraggingOrResizing => _drag is not null;
+
     protected virtual void OnLockChanged(bool locked)
+    {
+    }
+
+    protected virtual void OnTitleEditingChanged(bool isEditing)
+    {
+    }
+
+    protected virtual void OnDragEnded()
+    {
+    }
+
+    protected virtual void PopulateCustomContextMenuItems(
+        System.Windows.Controls.ItemCollection items,
+        ContextMenu menu)
     {
     }
 
@@ -1920,6 +1938,7 @@ public class WidgetWindowBase : Window
             SnapGridOverlay.HideGrid();
             EnsureTaskbarSafeBounds();
         }
+        OnDragEnded();
     }
 
     // Snaps a proposed position to nearby cards and the work area and shows the matching
@@ -2011,7 +2030,7 @@ public class WidgetWindowBase : Window
         return deltaX * deltaX + deltaY * deltaY <= radius * radius;
     }
 
-    private bool IsInteractive(Point point)
+    protected bool IsInteractive(Point point)
     {
         DependencyObject? current = InputHitTest(point) as DependencyObject;
         while (current is not null)
@@ -2051,6 +2070,7 @@ public class WidgetWindowBase : Window
 
         menu.Items.Add(appSettings);
         menu.Items.Add(lockPosition);
+        PopulateCustomContextMenuItems(menu.Items, menu);
         menu.Items.Add(new Separator());
         menu.Items.Add(delete);
         menu.Items.Add(exit);

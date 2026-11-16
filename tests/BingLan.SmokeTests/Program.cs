@@ -85,6 +85,7 @@ Run("天气卡片最小高度随字号与疏密缩放", ThemeStyleTests.TestWeat
 Run("卡片折叠与条目增删动效规格", ThemeStyleTests.TestWp6CardMotionRules);
 Run("设置窗口尺寸与最小尺寸不超过显示器工作区", ThemeStyleTests.TestSettingsWindowSizingRules);
 Run("时钟排版预设、Schema v47 迁移与 0.2.66 降级缺字段回退", ThemeStyleTests.TestClockLayoutPresetsAndMigration);
+Run("分组盒鼠标离开 5 秒自动收起规则与 Schema v48 迁移", ThemeStyleTests.TestFileBoxAutoCollapseRulesAndSchemaV48Migration);
 Run("无底板与接近透明时钟预设的日期与数字可读性", ThemeStyleTests.TestUnbackedClockReadability);
 Run("WP9 无底板推荐效果保留自定义文字色并一键切换", ThemeStyleTests.TestWp9RecommendedClearLook);
 Run("WP10 折叠摘要规则仅输出数量且按视图统计未完成项", ThemeStyleTests.TestWp10CardFoldSummaries);

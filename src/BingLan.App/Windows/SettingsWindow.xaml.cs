@@ -73,6 +73,7 @@ public partial class SettingsWindow : Window
     private bool _loadingTopBar;
     private bool _loadingTopBarLook;
     private bool _loadingSearchAppearance;
+    private FileBoxWindow? _observedFileBox;
     private bool _topBarApplyQueued;
     private bool _presetPreviewQueued;
     private bool _isClosed;
@@ -214,7 +215,7 @@ public partial class SettingsWindow : Window
         RefreshBackupList();
         ShowPage("Scheme");
         Closing += (_, _) => CommitPendingChanges();
-        Closed += (_, _) => { _isClosed = true; CancelSearch(); };
+        Closed += (_, _) => { _isClosed = true; CancelSearch(); AttachObservedFileBox(null); };
         // The index reads the finished pages once, after the window has shown.
         Loaded += (_, _) => Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, () => _ = SearchIndex);
         Deactivated += (_, _) => SettingsSearchPopup.IsOpen = false;
@@ -436,6 +437,7 @@ public partial class SettingsWindow : Window
         _selectedComponentEntry = entry;
         if (entry.Kind is { } kind)
         {
+            AttachObservedFileBox(null);
             SelectedWidgetAppearanceHost.Content = null;
             FileBoxCollectPanel.Visibility = Visibility.Collapsed;
             FileBoxDesktopHintPanel.Visibility = Visibility.Collapsed;
@@ -504,8 +506,10 @@ public partial class SettingsWindow : Window
 
         var panel = new WidgetAppearancePanel { SharedStyle = _maintenance.Style };
         panel.Attach(entry.Window);
-        LoadFileBoxViewMode(entry.Window as FileBoxWindow);
-        LoadFileBoxCollect(entry.Window as FileBoxWindow);
+        var fileBox = entry.Window as FileBoxWindow;
+        AttachObservedFileBox(fileBox);
+        LoadFileBoxViewMode(fileBox);
+        LoadFileBoxCollect(fileBox);
         LoadTodoSettings(entry.Window as TodoWidgetWindow);
         SelectedWidgetAppearanceHost.Content = panel;
         SelectedWidgetHeadingText.Text = entry.Name;
@@ -1389,11 +1393,59 @@ public partial class SettingsWindow : Window
             var list = box.State.ViewMode == FileBoxViewMode.List;
             FileBoxTilesRadio.IsChecked = !list;
             FileBoxListRadio.IsChecked = list;
+            FileBoxAutoCollapseCheckBox.IsChecked = box.State.AutoCollapse;
         }
         finally
         {
             _loadingViewMode = false;
         }
+    }
+
+    private void AttachObservedFileBox(FileBoxWindow? box)
+    {
+        if (_observedFileBox is not null)
+        {
+            _observedFileBox.WidgetChanged -= OnObservedFileBoxChanged;
+        }
+        _observedFileBox = box;
+        if (_observedFileBox is not null)
+        {
+            _observedFileBox.WidgetChanged += OnObservedFileBoxChanged;
+        }
+    }
+
+    private void OnObservedFileBoxChanged(WidgetWindowBase window)
+    {
+        if (window is not FileBoxWindow box
+            || !ReferenceEquals(_selectedComponentEntry?.Window, box)
+            || _loadingViewMode)
+        {
+            return;
+        }
+
+        _loadingViewMode = true;
+        try
+        {
+            FileBoxAutoCollapseCheckBox.IsChecked = box.State.AutoCollapse;
+        }
+        finally
+        {
+            _loadingViewMode = false;
+        }
+    }
+
+    private void FileBoxAutoCollapse_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_loadingViewMode || _selectedComponentEntry?.Window is not FileBoxWindow box)
+        {
+            return;
+        }
+
+        var enabled = FileBoxAutoCollapseCheckBox.IsChecked == true;
+        box.SetAutoCollapse(enabled);
+        ComponentSettingsStatusText.Text = enabled
+            ? $"“{box.State.Title}”已开启鼠标离开 5 秒后自动收起"
+            : $"“{box.State.Title}”已关闭自动收起";
     }
 
     private void FileBoxViewMode_Changed(object sender, RoutedEventArgs e)

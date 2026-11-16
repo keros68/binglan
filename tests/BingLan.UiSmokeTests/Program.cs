@@ -241,6 +241,7 @@ internal static class Program
         Run("三种材质与 0/12/32 圆角真实窗口无白边或锯齿", TestMaterialCornerEdgesNoWhiteHalo, failures);
         Run("空状态引导与卡片折叠增删动效", TestWp6EmptyStateAndCardMotion, failures);
         Run("悬停弹出设置入口时右侧标题栏按钮不漂移", TestHeaderButtonsStayStationaryWhenSettingsDotShows, failures);
+        Run("分组盒开启鼠标离开 5 秒后自动收起并点击标题条展开", TestFileBoxAutoCollapseInteraction, failures);
 
         if (failures.Count > 0)
         {
@@ -7736,6 +7737,81 @@ internal static class Program
         finally
         {
             Close(note);
+        }
+    }
+
+    private static void TestFileBoxAutoCollapseInteraction()
+    {
+        var box = new FileBoxWindow(new FileBoxState
+        {
+            Title = "抽屉测试盒",
+            Placement = new WindowPlacement { Left = 80, Top = 80, Width = 366, Height = 306 }
+        });
+        var settings = new SettingsWindow(
+            new CityLookupService(),
+            new InformationWidgetState(),
+            DesktopExperienceRules.CreateDefault(),
+            (_, _) => { },
+            _ => { },
+            _ => { },
+            widgetProvider: () => [box]);
+        ShowAndPump(box);
+        ShowAndPump(settings);
+        try
+        {
+            settings.ShowWidgetSettings(box);
+            Pump();
+            var toggle = Require<CheckBox>(settings, "FileBoxAutoCollapseCheckBox");
+            Assert(toggle.IsChecked == false && !box.State.AutoCollapse && !box.IsAutoCollapseTimerRunning,
+                "分组盒自动收起应默认关闭且不启动计时器");
+
+            toggle.IsChecked = true;
+            Pump();
+            Assert(box.State.AutoCollapse, "开启开关应写入分组盒 AutoCollapse 状态");
+
+            if (!box.IsMouseOver)
+            {
+                Assert(box.IsAutoCollapseTimerRunning, "鼠标在盒外且开启自动收起时应启动倒计时");
+
+                box.ContextMenu!.IsOpen = true;
+                Pump();
+                Assert(!box.IsAutoCollapseTimerRunning, "右键菜单打开时应暂停自动收起倒计时");
+
+                box.ContextMenu.IsOpen = false;
+                Pump();
+                Assert(box.IsAutoCollapseTimerRunning, "菜单关闭后应重新启动倒计时");
+
+                CardMotionAnimator.AreSystemAnimationsEnabled = () => false;
+                box.TriggerAutoCollapseTickForTesting();
+                Pump();
+                Assert(box.State.IsCollapsed && Near(box.ActualHeight, 48d),
+                    "自动收起计时触发后应折叠到 48 DIP 标题条");
+
+                // 拖动超过阈值时不按点击展开。
+                Assert(box.TryBeginFoldedTitleBarClick(new Point(80, 20), 1, 100, 100),
+                    "点击折叠后标题栏空白处应记录按压起点");
+                Assert(!box.CompleteFoldedTitleBarClick(120, 100) && box.State.IsCollapsed,
+                    "标题栏移动超过 4px 不应触发展开");
+
+                // 单击未拖动则平滑展开。
+                Assert(box.TryBeginFoldedTitleBarClick(new Point(80, 20), 1, 100, 100),
+                    "再次点击折叠标题栏应记录按压起点");
+                Assert(box.CompleteFoldedTitleBarClick(101, 101) && !box.State.IsCollapsed,
+                    "自动收起状态下单击标题栏应恢复展开");
+                Pump();
+                Assert(Near(box.ActualHeight, 306d), "展开后分组盒应恢复原高度");
+            }
+
+            toggle.IsChecked = false;
+            Pump();
+            Assert(!box.State.AutoCollapse && !box.IsAutoCollapseTimerRunning,
+                "关闭自动收起应立即停止倒计时");
+        }
+        finally
+        {
+            CardMotionAnimator.AreSystemAnimationsEnabled = () => SystemParameters.ClientAreaAnimation;
+            settings.Close();
+            Close(box);
         }
     }
 

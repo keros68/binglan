@@ -359,6 +359,9 @@ public sealed class FileBoxState
     /// <summary>Whether the box is folded up to its title bar.</summary>
     public bool IsCollapsed { get; set; }
 
+    /// <summary>Whether an expanded box folds back after the pointer leaves for 5 seconds.</summary>
+    public bool AutoCollapse { get; set; }
+
     /// <summary>Whether mappings show as tiles or as a compact list; tiles by default.</summary>
     public FileBoxViewMode ViewMode { get; set; }
 
