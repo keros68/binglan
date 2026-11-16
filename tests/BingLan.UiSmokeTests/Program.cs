@@ -7755,16 +7755,27 @@ internal static class Program
         ShowAndPump(box);
         try
         {
-            AssertNoHorizontalDrift(
-                box,
-                "分组盒（展开）",
-                Require<Button>(box, "AddButton"),
-                Require<Button>(box, "SortButton"),
-                Require<Button>(box, "CollapseButton"));
+            var boxAdd = Require<Button>(box, "AddButton");
+            var boxSort = Require<Button>(box, "SortButton");
+            var boxCollapse = Require<Button>(box, "CollapseButton");
+            AssertNoHorizontalDrift(box, "分组盒（展开）", boxAdd, boxSort, boxCollapse);
+            Assert(
+                LeftX(boxAdd, box) < LeftX(boxSort, box) && LeftX(boxSort, box) < LeftX(boxCollapse, box),
+                "分组盒折叠按钮应固定在最右侧");
+            var boxCollapseX = LeftX(boxCollapse, box);
 
             box.SetCollapsed(true);
             Pump();
-            AssertNoHorizontalDrift(box, "分组盒（折叠）", Require<Button>(box, "CollapseButton"));
+            Assert(
+                Math.Abs(LeftX(boxCollapse, box) - boxCollapseX) < 0.01,
+                $"分组盒收起后折叠按钮发生了水平漂移 ({boxCollapseX:F2} -> {LeftX(boxCollapse, box):F2})");
+            AssertNoHorizontalDrift(box, "分组盒（折叠）", boxCollapse);
+
+            box.SetCollapsed(false);
+            Pump();
+            Assert(
+                Math.Abs(LeftX(boxCollapse, box) - boxCollapseX) < 0.01,
+                $"分组盒展开后折叠按钮发生了水平漂移 ({boxCollapseX:F2} -> {LeftX(boxCollapse, box):F2})");
         }
         finally
         {
@@ -7778,16 +7789,27 @@ internal static class Program
         ShowAndPump(todo);
         try
         {
-            AssertNoHorizontalDrift(
-                todo,
-                "待办（展开）",
-                Require<Button>(todo, "ViewModeButton"),
-                Require<Button>(todo, "CollapseButton"),
-                Require<Button>(todo, "AddTodoButton"));
+            var todoView = Require<Button>(todo, "ViewModeButton");
+            var todoAdd = Require<Button>(todo, "AddTodoButton");
+            var todoCollapse = Require<Button>(todo, "CollapseButton");
+            AssertNoHorizontalDrift(todo, "待办（展开）", todoView, todoAdd, todoCollapse);
+            Assert(
+                LeftX(todoView, todo) < LeftX(todoAdd, todo) && LeftX(todoAdd, todo) < LeftX(todoCollapse, todo),
+                "待办新增按钮应位于折叠按钮左侧，折叠按钮应固定在最右侧");
+            var todoCollapseX = LeftX(todoCollapse, todo);
 
             todo.SetCollapsed(true);
             Pump();
-            AssertNoHorizontalDrift(todo, "待办（折叠）", Require<Button>(todo, "CollapseButton"));
+            Assert(
+                Math.Abs(LeftX(todoCollapse, todo) - todoCollapseX) < 0.01,
+                $"待办收起后折叠按钮发生了水平漂移 ({todoCollapseX:F2} -> {LeftX(todoCollapse, todo):F2})");
+            AssertNoHorizontalDrift(todo, "待办（折叠）", todoCollapse);
+
+            todo.SetCollapsed(false);
+            Pump();
+            Assert(
+                Math.Abs(LeftX(todoCollapse, todo) - todoCollapseX) < 0.01,
+                $"待办点击下拉按钮展开后折叠按钮发生了水平漂移 ({todoCollapseX:F2} -> {LeftX(todoCollapse, todo):F2})");
         }
         finally
         {
