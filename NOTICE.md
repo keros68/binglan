@@ -28,6 +28,10 @@
 | --- | --- | --- |
 | Microsoft.Windows.CsWin32 | `design-lab/BingLan.DesktopVisibilitySpike` 研究项目生成 Windows API 声明，只在编译时使用，不随程序发布 | MIT |
 
+## 文档展示图背景
+
+`docs/images/brand-header.png` 与 `docs/images/materials.png` 中的冰蓝渐层背景均由仓库脚本通过矢量渐变与几何图形自行绘制，不含第三方图片资产。
+
 ## 参考过的项目
 
 产品设计参考过 Rainmeter、Pogget、Nexus Dock 和 TranslucentTB 等工具的行为，仓库中没有复制它们的代码或素材。“从 Rainmeter 皮肤导入外观”只在用户本机读取所选皮肤的文字设置，不随程序分发任何皮肤内容。
