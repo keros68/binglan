@@ -145,7 +145,7 @@ public static class ClockLayoutRules
         var effectiveColor = WidgetAppearanceRules.CoerceTextColor(textColor);
         var safeOpacity = WidgetAppearanceRules.CoerceBackgroundOpacity(backgroundOpacity);
         var isUnbacked = safeOpacity < DesktopStyleRules.MinimumGlassDensity;
-        var lowBackingPrimaryDate = safeOpacity < ColorContrastRules.NearClearBackgroundOpacityThreshold;
+        var lowBackingPrimaryDate = ColorContrastRules.SecondaryTextUsesPrimaryInk(safeOpacity);
 
         return safePreset switch
         {

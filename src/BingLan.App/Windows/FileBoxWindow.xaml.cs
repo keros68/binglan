@@ -135,18 +135,6 @@ public partial class FileBoxWindow : WidgetWindowBase
         State.IsLocked = locked;
     }
 
-    protected override void OnAppearanceRefreshed()
-    {
-        base.OnAppearanceRefreshed();
-        if (CollapsedSummaryText is not null)
-        {
-            var usePrimary = !AccessibilityThemeManager.IsHighContrastEnabled
-                && CardFoldSummaryRules.UsesPrimaryInk(
-                    DesktopStyleRules.ResolveRenderedCard(WidgetAppearance, CurrentStyle).BackgroundOpacity);
-            CollapsedSummaryText.Foreground = usePrimary ? WidgetTextBrush : WidgetSecondaryTextBrush;
-        }
-    }
-
     private const double CollapsedHeight = 48d;
     private const double DefaultMinHeight = 166d;
 

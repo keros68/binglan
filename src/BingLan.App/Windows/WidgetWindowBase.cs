@@ -792,7 +792,7 @@ public class WidgetWindowBase : Window
             CreateAppearanceBrush(WidgetAppearance.TextColor, 1d));
         SetValue(
             WidgetSecondaryTextBrushPropertyKey,
-            CreateAppearanceBrush(WidgetAppearance.TextColor, ColorContrastRules.SecondaryTextAlpha));
+            CreateAppearanceBrush(WidgetAppearance.TextColor, rendered.SecondaryTextAlpha));
         SetValue(
             WidgetDisabledTextBrushPropertyKey,
             CreateAppearanceBrush(WidgetAppearance.TextColor, ColorContrastRules.DisabledTextAlpha));

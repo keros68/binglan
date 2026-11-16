@@ -587,5 +587,47 @@ internal static class SettingsWindowTests
             window.Close();
             Pump();
         }
+
+        // 拆分天气信息卡验证次要文字通用规则：无底板/低于 0.20 用主墨色，不低于 0.20 保持次墨色。
+        var experience = DesktopExperienceRules.CreateDefault();
+        var weatherComp = experience.GetComponent(DesktopComponentKind.Weather);
+        weatherComp.Appearance.TextColor = "#FFFFFF";
+        weatherComp.Appearance.BackgroundColor = "#EDF2F7";
+        weatherComp.Appearance.BackgroundOpacity = WidgetAppearanceRules.MinimumBackgroundOpacity;
+        var weatherWindow = new InformationWidgetWindow(
+            new InformationWidgetState(),
+            new FakeSamplingService(),
+            new WeatherService(new StubHttpMessageHandler()),
+            experience,
+            DesktopComponentKind.Weather);
+        ShowAndPump(weatherWindow);
+        try
+        {
+            var highText = Require<TextBlock>(weatherWindow, "WeatherHighText");
+            var updatedText = Require<TextBlock>(weatherWindow, "WeatherUpdatedText");
+            AssertEqual(byte.MaxValue, ((System.Windows.Media.SolidColorBrush)highText.Foreground).Color.A,
+                "无底板下天气次要文字（最高/最低/湿度）应使用主墨色");
+            AssertEqual(byte.MaxValue, ((System.Windows.Media.SolidColorBrush)updatedText.Foreground).Color.A,
+                "无底板下天气更新时间应使用主墨色");
+
+            weatherComp.Appearance.BackgroundOpacity = 0.15d;
+            weatherWindow.ApplyDesktopExperience(experience);
+            Pump();
+            AssertEqual(byte.MaxValue, ((System.Windows.Media.SolidColorBrush)highText.Foreground).Color.A,
+                "渲染不透明度 0.15 下天气次要文字应使用主墨色");
+
+            weatherComp.Appearance.BackgroundOpacity = 0.66d;
+            weatherWindow.ApplyDesktopExperience(experience);
+            Pump();
+            Assert(((System.Windows.Media.SolidColorBrush)highText.Foreground).Color.A < byte.MaxValue,
+                "有底板（0.66）下天气次要文字应保留次级不透明度");
+            Assert(((System.Windows.Media.SolidColorBrush)updatedText.Foreground).Color.A < byte.MaxValue,
+                "有底板（0.66）下天气更新时间应保留次级不透明度");
+        }
+        finally
+        {
+            weatherWindow.Close();
+            Pump();
+        }
     }
 }

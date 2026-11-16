@@ -1654,16 +1654,107 @@ internal static class ThemeStyleTests
         {
             item.IsCompleted = true;
         }
-        Check(CardFoldSummaryRules.FormatTodoSummary(todoWidget, today, weekStart, weekEnd) == "0 项未完成",
-            "全部完成后周历视图折叠摘要应为 0 项未完成");
+        Check(CardFoldSummaryRules.FormatTodoSummary(todoWidget, today, weekStart, weekEnd) == "已全部完成",
+            "全部完成后周历视图折叠摘要应显示已全部完成");
         todoWidget.WeeklyView = false;
-        Check(CardFoldSummaryRules.FormatTodoSummary(todoWidget, today) == "0 项未完成",
-            "全部完成后列表视图折叠摘要应为 0 项未完成");
+        Check(CardFoldSummaryRules.FormatTodoSummary(todoWidget, today) == "已全部完成",
+            "全部完成后列表视图折叠摘要应显示已全部完成");
 
-        Check(CardFoldSummaryRules.UsesPrimaryInk(WidgetAppearanceRules.MinimumBackgroundOpacity)
-            && CardFoldSummaryRules.UsesPrimaryInk(0.05d)
-            && !CardFoldSummaryRules.UsesPrimaryInk(0.66d),
-            "无底板与接近透明下折叠摘要应改用主墨色，不低于 20% 时保持次墨色");
+        var emptyTodoWidget = new TodoWidgetState();
+        Check(CardFoldSummaryRules.FormatTodoSummary(emptyTodoWidget, today) == "0 项未完成",
+            "空待办列表折叠摘要应保持 0 项未完成");
+
+        Check(ColorContrastRules.SecondaryTextUsesPrimaryInk(WidgetAppearanceRules.MinimumBackgroundOpacity)
+            && ColorContrastRules.SecondaryTextUsesPrimaryInk(0.05d)
+            && !ColorContrastRules.SecondaryTextUsesPrimaryInk(0.20d)
+            && !ColorContrastRules.SecondaryTextUsesPrimaryInk(0.66d),
+            "通用次要文字规则应在底不透明度低于 0.2 时使用主墨色，不低于 0.2 时保持次墨色");
+    }
+
+    public static void TestNearClearSecondaryTextUsesPrimaryInk()
+    {
+        var globalClear = new DesktopStyleState
+        {
+            Glass = GlassMode.Clear,
+            TextInk = TextInk.White,
+            CardShadow = CardShadow.Soft
+        };
+
+        foreach (var lowOpacity in new[] { WidgetAppearanceRules.MinimumBackgroundOpacity, 0.05d, 0.199d })
+        {
+            Check(ColorContrastRules.SecondaryTextUsesPrimaryInk(lowOpacity)
+                && ColorContrastRules.ResolveSecondaryTextAlpha(lowOpacity) == 1d,
+                $"渲染不透明度 {lowOpacity:0.###} 低于 0.2 时次要文字应取全不透明主墨色");
+
+            var lightNearClearCard = new WidgetAppearanceState
+            {
+                BackgroundColor = "#EDF2F7",
+                BackgroundOpacity = lowOpacity,
+                TextColor = "#FFFFFF"
+            };
+            var lightRendered = DesktopStyleRules.ResolveRenderedCard(lightNearClearCard, globalClear);
+            Check(lightRendered.SecondaryTextUsesPrimaryInk && lightRendered.SecondaryTextAlpha == 1d,
+                $"浅色玻璃不透明度 {lowOpacity:0.###} 配白字渲染底低于 0.2 时次要文字应使用主墨色");
+
+            var darkNearClearCard = new WidgetAppearanceState
+            {
+                BackgroundColor = "#16202C",
+                BackgroundOpacity = lowOpacity,
+                TextColor = "#FFFFFF"
+            };
+            var darkRendered = DesktopStyleRules.ResolveRenderedCard(darkNearClearCard, globalClear);
+            Check(darkRendered.SecondaryTextUsesPrimaryInk && darkRendered.SecondaryTextAlpha == 1d,
+                $"深色玻璃不透明度 {lowOpacity:0.###} 低于 0.2 时次要文字应使用主墨色");
+
+            var experience = DesktopExperienceRules.CreateDefault();
+            foreach (var kind in new[]
+                     {
+                         DesktopComponentKind.TimeDate,
+                         DesktopComponentKind.Greeting,
+                         DesktopComponentKind.Weather,
+                         DesktopComponentKind.Performance
+                     })
+            {
+                var comp = experience.GetComponent(kind);
+                comp.Appearance.BackgroundColor = "#EDF2F7";
+                comp.Appearance.BackgroundOpacity = lowOpacity;
+                comp.Appearance.TextColor = "#FFFFFF";
+                var compRendered = DesktopStyleRules.ResolveRenderedCard(comp, globalClear);
+                Check(compRendered.SecondaryTextUsesPrimaryInk && compRendered.SecondaryTextAlpha == 1d,
+                    $"拆分信息卡 {kind} 在渲染底低于 0.2 时次要文字应使用主墨色");
+            }
+        }
+
+        foreach (var backedOpacity in new[] { 0.20d, 0.35d, 0.66d, 0.96d })
+        {
+            Check(!ColorContrastRules.SecondaryTextUsesPrimaryInk(backedOpacity)
+                && ColorContrastRules.ResolveSecondaryTextAlpha(backedOpacity) == ColorContrastRules.SecondaryTextAlpha,
+                $"渲染不透明度 {backedOpacity:0.##} 不低于 0.2 时次要文字应保持 0.76 层次");
+
+            var lightCard = new WidgetAppearanceState
+            {
+                BackgroundColor = "#EDF2F7",
+                BackgroundOpacity = backedOpacity,
+                TextColor = "#1E2B3C"
+            };
+            var lightWhiteCard = new WidgetAppearanceState
+            {
+                BackgroundColor = "#EDF2F7",
+                BackgroundOpacity = backedOpacity,
+                TextColor = "#FFFFFF"
+            };
+            var darkCard = new WidgetAppearanceState
+            {
+                BackgroundColor = "#16202C",
+                BackgroundOpacity = backedOpacity,
+                TextColor = "#FFFFFF"
+            };
+            var lightStyle = new DesktopStyleState { Glass = GlassMode.Light, GlassDensity = backedOpacity };
+            Check(!DesktopStyleRules.ResolveRenderedCard(lightCard, lightStyle).SecondaryTextUsesPrimaryInk
+                && !DesktopStyleRules.ResolveRenderedCard(lightWhiteCard, lightStyle).SecondaryTextUsesPrimaryInk
+                && !DesktopStyleRules.ResolveRenderedCard(darkCard, lightStyle).SecondaryTextUsesPrimaryInk,
+                $"渲染不透明度 {backedOpacity:0.##} 不低于 0.2 时四类外观次要文字应保留次级不透明度");
+        }
     }
 
     private static void Check(bool condition, string message)

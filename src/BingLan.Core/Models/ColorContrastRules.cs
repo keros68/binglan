@@ -36,6 +36,17 @@ public static class ColorContrastRules
     public const double MinimumNormalTextContrast = 4.5d;
     public const double MinimumLargeTextContrast = 3.0d;
 
+    /// <summary>
+    /// Below 20% rendered backing opacity, secondary text rises to full primary ink
+    /// (alpha 1.0) so metadata, dates, counts and summaries remain readable over bright
+    /// wallpapers; at or above 20% it keeps <see cref="SecondaryTextAlpha"/>.
+    /// </summary>
+    public static bool SecondaryTextUsesPrimaryInk(double renderedBackgroundOpacity) =>
+        renderedBackgroundOpacity < NearClearBackgroundOpacityThreshold;
+
+    public static double ResolveSecondaryTextAlpha(double renderedBackgroundOpacity) =>
+        SecondaryTextUsesPrimaryInk(renderedBackgroundOpacity) ? 1d : SecondaryTextAlpha;
+
     public readonly record struct SrgbColor(double R, double G, double B, double A = 1d);
 
     public static SrgbColor ParseHex(string hex)

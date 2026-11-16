@@ -2443,6 +2443,16 @@ internal static class Program
                 && todoSummary.Text == "2 项未完成"
                 && !todoSummary.Text.Contains("秘密", StringComparison.Ordinal),
                 "收起后待办标题右侧应仅显示未完成数量摘要");
+            window.SetWidgetBackgroundOpacity(0.15d);
+            Pump();
+            Assert(((SolidColorBrush)window.WidgetSecondaryTextBrush).Color.A == byte.MaxValue,
+                "底不透明度低于 0.2 时通用次要文字画刷应提升为主墨色");
+            window.SetWidgetBackgroundOpacity(0.20d);
+            Pump();
+            Assert(((SolidColorBrush)window.WidgetSecondaryTextBrush).Color.A < byte.MaxValue,
+                "底不透明度不低于 0.2 时通用次要文字画刷应保留次墨色");
+            window.SetWidgetBackgroundOpacity(WidgetAppearanceRules.DefaultBackgroundOpacity);
+            Pump();
             Assert(state.TodoWidgets[0].IsCollapsed, "收起状态应写入待办状态");
             Assert(Near(state.TodoWidgets[0].ExpandedHeight, 336), "收起时应记住展开高度");
             window.CaptureState();
@@ -2470,6 +2480,19 @@ internal static class Program
             Assert(Require<ScrollViewer>(restored, "ListHost").IsVisible, "展开后正文应恢复显示");
             Assert(Require<Button>(restored, "ViewModeButton").Visibility == Visibility.Visible, "展开后视图切换按钮应恢复");
             Assert(restoredSummary.Visibility == Visibility.Collapsed, "展开后待办折叠摘要应隐藏");
+
+            var todoList = Require<ItemsControl>(restored, "TodoList");
+            while (FindVisualChildren<CheckBox>(todoList).FirstOrDefault(c => c.IsChecked != true) is { } nextCheck)
+            {
+                nextCheck.IsChecked = true;
+                Pump();
+            }
+            Require<Button>(restored, "CollapseButton").RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            PumpUntil(
+                () => Near(restored.ActualHeight, 48) && !restored.IsFoldAnimating,
+                "等待全部完成后的待办卡片完成收起");
+            Assert(restoredSummary.Visibility == Visibility.Visible && restoredSummary.Text == "已全部完成",
+                "待办全部完成后折叠摘要应显示已全部完成");
         }
         finally
         {

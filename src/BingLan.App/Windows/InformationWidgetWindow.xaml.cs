@@ -223,13 +223,19 @@ public partial class InformationWidgetWindow : WidgetWindowBase
         ApplyClockLayout(timeDate, greeting, showTimeDate, showGreeting, lowChrome);
         SettingsButton.Foreground = GetComponentTextBrush(isolatedComponent ?? timeDate);
 
-        ApplyTextBrush(PerformanceCard, GetComponentTextBrush(performance), GetComponentSecondaryTextBrush(performance));
         var isIsolatedPerformance = _componentKind == DesktopComponentKind.Performance;
         var performanceRender = isIsolatedPerformance
             ? null
             : DesktopStyleRules.ResolveRenderedCard(
                 _usesLegacyAppearance ? WidgetAppearance : performance.Appearance,
                 CurrentStyle);
+        var performanceBackingOpacity = isIsolatedPerformance
+            ? isolatedRender!.BackgroundOpacity
+            : performanceRender!.BackgroundOpacity;
+        ApplyTextBrush(
+            PerformanceCard,
+            GetComponentTextBrush(performance),
+            GetComponentSecondaryTextBrush(performance, performanceBackingOpacity));
         PerformanceCard.Background = isIsolatedPerformance
             ? System.Windows.Media.Brushes.Transparent
             : AccessibilityThemeManager.IsHighContrastEnabled
@@ -257,13 +263,19 @@ public partial class InformationWidgetWindow : WidgetWindowBase
         UploadLabelText.FontSize = 12d * performance.FontScale;
         DownloadLabelText.FontSize = 12d * performance.FontScale;
 
-        ApplyTextBrush(WeatherCard, GetComponentTextBrush(weather), GetComponentSecondaryTextBrush(weather));
         var isIsolatedWeather = _componentKind == DesktopComponentKind.Weather;
         var weatherRender = isIsolatedWeather
             ? null
             : DesktopStyleRules.ResolveRenderedCard(
                 _usesLegacyAppearance ? WidgetAppearance : weather.Appearance,
                 CurrentStyle);
+        var weatherBackingOpacity = isIsolatedWeather
+            ? isolatedRender!.BackgroundOpacity
+            : weatherRender!.BackgroundOpacity;
+        ApplyTextBrush(
+            WeatherCard,
+            GetComponentTextBrush(weather),
+            GetComponentSecondaryTextBrush(weather, weatherBackingOpacity));
         WeatherCard.Background = isIsolatedWeather
             ? System.Windows.Media.Brushes.Transparent
             : AccessibilityThemeManager.IsHighContrastEnabled
@@ -308,8 +320,10 @@ public partial class InformationWidgetWindow : WidgetWindowBase
             && isIsolatedTimeDate;
         var preset = ClockLayoutRules.CoercePreset(State.ClockLayout);
         var effectiveBackgroundOpacity = isIsolatedTimeDate
-            ? timeDate.Appearance.BackgroundOpacity
-            : (_usesLegacyAppearance ? WidgetAppearance.BackgroundOpacity : WidgetAppearanceRules.MinimumBackgroundOpacity);
+            ? DesktopStyleRules.ResolveRenderedCard(timeDate, CurrentStyle).BackgroundOpacity
+            : (_usesLegacyAppearance
+                ? DesktopStyleRules.ResolveRenderedCard(WidgetAppearance, CurrentStyle).BackgroundOpacity
+                : WidgetAppearanceRules.MinimumBackgroundOpacity);
         var spec = ClockLayoutRules.ResolveTypography(
             preset,
             timeDate.FontFamily,
@@ -449,7 +463,7 @@ public partial class InformationWidgetWindow : WidgetWindowBase
         }
 
         var primaryBrush = GetComponentTextBrush(timeDate);
-        var secondaryBrush = GetComponentSecondaryTextBrush(timeDate);
+        var secondaryBrush = GetComponentSecondaryTextBrush(timeDate, effectiveBackgroundOpacity);
         var dateBrush = spec.DateUsesPrimaryInk ? primaryBrush : secondaryBrush;
         TimeText.Foreground = primaryBrush;
         DateText.Foreground = dateBrush;
@@ -514,12 +528,16 @@ public partial class InformationWidgetWindow : WidgetWindowBase
                 ? WidgetTextBrush
                 : CreateBrush(component.Appearance.TextColor, 1d);
 
-    private Brush GetComponentSecondaryTextBrush(DesktopComponentState component) =>
+    private Brush GetComponentSecondaryTextBrush(
+        DesktopComponentState component,
+        double renderedBackgroundOpacity) =>
         AccessibilityThemeManager.IsHighContrastEnabled
             ? SystemColors.WindowTextBrush
             : _usesLegacyAppearance
                 ? WidgetSecondaryTextBrush
-                : CreateBrush(component.Appearance.TextColor, ColorContrastRules.SecondaryTextAlpha);
+                : CreateBrush(
+                    component.Appearance.TextColor,
+                    ColorContrastRules.ResolveSecondaryTextAlpha(renderedBackgroundOpacity));
 
     private static SolidColorBrush CreateComponentBackgroundBrush(
         DesktopComponentState component) =>

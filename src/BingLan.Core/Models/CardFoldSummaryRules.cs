@@ -18,38 +18,67 @@ public static class CardFoldSummaryRules
         return FormatFileBoxSummary(box.Items.Count);
     }
 
-    public static string FormatTodoSummary(int openCount) =>
-        $"{Math.Max(0, openCount)} 项未完成";
+    public static string FormatTodoSummary(int openCount, int completedCount = 0)
+    {
+        var safeOpen = Math.Max(0, openCount);
+        if (safeOpen == 0 && completedCount > 0)
+        {
+            return "已全部完成";
+        }
+
+        return $"{safeOpen} 项未完成";
+    }
+
+    private static (int OpenCount, int CompletedCount) CountScopedTodos(
+        IEnumerable<TodoItemState> items,
+        bool weeklyView,
+        DateTime today,
+        DateTime? weekStart,
+        DateTime? weekEnd)
+    {
+        ArgumentNullException.ThrowIfNull(items);
+        var todayDate = today.Date;
+        var openCount = 0;
+        var completedCount = 0;
+        var hasWeekRange = weeklyView && weekStart is not null && weekEnd is not null;
+        var startDate = weekStart?.Date ?? default;
+        var endDate = weekEnd?.Date ?? default;
+
+        foreach (var item in items)
+        {
+            if (item.Kind != TodoItemKind.Todo || string.IsNullOrWhiteSpace(item.Text))
+            {
+                continue;
+            }
+
+            var inScope = hasWeekRange
+                ? item.Date is { } date && date.Date >= startDate && date.Date <= endDate
+                : TodoService.BelongsToTodayList(item, todayDate);
+            if (!inScope)
+            {
+                continue;
+            }
+
+            if (item.IsCompleted)
+            {
+                completedCount++;
+            }
+            else
+            {
+                openCount++;
+            }
+        }
+
+        return (openCount, completedCount);
+    }
 
     public static int CountOpenTodos(
         IEnumerable<TodoItemState> items,
         bool weeklyView,
         DateTime today,
         DateTime? weekStart = null,
-        DateTime? weekEnd = null)
-    {
-        ArgumentNullException.ThrowIfNull(items);
-        var todayDate = today.Date;
-
-        if (weeklyView && weekStart is { } start && weekEnd is { } end)
-        {
-            var startDate = start.Date;
-            var endDate = end.Date;
-            return items.Count(item =>
-                item.Kind == TodoItemKind.Todo
-                && !item.IsCompleted
-                && !string.IsNullOrWhiteSpace(item.Text)
-                && item.Date is { } date
-                && date.Date >= startDate
-                && date.Date <= endDate);
-        }
-
-        return items.Count(item =>
-            item.Kind == TodoItemKind.Todo
-            && !item.IsCompleted
-            && !string.IsNullOrWhiteSpace(item.Text)
-            && TodoService.BelongsToTodayList(item, todayDate));
-    }
+        DateTime? weekEnd = null) =>
+        CountScopedTodos(items, weeklyView, today, weekStart, weekEnd).OpenCount;
 
     public static int CountOpenTodos(
         TodoWidgetState widget,
@@ -66,20 +95,19 @@ public static class CardFoldSummaryRules
         bool weeklyView,
         DateTime today,
         DateTime? weekStart = null,
-        DateTime? weekEnd = null) =>
-        FormatTodoSummary(CountOpenTodos(items, weeklyView, today, weekStart, weekEnd));
+        DateTime? weekEnd = null)
+    {
+        var counts = CountScopedTodos(items, weeklyView, today, weekStart, weekEnd);
+        return FormatTodoSummary(counts.OpenCount, counts.CompletedCount);
+    }
 
     public static string FormatTodoSummary(
         TodoWidgetState widget,
         DateTime today,
         DateTime? weekStart = null,
-        DateTime? weekEnd = null) =>
-        FormatTodoSummary(CountOpenTodos(widget, today, weekStart, weekEnd));
-
-    /// <summary>
-    /// Unbacked and near-clear cards raise the folded summary from secondary ink to primary
-    /// ink so the count remains legible against bright wallpaper.
-    /// </summary>
-    public static bool UsesPrimaryInk(double backgroundOpacity) =>
-        backgroundOpacity < ColorContrastRules.NearClearBackgroundOpacityThreshold;
+        DateTime? weekEnd = null)
+    {
+        ArgumentNullException.ThrowIfNull(widget);
+        return FormatTodoSummary(widget.Items, widget.WeeklyView, today, weekStart, weekEnd);
+    }
 }

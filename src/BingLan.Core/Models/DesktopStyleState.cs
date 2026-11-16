@@ -73,7 +73,14 @@ public sealed record RenderedCardLook(
     string SubtleControlColor,
     string ControlColor,
     CardShadow EffectiveShadow,
-    string NoteBodySurfaceColor);
+    string NoteBodySurfaceColor)
+{
+    public bool SecondaryTextUsesPrimaryInk =>
+        ColorContrastRules.SecondaryTextUsesPrimaryInk(BackgroundOpacity);
+
+    public double SecondaryTextAlpha =>
+        ColorContrastRules.ResolveSecondaryTextAlpha(BackgroundOpacity);
+}
 
 /// <summary>
 /// Desktop-wide style shared by every card and the dock: card shadow, the gap cards keep

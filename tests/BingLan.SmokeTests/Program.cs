@@ -88,6 +88,7 @@ Run("时钟排版预设、Schema v47 迁移与 0.2.66 降级缺字段回退", Th
 Run("无底板与接近透明时钟预设的日期与数字可读性", ThemeStyleTests.TestUnbackedClockReadability);
 Run("WP9 无底板推荐效果保留自定义文字色并一键切换", ThemeStyleTests.TestWp9RecommendedClearLook);
 Run("WP10 折叠摘要规则仅输出数量且按视图统计未完成项", ThemeStyleTests.TestWp10CardFoldSummaries);
+Run("无底板与接近透明时次要文字通用规则及阈值切换", ThemeStyleTests.TestNearClearSecondaryTextUsesPrimaryInk);
 Run("切换全局材质时保留自定义文字颜色", ThemeStyleTests.TestMaterialSwitchPreservesCustomTextColor);
 Run("天气矢量图标覆盖全部 WMO 描述", ThemeStyleTests.TestWeatherIconMapping);
 Run("统一圆角与标题色标默认值", ThemeStyleTests.TestDefaultRadiusAndHeaderTagDefaults);

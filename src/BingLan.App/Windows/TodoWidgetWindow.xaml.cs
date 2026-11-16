@@ -134,18 +134,6 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         State.IsLocked = locked;
     }
 
-    protected override void OnAppearanceRefreshed()
-    {
-        base.OnAppearanceRefreshed();
-        if (CollapsedSummaryText is not null)
-        {
-            var usePrimary = !AccessibilityThemeManager.IsHighContrastEnabled
-                && CardFoldSummaryRules.UsesPrimaryInk(
-                    DesktopStyleRules.ResolveRenderedCard(WidgetAppearance, CurrentStyle).BackgroundOpacity);
-            CollapsedSummaryText.Foreground = usePrimary ? WidgetTextBrush : WidgetSecondaryTextBrush;
-        }
-    }
-
     public void CaptureState(bool commitDayEditor = true)
     {
         CopyPlacementTo(State.Placement);
