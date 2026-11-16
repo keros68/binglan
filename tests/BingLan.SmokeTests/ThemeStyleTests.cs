@@ -1836,6 +1836,35 @@ internal static class ThemeStyleTests
         }
     }
 
+    public static void TestDescribeSharedLookSummary()
+    {
+        var light = new DesktopStyleState
+        {
+            Glass = GlassMode.Light,
+            Palette = "ice",
+            TextInk = TextInk.Auto
+        };
+        Check(DesktopStyleRules.DescribeSharedLookSummary(light) == "浅色玻璃 · 冰蓝 · 自动字色",
+            "浅色冰蓝默认摘要应正确描述材质、配色与字色模式");
+
+        var dark = new DesktopStyleState
+        {
+            Glass = GlassMode.Dark,
+            TextInk = TextInk.White
+        };
+        Check(DesktopStyleRules.DescribeSharedLookSummary(dark) == "深色玻璃 · 白色字",
+            "深色玻璃摘要应正确描述");
+
+        var clearCustom = new DesktopStyleState
+        {
+            Glass = GlassMode.Clear,
+            TextInk = TextInk.Custom,
+            CustomTextColor = "#D8ECFF"
+        };
+        Check(DesktopStyleRules.DescribeSharedLookSummary(clearCustom) == "无底板 · 自定义字色 #D8ECFF",
+            "无底板自定义字色摘要应包含具体颜色值");
+    }
+
     private static void Check(bool condition, string message)
     {
         if (!condition)

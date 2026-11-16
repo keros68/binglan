@@ -6779,10 +6779,79 @@ internal static class Program
                     && Require<Expander>(window, "AppearanceBarsLookFold").IsExpanded
                     && Require<RadioButton>(window, "DockFollowLookRadio").IsVisible,
                 "Dock 分区的外观一行应跳到外观样式页里的 Dock 外观");
+
+            // 桌面组件页展示统一配色引导并可一键跳往外观样式页。
+            window.ShowComponentSettings(DesktopComponentKind.TimeDate);
+            Pump();
+            var guideRow = Require<SettingsRow>(window, "ComponentUnifiedLookGuideRow");
+            var quickFollow = Require<Button>(window, "ComponentQuickFollowGlobalButton");
+            Assert(guideRow.Description.Contains("浅色玻璃", StringComparison.Ordinal)
+                    && quickFollow.Visibility == Visibility.Collapsed,
+                "跟随全局的内置组件应在统一外观与配色引导中展示当前全局方案并隐藏多余恢复按钮");
+            ClickButton(Require<Button>(window, "GoToUnifiedAppearanceButton"));
+            Assert(Require<FrameworkElement>(window, "AppearancePage").IsVisible,
+                "点击桌面组件页统一配色设置按钮应跳到外观样式页");
         }
         finally
         {
             window.Close();
+            Pump();
+        }
+
+        // 分组盒与便签在独立改色后列入未跟随列表，且可在详情与引导中一键恢复跟随全局外观。
+        var box = new FileBoxWindow(new FileBoxState
+        {
+            Title = "自定义外观测试盒",
+            Placement = new WindowPlacement { Left = 80, Top = 80, Width = 320, Height = 260 }
+        });
+        var note = new NoteWidgetWindow(new NoteWidgetState
+        {
+            Title = "自定义外观便签",
+            Placement = new WindowPlacement { Left = 420, Top = 80, Width = 300, Height = 240 }
+        });
+        box.SetWidgetBackgroundColor("#224466");
+        var widgetWindow = new SettingsWindow(
+            new CityLookupService(),
+            new InformationWidgetState(),
+            DesktopExperienceRules.CreateDefault(),
+            (_, _) => { },
+            _ => { },
+            _ => { },
+            widgetProvider: () => [box, note]);
+        ShowAndPump(box);
+        ShowAndPump(note);
+        ShowAndPump(widgetWindow);
+        try
+        {
+            var widgetOverrides = Require<SettingsGroup>(widgetWindow, "AppearanceOverridesGroup");
+            Assert(widgetOverrides.Items.OfType<SettingsRow>().Any(row => row.Header == "自定义外观测试盒")
+                    && !widgetOverrides.Items.OfType<SettingsRow>().Any(row => row.Header == "自定义外观便签"),
+                "未跟随全局的部分应列出独立改色的分组盒，不列跟随全局的便签");
+
+            widgetWindow.ShowWidgetSettings(box);
+            Pump();
+            var boxFold = Require<Expander>(widgetWindow, "SelectedWidgetOwnLookFold");
+            Assert(boxFold.IsExpanded
+                    && Require<FrameworkElement>(widgetWindow, "SelectedWidgetFollowSharedLookRow").IsVisible
+                    && Require<Button>(widgetWindow, "SelectedWidgetQuickFollowGlobalButton").IsVisible,
+                "独立改色的分组盒应展开独立外观并显示恢复跟随入口");
+
+            ClickButton(Require<Button>(widgetWindow, "SelectedWidgetFollowSharedLookButton"));
+            Assert(DesktopStyleRules.FollowsSharedCardLook(box.WidgetAppearance, new DesktopStyleState())
+                    && !widgetOverrides.Items.OfType<SettingsRow>().Any(row => row.Header == "自定义外观测试盒"),
+                "分组盒点击恢复跟随后应改回全局配色并从自定义列表移除");
+
+            widgetWindow.ShowWidgetSettings(note);
+            Pump();
+            ClickButton(Require<Button>(widgetWindow, "GoToWidgetUnifiedAppearanceButton"));
+            Assert(Require<FrameworkElement>(widgetWindow, "AppearancePage").IsVisible,
+                "便签详情点击统一配色设置按钮应跳到外观样式页");
+        }
+        finally
+        {
+            widgetWindow.Close();
+            Close(box);
+            Close(note);
             Pump();
         }
     }

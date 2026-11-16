@@ -619,6 +619,24 @@ public static class DesktopStyleRules
             && Math.Abs(appearance.HeaderOpacity - glass.HeaderOpacity) < 0.005d;
     }
 
+    public static string DescribeSharedLookSummary(DesktopStyleState style)
+    {
+        ArgumentNullException.ThrowIfNull(style);
+        var ink = style.TextInk switch
+        {
+            TextInk.White => "白色字",
+            TextInk.Dark => "深色字",
+            TextInk.Custom => $"自定义字色 {style.CustomTextColor}",
+            _ => "自动字色"
+        };
+        return style.Glass switch
+        {
+            GlassMode.Dark => $"深色玻璃 · {ink}",
+            GlassMode.Clear => $"无底板 · {ink}",
+            _ => $"浅色玻璃 · {GetPalette(style.Palette).Name} · {ink}"
+        };
+    }
+
     public static bool FollowsSharedCardLook(
         WidgetAppearanceState appearance,
         DesktopStyleState style)

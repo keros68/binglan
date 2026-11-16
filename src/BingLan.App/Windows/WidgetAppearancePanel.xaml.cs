@@ -36,9 +36,15 @@ public partial class WidgetAppearancePanel : WpfUserControl
             _window.SetWidgetHeaderOpacity(colors.HeaderOpacity);
             _window.SetWidgetTextColor(colors.TextColor);
             RefreshValues();
+            NotifyAppearanceEdited();
         });
         _sizeTimer.Tick += (_, _) => ApplySize(showResult: false);
     }
+
+    private void NotifyAppearanceEdited() => AppearanceEdited?.Invoke();
+
+    /// <summary>Raised when the user edits card colour or opacity through this panel.</summary>
+    internal event Action? AppearanceEdited;
 
     /// <summary>The shared card material, for the light-glass palette and density.</summary>
     internal BingLan.Core.Models.DesktopStyleState SharedStyle { get; set; } = new();
@@ -66,6 +72,7 @@ public partial class WidgetAppearancePanel : WpfUserControl
             note.SetBodyColor(look.TextColor);
         }
         RefreshValues();
+        NotifyAppearanceEdited();
     }
 
     public void Attach(WidgetWindowBase window)
@@ -114,9 +121,10 @@ public partial class WidgetAppearancePanel : WpfUserControl
         object sender,
         RoutedPropertyChangedEventArgs<double> e)
     {
-        if (!_isRefreshing)
+        if (!_isRefreshing && _window is not null)
         {
-            _window?.SetWidgetBackgroundOpacity(e.NewValue);
+            _window.SetWidgetBackgroundOpacity(e.NewValue);
+            NotifyAppearanceEdited();
         }
         RefreshLabels();
     }
@@ -125,9 +133,10 @@ public partial class WidgetAppearancePanel : WpfUserControl
         object sender,
         RoutedPropertyChangedEventArgs<double> e)
     {
-        if (!_isRefreshing)
+        if (!_isRefreshing && _window is not null)
         {
-            _window?.SetWidgetHeaderOpacity(e.NewValue);
+            _window.SetWidgetHeaderOpacity(e.NewValue);
+            NotifyAppearanceEdited();
         }
         RefreshLabels();
     }
@@ -205,6 +214,7 @@ public partial class WidgetAppearancePanel : WpfUserControl
         }
         _window.SetWidgetBackgroundColor(color);
         RefreshValues();
+        NotifyAppearanceEdited();
     }
 
     private void HeaderColorButton_Click(object sender, RoutedEventArgs e)
@@ -215,6 +225,7 @@ public partial class WidgetAppearancePanel : WpfUserControl
         }
         _window.SetWidgetHeaderColor(color);
         RefreshValues();
+        NotifyAppearanceEdited();
     }
 
     private void TextColorEditor_LostFocus(object sender, RoutedEventArgs e) =>
@@ -228,6 +239,7 @@ public partial class WidgetAppearancePanel : WpfUserControl
         }
         _window.SetWidgetTextColor(color);
         RefreshValues();
+        NotifyAppearanceEdited();
     }
 
     private void QuickTextColorButton_Click(object sender, RoutedEventArgs e)
@@ -238,12 +250,18 @@ public partial class WidgetAppearancePanel : WpfUserControl
         }
         _window.SetWidgetTextColor(color);
         RefreshValues();
+        NotifyAppearanceEdited();
     }
 
     private void ResetButton_Click(object sender, RoutedEventArgs e)
     {
-        _window?.ResetWidgetAppearance();
+        if (_window is null)
+        {
+            return;
+        }
+        _window.ResetWidgetAppearance();
         RefreshValues();
+        NotifyAppearanceEdited();
     }
 
     private void SizeEditor_TextChanged(object sender, TextChangedEventArgs e)
@@ -307,6 +325,7 @@ public partial class WidgetAppearancePanel : WpfUserControl
         }
         _window.SetWidgetBackgroundColor(BackgroundColorEditor.Text);
         RefreshValues();
+        NotifyAppearanceEdited();
     }
 
     private void CommitHeaderColor()
@@ -317,6 +336,7 @@ public partial class WidgetAppearancePanel : WpfUserControl
         }
         _window.SetWidgetHeaderColor(HeaderColorEditor.Text);
         RefreshValues();
+        NotifyAppearanceEdited();
     }
 
     private void CommitTextColor()
@@ -327,6 +347,7 @@ public partial class WidgetAppearancePanel : WpfUserControl
         }
         _window.SetWidgetTextColor(TextColorEditor.Text);
         RefreshValues();
+        NotifyAppearanceEdited();
     }
 
     private void RefreshLabels()
