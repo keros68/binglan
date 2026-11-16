@@ -1151,12 +1151,6 @@ public class WidgetWindowBase : Window
     {
     }
 
-    protected virtual void PopulateCustomContextMenuItems(
-        System.Windows.Controls.ItemCollection items,
-        ContextMenu menu)
-    {
-    }
-
     private static object CoerceWidgetCornerRadius(
         DependencyObject dependencyObject,
         object baseValue) =>
@@ -2070,7 +2064,6 @@ public class WidgetWindowBase : Window
 
         menu.Items.Add(appSettings);
         menu.Items.Add(lockPosition);
-        PopulateCustomContextMenuItems(menu.Items, menu);
         menu.Items.Add(new Separator());
         menu.Items.Add(delete);
         menu.Items.Add(exit);

@@ -115,20 +115,6 @@ public partial class FileBoxWindow : WidgetWindowBase
 
     protected override void OnDragEnded() => RefreshAutoCollapseTimer();
 
-    protected override void PopulateCustomContextMenuItems(
-        System.Windows.Controls.ItemCollection items,
-        System.Windows.Controls.ContextMenu menu)
-    {
-        var autoCollapse = new System.Windows.Controls.MenuItem
-        {
-            Header = "鼠标离开 5 秒后自动收起",
-            IsCheckable = true
-        };
-        menu.Opened += (_, _) => autoCollapse.IsChecked = State.AutoCollapse;
-        autoCollapse.Click += (_, _) => SetAutoCollapse(autoCollapse.IsChecked);
-        items.Add(autoCollapse);
-    }
-
     /// <summary>The other open boxes a mapping can be transferred to.</summary>
     internal Func<IReadOnlyList<FileBoxWindow>> OtherBoxes { get; set; } = () => [];
 

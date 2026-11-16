@@ -7801,7 +7801,27 @@ internal static class Program
         ShowAndPump(note);
         try
         {
-            AssertNoHorizontalDrift(note, "便签", Require<Button>(note, "FormatToggle"));
+            note.ApplySelection(false);
+            Pump();
+            if (!note.IsMouseOver)
+            {
+                var settingsButton = Require<Button>(note, "SettingsButton");
+                var formatToggle = Require<Button>(note, "FormatToggle");
+                Assert(
+                    settingsButton.Visibility == Visibility.Collapsed
+                    && formatToggle.Visibility == Visibility.Collapsed,
+                    "便签未悬停或选中时设置按钮与格式按钮应同时折叠");
+
+                note.ApplySelection(true);
+                Pump();
+                Assert(
+                    settingsButton.Visibility == Visibility.Visible
+                    && formatToggle.Visibility == Visibility.Visible,
+                    "便签选中后设置按钮与格式按钮应同时可见");
+                Assert(
+                    LeftX(settingsButton, note) < LeftX(formatToggle, note),
+                    "便签设置按钮应位于 FormatToggle 左侧");
+            }
         }
         finally
         {
