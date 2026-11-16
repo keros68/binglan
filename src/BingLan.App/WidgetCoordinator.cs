@@ -529,6 +529,7 @@ public sealed class WidgetCoordinator : IDisposable
         state.Use24HourClock = use24HourClock;
         foreach (var information in _windows.OfType<InformationWidgetWindow>())
         {
+            information.ApplyDesktopExperience(_state.DesktopExperience);
             information.RefreshConfiguredValues(false);
         }
         SaveNow();

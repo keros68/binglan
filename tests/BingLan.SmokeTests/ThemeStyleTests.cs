@@ -841,7 +841,8 @@ internal static class ThemeStyleTests
                 }
                 """);
             var migrated = store.Load();
-            Check(migrated.SchemaVersion == 46, "v45 状态应迁移到 SchemaVersion 46");
+            Check(migrated.SchemaVersion == AppState.CurrentSchemaVersion,
+                $"v45 状态应顺次迁移到当前 SchemaVersion {AppState.CurrentSchemaVersion}");
             Check(Math.Abs(migrated.Style.GlassDensity - 0.66d) < 0.0001d
                 && Math.Abs(migrated.Style.ItemSurfaceStrength - 0.32d) < 0.0001d,
                 "v45 默认玻璃浓度 0.32 与条目强度 0.48 应迁移到 0.66 与 0.32");
@@ -1242,6 +1243,156 @@ internal static class ThemeStyleTests
             && large.Left == 100d + (1706d - SettingsWindowSizingRules.DefaultWidth) / 2d
             && large.Top == 40d + (1018d - SettingsWindowSizingRules.DefaultHeight) / 2d,
             $"充裕工作区应保持默认尺寸并居中显示，实际 {large}");
+    }
+
+    public static void TestClockLayoutPresetsAndMigration()
+    {
+        var defaults = new InformationWidgetState();
+        Check(defaults.ClockLayout == ClockLayoutPreset.Classic && defaults.ShowDate,
+            "新建信息状态默认应为经典时钟版式且显示日期");
+        Check(ClockLayoutRules.CoercePreset((ClockLayoutPreset)999) == ClockLayoutPreset.Classic,
+            "未知时钟版式枚举值应回退为经典版式");
+
+        defaults.ClockLayout = (ClockLayoutPreset)42;
+        Check(defaults.ClockLayout == ClockLayoutPreset.Classic,
+            "属性写入未知时钟版式时应立刻钳制回经典版式");
+
+        // All four presets provide bundled/known typography specs, honor custom font/scale/color, and react to 12/24h & ShowDate.
+        var morning = new DateTime(2026, 11, 16, 9, 5, 0);
+        var afternoon = new DateTime(2026, 11, 16, 15, 40, 0);
+        foreach (var preset in ClockLayoutRules.AllPresets)
+        {
+            var presetSpec = ClockLayoutRules.ResolveTypography(preset, userFontFamily: null, 1.2d, "#AABBCC");
+            if (presetSpec.EffectiveTimeFontFamily is { } tf)
+            {
+                Check(ClockLayoutRules.BundledFontNames.Contains(tf),
+                    $"版式 {preset} 默认时间字体 {tf} 必须来自内置字体清单");
+            }
+            if (presetSpec.EffectiveDateFontFamily is { } df)
+            {
+                Check(ClockLayoutRules.BundledFontNames.Contains(df),
+                    $"版式 {preset} 默认日期字体 {df} 必须来自内置字体清单");
+            }
+
+            var customSpec = ClockLayoutRules.ResolveTypography(preset, "Segoe UI", 1.5d, "#123456");
+            Check(customSpec.EffectiveTimeFontFamily == "Segoe UI"
+                && customSpec.EffectiveDateFontFamily == "Segoe UI"
+                && customSpec.EffectiveTextColor == "#123456"
+                && customSpec.TimeFontSize > presetSpec.TimeFontSize,
+                $"版式 {preset} 应保留用户自定义字体、字号缩放与文字颜色");
+
+            var shown24 = ClockLayoutRules.FormatClockParts(afternoon, preset, use24HourClock: true, showDate: true);
+            var shown12 = ClockLayoutRules.FormatClockParts(afternoon, preset, use24HourClock: false, showDate: true);
+            var hiddenDate = ClockLayoutRules.FormatClockParts(morning, preset, use24HourClock: true, showDate: false);
+            Check(!string.IsNullOrWhiteSpace(shown24.TimeText)
+                && !string.IsNullOrWhiteSpace(shown24.DateText)
+                && shown24.TimeText != shown12.TimeText
+                && string.IsNullOrEmpty(hiddenDate.DateText),
+                $"版式 {preset} 下 12/24 小时制与显示日期开关都必须生效");
+        }
+
+        var temp = Path.Combine(Path.GetTempPath(), $"binglan-wp8-clock-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(temp);
+        try
+        {
+            var store = new LocalStateStore(temp);
+
+            // 1) Forward migration from v46 -> v47 defaults ClockLayout = Classic and ShowDate = true without dropping existing fields.
+            File.WriteAllText(
+                store.StatePath,
+                """
+                {
+                  "SchemaVersion": 46,
+                  "InformationWidgets": [
+                    {
+                      "GreetingName": "林汐",
+                      "Use24HourClock": false,
+                      "WeatherCity": "上海"
+                    }
+                  ],
+                  "DesktopExperience": {
+                    "Components": [
+                      {
+                        "Kind": 0,
+                        "FontScale": 1.3,
+                        "FontFamily": "Quicksand",
+                        "Appearance": { "TextColor": "#F0F4FF" }
+                      }
+                    ]
+                  }
+                }
+                """);
+            var migrated = store.Load();
+            var info = migrated.InformationWidgets.Single();
+            Check(migrated.SchemaVersion == AppState.CurrentSchemaVersion
+                && AppState.CurrentSchemaVersion == 47
+                && info.ClockLayout == ClockLayoutPreset.Classic
+                && info.ShowDate
+                && info.GreetingName == "林汐"
+                && !info.Use24HourClock
+                && info.WeatherCity == "上海",
+                "v46 迁移到 v47 后信息卡应为经典版式、显示日期并保留已有字段");
+
+            var timeComponent = migrated.DesktopExperience.GetComponent(DesktopComponentKind.TimeDate);
+            Check(timeComponent.FontFamily == "Quicksand"
+                && Math.Abs(timeComponent.FontScale - 1.3d) < 0.001d
+                && timeComponent.Appearance.TextColor == "#F0F4FF",
+                "v46 迁移到 v47 后不得覆盖时钟卡片已有字体、字号和文字颜色");
+
+            store.Save(migrated);
+            var migrationBackups = Directory.GetFiles(store.BackupDirectory, "widgets-before-migration-*.json");
+            Check(migrationBackups.Length == 1
+                && File.ReadAllText(migrationBackups[0]).Contains("\"SchemaVersion\": 46", StringComparison.Ordinal),
+                "v46 升级到 v47 保存时应留下含原 v46 内容的迁移前备份");
+
+            // 2) Unknown ClockLayout values (out-of-range integer, unknown string, null) fall back safely to Classic.
+            foreach (var rawValue in new[] { "999", "\"NeonFuturistic\"", "null" })
+            {
+                File.WriteAllText(
+                    store.StatePath,
+                    $$"""
+                    {
+                      "SchemaVersion": 47,
+                      "InformationWidgets": [
+                        { "ClockLayout": {{rawValue}}, "ShowDate": false }
+                      ]
+                    }
+                    """);
+                var fallback = store.Load();
+                Check(fallback.InformationWidgets.Single().ClockLayout == ClockLayoutPreset.Classic
+                    && !fallback.InformationWidgets.Single().ShowDate,
+                    $"未知时钟版式 {rawValue} 应安全回退为经典版式并保留其余字段");
+            }
+
+            // 3) Simulate downgrade to 0.2.66 (SchemaVersion 45) saving state back without v47 ClockLayout/ShowDate properties.
+            info.ClockLayout = ClockLayoutPreset.DatePoster;
+            info.ShowDate = false;
+            store.Save(migrated);
+
+            var root = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(store.StatePath))!.AsObject();
+            root["SchemaVersion"] = 45;
+            var firstInfo = root["InformationWidgets"]!.AsArray()[0]!.AsObject();
+            firstInfo.Remove("ClockLayout");
+            firstInfo.Remove("ShowDate");
+            File.WriteAllText(store.StatePath, root.ToJsonString());
+
+            var roundTrippedFrom0266 = store.Load().InformationWidgets.Single();
+            Check(roundTrippedFrom0266.ClockLayout == ClockLayoutPreset.Classic
+                && roundTrippedFrom0266.ShowDate
+                && roundTrippedFrom0266.GreetingName == "林汐",
+                "0.2.66 按旧格式存回并丢失 ClockLayout/ShowDate 后，新版本加载应回到经典默认且正常显示日期");
+
+            // Also test v47 payload with both new fields removed manually.
+            root["SchemaVersion"] = AppState.CurrentSchemaVersion;
+            File.WriteAllText(store.StatePath, root.ToJsonString());
+            var missingFieldsInV47 = store.Load().InformationWidgets.Single();
+            Check(missingFieldsInV47.ClockLayout == ClockLayoutPreset.Classic && missingFieldsInV47.ShowDate,
+                "当前 Schema 下缺失 ClockLayout/ShowDate 字段也必须安全回到默认样式");
+        }
+        finally
+        {
+            Directory.Delete(temp, true);
+        }
     }
 
     private static void Check(bool condition, string message)

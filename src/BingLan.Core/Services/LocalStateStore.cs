@@ -766,6 +766,15 @@ public sealed class LocalStateStore
             MigrateLegacyV45Defaults(state);
             state.SchemaVersion = 46;
         }
+        if (state.SchemaVersion < 47)
+        {
+            // Clock layout and date visibility default to Classic and shown for migrated configs.
+            foreach (var information in state.InformationWidgets)
+            {
+                information.ClockLayout = ClockLayoutRules.CoercePreset(information.ClockLayout);
+            }
+            state.SchemaVersion = 47;
+        }
         state.Updates ??= new UpdateState();
         state.QuickPlaces = QuickPlaceRules.Normalize(state.QuickPlaces);
         state.DismissedDesktopCategories = (state.DismissedDesktopCategories ?? [])
@@ -857,6 +866,7 @@ public sealed class LocalStateStore
                 information.Appearance.TextColor);
             information.CornerRadius = WidgetAppearanceRules.CoerceCornerRadius(
                 information.CornerRadius);
+            information.ClockLayout = ClockLayoutRules.CoercePreset(information.ClockLayout);
         }
 
         state.DesktopExperience ??= DesktopExperienceRules.CreateDefault();

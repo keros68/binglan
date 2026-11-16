@@ -1062,6 +1062,29 @@
                                                       Checked="DisplaySettings_Changed"
                                                       Unchecked="DisplaySettings_Changed"/>
                                         </local:SettingsRow>
+                                        <local:SettingsRow x:Name="ShowClockDateRow"
+                                                           Header="显示日期"
+                                                           local:SettingsSearch.Keywords="时间 时钟 日期 星期 隐藏日期">
+                                            <CheckBox x:Name="ShowClockDateCheckBox"
+                                                      AutomationProperties.Name="显示日期"
+                                                      Style="{StaticResource ToggleSwitchStyle}"
+                                                      Checked="DisplaySettings_Changed"
+                                                      Unchecked="DisplaySettings_Changed"/>
+                                        </local:SettingsRow>
+                                        <local:SettingsRow x:Name="ClockLayoutRow"
+                                                           Header="时钟版式"
+                                                           Description="选择时钟排版样式；已手动选择的字体、字号与文字颜色会继续保留"
+                                                           local:SettingsSearch.Keywords="时钟 预设 排版 经典 极简大数字 日期海报 纵向数字">
+                                            <ComboBox x:Name="ClockLayoutSelector"
+                                                      Width="168"
+                                                      AutomationProperties.Name="时钟版式"
+                                                      SelectionChanged="ClockLayout_SelectionChanged">
+                                                <ComboBoxItem Content="经典" Tag="Classic"/>
+                                                <ComboBoxItem Content="极简大数字" Tag="MinimalDigits"/>
+                                                <ComboBoxItem Content="日期海报" Tag="DatePoster"/>
+                                                <ComboBoxItem Content="纵向数字" Tag="VerticalDigits"/>
+                                            </ComboBox>
+                                        </local:SettingsRow>
                                         <local:SettingsRow Header="时间下方的细线" Description="两端渐隐">
                                             <StackPanel Orientation="Horizontal">
                                                 <Slider x:Name="ClockDividerThicknessSlider"

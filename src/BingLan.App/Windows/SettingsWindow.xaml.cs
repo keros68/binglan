@@ -42,6 +42,7 @@ public partial class SettingsWindow : Window
     private readonly Func<IReadOnlyList<WidgetWindowBase>> _widgetProvider;
     private readonly Action<WidgetWindowBase, bool> _applyWidgetLock;
     private readonly DesktopExperienceState _desktopExperience;
+    private readonly InformationWidgetState _informationState;
     private readonly DockState _dockState;
     private readonly Action _applyDock;
     private readonly TaskbarState _taskbarState;
@@ -55,6 +56,7 @@ public partial class SettingsWindow : Window
     private CancellationTokenSource? _searchCancellation;
     private bool _loadingExperience;
     private bool _loadingComponentEditor;
+    private bool _loadingDisplaySettings;
     // Settings apply as soon as they change; typed values wait for a short pause first.
     private readonly DispatcherTimer _componentApplyTimer =
         new() { Interval = TimeSpan.FromMilliseconds(400) };
@@ -120,6 +122,7 @@ public partial class SettingsWindow : Window
         _widgetProvider = widgetProvider ?? (() => []);
         _applyWidgetLock = applyWidgetLock ?? ((_, _) => { });
         _desktopExperience = desktopExperience;
+        _informationState = state;
         DesktopExperienceRules.Normalize(_desktopExperience);
         _dockState = dockState ?? new DockState();
         _applyDock = applyDock ?? (() => { });
@@ -178,8 +181,12 @@ public partial class SettingsWindow : Window
             ApplyDisplaySettings();
         };
 
+        _loadingDisplaySettings = true;
         GreetingNameEditor.Text = state.GreetingName;
         Use24HourClockCheckBox.IsChecked = state.Use24HourClock;
+        ShowClockDateCheckBox.IsChecked = state.ShowDate;
+        SelectByTag(ClockLayoutSelector, state.ClockLayout.ToString());
+        _loadingDisplaySettings = false;
         UpdateCurrentCity(state.WeatherCity);
         LoadDesktopExperience();
         RefreshComponentList();
@@ -451,6 +458,13 @@ public partial class SettingsWindow : Window
                 DesktopComponentKind.Greeting
                 ? Visibility.Visible
                 : Visibility.Collapsed;
+            var isTimeDate = kind == DesktopComponentKind.TimeDate;
+            ShowClockDateRow.Visibility = isTimeDate ? Visibility.Visible : Visibility.Collapsed;
+            ClockLayoutRow.Visibility = isTimeDate ? Visibility.Visible : Visibility.Collapsed;
+            _loadingDisplaySettings = true;
+            ShowClockDateCheckBox.IsChecked = _informationState.ShowDate;
+            SelectByTag(ClockLayoutSelector, ClockLayoutRules.CoercePreset(_informationState.ClockLayout).ToString());
+            _loadingDisplaySettings = false;
             _loadingDivider = true;
             var clock = _desktopExperience.GetComponent(DesktopComponentKind.TimeDate);
             ClockDividerCheckBox.IsChecked = clock.ShowDivider;
@@ -776,7 +790,7 @@ public partial class SettingsWindow : Window
 
     private void DisplaySettings_Changed(object sender, RoutedEventArgs e)
     {
-        if (!IsLoaded)
+        if (!IsLoaded || _loadingDisplaySettings)
         {
             return;
         }
@@ -789,6 +803,16 @@ public partial class SettingsWindow : Window
         {
             _displaySettingsTimer.Start();
         }
+    }
+
+    private void ClockLayout_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!IsLoaded || _loadingDisplaySettings)
+        {
+            return;
+        }
+        _displaySettingsTimer.Stop();
+        ApplyDisplaySettings();
     }
 
     // The quick-launch icons being edited. An added icon stays here until it has a
@@ -1014,9 +1038,23 @@ public partial class SettingsWindow : Window
 
     private void ApplyDisplaySettings()
     {
-        _applyDisplaySettings(
-            GreetingNameEditor.Text.Trim(),
-            Use24HourClockCheckBox.IsChecked == true);
+        var greetingName = GreetingNameEditor.Text.Trim();
+        var use24HourClock = Use24HourClockCheckBox.IsChecked == true;
+        _informationState.GreetingName = greetingName;
+        _informationState.Use24HourClock = use24HourClock;
+        _informationState.ShowDate = ShowClockDateCheckBox.IsChecked == true;
+        if (ClockLayoutSelector.SelectedItem is ComboBoxItem { Tag: string layoutTag }
+            && Enum.TryParse<ClockLayoutPreset>(layoutTag, out var clockLayout))
+        {
+            _informationState.ClockLayout = ClockLayoutRules.CoercePreset(clockLayout);
+        }
+
+        _applyDisplaySettings(greetingName, use24HourClock);
+        foreach (var information in _widgetProvider().OfType<InformationWidgetWindow>())
+        {
+            information.ApplyDesktopExperience(_desktopExperience);
+            information.RefreshConfiguredValues(false);
+        }
         DisplaySettingsStatusText.Text = "已保存";
     }
 

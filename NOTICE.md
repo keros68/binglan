@@ -6,12 +6,12 @@
 
 字体文件和许可证原文位于 `src/BingLan.App/Assets/Fonts/`，安装后许可证复制到程序目录的 `字体许可` 文件夹。字体只从程序资源加载，不安装到 Windows。
 
-| 字体 | 版权 | 许可证 |
-| --- | --- | --- |
-| 得意黑 Smiley Sans | Copyright (c) 2022–2024 atelierAnchor | SIL Open Font License 1.1 |
-| Jost | Copyright 2020 The Jost Project Authors | SIL Open Font License 1.1 |
-| Quicksand | Copyright 2011 The Quicksand Project Authors | SIL Open Font License 1.1 |
-| Abril Fatface | Copyright (c) 2011 TypeTogether | SIL Open Font License 1.1 |
+| 字体 | 来源 | 版权 | 许可证 |
+| --- | --- | --- | --- |
+| 得意黑 Smiley Sans（`SmileySans-Oblique.ttf`） | [atelier-anchor/smiley-sans](https://github.com/atelier-anchor/smiley-sans)（https://atelier-anchor.com） | Copyright (c) 2022–2024 atelierAnchor | SIL Open Font License 1.1（`LICENSE-SmileySans.txt`） |
+| Jost（`Jost-200-Thin.ttf`、`Jost-300-Light.ttf`、`Jost-400-Book.ttf`、`Jost-500-Medium.ttf`） | [indestructible-type/Jost](https://github.com/indestructible-type/Jost) | Copyright 2020 The Jost Project Authors | SIL Open Font License 1.1（`LICENSE-Jost.txt`） |
+| Quicksand（`Quicksand-Light.ttf`、`Quicksand-Regular.ttf`、`Quicksand-Bold.ttf`） | [andrew-paglinawan/QuicksandFamily](https://github.com/andrew-paglinawan/QuicksandFamily) | Copyright 2011 The Quicksand Project Authors | SIL Open Font License 1.1（`LICENSE-Quicksand.txt`） |
+| Abril Fatface（`AbrilFatface-Regular.ttf`） | [TypeTogether](https://www.type-together.com)（[google/fonts](https://github.com/google/fonts/tree/main/ofl/abrilfatface)） | Copyright (c) 2011 TypeTogether | SIL Open Font License 1.1（`LICENSE-AbrilFatface.txt`） |
 
 ## 内置城市数据
 

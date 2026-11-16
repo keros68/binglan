@@ -942,6 +942,122 @@ internal static class WidgetWindowTests
             $"{label} 应完整落在工作区内：窗口 ({rect.Left},{rect.Top})-({rect.Right},{rect.Bottom})，工作区 ({workArea.Left},{workArea.Top})-({workArea.Right},{workArea.Bottom})");
     }
 
+    public static void ClockLayoutPresetsRespectCustomizationsAndToggles()
+    {
+        var state = new InformationWidgetState
+        {
+            Use24HourClock = true,
+            ShowDate = true,
+            ClockLayout = ClockLayoutPreset.Classic
+        };
+        var experience = DesktopExperienceRules.CreateDefault();
+        var clockComponent = experience.GetComponent(DesktopComponentKind.TimeDate);
+        var window = new InformationWidgetWindow(
+            state,
+            new FakeSamplingService(),
+            new WeatherService(new StubHttpMessageHandler()),
+            experience,
+            DesktopComponentKind.TimeDate);
+        window.ApplyPlacement(clockComponent.Placement, clockComponent.IsLocked);
+        ShowAndPump(window);
+
+        var settings = new SettingsWindow(
+            new CityLookupService(new CitySearchService(new StubHttpMessageHandler()), CityLibrary.Empty),
+            state,
+            experience,
+            (greeting, use24) =>
+            {
+                state.GreetingName = greeting;
+                state.Use24HourClock = use24;
+            },
+            _ => { },
+            updated => window.ApplyDesktopExperience(updated),
+            widgetProvider: () => [window]);
+        ShowAndPump(settings);
+
+        try
+        {
+            settings.ShowComponentSettings(DesktopComponentKind.TimeDate);
+            Pump();
+
+            var selector = Require<ComboBox>(settings, "ClockLayoutSelector");
+            var showDateBox = Require<CheckBox>(settings, "ShowClockDateCheckBox");
+            var use24Box = Require<CheckBox>(settings, "Use24HourClockCheckBox");
+            var timeText = Require<TextBlock>(window, "TimeText");
+            var dateText = Require<TextBlock>(window, "DateText");
+            var periodText = Require<TextBlock>(window, "TimePeriodText");
+
+            void SelectLayout(ClockLayoutPreset preset)
+            {
+                selector.SelectedItem = selector.Items.OfType<ComboBoxItem>()
+                    .Single(item => Equals(item.Tag, preset.ToString()));
+                Pump();
+            }
+
+            // Classic: time sits above date.
+            SelectLayout(ClockLayoutPreset.Classic);
+            AssertEqual(ClockLayoutPreset.Classic, state.ClockLayout, "设置页选中经典版式应写入状态");
+            var timeRect = timeText.TransformToAncestor(window).TransformBounds(new Rect(0, 0, timeText.ActualWidth, timeText.ActualHeight));
+            var dateRect = dateText.TransformToAncestor(window).TransformBounds(new Rect(0, 0, dateText.ActualWidth, dateText.ActualHeight));
+            Assert(timeRect.Top < dateRect.Top, "经典版式时间应位于日期上方");
+
+            // MinimalDigits: centered horizontal alignment + large thin numerals.
+            SelectLayout(ClockLayoutPreset.MinimalDigits);
+            AssertEqual(TextAlignment.Center, timeText.TextAlignment, "极简大数字应居中排版");
+            Assert(timeText.FontSize >= 60d && timeText.FontWeight == FontWeights.ExtraLight,
+                "极简大数字默认应使用 Jost 极细大字号");
+
+            // DatePoster: date sits above time; 12h period renders beside date.
+            SelectLayout(ClockLayoutPreset.DatePoster);
+            use24Box.IsChecked = false;
+            Pump();
+            timeRect = timeText.TransformToAncestor(window).TransformBounds(new Rect(0, 0, timeText.ActualWidth, timeText.ActualHeight));
+            dateRect = dateText.TransformToAncestor(window).TransformBounds(new Rect(0, 0, dateText.ActualWidth, dateText.ActualHeight));
+            Assert(dateRect.Top < timeRect.Top, "日期海报版式日期应位于时间上方");
+            AssertEqual(Visibility.Visible, periodText.Visibility, "非经典版式在 12 小时制下应显示上午/下午标记");
+
+            // VerticalDigits: stacked HH/MM digits sit left of date block.
+            SelectLayout(ClockLayoutPreset.VerticalDigits);
+            Assert(timeText.Text.Contains('\n'), "纵向数字版式时间应按时/分两行纵向排列");
+            timeRect = timeText.TransformToAncestor(window).TransformBounds(new Rect(0, 0, timeText.ActualWidth, timeText.ActualHeight));
+            dateRect = dateText.TransformToAncestor(window).TransformBounds(new Rect(0, 0, dateText.ActualWidth, dateText.ActualHeight));
+            Assert(timeRect.Left < dateRect.Left, "纵向数字版式日期应位于纵向数字右侧");
+
+            // ShowDate toggle hides DateText across presets without hiding time.
+            showDateBox.IsChecked = false;
+            Pump();
+            AssertEqual(Visibility.Collapsed, dateText.Visibility, "关闭显示日期后日期文本应隐藏");
+            AssertEqual(Visibility.Visible, timeText.Visibility, "关闭显示日期后时间仍应显示");
+            showDateBox.IsChecked = true;
+            Pump();
+            AssertEqual(Visibility.Visible, dateText.Visibility, "重新开启显示日期后日期应恢复显示");
+
+            // Switching clock layout keeps user custom FontFamily, FontScale, and TextColor intact.
+            clockComponent.FontFamily = "Segoe UI";
+            clockComponent.FontScale = 1.4d;
+            clockComponent.Appearance.TextColor = "#D8E8FF";
+            window.ApplyDesktopExperience(experience);
+            Pump();
+
+            var scaledVerticalSize = timeText.FontSize;
+            SelectLayout(ClockLayoutPreset.DatePoster);
+            AssertEqual("Segoe UI", clockComponent.FontFamily, "切换时钟版式不得改写用户已选字体");
+            AssertEqual(1.4d, clockComponent.FontScale, "切换时钟版式不得改写用户已选字号缩放");
+            AssertEqual("#D8E8FF", clockComponent.Appearance.TextColor, "切换时钟版式不得改写用户文字颜色");
+            Assert(timeText.FontFamily.Source.Equals("Segoe UI", StringComparison.OrdinalIgnoreCase)
+                && dateText.FontFamily.Source.Equals("Segoe UI", StringComparison.OrdinalIgnoreCase),
+                "用户自定义字体应覆盖版式默认字体");
+            Assert(scaledVerticalSize > 54d && timeText.FontSize > 48d, "用户字号缩放应在各版式上持续生效");
+        }
+        finally
+        {
+            settings.Close();
+            window.CanClose = true;
+            window.Close();
+            Pump();
+        }
+    }
+
     [StructLayout(LayoutKind.Sequential)]
     private struct NativeRect
     {

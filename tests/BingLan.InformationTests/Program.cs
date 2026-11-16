@@ -57,6 +57,7 @@ internal static class Program
         Run("越界隐藏信息组件重新显示时收拢进工作区", WidgetWindowTests.OffScreenHiddenComponentRecoversOnShow, failures);
         Run("独立时间、天气、性能卡跟随组件圆角", WidgetWindowTests.IsolatedCardsFollowComponentCornerRadius, failures);
         Run("时间细线选项与右键锁定", WidgetWindowTests.ClockDividerAndLockMenu, failures);
+        Run("时钟四种排版预设保留自定义设置并响应日期与小时制开关", WidgetWindowTests.ClockLayoutPresetsRespectCustomizationsAndToggles, failures);
         Run("裸文字表面白色默认与对比度阴影", WidgetWindowTests.NakedTextContrastDefaults, failures);
         Run("信息组件天气成功管线", WidgetWindowTests.WeatherPipelineUpdatesWindow, failures);
         Run("信息组件天气失败状态", WidgetWindowTests.WeatherFailureShowsStatus, failures);

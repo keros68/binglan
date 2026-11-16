@@ -18,7 +18,7 @@ BingLan Desktop (冰蓝桌面) is a Windows 11 desktop companion built with .NET
 
 ## Features
 
-- **Desktop info**: time and date, greeting, weather, and CPU / RAM / network are separate cards, each with its own font, size, colour, and position. Cards sit on the desktop layer, never cover other app windows, and stay visible after Win+D.
+- **Desktop info**: time and date, greeting, weather, and CPU / RAM / network are separate cards, each with its own font, size, colour, and position; the clock card offers four layout presets (classic, minimal digits, date poster, and vertical digits) plus 12/24-hour and date visibility toggles. Cards sit on the desktop layer, never cover other app windows, and stay visible after Win+D.
 - **To-dos and notes**: the to-do card switches between today's list and a 1–5-week calendar with lunar dates; both share the same tasks. Supports deadlines with optional times, events, countdowns, and linked files, and highlights tasks close to their deadline. Notes support multiline text.
 - **File groups**: map desktop files, folders, and apps into boxes, sorted by type automatically, foldable to a title bar, with multi-select, bulk remove, and move between boxes. Boxes record paths only and never move original files. Deleting originals is an optional setting, off by default; each deletion asks first and goes to the Recycle Bin.
 - **Quick launch**: a row of line icons for This PC, Desktop, Documents, Downloads, Pictures, and the Recycle Bin by default; icons, names, and targets are customizable.

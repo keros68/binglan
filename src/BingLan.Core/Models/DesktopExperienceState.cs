@@ -251,7 +251,10 @@ public static class DesktopExperienceRules
         return Math.Ceiling(contentHeight);
     }
 
-    public static double CalculateCombinedInformationMinHeight(DesktopExperienceState experience)
+    public static double CalculateCombinedInformationMinHeight(
+        DesktopExperienceState experience,
+        ClockLayoutPreset clockPreset = ClockLayoutPreset.Classic,
+        bool showDate = true)
     {
         ArgumentNullException.ThrowIfNull(experience);
         var timeDate = experience.GetComponent(DesktopComponentKind.TimeDate);
@@ -266,9 +269,21 @@ public static class DesktopExperienceRules
             total += 8d;
             if (timeDate.IsVisible)
             {
-                var timeScale = CoerceFontScale(timeDate.FontScale);
-                total += 36d * (lowChrome ? 1.3d : 1d) * timeScale * TypographicLineHeightFactor;
-                total += 13d * timeScale * TypographicLineHeightFactor;
+                var spec = ClockLayoutRules.ResolveTypography(
+                    clockPreset,
+                    timeDate.FontFamily,
+                    timeDate.FontScale,
+                    timeDate.Appearance.TextColor,
+                    centerClockPreset: false,
+                    lowChrome: lowChrome);
+                var timeLineHeight = spec.TimeLineHeight ?? (spec.TimeFontSize * TypographicLineHeightFactor);
+                var timeHeight = clockPreset == ClockLayoutPreset.VerticalDigits
+                    ? timeLineHeight * 2d
+                    : timeLineHeight;
+                var dateHeight = showDate ? spec.DateFontSize * TypographicLineHeightFactor : 0d;
+                total += spec.Arrangement == ClockDateArrangement.VerticalSideBySide
+                    ? Math.Max(timeHeight, dateHeight)
+                    : timeHeight + dateHeight;
                 if (timeDate.ShowDivider)
                 {
                     total += 20d + timeDate.DividerThickness;

@@ -9,6 +9,7 @@ using Microsoft.Win32;
 using Brush = System.Windows.Media.Brush;
 using Color = System.Windows.Media.Color;
 using ColorConverter = System.Windows.Media.ColorConverter;
+using Grid = System.Windows.Controls.Grid;
 
 namespace BingLan.App.Windows;
 
@@ -207,7 +208,10 @@ public partial class InformationWidgetWindow : WidgetWindowBase
         else
         {
             MinWidth = 250d;
-            MinHeight = DesktopExperienceRules.CalculateCombinedInformationMinHeight(experience);
+            MinHeight = DesktopExperienceRules.CalculateCombinedInformationMinHeight(
+                experience,
+                State.ClockLayout,
+                State.ShowDate);
         }
 
         var (surfaceBorderBrush, surfaceBorderThickness) = isolatedRender is not null
@@ -216,51 +220,7 @@ public partial class InformationWidgetWindow : WidgetWindowBase
         Surface.BorderBrush = surfaceBorderBrush;
         Surface.BorderThickness = surfaceBorderThickness;
 
-        var bigClock = experience.ActivePreset == DesktopLayoutPreset.CenterClock
-            && _componentKind == DesktopComponentKind.TimeDate;
-        TimeText.FontSize = (bigClock ? 96d : 36d * (lowChrome ? 1.3d : 1d)) * timeDate.FontScale;
-        var timeFont = timeDate.FontFamily is { } timeFontName ? InstalledFontCatalog.Resolve(timeFontName) : null;
-        var defaultTimeWeight = bigClock ? FontWeights.Light : FontWeights.Bold;
-        TimeText.FontWeight = timeFont is null
-            ? defaultTimeWeight
-            : InstalledFontCatalog.WeightOf(timeFont, defaultTimeWeight);
-        var clockAlignment = bigClock ? TextAlignment.Center : TextAlignment.Left;
-        TimeText.TextAlignment = clockAlignment;
-        DateText.TextAlignment = clockAlignment;
-        DateText.FontSize = 13d * timeDate.FontScale;
-        var isolatedGreeting = _componentKind == DesktopComponentKind.Greeting;
-        GreetingText.FontSize = (isolatedGreeting ? 34d : 15d) * greeting.FontScale;
-        var defaultGreetingWeight = isolatedGreeting ? FontWeights.Light : FontWeights.Normal;
-        GreetingText.FontWeight = greeting.FontFamily is { } greetingFontName
-            ? InstalledFontCatalog.WeightOf(InstalledFontCatalog.Resolve(greetingFontName), defaultGreetingWeight)
-            : defaultGreetingWeight;
-        GreetingText.TextAlignment = isolatedGreeting ? TextAlignment.Center : TextAlignment.Left;
-        GreetingText.HorizontalAlignment = isolatedGreeting
-            ? System.Windows.HorizontalAlignment.Stretch
-            : System.Windows.HorizontalAlignment.Left;
-        ClockPanel.VerticalAlignment = isolatedGreeting
-            ? System.Windows.VerticalAlignment.Center
-            : System.Windows.VerticalAlignment.Top;
-        TimeText.Foreground = GetComponentTextBrush(timeDate);
-        ClockDivider.Visibility = timeDate.ShowDivider && showTimeDate ? Visibility.Visible : Visibility.Collapsed;
-        ClockDivider.Height = timeDate.DividerThickness;
-        ClockDivider.RadiusY = timeDate.DividerThickness / 2d;
-        ClockDivider.RadiusX = timeDate.DividerThickness / 2d;
-        if (GetComponentTextBrush(timeDate) is SolidColorBrush { Color: var ink })
-        {
-            var faded = Color.FromArgb(0, ink.R, ink.G, ink.B);
-            ClockDivider.Fill = new LinearGradientBrush(
-                new GradientStopCollection
-                {
-                    new(faded, 0d),
-                    new(Color.FromArgb(200, ink.R, ink.G, ink.B), 0.5d),
-                    new(faded, 1d)
-                },
-                new System.Windows.Point(0, 0),
-                new System.Windows.Point(1, 0));
-        }
-        DateText.Foreground = GetComponentTextBrush(timeDate);
-        GreetingText.Foreground = GetComponentTextBrush(greeting);
+        ApplyClockLayout(timeDate, greeting, showTimeDate, showGreeting, lowChrome);
         SettingsButton.Foreground = GetComponentTextBrush(isolatedComponent ?? timeDate);
 
         ApplyTextBrush(PerformanceCard, GetComponentTextBrush(performance), GetComponentSecondaryTextBrush(performance));
@@ -332,7 +292,214 @@ public partial class InformationWidgetWindow : WidgetWindowBase
         WeatherHumidityText.FontSize = weatherMetaSize;
         WeatherUpdatedText.FontSize = weatherMetaSize;
         WeatherStatusText.FontSize = 11d * weather.FontScale;
+        UpdateClock();
         RefreshMinimumSizeFloor();
+    }
+
+    private void ApplyClockLayout(
+        DesktopComponentState timeDate,
+        DesktopComponentState greeting,
+        bool showTimeDate,
+        bool showGreeting,
+        bool lowChrome)
+    {
+        var isIsolatedTimeDate = _componentKind == DesktopComponentKind.TimeDate;
+        var bigClock = _experience.ActivePreset == DesktopLayoutPreset.CenterClock
+            && isIsolatedTimeDate;
+        var preset = ClockLayoutRules.CoercePreset(State.ClockLayout);
+        var spec = ClockLayoutRules.ResolveTypography(
+            preset,
+            timeDate.FontFamily,
+            timeDate.FontScale,
+            timeDate.Appearance.TextColor,
+            bigClock,
+            lowChrome);
+        var hasCustomFont = !string.IsNullOrWhiteSpace(timeDate.FontFamily);
+
+        ApplyClockElementFont(TimeText, spec.EffectiveTimeFontFamily, hasCustomFont, spec.TimeFontWeightOpenType, allowUiFallback: false);
+        ApplyClockElementFont(DateText, spec.EffectiveDateFontFamily, hasCustomFont, spec.DateFontWeightOpenType, allowUiFallback: !hasCustomFont);
+        ApplyClockElementFont(TimePeriodText, spec.EffectiveDateFontFamily, hasCustomFont, spec.DateFontWeightOpenType, allowUiFallback: !hasCustomFont);
+
+        TimeText.FontSize = spec.TimeFontSize;
+        DateText.FontSize = spec.DateFontSize;
+        TimePeriodText.FontSize = spec.PeriodFontSize;
+        if (spec.TimeLineHeight is { } timeLineHeight)
+        {
+            TimeText.LineStackingStrategy = LineStackingStrategy.BlockLineHeight;
+            TimeText.LineHeight = timeLineHeight;
+        }
+        else
+        {
+            TimeText.LineStackingStrategy = LineStackingStrategy.MaxHeight;
+            TimeText.LineHeight = double.NaN;
+        }
+
+        var hasVisibleCardBacking = isIsolatedTimeDate
+            && timeDate.Appearance.BackgroundOpacity >= 0.05d;
+        var textShadow = hasVisibleCardBacking || AccessibilityThemeManager.IsHighContrastEnabled
+            ? null
+            : (System.Windows.Media.Effects.Effect)FindResource("NakedTextContrastShadow");
+        TimeText.Effect = textShadow;
+        DateText.Effect = textShadow;
+        TimePeriodText.Effect = textShadow;
+
+        switch (spec.Arrangement)
+        {
+            case ClockDateArrangement.MinimalCentered:
+                ClockLayoutGrid.HorizontalAlignment = System.Windows.HorizontalAlignment.Stretch;
+                SetClockGridCell(TimeText, row: 0, rowSpan: 1, column: 0, columnSpan: 2);
+                TimeText.TextAlignment = TextAlignment.Center;
+                TimeText.VerticalAlignment = System.Windows.VerticalAlignment.Top;
+
+                SetClockGridCell(DateMetaPanel, row: 1, rowSpan: 1, column: 0, columnSpan: 2);
+                DateMetaPanel.Orientation = System.Windows.Controls.Orientation.Horizontal;
+                DateMetaPanel.HorizontalAlignment = System.Windows.HorizontalAlignment.Center;
+                DateMetaPanel.VerticalAlignment = System.Windows.VerticalAlignment.Top;
+                DateMetaPanel.Margin = new Thickness(0d, 4d, 0d, 0d);
+                DateText.TextAlignment = TextAlignment.Center;
+                TimePeriodText.TextAlignment = TextAlignment.Center;
+                break;
+
+            case ClockDateArrangement.DateAboveTime:
+                ClockLayoutGrid.HorizontalAlignment = System.Windows.HorizontalAlignment.Stretch;
+                SetClockGridCell(DateMetaPanel, row: 0, rowSpan: 1, column: 0, columnSpan: 2);
+                DateMetaPanel.Orientation = System.Windows.Controls.Orientation.Horizontal;
+                DateMetaPanel.HorizontalAlignment = spec.CenterHorizontally
+                    ? System.Windows.HorizontalAlignment.Center
+                    : System.Windows.HorizontalAlignment.Left;
+                DateMetaPanel.VerticalAlignment = System.Windows.VerticalAlignment.Top;
+                DateMetaPanel.Margin = new Thickness(0d, 0d, 0d, 2d);
+
+                SetClockGridCell(TimeText, row: 1, rowSpan: 1, column: 0, columnSpan: 2);
+                var posterAlign = spec.CenterHorizontally ? TextAlignment.Center : TextAlignment.Left;
+                TimeText.TextAlignment = posterAlign;
+                TimeText.VerticalAlignment = System.Windows.VerticalAlignment.Top;
+                DateText.TextAlignment = posterAlign;
+                TimePeriodText.TextAlignment = posterAlign;
+                break;
+
+            case ClockDateArrangement.VerticalSideBySide:
+                ClockLayoutGrid.HorizontalAlignment = spec.CenterHorizontally
+                    ? System.Windows.HorizontalAlignment.Center
+                    : System.Windows.HorizontalAlignment.Left;
+                SetClockGridCell(TimeText, row: 0, rowSpan: 2, column: 0, columnSpan: 1);
+                TimeText.TextAlignment = TextAlignment.Center;
+                TimeText.VerticalAlignment = System.Windows.VerticalAlignment.Center;
+
+                SetClockGridCell(DateMetaPanel, row: 0, rowSpan: 2, column: 1, columnSpan: 1);
+                DateMetaPanel.Orientation = System.Windows.Controls.Orientation.Vertical;
+                DateMetaPanel.HorizontalAlignment = System.Windows.HorizontalAlignment.Left;
+                DateMetaPanel.VerticalAlignment = System.Windows.VerticalAlignment.Center;
+                DateMetaPanel.Margin = new Thickness(14d, 0d, 0d, 0d);
+                DateText.TextAlignment = TextAlignment.Left;
+                TimePeriodText.TextAlignment = TextAlignment.Left;
+                break;
+
+            default:
+                ClockLayoutGrid.HorizontalAlignment = System.Windows.HorizontalAlignment.Stretch;
+                SetClockGridCell(TimeText, row: 0, rowSpan: 1, column: 0, columnSpan: 2);
+                var classicAlign = spec.CenterHorizontally ? TextAlignment.Center : TextAlignment.Left;
+                TimeText.TextAlignment = classicAlign;
+                TimeText.VerticalAlignment = System.Windows.VerticalAlignment.Top;
+
+                SetClockGridCell(DateMetaPanel, row: 1, rowSpan: 1, column: 0, columnSpan: 2);
+                DateMetaPanel.Orientation = System.Windows.Controls.Orientation.Vertical;
+                DateMetaPanel.HorizontalAlignment = spec.CenterHorizontally
+                    ? System.Windows.HorizontalAlignment.Center
+                    : System.Windows.HorizontalAlignment.Left;
+                DateMetaPanel.VerticalAlignment = System.Windows.VerticalAlignment.Top;
+                DateMetaPanel.Margin = new Thickness(0d);
+                DateText.TextAlignment = classicAlign;
+                TimePeriodText.TextAlignment = classicAlign;
+                break;
+        }
+
+        var isolatedGreeting = _componentKind == DesktopComponentKind.Greeting;
+        GreetingText.FontSize = (isolatedGreeting ? 34d : 15d) * greeting.FontScale;
+        var defaultGreetingWeight = isolatedGreeting ? FontWeights.Light : FontWeights.Normal;
+        GreetingText.FontWeight = greeting.FontFamily is { } greetingFontName
+            ? InstalledFontCatalog.WeightOf(InstalledFontCatalog.Resolve(greetingFontName), defaultGreetingWeight)
+            : defaultGreetingWeight;
+        GreetingText.TextAlignment = isolatedGreeting ? TextAlignment.Center : TextAlignment.Left;
+        GreetingText.HorizontalAlignment = isolatedGreeting
+            ? System.Windows.HorizontalAlignment.Stretch
+            : System.Windows.HorizontalAlignment.Left;
+
+        if (isolatedGreeting)
+        {
+            Grid.SetRowSpan(ClockPanel, 3);
+            ClockPanel.VerticalAlignment = System.Windows.VerticalAlignment.Center;
+            ClockPanel.Margin = new Thickness(17d, 8d, 17d, 0d);
+        }
+        else if (isIsolatedTimeDate && (preset != ClockLayoutPreset.Classic || hasVisibleCardBacking))
+        {
+            Grid.SetRowSpan(ClockPanel, 3);
+            ClockPanel.VerticalAlignment = System.Windows.VerticalAlignment.Center;
+            ClockPanel.Margin = new Thickness(18d, 10d, 18d, 10d);
+        }
+        else
+        {
+            Grid.SetRowSpan(ClockPanel, isIsolatedTimeDate ? 3 : 1);
+            ClockPanel.VerticalAlignment = System.Windows.VerticalAlignment.Top;
+            ClockPanel.Margin = new Thickness(17d, 8d, 17d, 0d);
+        }
+
+        var primaryBrush = GetComponentTextBrush(timeDate);
+        var secondaryBrush = GetComponentSecondaryTextBrush(timeDate);
+        TimeText.Foreground = primaryBrush;
+        DateText.Foreground = spec.DateUsesPrimaryInk ? primaryBrush : secondaryBrush;
+        TimePeriodText.Foreground = secondaryBrush;
+        GreetingText.Foreground = GetComponentTextBrush(greeting);
+
+        ClockDivider.Visibility = timeDate.ShowDivider && showTimeDate ? Visibility.Visible : Visibility.Collapsed;
+        ClockDivider.Height = timeDate.DividerThickness;
+        ClockDivider.RadiusY = timeDate.DividerThickness / 2d;
+        ClockDivider.RadiusX = timeDate.DividerThickness / 2d;
+        if (primaryBrush is SolidColorBrush { Color: var ink })
+        {
+            var faded = Color.FromArgb(0, ink.R, ink.G, ink.B);
+            ClockDivider.Fill = new LinearGradientBrush(
+                new GradientStopCollection
+                {
+                    new(faded, 0d),
+                    new(Color.FromArgb(200, ink.R, ink.G, ink.B), 0.5d),
+                    new(faded, 1d)
+                },
+                new System.Windows.Point(0, 0),
+                new System.Windows.Point(1, 0));
+        }
+    }
+
+    private static void ApplyClockElementFont(
+        System.Windows.Controls.TextBlock element,
+        string? familyName,
+        bool hasUserCustomFont,
+        int defaultWeightOpenType,
+        bool allowUiFallback)
+    {
+        var fallbackWeight = FontWeight.FromOpenTypeWeight(defaultWeightOpenType);
+        if (string.IsNullOrWhiteSpace(familyName))
+        {
+            element.ClearValue(System.Windows.Controls.TextBlock.FontFamilyProperty);
+            element.FontWeight = fallbackWeight;
+            return;
+        }
+
+        var resolved = InstalledFontCatalog.Resolve(familyName);
+        element.FontFamily = allowUiFallback
+            ? InstalledFontCatalog.CreateWithUiFallback(resolved)
+            : InstalledFontCatalog.Create(resolved);
+        element.FontWeight = hasUserCustomFont
+            ? InstalledFontCatalog.WeightOf(resolved, fallbackWeight)
+            : fallbackWeight;
+    }
+
+    private static void SetClockGridCell(UIElement element, int row, int rowSpan, int column, int columnSpan)
+    {
+        Grid.SetRow(element, row);
+        Grid.SetRowSpan(element, rowSpan);
+        Grid.SetColumn(element, column);
+        Grid.SetColumnSpan(element, columnSpan);
     }
 
     private Brush GetComponentTextBrush(DesktopComponentState component) =>
@@ -520,8 +687,34 @@ public partial class InformationWidgetWindow : WidgetWindowBase
     private void UpdateClock()
     {
         var now = DateTime.Now;
-        TimeText.Text = GreetingService.FormatTime(now, State.Use24HourClock);
-        DateText.Text = GreetingService.FormatDate(now);
+        var showTimeDate = (_experience?.GetComponent(DesktopComponentKind.TimeDate).IsVisible ?? true)
+            && (_componentKind is null or DesktopComponentKind.TimeDate);
+        var parts = ClockLayoutRules.FormatClockParts(
+            now,
+            State.ClockLayout,
+            State.Use24HourClock,
+            State.ShowDate);
+
+        TimeText.Text = parts.TimeText;
+        TimeText.Visibility = showTimeDate ? Visibility.Visible : Visibility.Collapsed;
+
+        var showPeriod = showTimeDate && !string.IsNullOrEmpty(parts.PeriodText);
+        TimePeriodText.Text = parts.PeriodText ?? string.Empty;
+        TimePeriodText.Visibility = showPeriod ? Visibility.Visible : Visibility.Collapsed;
+
+        var showDateText = showTimeDate && State.ShowDate && !string.IsNullOrEmpty(parts.DateText);
+        DateText.Text = parts.DateText;
+        DateText.Visibility = showDateText ? Visibility.Visible : Visibility.Collapsed;
+
+        TimePeriodText.Margin = showPeriod && showDateText
+            ? DateMetaPanel.Orientation == System.Windows.Controls.Orientation.Horizontal
+                ? new Thickness(0d, 0d, 8d, 0d)
+                : new Thickness(0d, 0d, 0d, 4d)
+            : new Thickness(0d);
+        DateMetaPanel.Visibility = showPeriod || showDateText
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+
         GreetingText.Text = GreetingService.BuildGreeting(now, State.GreetingName);
     }
 

@@ -73,6 +73,18 @@ internal static class InstalledFontCatalog
     }
 
     /// <summary>
+    /// Loads a bundled font with a Windows CJK UI fallback for surfaces that mix Latin
+    /// display numerals with localized date labels.
+    /// </summary>
+    internal static FontFamily CreateWithUiFallback(string name)
+    {
+        var bundled = Bundled.FirstOrDefault(font => font.Name == name);
+        return bundled.Name is null
+            ? new FontFamily(name)
+            : new FontFamily(BundledFontsUri, $"./#{bundled.Family}, Microsoft YaHei UI");
+    }
+
+    /// <summary>
     /// The weight a picker name stands for ("Jost 极细" is the thin Jost), or the given
     /// default for fonts without one. Bold text still uses bold.
     /// </summary>
