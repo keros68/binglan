@@ -48,6 +48,10 @@ public partial class FileBoxWindow : WidgetWindowBase
         ApplyPlacement(state.Placement, state.IsLocked);
         WidgetCornerRadius = state.CornerRadius;
         RefreshCount();
+        if (state.IsCollapsed)
+        {
+            SetCollapsed(true);
+        }
         Loaded += FileBoxWindow_Loaded;
         PreviewKeyDown += FileBoxWindow_PreviewKeyDown;
         PreviewMouseLeftButtonDown += FileBoxWindow_BackgroundPointerDown;
@@ -131,6 +135,18 @@ public partial class FileBoxWindow : WidgetWindowBase
         State.IsLocked = locked;
     }
 
+    protected override void OnAppearanceRefreshed()
+    {
+        base.OnAppearanceRefreshed();
+        if (CollapsedSummaryText is not null)
+        {
+            var usePrimary = !AccessibilityThemeManager.IsHighContrastEnabled
+                && CardFoldSummaryRules.UsesPrimaryInk(
+                    DesktopStyleRules.ResolveRenderedCard(WidgetAppearance, CurrentStyle).BackgroundOpacity);
+            CollapsedSummaryText.Foreground = usePrimary ? WidgetTextBrush : WidgetSecondaryTextBrush;
+        }
+    }
+
     private const double CollapsedHeight = 48d;
     private const double DefaultMinHeight = 166d;
 
@@ -159,6 +175,10 @@ public partial class FileBoxWindow : WidgetWindowBase
         State.IsCollapsed = collapsed;
         CollapseButton.Content = collapsed ? "\uE70D" : "\uE70E";
         CollapseButton.ToolTip = collapsed ? "展开分组盒" : "折叠成标题条";
+        AddButton.Visibility = collapsed ? Visibility.Collapsed : Visibility.Visible;
+        SortButton.Visibility = collapsed ? Visibility.Collapsed : Visibility.Visible;
+        CollapsedSummaryText.Visibility = collapsed ? Visibility.Visible : Visibility.Collapsed;
+        RefreshCollapsedSummary();
 
         var bodyElements = FoldBodyElements();
         if (collapsed)
@@ -1558,9 +1578,15 @@ public partial class FileBoxWindow : WidgetWindowBase
         }
     }
 
+    internal void RefreshCollapsedSummary()
+    {
+        CollapsedSummaryText.Text = CardFoldSummaryRules.FormatFileBoxSummary(_items.Count);
+    }
+
     private void RefreshCount()
     {
-        CountText.Text = $"{_items.Count} 项";
+        CountText.Text = CardFoldSummaryRules.FormatFileBoxSummary(_items.Count);
+        RefreshCollapsedSummary();
         var isEmpty = _items.Count == 0;
         var becameEmpty = isEmpty && FileBoxEmptyState.Visibility != Visibility.Visible;
         FileBoxEmptyState.Visibility = isEmpty ? Visibility.Visible : Visibility.Collapsed;

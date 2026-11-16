@@ -368,6 +368,7 @@
                             <ColumnDefinition Width="Auto"/>
                             <ColumnDefinition Width="Auto"/>
                             <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
                         <Grid Grid.Column="0">
                             <Grid.ColumnDefinitions>
@@ -391,9 +392,17 @@
                                      FontStyle="{Binding WidgetTitleFontStyle, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
                                      Text="{Binding Title, Mode=OneTime}"/>
                         </Grid>
+                    <TextBlock x:Name="CollapsedSummaryText"
+                               Grid.Column="1"
+                               Margin="8,0,4,0"
+                               VerticalAlignment="Center"
+                               IsHitTestVisible="False"
+                               Visibility="Collapsed"
+                               FontSize="{StaticResource CardFont.Meta}"
+                               Foreground="{Binding WidgetSecondaryTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
                     <Button x:Name="ViewModeButton"
                             Style="{StaticResource WidgetHeaderToolButtonStyle}"
-                            Grid.Column="1"
+                            Grid.Column="2"
                             AutomationProperties.Name="切换列表与周历视图"
                             Width="30"
                             Height="28"
@@ -407,7 +416,7 @@
                             Click="ToggleViewMode_Click"/>
                     <Button x:Name="CollapseButton"
                             Style="{StaticResource WidgetHeaderToolButtonStyle}"
-                            Grid.Column="2"
+                            Grid.Column="3"
                             AutomationProperties.Name="折叠或展开待办卡片"
                             Width="28"
                             Height="28"
@@ -420,7 +429,7 @@
                             Content="&#xE70E;"
                             ToolTip="收起成标题条"
                             Click="CollapseButton_Click"/>
-                    <Button Grid.Column="3"
+                    <Button Grid.Column="4"
                             AutomationProperties.Name="打开待办组件设置"
                             Style="{StaticResource WidgetSettingsButtonStyle}"
                             Width="30"
@@ -436,7 +445,7 @@
                             Click="Settings_Click"/>
                     <Button x:Name="AddTodoButton"
                             Style="{StaticResource WidgetHeaderToolButtonStyle}"
-                            Grid.Column="4"
+                            Grid.Column="5"
                             AutomationProperties.Name="新增待办"
                             Width="30"
                             Height="28"

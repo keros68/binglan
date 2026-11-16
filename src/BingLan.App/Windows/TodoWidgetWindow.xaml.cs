@@ -134,6 +134,18 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         State.IsLocked = locked;
     }
 
+    protected override void OnAppearanceRefreshed()
+    {
+        base.OnAppearanceRefreshed();
+        if (CollapsedSummaryText is not null)
+        {
+            var usePrimary = !AccessibilityThemeManager.IsHighContrastEnabled
+                && CardFoldSummaryRules.UsesPrimaryInk(
+                    DesktopStyleRules.ResolveRenderedCard(WidgetAppearance, CurrentStyle).BackgroundOpacity);
+            CollapsedSummaryText.Foreground = usePrimary ? WidgetTextBrush : WidgetSecondaryTextBrush;
+        }
+    }
+
     public void CaptureState(bool commitDayEditor = true)
     {
         CopyPlacementTo(State.Placement);
@@ -1019,6 +1031,8 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         State.IsCollapsed = collapsed;
         CollapseButton.Content = collapsed ? "\uE70D" : "\uE70E";
         CollapseButton.ToolTip = collapsed ? "展开待办卡片" : "收起成标题条";
+        CollapsedSummaryText.Visibility = collapsed ? Visibility.Visible : Visibility.Collapsed;
+        RefreshCollapsedSummary();
 
         var bodyElements = FoldBodyElements();
         if (collapsed)
@@ -2779,11 +2793,31 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         }
     }
 
+    internal void RefreshCollapsedSummary()
+    {
+        DateTime? weekStart = null;
+        DateTime? weekEnd = null;
+        if (State.WeeklyView)
+        {
+            var firstMonday = WeekWindowStart;
+            weekStart = firstMonday;
+            weekEnd = firstMonday.AddDays(7 * WeeklyRowCount - 1);
+        }
+
+        CollapsedSummaryText.Text = CardFoldSummaryRules.FormatTodoSummary(
+            _items,
+            State.WeeklyView,
+            DateTime.Today,
+            weekStart,
+            weekEnd);
+    }
+
     // A blank row only exists while it is being typed into (blanks are pruned once
     // the caret leaves), and it is not a task, so it is left out of the count.
     private void RefreshSummary()
     {
         CompletedVisibilityButton.Content = State.HideCompleted ? "显示已完成" : "隐藏已完成";
+        RefreshCollapsedSummary();
 
         if (State.WeeklyView)
         {

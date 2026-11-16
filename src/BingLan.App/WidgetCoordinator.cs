@@ -2721,7 +2721,14 @@ public sealed class WidgetCoordinator : IDisposable
                         .ToList())
                 : null;
 
-        public void TodoItemToggled() => owner.ScheduleSave();
+        public void TodoItemToggled()
+        {
+            foreach (var todo in owner._windows.OfType<TodoWidgetWindow>())
+            {
+                todo.RefreshCollapsedSummary();
+            }
+            owner.ScheduleSave();
+        }
 
         // The Start-menu scan resolves every shortcut, so its result is cached across
         // search sessions and only refreshed when it has gone stale.

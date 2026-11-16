@@ -1711,14 +1711,27 @@ internal static class Program
 
             window.Height = 320;
             Pump();
+            var boxCollapsedSummary = Require<TextBlock>(window, "CollapsedSummaryText");
+            Assert(boxCollapsedSummary.Visibility == Visibility.Collapsed, "展开状态下分组盒不应显示折叠摘要");
             window.SetCollapsed(true);
             Pump();
             Assert(state.IsCollapsed && Math.Abs(window.ActualHeight - 48) < 1 && !list.IsVisible,
                 "折叠后分组盒只剩标题条");
+            Assert(boxCollapsedSummary.Visibility == Visibility.Visible
+                && boxCollapsedSummary.Text == $"{state.Items.Count} 项"
+                && !boxCollapsedSummary.Text.Contains("文件", StringComparison.Ordinal),
+                "折叠后分组盒标题右侧应仅显示条目数量摘要");
+            Assert(Require<Button>(window, "AddButton").Visibility == Visibility.Collapsed
+                && Require<Button>(window, "SortButton").Visibility == Visibility.Collapsed,
+                "折叠后分组盒应隐藏添加与排序按钮");
             window.SetCollapsed(false);
             Pump();
             Assert(!state.IsCollapsed && Math.Abs(window.ActualHeight - 320) < 1 && list.IsVisible,
                 "展开后恢复折叠前的高度");
+            Assert(boxCollapsedSummary.Visibility == Visibility.Collapsed
+                && Require<Button>(window, "AddButton").Visibility == Visibility.Visible
+                && Require<Button>(window, "SortButton").Visibility == Visibility.Visible,
+                "展开后分组盒应隐藏折叠摘要并恢复添加与排序按钮");
         }
         finally
         {
@@ -2400,7 +2413,13 @@ internal static class Program
         {
             TodoWidgets = [new TodoWidgetState
             {
-                Placement = new WindowPlacement { Left = 120, Top = 120, Width = 286, Height = 336 }
+                Placement = new WindowPlacement { Left = 120, Top = 120, Width = 286, Height = 336 },
+                Items =
+                [
+                    new TodoItemState { Text = "秘密事项一", Order = 0, Date = DateTime.Today },
+                    new TodoItemState { Text = "秘密事项二", Order = 1, Date = DateTime.Today },
+                    new TodoItemState { Text = "已完成事项", Order = 2, Date = DateTime.Today, IsCompleted = true }
+                ]
             }],
             FileBoxes = []
         };
@@ -2410,6 +2429,8 @@ internal static class Program
         {
             window.Height = 336;
             Pump();
+            var todoSummary = Require<TextBlock>(window, "CollapsedSummaryText");
+            Assert(todoSummary.Visibility == Visibility.Collapsed, "展开状态下待办卡片不应显示折叠摘要");
             Require<Button>(window, "CollapseButton").RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
             PumpUntil(
                 () => Near(window.ActualHeight, 48) && !window.IsFoldAnimating,
@@ -2418,6 +2439,10 @@ internal static class Program
             Assert(!Require<ScrollViewer>(window, "ListHost").IsVisible, "收起后正文列表应隐藏");
             Assert(Require<Button>(window, "ViewModeButton").Visibility == Visibility.Collapsed, "收起后视图切换按钮应隐藏");
             Assert(Require<Button>(window, "AddTodoButton").Visibility == Visibility.Collapsed, "收起后新增按钮应隐藏");
+            Assert(todoSummary.Visibility == Visibility.Visible
+                && todoSummary.Text == "2 项未完成"
+                && !todoSummary.Text.Contains("秘密", StringComparison.Ordinal),
+                "收起后待办标题右侧应仅显示未完成数量摘要");
             Assert(state.TodoWidgets[0].IsCollapsed, "收起状态应写入待办状态");
             Assert(Near(state.TodoWidgets[0].ExpandedHeight, 336), "收起时应记住展开高度");
             window.CaptureState();
@@ -2435,12 +2460,16 @@ internal static class Program
         try
         {
             Assert(Near(restored.ActualHeight, 48), "重启后收起的卡片应以标题条打开");
+            var restoredSummary = Require<TextBlock>(restored, "CollapsedSummaryText");
+            Assert(restoredSummary.Visibility == Visibility.Visible && restoredSummary.Text == "2 项未完成",
+                "重启后收起的待办卡片应在标题右侧显示未完成数量摘要");
             Require<Button>(restored, "CollapseButton").RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
             PumpUntil(
                 () => Near(restored.ActualHeight, 336) && !restored.IsFoldAnimating,
                 "等待待办卡片完成展开动画");
             Assert(Require<ScrollViewer>(restored, "ListHost").IsVisible, "展开后正文应恢复显示");
             Assert(Require<Button>(restored, "ViewModeButton").Visibility == Visibility.Visible, "展开后视图切换按钮应恢复");
+            Assert(restoredSummary.Visibility == Visibility.Collapsed, "展开后待办折叠摘要应隐藏");
         }
         finally
         {

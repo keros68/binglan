@@ -1587,6 +1587,85 @@ internal static class ThemeStyleTests
             "全局已自定义文字色时跟随全局的卡片应保留自定义文字色并切到无底板");
     }
 
+    public static void TestWp10CardFoldSummaries()
+    {
+        var Check = (bool condition, string message) =>
+        {
+            if (!condition)
+            {
+                throw new InvalidOperationException(message);
+            }
+        };
+
+        var emptyBox = new FileBoxState();
+        Check(CardFoldSummaryRules.FormatFileBoxSummary(emptyBox) == "0 项", "空分组盒折叠摘要应为 0 项");
+        Check(CardFoldSummaryRules.FormatFileBoxSummary(-3) == "0 项", "负数计数应钳制为 0 项");
+
+        var populatedBox = new FileBoxState();
+        populatedBox.Items.AddRange(
+        [
+            new FileMappingState { Path = @"C:\Users\Alice\Desktop\机密预算.xlsx", Title = "机密预算" },
+            new FileMappingState { Path = @"D:\Projects\设计稿.psd" },
+            new FileMappingState { Path = @"D:\Docs" },
+            new FileMappingState { Path = "shell:RecycleBinFolder", Title = "回收站" }
+        ]);
+        var boxSummary = CardFoldSummaryRules.FormatFileBoxSummary(populatedBox);
+        Check(boxSummary == "4 项", $"4 项分组盒摘要应为 4 项，实际为 {boxSummary}");
+        Check(!boxSummary.Contains("预算", StringComparison.Ordinal)
+            && !boxSummary.Contains("设计稿", StringComparison.Ordinal)
+            && !boxSummary.Contains("回收站", StringComparison.Ordinal)
+            && !boxSummary.Contains("Alice", StringComparison.OrdinalIgnoreCase),
+            "分组盒折叠摘要只允许包含数量，不得包含文件名或路径");
+
+        var today = new DateTime(2026, 11, 16);
+        var todoWidget = new TodoWidgetState
+        {
+            WeeklyView = false,
+            Items =
+            [
+                new TodoItemState { Text = "机密待办一", Date = today, Kind = TodoItemKind.Todo },
+                new TodoItemState { Text = "待办二", Date = today, Kind = TodoItemKind.Todo },
+                // Past-dated open item with an active deadline stays in today's list.
+                new TodoItemState { Text = "跨日截止待办", Date = today.AddDays(-2), DeadlineDate = today.AddDays(3), Kind = TodoItemKind.Todo },
+                new TodoItemState { Text = "已完成待办", Date = today, IsCompleted = true, Kind = TodoItemKind.Todo },
+                new TodoItemState { Text = "   ", Date = today, Kind = TodoItemKind.Todo },
+                new TodoItemState { Text = "团队周会", Date = today, Kind = TodoItemKind.Event },
+                new TodoItemState { Text = "产品发布", Date = today, DeadlineDate = today.AddDays(5), Kind = TodoItemKind.Countdown },
+                new TodoItemState { Text = "更早日期无截止待办", Date = today.AddDays(-3), Kind = TodoItemKind.Todo }
+            ]
+        };
+
+        var listSummary = CardFoldSummaryRules.FormatTodoSummary(todoWidget, today);
+        Check(CardFoldSummaryRules.CountOpenTodos(todoWidget, today) == 3 && listSummary == "3 项未完成",
+            $"今日列表视图应仅统计 3 项未完成待办，实际为 {listSummary}");
+        Check(!listSummary.Contains("机密", StringComparison.Ordinal)
+            && !listSummary.Contains("待办二", StringComparison.Ordinal)
+            && !listSummary.Contains("周会", StringComparison.Ordinal),
+            "待办折叠摘要只允许包含数量，不得包含条目正文");
+
+        todoWidget.WeeklyView = true;
+        var weekStart = new DateTime(2026, 11, 9);
+        var weekEnd = new DateTime(2026, 11, 22);
+        var weeklySummary = CardFoldSummaryRules.FormatTodoSummary(todoWidget, today, weekStart, weekEnd);
+        Check(CardFoldSummaryRules.CountOpenTodos(todoWidget, today, weekStart, weekEnd) == 4 && weeklySummary == "4 项未完成",
+            $"周历视图应统计显示周范围内的 4 项未完成待办，实际为 {weeklySummary}");
+
+        foreach (var item in todoWidget.Items)
+        {
+            item.IsCompleted = true;
+        }
+        Check(CardFoldSummaryRules.FormatTodoSummary(todoWidget, today, weekStart, weekEnd) == "0 项未完成",
+            "全部完成后周历视图折叠摘要应为 0 项未完成");
+        todoWidget.WeeklyView = false;
+        Check(CardFoldSummaryRules.FormatTodoSummary(todoWidget, today) == "0 项未完成",
+            "全部完成后列表视图折叠摘要应为 0 项未完成");
+
+        Check(CardFoldSummaryRules.UsesPrimaryInk(WidgetAppearanceRules.MinimumBackgroundOpacity)
+            && CardFoldSummaryRules.UsesPrimaryInk(0.05d)
+            && !CardFoldSummaryRules.UsesPrimaryInk(0.66d),
+            "无底板与接近透明下折叠摘要应改用主墨色，不低于 20% 时保持次墨色");
+    }
+
     private static void Check(bool condition, string message)
     {
         if (!condition)
