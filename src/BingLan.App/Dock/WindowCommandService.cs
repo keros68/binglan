@@ -10,22 +10,37 @@ using BingLan.Core.TopBar;
 
 namespace BingLan.App.Dock;
 
-internal sealed record WindowCommandResult(bool Succeeded, string Message);
+internal sealed record WindowCommandResult(bool Succeeded, string Message, bool NoLiveWindows = false);
 
 internal static class WindowCommandService
 {
-    internal static WindowCommandResult Toggle(WindowGroup group, DockToggleCooldown cooldown)
+    internal static async Task<WindowCommandResult> ToggleAsync(
+        WindowGroup group,
+        DockToggleCooldown cooldown,
+        string? displayName = null)
     {
+        var name = string.IsNullOrWhiteSpace(displayName) ? group.DisplayName : displayName;
         if (group.Windows.Count == 0)
         {
-            return new WindowCommandResult(false, "窗口组为空");
+            return new WindowCommandResult(false, "窗口组为空", NoLiveWindows: true);
+        }
+
+        var live = FilterLiveCandidates(group.Windows);
+        if (live.Count == 0)
+        {
+            return new WindowCommandResult(false, "窗口已关闭", NoLiveWindows: true);
         }
 
         var foreground = DockNativeMethods.GetForegroundWindow();
-        var foregroundInGroup = group.Windows.FirstOrDefault(window => window.Handle == foreground);
-        var target = group.Windows.FirstOrDefault(
-                window => !DockNativeMethods.IsIconic(window.Handle))
-            ?? group.Windows[0];
+        var foregroundRoot = GetRootOwnerOrSelf(foreground);
+        var foregroundInGroup = live
+            .Select(entry => entry.Window)
+            .FirstOrDefault(window => window.Handle == foreground
+                || (foregroundRoot != 0 && GetRootOwnerOrSelf(window.Handle) == foregroundRoot));
+        var selected = WindowActivationRules.SelectActivationTarget(
+            live.Select(entry => entry.Candidate).ToArray())!;
+        var target = live.First(entry => entry.Window.Handle == selected.Handle).Window;
+
         // A minimized foreground is either stale (the pointer has not moved on yet) or
         // an already-minimized window the system still names; both mean "restore".
         var foregroundIsMinimized = foregroundInGroup is { } active
@@ -36,20 +51,66 @@ internal static class WindowCommandService
             DockNativeMethods.IsIconic(target.Handle));
         if (action == DockClickAction.MinimizeForeground)
         {
-            DockNativeMethods.ShowWindowAsync(foregroundInGroup!.Handle, DockNativeMethods.SwMinimize);
+            var minimized = DockNativeMethods.ShowWindowAsync(foregroundInGroup!.Handle, DockNativeMethods.SwMinimize);
+            if (!minimized && ShellSurfaceNativeMethods.IsWindowElevated(foregroundInGroup.Handle))
+            {
+                return new WindowCommandResult(
+                    false,
+                    $"{name} 正在以管理员身份运行，Windows 不允许普通权限的 Dock 最小化它。");
+            }
             cooldown.MarkMinimized(foregroundInGroup.Handle);
-            return new WindowCommandResult(true, $"已最小化 {group.DisplayName}");
+            return new WindowCommandResult(true, $"已最小化 {name}");
         }
 
         if (foregroundInGroup is { } restored)
         {
             cooldown.Clear(restored.Handle);
         }
-        return Focus(target, action == DockClickAction.RestoreAndActivate, group.DisplayName);
+        return await FocusAsync(target, action == DockClickAction.RestoreAndActivate, name);
     }
 
     internal static WindowCommandResult Focus(TrackedWindow window) =>
-        Focus(window, DockNativeMethods.IsIconic(window.Handle), window.Title);
+        FocusCore(window, DockNativeMethods.IsIconic(window.Handle), window.Title);
+
+    internal static async Task<WindowCommandResult> FocusAsync(
+        TrackedWindow target,
+        bool restore,
+        string? displayName = null)
+    {
+        var name = string.IsNullOrWhiteSpace(displayName) ? target.Title : displayName;
+        if (target.Handle == 0
+            || !DockNativeMethods.IsWindow(target.Handle)
+            || !DockNativeMethods.IsWindowVisible(target.Handle))
+        {
+            return new WindowCommandResult(false, "窗口已关闭", NoLiveWindows: true);
+        }
+
+        if (TryBringToForeground(target.Handle, restore))
+        {
+            return new WindowCommandResult(true, $"已切换到 {name}");
+        }
+
+        if (restore
+            && !ShellSurfaceNativeMethods.IsWindowElevated(ResolvePopupOrSelf(target.Handle))
+            && !ShellSurfaceNativeMethods.IsForegroundElevated())
+        {
+            for (var attempt = 0; attempt < 3; attempt++)
+            {
+                await Task.Delay(40);
+                if (!DockNativeMethods.IsWindow(target.Handle)
+                    || !DockNativeMethods.IsWindowVisible(target.Handle))
+                {
+                    return new WindowCommandResult(false, "窗口已关闭", NoLiveWindows: true);
+                }
+                if (TryBringToForeground(target.Handle, restore: false))
+                {
+                    return new WindowCommandResult(true, $"已切换到 {name}");
+                }
+            }
+        }
+
+        return BuildFocusFailureResult(target.Handle, name);
+    }
 
     /// <summary>
     /// Restores and brings a running window forward during drag hover without flashing
@@ -225,9 +286,15 @@ internal static class WindowCommandService
         var shown = FindShownWindow(processIds);
         if (shown != 0)
         {
-            return DockNativeMethods.SetForegroundWindow(shown)
-                ? new WindowCommandResult(true, $"已切换到 {app.DisplayName}")
-                : new WindowCommandResult(false, $"Windows 阻止了切换到 {app.DisplayName}");
+            var tracked = new TrackedWindow(
+                shown,
+                0,
+                app.DisplayName,
+                app.AppUserModelId,
+                app.ExecutablePath,
+                false,
+                DockNativeMethods.IsIconic(shown));
+            return await FocusAsync(tracked, tracked.IsMinimized, app.DisplayName);
         }
 
         if (!IsHotkeyRegistered(hotkey)
@@ -288,29 +355,172 @@ internal static class WindowCommandService
         }
     }
 
-    private static WindowCommandResult Focus(TrackedWindow target, bool restore, string name)
+    private static WindowCommandResult FocusCore(TrackedWindow target, bool restore, string name)
     {
-        if (restore)
+        if (target.Handle == 0
+            || !DockNativeMethods.IsWindow(target.Handle)
+            || !DockNativeMethods.IsWindowVisible(target.Handle))
         {
-            DockNativeMethods.ShowWindowAsync(target.Handle, DockNativeMethods.SwRestore);
+            return new WindowCommandResult(false, "窗口已关闭", NoLiveWindows: true);
         }
 
-        if (DockNativeMethods.SetForegroundWindow(target.Handle))
+        if (TryBringToForeground(target.Handle, restore))
         {
             return new WindowCommandResult(true, $"已切换到 {name}");
         }
 
-        var info = new DockNativeMethods.FlashWindowInfo
-        {
-            Size = (uint)Marshal.SizeOf<DockNativeMethods.FlashWindowInfo>(),
-            Window = target.Handle,
-            Flags = 2,
-            Count = 3,
-            Timeout = 0
-        };
-        DockNativeMethods.FlashWindowEx(ref info);
-        return new WindowCommandResult(false, $"Windows 阻止了切换到 {name}，已闪烁提醒");
+        return BuildFocusFailureResult(target.Handle, name);
     }
+
+    private static WindowCommandResult BuildFocusFailureResult(nint targetHandle, string name)
+    {
+        var targetElevated = ShellSurfaceNativeMethods.IsWindowElevated(ResolvePopupOrSelf(targetHandle));
+        var foregroundElevated = !targetElevated && ShellSurfaceNativeMethods.IsForegroundElevated();
+        if (!targetElevated)
+        {
+            var info = new DockNativeMethods.FlashWindowInfo
+            {
+                Size = (uint)Marshal.SizeOf<DockNativeMethods.FlashWindowInfo>(),
+                Window = targetHandle,
+                Flags = 2,
+                Count = 3,
+                Timeout = 0
+            };
+            DockNativeMethods.FlashWindowEx(ref info);
+        }
+        return new WindowCommandResult(
+            false,
+            WindowActivationRules.FormatSwitchBlockedMessage(name, targetElevated, foregroundElevated));
+    }
+
+    private static bool TryBringToForeground(nint targetWindow, bool restore)
+    {
+        if (restore)
+        {
+            DockNativeMethods.ShowWindowAsync(targetWindow, DockNativeMethods.SwRestore);
+        }
+
+        var activationTarget = ResolvePopupOrSelf(targetWindow);
+        if (DockNativeMethods.SetForegroundWindow(activationTarget))
+        {
+            return true;
+        }
+
+        if (ShellSurfaceNativeMethods.IsWindowElevated(activationTarget)
+            || ShellSurfaceNativeMethods.IsForegroundElevated())
+        {
+            return false;
+        }
+
+        var foreground = DockNativeMethods.GetForegroundWindow();
+        if (!IsWindowResponsive(activationTarget)
+            || (foreground != 0 && !IsWindowResponsive(foreground)))
+        {
+            return false;
+        }
+
+        var foregroundThread = foreground != 0
+            ? DockNativeMethods.GetWindowThreadProcessId(foreground, out _)
+            : 0;
+        var currentThread = DockNativeMethods.GetCurrentThreadId();
+        var attached = false;
+        try
+        {
+            if (foregroundThread != 0 && foregroundThread != currentThread)
+            {
+                attached = DockNativeMethods.AttachThreadInput(currentThread, foregroundThread, true);
+                if (!attached)
+                {
+                    return false;
+                }
+            }
+            DockNativeMethods.BringWindowToTop(activationTarget);
+            _ = DockNativeMethods.SetForegroundWindow(activationTarget);
+        }
+        finally
+        {
+            if (attached)
+            {
+                DockNativeMethods.AttachThreadInput(currentThread, foregroundThread, false);
+            }
+        }
+
+        var currentForeground = DockNativeMethods.GetForegroundWindow();
+        return currentForeground != 0
+            && (currentForeground == activationTarget
+                || currentForeground == targetWindow
+                || GetRootOwnerOrSelf(currentForeground) == GetRootOwnerOrSelf(targetWindow));
+    }
+
+    private static List<(TrackedWindow Window, WindowCandidateInfo Candidate)> FilterLiveCandidates(
+        IReadOnlyList<TrackedWindow> windows)
+    {
+        var live = new List<(TrackedWindow Window, WindowCandidateInfo Candidate)>(windows.Count);
+        foreach (var window in windows)
+        {
+            var handle = window.Handle;
+            if (handle == 0
+                || !DockNativeMethods.IsWindow(handle)
+                || !DockNativeMethods.IsWindowVisible(handle)
+                || NativeMethods.IsWindowCloaked(handle))
+            {
+                continue;
+            }
+
+            var isMinimized = DockNativeMethods.IsIconic(handle);
+            var isEnabled = DockNativeMethods.IsWindowEnabled(handle);
+            var popup = ResolvePopupOrSelf(handle);
+            var hasEnabledPopup = popup != handle
+                && DockNativeMethods.IsWindowVisible(popup)
+                && DockNativeMethods.IsWindowEnabled(popup);
+            var hasTitle = !string.IsNullOrWhiteSpace(window.Title)
+                || DockNativeMethods.GetWindowTextLengthW(handle) > 0;
+            live.Add((
+                window,
+                new WindowCandidateInfo(handle, isMinimized, isEnabled, hasEnabledPopup, hasTitle)));
+        }
+        return live;
+    }
+
+    private static nint ResolvePopupOrSelf(nint window)
+    {
+        var current = window;
+        for (var depth = 0; depth < 8 && current != 0; depth++)
+        {
+            var popup = DockNativeMethods.GetLastActivePopup(current);
+            if (popup == 0 || popup == current)
+            {
+                break;
+            }
+            if (DockNativeMethods.IsWindowVisible(popup) && DockNativeMethods.IsWindowEnabled(popup))
+            {
+                return popup;
+            }
+            current = popup;
+        }
+        return window;
+    }
+
+    private static nint GetRootOwnerOrSelf(nint window)
+    {
+        if (window == 0)
+        {
+            return 0;
+        }
+        var rootOwner = DockNativeMethods.GetAncestor(window, DockNativeMethods.GaRootOwner);
+        return rootOwner != 0 ? rootOwner : window;
+    }
+
+    private static bool IsWindowResponsive(nint window) =>
+        window != 0
+        && DockNativeMethods.SendMessageTimeoutW(
+            window,
+            DockNativeMethods.WmNull,
+            0,
+            0,
+            DockNativeMethods.SmtoAbortIfHung,
+            50,
+            out _) != 0;
 
     private static HashSet<uint> RunningProcessIds(string executablePath)
     {

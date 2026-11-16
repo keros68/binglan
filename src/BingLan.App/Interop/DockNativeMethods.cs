@@ -37,6 +37,7 @@ internal static class DockNativeMethods
     internal const uint AbmWindowPosChanged = 0x00000009;
     internal const int AbnPosChanged = 1;
 
+    internal const uint WmNull = 0x0000;
     internal const int WmActivate = 0x0006;
     internal const ushort WaInactive = 0;
     internal const int WmWindowPosChanged = 0x0047;
@@ -301,11 +302,27 @@ internal static class DockNativeMethods
 
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool IsWindowEnabled(nint hwnd);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool ShowWindowAsync(nint hwnd, int command);
 
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool SetForegroundWindow(nint hwnd);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool AllowSetForegroundWindow(uint processId);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool BringWindowToTop(nint hwnd);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, [MarshalAs(UnmanagedType.Bool)] bool attach);
 
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
@@ -369,11 +386,14 @@ internal static class DockNativeMethods
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool GetMonitorInfoW(nint monitor, ref MonitorInfo monitorInfo);
 
-    [DllImport("kernel32.dll")]
+    [DllImport("kernel32.dll", SetLastError = true)]
     internal static extern nint OpenProcess(
         uint desiredAccess,
         [MarshalAs(UnmanagedType.Bool)] bool inheritHandle,
         uint processId);
+
+    [DllImport("kernel32.dll")]
+    internal static extern uint GetCurrentThreadId();
 
     [DllImport("kernel32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]

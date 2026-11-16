@@ -73,14 +73,24 @@ internal static class ShellSurfaceNativeMethods
     internal static bool ShowDesktop() => SendChord(WindowsKey, 0x44);
 
     /// <summary>
-    /// Asks Explorer itself to open Start (WM_SYSCOMMAND/SC_TASKLIST). Unlike injected
-    /// keys this is not affected by held modifiers or by UIPI when an elevated window is
-    /// in front: the message goes to Explorer, which runs at the same integrity level.
+    /// Asks Explorer itself to open Start (WM_SYSCOMMAND/SC_TASKLIST). Before posting,
+    /// grants Explorer foreground activation rights because a click on a WS_EX_NOACTIVATE
+    /// dock leaves last-input ownership with BingLan.
     /// </summary>
     internal static bool PostStartMenuCommand()
     {
         var tray = TaskbarNativeMethods.FindWindowW("Shell_TrayWnd", null);
-        return tray != 0 && DockNativeMethods.PostMessageW(tray, DockNativeMethods.WmSysCommand, ScTaskList, 0);
+        if (tray == 0)
+        {
+            return false;
+        }
+
+        DockNativeMethods.GetWindowThreadProcessId(tray, out var explorerPid);
+        if (explorerPid != 0)
+        {
+            _ = DockNativeMethods.AllowSetForegroundWindow(explorerPid);
+        }
+        return DockNativeMethods.PostMessageW(tray, DockNativeMethods.WmSysCommand, ScTaskList, 0);
     }
 
     internal static bool OpenQuickLinkMenu() => SendChord(WindowsKey, 0x58);
@@ -114,12 +124,15 @@ internal static class ShellSurfaceNativeMethods
     }
 
     /// <summary>
-    /// The Start menu is a CoreWindow of StartMenuExperienceHost; Windows 11 24H2+ hosts
-    /// the same menu under SearchHost instead, verified live on 25H2 build 26200.
+    /// The Start menu is a CoreWindow of StartMenuExperienceHost (or SearchHost on
+    /// Windows 11 24H2+, or ShellExperienceHost on older builds); classic/third-party
+    /// menus hosted by explorer use DV2ControlHost or OpenShellMenu.CMenuContainer.
     /// </summary>
     internal static bool IsStartMenuSurface(string className, string processName) =>
-        className == "Windows.UI.Core.CoreWindow"
-        && processName is "StartMenuExperienceHost" or "SearchHost";
+        (className == "Windows.UI.Core.CoreWindow"
+            && processName is "StartMenuExperienceHost" or "SearchHost" or "ShellExperienceHost")
+        || (processName == "explorer"
+            && className is "DV2ControlHost" or "OpenShellMenu.CMenuContainer");
 
     internal static bool IsQuickSettingsForeground()
     {
@@ -150,19 +163,30 @@ internal static class ShellSurfaceNativeMethods
         processName is "ShellHost" or "ShellExperienceHost";
 
     /// <summary>
-    /// UIPI silently drops input injected toward a higher-integrity foreground window
-    /// (Task Manager, apps run as administrator) while SendInput still reports success.
-    /// An elevated BingLan is not affected.
+    /// UIPI blocks or drops input injected toward a higher-integrity foreground window
+    /// (Task Manager, apps run as administrator); SendInput returns 0 under UIPI on
+    /// Windows 11, and SetForegroundWindow/ShowWindowAsync also fail across integrity
+    /// levels. An elevated BingLan is not affected.
     /// </summary>
-    internal static bool IsForegroundElevated()
+    internal static bool IsForegroundElevated() =>
+        IsWindowElevated(DockNativeMethods.GetForegroundWindow());
+
+    internal static bool IsTaskbarElevated()
     {
-        if (Environment.IsPrivilegedProcess) return false;
-        var window = DockNativeMethods.GetForegroundWindow();
-        if (window == 0) return false;
+        var tray = TaskbarNativeMethods.FindWindowW("Shell_TrayWnd", null);
+        return tray != 0 && IsWindowElevated(tray);
+    }
+
+    internal static bool IsWindowElevated(nint window)
+    {
+        if (Environment.IsPrivilegedProcess || window == 0) return false;
         DockNativeMethods.GetWindowThreadProcessId(window, out var processId);
         if (processId == 0 || processId == (uint)Environment.ProcessId) return false;
         var process = DockNativeMethods.OpenProcess(DockNativeMethods.ProcessQueryLimitedInformation, false, processId);
-        if (process == 0) return false;
+        if (process == 0)
+        {
+            return Marshal.GetLastWin32Error() == ErrorAccessDenied;
+        }
         try
         {
             if (!OpenProcessToken(process, TokenQuery, out var token))

@@ -60,6 +60,9 @@ Run("文件夹与文件固定项：识别、去重、不匹配运行窗口", Tes
 Run("文件夹与文件固定项保存往返且不进入主题导出", TestPathPinsPersistAndStayOutOfThemes);
 Run("拖拽文件到应用判定是否直接打开及收集有效目标", TestDockFileDropCanOpenFilesAndDecide);
 Run("拖拽文件命令行参数转义与悬停 500ms 唤起状态机", TestDockFileDropLaunchArgumentsAndHoverState);
+Run("Dock 顶层窗口过滤规则：排除零尺寸、穿透阴影与无标题禁用辅助窗", TestTopLevelWindowFilterRules);
+Run("Dock 激活目标选择：WPS 最小化主窗优先于未最小化的禁用辅助窗", TestSelectActivationTarget);
+Run("Dock 权限隔离提示文案：区分目标提权、前台提权与常规拦截", TestActivationBlockedMessages);
 
 if (failures.Count > 0)
 {
@@ -1833,6 +1836,200 @@ static void TestDockFileDropLaunchArgumentsAndHoverState()
     Assert(hover.HoveredKey is null, "Clear 应清除悬停记录");
     Assert(!hover.Hover("exe:ps.exe", isRunning: true, t0 + TimeSpan.FromSeconds(4)), "Clear 后再次悬停应重新计时");
     Assert(hover.Hover("exe:ps.exe", isRunning: true, t0 + TimeSpan.FromSeconds(4.5)), "Clear 后再次满 500ms 应允许触发");
+}
+
+static void TestTopLevelWindowFilterRules()
+{
+    Assert(
+        WindowActivationRules.ShouldIncludeTopLevelWindow(
+            isAppWindow: false,
+            isToolWindow: false,
+            isNoActivate: false,
+            isCloaked: false,
+            isMinimized: false,
+            isLayeredClickThrough: false,
+            isDisabled: false,
+            hasTitle: true,
+            width: 1200,
+            height: 800),
+        "正常可见顶层窗口应纳入 Dock");
+
+    Assert(
+        WindowActivationRules.ShouldIncludeTopLevelWindow(
+            isAppWindow: false,
+            isToolWindow: false,
+            isNoActivate: false,
+            isCloaked: false,
+            isMinimized: true,
+            isLayeredClickThrough: false,
+            isDisabled: false,
+            hasTitle: true,
+            width: 0,
+            height: 0),
+        "最小化窗口即使矩形为 0 也不应被尺寸规则过滤");
+
+    Assert(
+        WindowActivationRules.ShouldIncludeTopLevelWindow(
+            isAppWindow: true,
+            isToolWindow: true,
+            isNoActivate: false,
+            isCloaked: false,
+            isMinimized: false,
+            isLayeredClickThrough: false,
+            isDisabled: true,
+            hasTitle: false,
+            width: 0,
+            height: 0),
+        "显式 WS_EX_APPWINDOW 未隐藏时应保留");
+
+    Assert(
+        !WindowActivationRules.ShouldIncludeTopLevelWindow(
+            isAppWindow: true,
+            isToolWindow: false,
+            isNoActivate: false,
+            isCloaked: true,
+            isMinimized: false,
+            isLayeredClickThrough: false,
+            isDisabled: false,
+            hasTitle: true,
+            width: 800,
+            height: 600),
+        "DWM 隐藏（Cloaked）的窗口不应纳入");
+
+    Assert(
+        !WindowActivationRules.ShouldIncludeTopLevelWindow(
+            isAppWindow: false,
+            isToolWindow: false,
+            isNoActivate: false,
+            isCloaked: false,
+            isMinimized: false,
+            isLayeredClickThrough: false,
+            isDisabled: false,
+            hasTitle: true,
+            width: 1,
+            height: 1),
+        "1x1 占位顶层窗口应被过滤");
+
+    Assert(
+        !WindowActivationRules.ShouldIncludeTopLevelWindow(
+            isAppWindow: false,
+            isToolWindow: false,
+            isNoActivate: false,
+            isCloaked: false,
+            isMinimized: false,
+            isLayeredClickThrough: true,
+            isDisabled: false,
+            hasTitle: true,
+            width: 1200,
+            height: 800),
+        "分层鼠标穿透阴影/水印层不应纳入");
+
+    Assert(
+        !WindowActivationRules.ShouldIncludeTopLevelWindow(
+            isAppWindow: false,
+            isToolWindow: false,
+            isNoActivate: false,
+            isCloaked: false,
+            isMinimized: false,
+            isLayeredClickThrough: false,
+            isDisabled: true,
+            hasTitle: false,
+            width: 300,
+            height: 200),
+        "禁用且无标题的辅助顶层窗口应被过滤");
+
+    Assert(
+        WindowActivationRules.ShouldIncludeTopLevelWindow(
+            isAppWindow: false,
+            isToolWindow: false,
+            isNoActivate: false,
+            isCloaked: false,
+            isMinimized: false,
+            isLayeredClickThrough: false,
+            isDisabled: true,
+            hasTitle: true,
+            width: 1200,
+            height: 800),
+        "带标题的禁用主窗口（如模态框背后）应保留");
+
+    Assert(
+        !WindowActivationRules.ShouldIncludeTopLevelWindow(
+            isAppWindow: false,
+            isToolWindow: true,
+            isNoActivate: false,
+            isCloaked: false,
+            isMinimized: false,
+            isLayeredClickThrough: false,
+            isDisabled: false,
+            hasTitle: true,
+            width: 800,
+            height: 600),
+        "无 WS_EX_APPWINDOW 的工具窗口不应纳入");
+}
+
+static void TestSelectActivationTarget()
+{
+    Assert(WindowActivationRules.SelectActivationTarget([]) is null, "空候选列表应返回 null");
+    AssertThrows<ArgumentNullException>(() => WindowActivationRules.SelectActivationTarget(null!), "null 候选列表应抛异常");
+
+    var helperUnminimizedDisabled = new WindowCandidateInfo(100, IsMinimized: false, IsEnabled: false, HasEnabledPopup: false, HasTitle: false);
+    var mainMinimized = new WindowCandidateInfo(200, IsMinimized: true, IsEnabled: true, HasEnabledPopup: false, HasTitle: true);
+    AssertEqual(
+        (nint)200,
+        WindowActivationRules.SelectActivationTarget([helperUnminimizedDisabled, mainMinimized])?.Handle ?? 0,
+        "WPS 主窗口最小化时应优先选它，而不是未最小化的禁用辅助窗");
+
+    var mainWithModalPopup = new WindowCandidateInfo(300, IsMinimized: false, IsEnabled: false, HasEnabledPopup: true, HasTitle: true);
+    AssertEqual(
+        (nint)300,
+        WindowActivationRules.SelectActivationTarget([mainMinimized, mainWithModalPopup])?.Handle ?? 0,
+        "带可用模态弹窗的未最小化主窗应视为可直接激活");
+
+    var unminimizedUntitled = new WindowCandidateInfo(400, IsMinimized: false, IsEnabled: true, HasEnabledPopup: false, HasTitle: false);
+    var minimizedUntitled = new WindowCandidateInfo(500, IsMinimized: true, IsEnabled: true, HasEnabledPopup: false, HasTitle: false);
+    AssertEqual(
+        (nint)400,
+        WindowActivationRules.SelectActivationTarget([minimizedUntitled, mainMinimized, unminimizedUntitled])?.Handle ?? 0,
+        "未最小化可激活窗口应优先于最小化窗口");
+    AssertEqual(
+        (nint)200,
+        WindowActivationRules.SelectActivationTarget([minimizedUntitled, mainMinimized])?.Handle ?? 0,
+        "同为最小化可激活窗口时应优先选带标题的主窗");
+    AssertEqual(
+        (nint)100,
+        WindowActivationRules.SelectActivationTarget([helperUnminimizedDisabled])?.Handle ?? 0,
+        "全不可直接激活时应兜底返回首项");
+}
+
+static void TestActivationBlockedMessages()
+{
+    var targetElevated = WindowActivationRules.FormatSwitchBlockedMessage("WPS Office", targetElevated: true, foregroundElevated: true);
+    Assert(targetElevated.Contains("WPS Office", StringComparison.Ordinal), "目标提权提示应包含应用名");
+    Assert(targetElevated.Contains("管理员", StringComparison.Ordinal), "目标提权提示应说明管理员权限原因");
+    Assert(!targetElevated.Contains("已闪烁提醒", StringComparison.Ordinal), "目标提权时不得谎称已闪烁提醒");
+
+    var foregroundElevated = WindowActivationRules.FormatSwitchBlockedMessage("WPS Office", targetElevated: false, foregroundElevated: true);
+    Assert(foregroundElevated.Contains("前台", StringComparison.Ordinal) && foregroundElevated.Contains("管理员", StringComparison.Ordinal),
+        "前台提权提示应说明前台程序为管理员");
+    Assert(foregroundElevated.Contains("已闪烁提醒", StringComparison.Ordinal), "同权限目标窗口仍应提示已闪烁");
+
+    AssertEqual(
+        "Windows 阻止了切换到 WPS Office，已闪烁提醒",
+        WindowActivationRules.FormatSwitchBlockedMessage("WPS Office", targetElevated: false, foregroundElevated: false),
+        "常规拦截文案应保留既有格式并使用展示名");
+
+    var taskbarElevated = WindowActivationRules.FormatStartMenuBlockedMessage(taskbarElevated: true, foregroundElevated: true);
+    Assert(taskbarElevated.Contains("资源管理器", StringComparison.Ordinal) && taskbarElevated.Contains("Win", StringComparison.Ordinal),
+        "任务栏提权时应提示资源管理器以管理员运行并引导键盘 Win 键");
+
+    var startForegroundElevated = WindowActivationRules.FormatStartMenuBlockedMessage(taskbarElevated: false, foregroundElevated: true);
+    Assert(startForegroundElevated.Contains("前台", StringComparison.Ordinal) && startForegroundElevated.Contains("管理员", StringComparison.Ordinal),
+        "前台提权时应提示先切换窗口或按 Win 键");
+
+    AssertEqual(
+        "无法打开 Windows 开始菜单，请稍后重试。",
+        WindowActivationRules.FormatStartMenuBlockedMessage(taskbarElevated: false, foregroundElevated: false),
+        "常规开始菜单失败应保留既有提示");
 }
 
 static void Assert(bool condition, string message)

@@ -565,7 +565,9 @@ public partial class IceBlueDockWindow : Window
                     entry.Icon = new Image { Source = icon, Width = 16, Height = 16 };
                 }
                 var captured = item;
-                entry.Click += (_, _) => Invoke(captured);
+                entry.Click += (_, _) => Dispatcher.BeginInvoke(
+                    () => Invoke(captured),
+                    DispatcherPriority.Input);
                 menu.Items.Add(entry);
             }
             menu.PlacementTarget = button;
@@ -628,9 +630,13 @@ public partial class IceBlueDockWindow : Window
         AutomationProperties.SetHelpText(button, "单击打开 Windows 开始菜单；右键或按菜单键、Shift+F10 打开系统快捷菜单");
         button.Click += async (_, _) =>
         {
-            if (!await ShellSurfaceService.OpenStartMenuAsync())
+            var result = await ShellSurfaceService.OpenStartMenuAsync();
+            if (result != ShellSurfaceResult.Opened)
             {
-                CommandFailed?.Invoke("无法打开 Windows 开始菜单，请稍后重试。");
+                CommandFailed?.Invoke(WindowActivationRules.FormatStartMenuBlockedMessage(
+                    ShellSurfaceNativeMethods.IsTaskbarElevated(),
+                    result == ShellSurfaceResult.ElevatedForeground
+                        || ShellSurfaceNativeMethods.IsForegroundElevated()));
             }
         };
         button.MouseRightButtonUp += async (_, e) =>
@@ -921,7 +927,25 @@ public partial class IceBlueDockWindow : Window
     {
         if (item.Group is not null)
         {
-            Report(WindowCommandService.Toggle(item.Group, _toggleCooldown));
+            var result = await WindowCommandService.ToggleAsync(
+                item.Group,
+                _toggleCooldown,
+                DisplayNameOf(item));
+            if (!result.NoLiveWindows)
+            {
+                Report(result);
+                return;
+            }
+
+            RefreshWindows();
+            if (item.Pinned is null)
+            {
+                return;
+            }
+        }
+
+        if (item.Pinned is null)
+        {
             return;
         }
 
@@ -935,12 +959,26 @@ public partial class IceBlueDockWindow : Window
         _revealPending = true;
         try
         {
-            Report(await WindowCommandService.RevealOrLaunchAsync(item.Pinned!));
+            Report(await WindowCommandService.RevealOrLaunchAsync(item.Pinned));
         }
         finally
         {
             _revealPending = false;
         }
+    }
+
+    private async Task FocusWindowFromMenuAsync(TrackedWindow window, string displayName)
+    {
+        var result = await WindowCommandService.FocusAsync(
+            window,
+            DockNativeMethods.IsIconic(window.Handle),
+            displayName);
+        if (result.NoLiveWindows)
+        {
+            RefreshWindows();
+            return;
+        }
+        Report(result);
     }
 
     private async void LaunchNewInstance(DockItem item, string name)
@@ -1001,9 +1039,12 @@ public partial class IceBlueDockWindow : Window
             {
                 foreach (var window in group.Windows)
                 {
+                    var captured = window;
                     menu.Items.Add(MenuItem(
-                        string.IsNullOrWhiteSpace(window.Title) ? name : window.Title,
-                        () => Report(WindowCommandService.Focus(window))));
+                        string.IsNullOrWhiteSpace(captured.Title) ? name : captured.Title,
+                        () => Dispatcher.BeginInvoke(
+                            () => _ = FocusWindowFromMenuAsync(captured, name),
+                            DispatcherPriority.Input)));
                 }
                 menu.Items.Add(new Separator());
             }

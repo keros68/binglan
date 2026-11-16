@@ -158,19 +158,51 @@ internal sealed class WindowCatalog
 
         var extendedStyle = (long)NativeMethods.GetWindowLongPtr(window, NativeMethods.GwlExStyle);
         var appWindow = (extendedStyle & NativeMethods.WsExAppWindow) != 0;
-        if (!appWindow
-            && ((extendedStyle & NativeMethods.WsExToolWindow) != 0
-                || (extendedStyle & DockNativeMethods.WsExNoActivate) != 0))
-        {
-            return false;
-        }
-
-        if (DockNativeMethods.DwmGetWindowAttribute(
+        var isToolWindow = (extendedStyle & NativeMethods.WsExToolWindow) != 0;
+        var isNoActivate = (extendedStyle & DockNativeMethods.WsExNoActivate) != 0;
+        var isCloaked = DockNativeMethods.DwmGetWindowAttribute(
                 window,
                 DockNativeMethods.DwmwaCloaked,
                 out int cloaked,
                 sizeof(int)) == 0
-            && cloaked != 0)
+            && cloaked != 0;
+        var isMinimized = DockNativeMethods.IsIconic(window);
+        var isLayeredClickThrough = (extendedStyle & NativeMethods.WsExLayered) != 0
+            && (extendedStyle & NativeMethods.WsExTransparent) != 0;
+        var isDisabled = !DockNativeMethods.IsWindowEnabled(window);
+        var width = 100;
+        var height = 100;
+        var hasTitle = true;
+        if (!appWindow && !isMinimized && !isToolWindow && !isNoActivate && !isCloaked)
+        {
+            if (DockNativeMethods.GetWindowRect(window, out var rect))
+            {
+                width = rect.Right - rect.Left;
+                height = rect.Bottom - rect.Top;
+            }
+            else
+            {
+                width = 0;
+                height = 0;
+            }
+
+            if (isDisabled)
+            {
+                hasTitle = DockNativeMethods.GetWindowTextLengthW(window) > 0;
+            }
+        }
+
+        if (!WindowActivationRules.ShouldIncludeTopLevelWindow(
+                appWindow,
+                isToolWindow,
+                isNoActivate,
+                isCloaked,
+                isMinimized,
+                isLayeredClickThrough,
+                isDisabled,
+                hasTitle,
+                width,
+                height))
         {
             return false;
         }

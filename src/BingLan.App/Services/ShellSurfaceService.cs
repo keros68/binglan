@@ -57,9 +57,9 @@ internal static class ShellSurfaceService
         return await RunWhenModifiersReleasedAsync(ShellSurfaceNativeMethods.ShowDesktop);
     }
 
-    internal static async Task<bool> OpenStartMenuAsync()
+    internal static async Task<ShellSurfaceResult> OpenStartMenuAsync()
     {
-        if (Interlocked.CompareExchange(ref _openingStart, 1, 0) != 0) return true;
+        if (Interlocked.CompareExchange(ref _openingStart, 1, 0) != 0) return ShellSurfaceResult.Opened;
         try
         {
             if (ShellSurfaceNativeMethods.PostStartMenuCommand())
@@ -67,12 +67,40 @@ internal static class ShellSurfaceService
                 for (var check = 0; check < 16; check++)
                 {
                     await Task.Delay(50);
-                    if (ShellSurfaceNativeMethods.IsStartMenuForeground()) return true;
+                    if (ShellSurfaceNativeMethods.IsStartMenuForeground()) return ShellSurfaceResult.Opened;
                 }
-                Debug.WriteLine("开始菜单消息未确认，改用 Ctrl+Esc");
+                Debug.WriteLine("开始菜单消息未确认，改用 UIA 开始按钮或 Ctrl+Esc");
             }
-            if (ShellSurfaceNativeMethods.IsStartMenuForeground()) return true;
-            return await RunWhenModifiersReleasedAsync(ShellSurfaceNativeMethods.OpenStartMenu);
+            if (ShellSurfaceNativeMethods.IsStartMenuForeground()) return ShellSurfaceResult.Opened;
+
+            if (!ShellSurfaceNativeMethods.IsTaskbarElevated())
+            {
+                var (invoked, alreadyOpen) = await Task.Run(TryInvokeStartButton);
+                if (alreadyOpen || ShellSurfaceNativeMethods.IsStartMenuForeground()) return ShellSurfaceResult.Opened;
+                if (invoked)
+                {
+                    for (var check = 0; check < 12; check++)
+                    {
+                        await Task.Delay(50);
+                        if (ShellSurfaceNativeMethods.IsStartMenuForeground()) return ShellSurfaceResult.Opened;
+                    }
+                    if (await Task.Run(IsStartButtonToggledOn)) return ShellSurfaceResult.Opened;
+                }
+            }
+
+            if (ShellSurfaceNativeMethods.IsTaskbarElevated() || ShellSurfaceNativeMethods.IsForegroundElevated())
+            {
+                return ShellSurfaceResult.ElevatedForeground;
+            }
+
+            if (await RunWhenModifiersReleasedAsync(ShellSurfaceNativeMethods.OpenStartMenu))
+            {
+                return ShellSurfaceResult.Opened;
+            }
+
+            return ShellSurfaceNativeMethods.IsTaskbarElevated() || ShellSurfaceNativeMethods.IsForegroundElevated()
+                ? ShellSurfaceResult.ElevatedForeground
+                : ShellSurfaceResult.Failed;
         }
         finally
         {
@@ -157,6 +185,9 @@ internal static class ShellSurfaceService
 
     internal static Task<bool> OpenInputMethodAsync() =>
         OpenTraySurfaceAsync(IsInputMethodButton, "ms-settings:keyboard");
+
+    internal static bool IsStartButton(string id, string className) =>
+        id == "StartButton" || className == "Start";
 
     // Explorer's control classes are implementation details. Match the known quick-
     // settings buttons only; an unknown tree falls back to the requested Settings page.
@@ -257,6 +288,104 @@ internal static class ShellSurfaceService
         finally
         {
             Volatile.Write(ref _openingTray, 0);
+        }
+    }
+
+    private static AutomationElement? FindStartButtonElement()
+    {
+        var taskbar = AutomationElement.RootElement.FindFirst(
+            TreeScope.Children,
+            new PropertyCondition(AutomationElement.ClassNameProperty, "Shell_TrayWnd"));
+        if (taskbar is null)
+        {
+            return null;
+        }
+
+        foreach (AutomationElement button in taskbar.FindAll(
+                     TreeScope.Descendants,
+                     new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Button)))
+        {
+            var current = button.Current;
+            if (IsStartButton(current.AutomationId, current.ClassName) && current.IsEnabled)
+            {
+                return button;
+            }
+        }
+
+        return null;
+    }
+
+    private static (bool Invoked, bool AlreadyOpen) TryInvokeStartButton()
+    {
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            try
+            {
+                var button = FindStartButtonElement();
+                if (button is null)
+                {
+                    return (false, false);
+                }
+
+                var tray = TaskbarNativeMethods.FindWindowW("Shell_TrayWnd", null);
+                if (tray != 0)
+                {
+                    DockNativeMethods.GetWindowThreadProcessId(tray, out var explorerPid);
+                    if (explorerPid != 0)
+                    {
+                        _ = DockNativeMethods.AllowSetForegroundWindow(explorerPid);
+                    }
+                }
+
+                if (button.TryGetCurrentPattern(TogglePattern.Pattern, out var togglePattern)
+                    && togglePattern is TogglePattern toggle)
+                {
+                    if (toggle.Current.ToggleState == ToggleState.On
+                        || ShellSurfaceNativeMethods.IsStartMenuForeground())
+                    {
+                        return (false, true);
+                    }
+                    toggle.Toggle();
+                    return (true, false);
+                }
+
+                if (button.TryGetCurrentPattern(InvokePattern.Pattern, out var invokePattern)
+                    && invokePattern is InvokePattern invoke)
+                {
+                    if (ShellSurfaceNativeMethods.IsStartMenuForeground())
+                    {
+                        return (false, true);
+                    }
+                    invoke.Invoke();
+                    return (true, false);
+                }
+
+                return (false, false);
+            }
+            catch (Exception exception) when (exception is ElementNotAvailableException
+                or ElementNotEnabledException or InvalidOperationException or COMException)
+            {
+                Debug.WriteLine($"UIA 开始按钮调用不可用：{exception.Message}");
+            }
+        }
+
+        return (false, false);
+    }
+
+    private static bool IsStartButtonToggledOn()
+    {
+        try
+        {
+            var button = FindStartButtonElement();
+            return button is not null
+                && button.TryGetCurrentPattern(TogglePattern.Pattern, out var pattern)
+                && pattern is TogglePattern toggle
+                && toggle.Current.ToggleState == ToggleState.On;
+        }
+        catch (Exception exception) when (exception is ElementNotAvailableException
+            or InvalidOperationException or COMException)
+        {
+            return false;
         }
     }
 
