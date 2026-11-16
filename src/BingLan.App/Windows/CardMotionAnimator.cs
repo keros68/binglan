@@ -14,7 +14,7 @@ namespace BingLan.App.Windows;
 
 /// <summary>
 /// 桌面卡片 120–200 ms 共享过渡动效：正文折叠/展开与条目/图标增删时的淡入滑入、淡出滑出。
-/// 始终遵循系统“动画效果”开关，系统关闭动画时立即切换且不启动过渡时钟。
+/// 同时遵循系统“动画效果”开关与应用内动效等级设置，任一关闭时立即切换且不启动过渡时钟。
 /// </summary>
 internal static class CardMotionAnimator
 {
@@ -26,8 +26,13 @@ internal static class CardMotionAnimator
     internal static Func<bool> AreSystemAnimationsEnabled { get; set; } =
         () => SystemParameters.ClientAreaAnimation;
 
+    /// <summary>
+    /// 应用内的全局动效等级；与 Dock 共用同一设置项，仅在宿主全局应用设置时同步更新。
+    /// </summary>
+    internal static MotionLevel Motion { get; set; } = MotionLevel.Standard;
+
     internal static bool IsAnimationEnabled =>
-        CardMotionRules.IsAnimated(AreSystemAnimationsEnabled());
+        CardMotionRules.IsAnimated(Motion, AreSystemAnimationsEnabled());
 
     internal static IEasingFunction CreateEase() =>
         new QuadraticEase { EasingMode = EasingMode.EaseOut };
@@ -39,7 +44,7 @@ internal static class CardMotionAnimator
             return;
         }
 
-        var duration = new Duration(CardMotionRules.ResolveItemDuration(true));
+        var duration = new Duration(CardMotionRules.ResolveItemDuration(Motion, AreSystemAnimationsEnabled()));
         var transform = new TranslateTransform(0d, -CardMotionRules.ItemSlideOffsetDip);
         container.RenderTransform = transform;
         container.Opacity = 0d;
@@ -127,7 +132,7 @@ internal static class CardMotionAnimator
         Canvas.SetTop(ghost, offset.Y);
         overlayHost.Children.Add(ghost);
 
-        var duration = new Duration(CardMotionRules.ResolveItemDuration(true));
+        var duration = new Duration(CardMotionRules.ResolveItemDuration(Motion, AreSystemAnimationsEnabled()));
         var fade = new DoubleAnimation(1d, 0d, duration) { EasingFunction = CreateEase() };
         var slide = new DoubleAnimation(0d, -CardMotionRules.ItemSlideOffsetDip, duration)
         {
@@ -152,7 +157,7 @@ internal static class CardMotionAnimator
         }
 
         emptyState.Opacity = 0d;
-        var duration = new Duration(CardMotionRules.ResolveItemDuration(true));
+        var duration = new Duration(CardMotionRules.ResolveItemDuration(Motion, AreSystemAnimationsEnabled()));
         var fade = new DoubleAnimation(0d, 1d, duration) { EasingFunction = CreateEase() };
         fade.Completed += (_, _) =>
         {
@@ -224,7 +229,9 @@ internal sealed class CardFoldAnimator
         _bodySurface.Height = startHeight;
         UpdateBodyClip(_bodySurface.ActualWidth > 0d ? _bodySurface.ActualWidth : _window.ActualWidth, startHeight);
 
-        var duration = new Duration(CardMotionRules.ResolveFoldDuration(true));
+        var duration = new Duration(CardMotionRules.ResolveFoldDuration(
+            CardMotionAnimator.Motion,
+            CardMotionAnimator.AreSystemAnimationsEnabled()));
         foreach (var element in bodyElements)
         {
             var startOpacity = wasAnimating ? element.Opacity : 1d;
@@ -286,7 +293,9 @@ internal sealed class CardFoldAnimator
         _bodySurface.Height = startHeight;
         UpdateBodyClip(_bodySurface.ActualWidth > 0d ? _bodySurface.ActualWidth : _window.ActualWidth, startHeight);
 
-        var duration = new Duration(CardMotionRules.ResolveFoldDuration(true));
+        var duration = new Duration(CardMotionRules.ResolveFoldDuration(
+            CardMotionAnimator.Motion,
+            CardMotionAnimator.AreSystemAnimationsEnabled()));
         for (var i = 0; i < bodyElements.Count; i++)
         {
             var element = bodyElements[i];

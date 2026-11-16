@@ -1672,6 +1672,7 @@ public sealed class WidgetCoordinator : IDisposable
         WidgetWindowBase.GridSnapEnabled = _state.Style.GridSnap;
         ApplyItemSurface();
         IceBlueDockWindow.Motion = _state.Style.Motion;
+        CardMotionAnimator.Motion = _state.Style.Motion;
         foreach (var window in _windows)
         {
             window.ApplyStyle(_state.Style);

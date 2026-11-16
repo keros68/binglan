@@ -1146,16 +1146,33 @@ internal static class ThemeStyleTests
             CardMotionRules.ItemDuration.TotalMilliseconds >= CardMotionRules.MinimumDurationMs &&
             CardMotionRules.ItemDuration.TotalMilliseconds <= CardMotionRules.MaximumDurationMs,
             $"条目增删过渡时长（{CardMotionRules.ItemDuration.TotalMilliseconds} ms）应落在 {CardMotionRules.MinimumDurationMs}–{CardMotionRules.MaximumDurationMs} ms 区间内");
-        Check(CardMotionRules.IsAnimated(true), "系统启用动画效果时应允许卡片过渡");
-        Check(!CardMotionRules.IsAnimated(false), "系统关闭动画效果时应禁用卡片过渡");
-        Check(
-            CardMotionRules.ResolveFoldDuration(true) == CardMotionRules.FoldDuration &&
-            CardMotionRules.ResolveFoldDuration(false) == TimeSpan.Zero,
-            "折叠过渡时长应仅在系统启用动画时非零");
-        Check(
-            CardMotionRules.ResolveItemDuration(true) == CardMotionRules.ItemDuration &&
-            CardMotionRules.ResolveItemDuration(false) == TimeSpan.Zero,
-            "条目增删过渡时长应仅在系统启用动画时非零");
+
+        foreach (var level in new[] { MotionLevel.Standard, MotionLevel.Reduced })
+        {
+            Check(CardMotionRules.IsAnimated(level, systemAnimationsEnabled: true),
+                $"系统动画开启且应用动效为 {level} 时应允许卡片过渡");
+            Check(
+                CardMotionRules.ResolveFoldDuration(level, true) == CardMotionRules.FoldDuration &&
+                CardMotionRules.ResolveItemDuration(level, true) == CardMotionRules.ItemDuration,
+                $"系统动画开启且应用动效为 {level} 时应返回共享过渡时长");
+        }
+
+        // 系统开/应用关、系统关/应用开、两者都关均不得产生过渡。
+        foreach (var (level, systemEnabled, label) in new (MotionLevel, bool, string)[]
+                 {
+                     (MotionLevel.Off, true, "系统开 + 应用动效关闭"),
+                     (MotionLevel.Standard, false, "系统关 + 应用动效标准"),
+                     (MotionLevel.Reduced, false, "系统关 + 应用动效减弱"),
+                     (MotionLevel.Off, false, "系统关 + 应用动效关闭")
+                 })
+        {
+            Check(!CardMotionRules.IsAnimated(level, systemEnabled),
+                $"{label} 时应禁用卡片过渡");
+            Check(
+                CardMotionRules.ResolveFoldDuration(level, systemEnabled) == TimeSpan.Zero &&
+                CardMotionRules.ResolveItemDuration(level, systemEnabled) == TimeSpan.Zero,
+                $"{label} 时折叠与条目过渡时长应为零");
+        }
     }
 
     private static ThemeReadResult Read(string manifest)
