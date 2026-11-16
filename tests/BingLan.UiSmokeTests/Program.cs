@@ -240,6 +240,7 @@ internal static class Program
         Run("主题导入对话框显示名称与预览图", TestThemeImportDialogShowsNameAndPreview, failures);
         Run("三种材质与 0/12/32 圆角真实窗口无白边或锯齿", TestMaterialCornerEdgesNoWhiteHalo, failures);
         Run("空状态引导与卡片折叠增删动效", TestWp6EmptyStateAndCardMotion, failures);
+        Run("悬停弹出设置入口时右侧标题栏按钮不漂移", TestHeaderButtonsStayStationaryWhenSettingsDotShows, failures);
 
         if (failures.Count > 0)
         {
@@ -7639,6 +7640,104 @@ internal static class Program
         string.IsNullOrWhiteSpace(control.Name)
             ? control.GetType().Name
             : $"{control.GetType().Name}#{control.Name}";
+
+    private static void TestHeaderButtonsStayStationaryWhenSettingsDotShows()
+    {
+        static double LeftX(FrameworkElement element, Window window) =>
+            element.TranslatePoint(new Point(0, 0), window).X;
+
+        static void AssertNoHorizontalDrift(
+            WidgetWindowBase window,
+            string label,
+            params Button[] stationaryButtons)
+        {
+            window.ApplySelection(false);
+            Pump();
+            if (window.IsMouseOver)
+            {
+                return; // 指针停留在卡片上时无法独立观测未悬停状态。
+            }
+
+            var settingsButton = Require<Button>(window, "SettingsButton");
+            Assert(settingsButton.Visibility == Visibility.Collapsed, $"{label} 未悬停或选中时设置按钮应折叠");
+            var before = stationaryButtons.Select(btn => LeftX(btn, window)).ToArray();
+
+            window.ApplySelection(true);
+            Pump();
+            Assert(settingsButton.Visibility == Visibility.Visible, $"{label} 选中后设置按钮应可见");
+            var settingsX = LeftX(settingsButton, window);
+            for (var i = 0; i < stationaryButtons.Length; i++)
+            {
+                var after = LeftX(stationaryButtons[i], window);
+                Assert(
+                    Math.Abs(after - before[i]) < 0.01,
+                    $"{label} 弹出设置按钮后 {stationaryButtons[i].Name} 发生了水平漂移 ({before[i]:F2} -> {after:F2})");
+                Assert(
+                    settingsX < after,
+                    $"{label} 设置按钮应位于 {stationaryButtons[i].Name} 左侧 ({settingsX:F2} vs {after:F2})");
+            }
+        }
+
+        var box = new FileBoxWindow(new FileBoxState
+        {
+            Placement = new WindowPlacement { Left = 80, Top = 80, Width = 366, Height = 306 }
+        });
+        ShowAndPump(box);
+        try
+        {
+            AssertNoHorizontalDrift(
+                box,
+                "分组盒（展开）",
+                Require<Button>(box, "AddButton"),
+                Require<Button>(box, "SortButton"),
+                Require<Button>(box, "CollapseButton"));
+
+            box.SetCollapsed(true);
+            Pump();
+            AssertNoHorizontalDrift(box, "分组盒（折叠）", Require<Button>(box, "CollapseButton"));
+        }
+        finally
+        {
+            Close(box);
+        }
+
+        var todo = new TodoWidgetWindow(new TodoWidgetState
+        {
+            Placement = new WindowPlacement { Left = 80, Top = 80, Width = 300, Height = 320 }
+        });
+        ShowAndPump(todo);
+        try
+        {
+            AssertNoHorizontalDrift(
+                todo,
+                "待办（展开）",
+                Require<Button>(todo, "ViewModeButton"),
+                Require<Button>(todo, "CollapseButton"),
+                Require<Button>(todo, "AddTodoButton"));
+
+            todo.SetCollapsed(true);
+            Pump();
+            AssertNoHorizontalDrift(todo, "待办（折叠）", Require<Button>(todo, "CollapseButton"));
+        }
+        finally
+        {
+            Close(todo);
+        }
+
+        var note = new NoteWidgetWindow(new NoteWidgetState
+        {
+            Placement = new WindowPlacement { Left = 80, Top = 80, Width = 306, Height = 266 }
+        });
+        ShowAndPump(note);
+        try
+        {
+            AssertNoHorizontalDrift(note, "便签", Require<Button>(note, "FormatToggle"));
+        }
+        finally
+        {
+            Close(note);
+        }
+    }
 
     private static bool Near(double actual, double expected) => Math.Abs(actual - expected) < 0.5;
 
