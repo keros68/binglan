@@ -136,6 +136,9 @@ public sealed partial class TopBarWindow : Window
     private uint _shellHookMessage;
     private bool _shellHookActive;
     private bool _closing;
+    private bool _isChangingVisibilityByApp;
+    private bool _trueFullScreenForeground;
+    private bool _desktopShown;
     private bool _menuOpen;
     private int _tick;
     private TextBlock? _inputMethodBadgeText;
@@ -352,14 +355,126 @@ public sealed partial class TopBarWindow : Window
         ApplyState();
     }
 
-    private static nint PreventActivation(nint hwnd, int message, nint wParam, nint lParam, ref bool handled)
+    internal event Action? ShellRecovered;
+
+    internal IEnumerable<nint> ActiveDesktopHandles()
+    {
+        if (!_closing
+            && IsVisible
+            && !_trueFullScreenForeground
+            && _appBar is not { IsFullScreenDetected: true }
+            && _handle != 0)
+        {
+            yield return _handle;
+        }
+
+        if (!_closing
+            && _state.SearchPresentation == SearchPresentation.Floating
+            && _searchWindow is { IsVisible: true } floating
+            && !_searchWindowHiddenForFullScreen
+            && floating.WindowHandle is var searchHandle
+            && searchHandle != 0)
+        {
+            yield return searchHandle;
+        }
+    }
+
+    internal void SetDesktopShown(bool shown, nint cardSlot)
+    {
+        _desktopShown = shown;
+        if (_closing)
+        {
+            return;
+        }
+
+        if (shown)
+        {
+            if (IsVisible
+                && !_trueFullScreenForeground
+                && _appBar is not { IsFullScreenDetected: true }
+                && _handle != 0)
+            {
+                if (NativeMethods.IsIconic(_handle) || !NativeMethods.IsWindowVisible(_handle))
+                {
+                    NativeMethods.ShowWindow(_handle, NativeMethods.SwShowNoActivate);
+                }
+                _appBar?.EnsureLayer();
+            }
+
+            if (_state.SearchPresentation == SearchPresentation.Floating
+                && _searchWindow is { IsVisible: true } floating
+                && !_searchWindowHiddenForFullScreen)
+            {
+                floating.RaiseAboveDesktop(cardSlot);
+            }
+            return;
+        }
+
+        if (_searchWindow is { } window && !_searchActive)
+        {
+            window.ReturnBelowTopmost();
+        }
+    }
+
+    private void HideFromApp()
+    {
+        _isChangingVisibilityByApp = true;
+        try
+        {
+            Hide();
+        }
+        finally
+        {
+            _isChangingVisibilityByApp = false;
+        }
+    }
+
+    private nint PreventActivation(nint hwnd, int message, nint wParam, nint lParam, ref bool handled)
     {
         if (message == WmMouseActivate)
         {
             handled = true;
             return MaNoActivate;
         }
+
+        if (!_closing && !_isChangingVisibilityByApp)
+        {
+            if (message == NativeMethods.WmSize && wParam == NativeMethods.SizeMinimized)
+            {
+                RecoverFromShell(minimized: true);
+            }
+            else if (message == NativeMethods.WmShowWindow && wParam == 0)
+            {
+                RecoverFromShell(minimized: false);
+            }
+            else if (message == NativeMethods.WmWindowPosChanged
+                     && (Marshal.PtrToStructure<NativeMethods.WindowPos>(lParam).Flags
+                         & NativeMethods.SwpHideWindow) != 0)
+            {
+                RecoverFromShell(minimized: false);
+            }
+        }
         return 0;
+    }
+
+    private void RecoverFromShell(bool minimized)
+    {
+        Dispatcher.BeginInvoke(
+            DispatcherPriority.Send,
+            new Action(() =>
+            {
+                if (_closing || _handle == 0 || !IsVisible)
+                {
+                    return;
+                }
+                if (minimized ? !NativeMethods.IsIconic(_handle) : NativeMethods.IsWindowVisible(_handle))
+                {
+                    return;
+                }
+                NativeMethods.ShowWindow(_handle, NativeMethods.SwShowNoActivate);
+                _appBar?.EnsureLayer();
+                ShellRecovered?.Invoke();
+            }));
     }
 
     private nint OnShellHook(nint hwnd, int message, nint wParam, nint lParam, ref bool handled)
@@ -1628,7 +1743,7 @@ public sealed partial class TopBarWindow : Window
             var previousWindow = _searchWindow;
             _searchWindow = null;
             previousWindow?.DetachSearchContent();
-            previousWindow?.Hide();
+            previousWindow?.HideFromApp();
             if (previousWindow is not null) _idleSearchWindow = previousWindow;
             host.Width = SearchBoxWidth;
             host.Height = Math.Clamp(_state.Height - 10d, 18d, 30d);
@@ -1653,16 +1768,21 @@ public sealed partial class TopBarWindow : Window
                         if (ReferenceEquals(_searchWindow, created) && _searchActive) EndSearchSessionAfterInput();
                     };
                     created.Dismissed += EndSearchSession;
+                    created.ShellRecovered += () => ShellRecovered?.Invoke();
                 }
             }
             var window = _searchWindow;
             if (_state.SearchPresentation == SearchPresentation.Floating)
             {
                 window.Show();
+                if (_desktopShown)
+                {
+                    window.RaiseAboveDesktop(DockNativeMethods.HwndTopmost);
+                }
             }
             else
             {
-                window.Hide();
+                window.HideFromApp();
                 var button = new Button
                 {
                     Content = new TextBlock { Text = GlyphSearch, FontFamily = StatusIconFont },
@@ -2685,7 +2805,7 @@ public sealed partial class TopBarWindow : Window
         }
         if (_state.SearchPresentation == SearchPresentation.Icon)
         {
-            _searchWindow?.Hide();
+            _searchWindow?.HideFromApp();
         }
         // Reserved bars return to the idle cadence after borrowing the fast input tick.
         _foregroundTimer.Interval = _appBar?.IsReserved == true && _todoFlyout is null && _clockFlyout is null
@@ -3213,17 +3333,22 @@ public sealed partial class TopBarWindow : Window
             && foregroundBounds.Bottom >= monitor.Bounds.Bottom;
         var zoomed = foreground && foregroundWindow != 0 && DockNativeMethods.IsZoomed(foregroundWindow);
         var trueFullScreen = DockVacateRules.IsTrueFullScreen(fullScreen, zoomed);
+        _trueFullScreenForeground = trueFullScreen;
         if (_searchWindow is { } floating && _state.SearchPresentation == SearchPresentation.Floating)
         {
             if (trueFullScreen && !_searchActive && floating.IsVisible)
             {
-                floating.Hide();
+                floating.HideFromApp();
                 _searchWindowHiddenForFullScreen = true;
             }
             else if (!trueFullScreen && _searchWindowHiddenForFullScreen)
             {
                 floating.Show();
                 _searchWindowHiddenForFullScreen = false;
+                if (_desktopShown)
+                {
+                    floating.RaiseAboveDesktop(DockNativeMethods.HwndTopmost);
+                }
             }
         }
 
@@ -3269,7 +3394,7 @@ public sealed partial class TopBarWindow : Window
             {
                 CloseTodoFlyout();
                 CloseClockFlyout();
-                Hide();
+                HideFromApp();
             }
         }
     }

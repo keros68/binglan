@@ -29,6 +29,16 @@ internal sealed class DockHost : IDisposable
         _notify = notify;
     }
 
+    internal event Action? ShellRecovered;
+
+    internal event Action? ShowDesktopTriggered;
+
+    internal IEnumerable<nint> ActiveDesktopHandles() =>
+        _window?.ActiveDesktopHandles() ?? [];
+
+    internal void EnsureAboveDesktop() =>
+        _window?.EnsureAboveDesktop();
+
     internal void Apply()
     {
         if (!_state.IsEnabled)
@@ -84,6 +94,8 @@ internal sealed class DockHost : IDisposable
         window.DockStateChanged += _stateChanged;
         window.SettingsRequested += _openSettings;
         window.CommandFailed += _notify;
+        window.ShellRecovered += () => ShellRecovered?.Invoke();
+        window.ShowDesktopTriggered += () => ShowDesktopTriggered?.Invoke();
         window.HideRequested += () =>
         {
             _state.IsEnabled = false;

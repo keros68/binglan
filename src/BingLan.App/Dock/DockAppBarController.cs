@@ -451,6 +451,8 @@ internal sealed class DockAppBarController : IDisposable
         DockNativeMethods.SHAppBarMessage(message, ref data);
     }
 
+    internal void EnsureLayer() => UpdateWindowLayer();
+
     // A reserved dock behaves like the taskbar: above normal windows, below a
     // full-screen app. A smart-hide dock is only on top while it is shown.
     private void UpdateWindowLayer()

@@ -20,6 +20,7 @@ internal static class DockNativeMethods
     internal const uint EventSystemMinimizeEnd = 0x0017;
     internal const uint EventSystemDesktopSwitch = 0x0020;
     internal const uint EventObjectCreate = 0x8000;
+    internal const uint EventObjectShow = 0x8002;
     internal const uint EventObjectHide = 0x8003;
     internal const uint EventObjectNameChange = 0x800C;
     internal const uint EventObjectStateChange = 0x800A;

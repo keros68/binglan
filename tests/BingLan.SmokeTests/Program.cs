@@ -66,6 +66,7 @@ Run("清爽桌面只改图标位", CleanDesktopTests.TestOnlyTheIconBitChanges);
 Run("清爽桌面隐藏与恢复计划", CleanDesktopTests.TestHideAndRestorePlans);
 Run("显示桌面判定与提升回落规则", DesktopSurfaceTests.TestShownStateAndActions);
 Run("显示桌面判定中外壳窗口的归类", DesktopSurfaceTests.TestOrdinaryWindowClassification);
+Run("显示桌面判定中 WorkerW 表面与工具窗过滤规则", DesktopSurfaceTests.TestSurfaceHostAndBlockerFiltering);
 Run("更新版本号与每日检查节奏", UpdateServiceTests.TestVersionAndSchedule);
 Run("更新发布信息解析与安全过滤", UpdateServiceTests.TestReleaseParsing);
 Run("检查更新结果与请求内容（离线桩）", UpdateServiceTests.TestCheck);

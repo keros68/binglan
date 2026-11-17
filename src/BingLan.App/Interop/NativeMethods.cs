@@ -163,6 +163,13 @@ internal static class NativeMethods
     [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     internal static extern nint FindWindowW(string className, string? windowName);
 
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    internal static extern nint FindWindowExW(
+        nint parentWindow,
+        nint childAfter,
+        string? className,
+        string? windowName);
+
     [DllImport("user32.dll")]
     internal static extern uint GetWindowThreadProcessId(nint window, out uint processId);
 

@@ -20,6 +20,8 @@ public partial class SearchWindow : Window
     private double _startWidth;
     private bool _allowClose;
     private bool _layoutChanging;
+    private bool _isChangingVisibilityByApp;
+    private HwndSource? _source;
 
     internal SearchWindow(TopBarState state, Border search, Action save)
     {
@@ -33,6 +35,8 @@ public partial class SearchWindow : Window
         SourceInitialized += (_, _) =>
         {
             var handle = new WindowInteropHelper(this).Handle;
+            _source = HwndSource.FromHwnd(handle);
+            _source?.AddHook(WindowProc);
             var style = (long)NativeMethods.GetWindowLongPtr(handle, NativeMethods.GwlExStyle);
             NativeMethods.SetWindowLongPtr(handle, NativeMethods.GwlExStyle,
                 (nint)(style | NativeMethods.WsExToolWindow | DockNativeMethods.WsExNoActivate));
@@ -56,13 +60,111 @@ public partial class SearchWindow : Window
                 {
                     if (_allowClose) return;
                     Dismissed?.Invoke();
-                    Hide();
+                    HideFromApp();
                 }, System.Windows.Threading.DispatcherPriority.Input);
             }
         };
     }
 
     internal event Action? Dismissed;
+    internal event Action? ShellRecovered;
+
+    internal nint WindowHandle => _source is { IsDisposed: false } source ? source.Handle : 0;
+
+    internal void HideFromApp()
+    {
+        _isChangingVisibilityByApp = true;
+        try
+        {
+            Hide();
+        }
+        finally
+        {
+            _isChangingVisibilityByApp = false;
+        }
+    }
+
+    internal void RaiseAboveDesktop(nint insertAfter)
+    {
+        if (_source is not { IsDisposed: false } source)
+        {
+            return;
+        }
+        if (NativeMethods.IsIconic(source.Handle) || !NativeMethods.IsWindowVisible(source.Handle))
+        {
+            NativeMethods.ShowWindow(source.Handle, NativeMethods.SwShowNoActivate);
+        }
+        const uint flags = NativeMethods.SwpNoMove | NativeMethods.SwpNoSize |
+                           NativeMethods.SwpNoActivate | NativeMethods.SwpShowWindow;
+        if ((NativeMethods.GetExStyleOf(source.Handle) & NativeMethods.WsExTopmost) == 0
+            || insertAfter == 0
+            || insertAfter == DockNativeMethods.HwndTopmost)
+        {
+            NativeMethods.SetWindowPos(source.Handle, DockNativeMethods.HwndTopmost, 0, 0, 0, 0, flags);
+        }
+        if (insertAfter != 0 && insertAfter != DockNativeMethods.HwndTopmost && insertAfter != source.Handle)
+        {
+            NativeMethods.SetWindowPos(source.Handle, insertAfter, 0, 0, 0, 0, flags);
+        }
+    }
+
+    internal void ReturnBelowTopmost()
+    {
+        if (_source is { IsDisposed: false } source
+            && (NativeMethods.GetExStyleOf(source.Handle) & NativeMethods.WsExTopmost) != 0)
+        {
+            NativeMethods.SetWindowPos(
+                source.Handle,
+                DockNativeMethods.HwndNoTopmost,
+                0,
+                0,
+                0,
+                0,
+                NativeMethods.SwpNoMove | NativeMethods.SwpNoSize | NativeMethods.SwpNoActivate);
+        }
+    }
+
+    private nint WindowProc(nint window, int message, nint wParam, nint lParam, ref bool handled)
+    {
+        if (!_allowClose && !_isChangingVisibilityByApp)
+        {
+            if (message == NativeMethods.WmSize && wParam == NativeMethods.SizeMinimized)
+            {
+                RecoverFromShell(minimized: true);
+            }
+            else if (message == NativeMethods.WmShowWindow && wParam == 0)
+            {
+                RecoverFromShell(minimized: false);
+            }
+            else if (message == NativeMethods.WmWindowPosChanged
+                     && (System.Runtime.InteropServices.Marshal.PtrToStructure<NativeMethods.WindowPos>(lParam).Flags
+                         & NativeMethods.SwpHideWindow) != 0)
+            {
+                RecoverFromShell(minimized: false);
+            }
+        }
+        return 0;
+    }
+
+    private void RecoverFromShell(bool minimized)
+    {
+        Dispatcher.BeginInvoke(
+            System.Windows.Threading.DispatcherPriority.Send,
+            new Action(() =>
+            {
+                if (_allowClose || _source is not { IsDisposed: false } source || !IsVisible)
+                {
+                    return;
+                }
+                var handle = source.Handle;
+                if (minimized ? !NativeMethods.IsIconic(handle) : NativeMethods.IsWindowVisible(handle))
+                {
+                    return;
+                }
+                NativeMethods.ShowWindow(handle, NativeMethods.SwShowNoActivate);
+                ShellRecovered?.Invoke();
+            }));
+    }
 
     internal void DetachSearchContent() => SearchContent.Content = null;
 

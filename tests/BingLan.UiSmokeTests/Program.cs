@@ -5099,6 +5099,37 @@ internal static class Program
             PumpUntil(() => (GetWindowLongPtr(handle, GwlExStyle) & WsExTopmost) == 0,
                 "回落后组件应离开置顶带");
             Assert(IsWindowVisible(handle), "回落后组件应保持可见");
+
+            // Regression: when the slot passed to RaiseAboveDesktop is the bottom-most
+            // topmost window, a single SetWindowPos(card, slot) in Win32 leaves the card
+            // non-topmost. Raising must still promote the card into WS_EX_TOPMOST.
+            var anchor = new Window
+            {
+                Width = 40,
+                Height = 40,
+                Left = 120,
+                Top = 120,
+                WindowStyle = WindowStyle.None,
+                ShowInTaskbar = false,
+                ShowActivated = false,
+                Topmost = true
+            };
+            ShowAndPump(anchor);
+            try
+            {
+                var anchorHandle = new WindowInteropHelper(anchor).Handle;
+                window.RaiseAboveDesktop(anchorHandle);
+                PumpUntil(() => (GetWindowLongPtr(handle, GwlExStyle) & WsExTopmost) != 0,
+                    "排在置顶带末尾窗口之后提升时，组件仍须获得 WS_EX_TOPMOST");
+            }
+            finally
+            {
+                anchor.Close();
+                Pump();
+            }
+            window.ReturnBelowOrdinaryWindows();
+            PumpUntil(() => (GetWindowLongPtr(handle, GwlExStyle) & WsExTopmost) == 0,
+                "锚点测试回落后组件应离开置顶带");
         }
         finally
         {

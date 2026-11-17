@@ -99,12 +99,7 @@ public sealed class WidgetCoordinator : IDisposable
             SaveNow();
         };
         _trayIcon = BuildTrayIcon();
-        _desktopSurfaceWatcher = new DesktopSurfaceWatcher(
-            () => _windows
-                .Where(window => window.IsVisible)
-                .Select(window => window.WindowHandle)
-                .Where(handle => handle != 0)
-                .ToList());
+        _desktopSurfaceWatcher = new DesktopSurfaceWatcher(GetDesktopProtectedHandles);
         // Only the installed app checks on its own; test and interactive runs keep quiet.
         _updater = new AppUpdater(_state.Updates, AppVersion, ScheduleSave, Exit, canAutoCheck: dataDirectory is null);
         _updater.ReleaseFound += OnReleaseFound;
@@ -124,6 +119,8 @@ public sealed class WidgetCoordinator : IDisposable
                 "冰蓝 Dock",
                 message,
                 TrayTipKind.Info));
+        _dock.ShellRecovered += _desktopSurfaceWatcher.ScheduleCheck;
+        _dock.ShowDesktopTriggered += _desktopSurfaceWatcher.ScheduleCheck;
         _taskbar = new TaskbarAdapter(TaskbarCheckpointPath(_store.DataDirectory));
         _taskbar.StatusChanged += OnTaskbarStatusChanged;
         _taskbar.AutoHideTakenOver += () =>
@@ -142,6 +139,7 @@ public sealed class WidgetCoordinator : IDisposable
                 "顶端信息条",
                 message,
                 TrayTipKind.Info));
+        _topBar.ShellRecovered += _desktopSurfaceWatcher.ScheduleCheck;
         StartupLog.Open(_store.DataDirectory);
         UiDiagnostics.Start(
             Dispatcher.CurrentDispatcher,
@@ -981,9 +979,16 @@ public sealed class WidgetCoordinator : IDisposable
         {
             if (e.NewValue is true && _desktopSurfaceWatcher.IsDesktopShown)
             {
-                var slot = NativeMethods.FindWindowW("Shell_TrayWnd", null);
-                window.RaiseAboveDesktop(slot != 0 ? slot : DockNativeMethods.HwndTopmost);
+                window.RaiseAboveDesktop(FindCardRaiseSlot());
             }
+        };
+        window.ShellRecovered += recovered =>
+        {
+            if (_desktopSurfaceWatcher.IsDesktopShown && recovered.IsVisible)
+            {
+                recovered.RaiseAboveDesktop(FindCardRaiseSlot());
+            }
+            _desktopSurfaceWatcher.ScheduleCheck();
         };
         window.WidgetChanged += OnWindowStateChanged;
         window.Selected += selected =>
@@ -999,34 +1004,56 @@ public sealed class WidgetCoordinator : IDisposable
         window.ExitRequested += Exit;
     }
 
+    private IReadOnlyList<nint> GetDesktopProtectedHandles()
+    {
+        var handles = new List<nint>(_windows.Count + 4);
+        foreach (var window in _windows)
+        {
+            if (window.IsVisible && window.WindowHandle is var handle && handle != 0)
+            {
+                handles.Add(handle);
+            }
+        }
+        if (_topBar is not null)
+        {
+            handles.AddRange(_topBar.ActiveDesktopHandles());
+        }
+        if (_dock is not null)
+        {
+            handles.AddRange(_dock.ActiveDesktopHandles());
+        }
+        return handles;
+    }
+
     /// <summary>
     /// The shell just showed or stopped showing the desktop. While it is shown, the
-    /// raised desktop surface would cover the cards behind the wallpaper, so they are
-    /// lifted into the topmost band under the taskbar; when ordinary windows return
-    /// they go back below them.
+    /// raised desktop surface (<c>WorkerW</c> or <c>Progman</c>) would cover desktop
+    /// cards and bars behind the wallpaper, so cards are lifted into the topmost band
+    /// under the taskbar and TopBar/Dock re-assert their topmost layer above it; when
+    /// ordinary windows return, cards go back below them.
     /// </summary>
     private void OnDesktopSurfaceChanged()
     {
         if (_desktopSurfaceWatcher.IsDesktopShown)
         {
-            RaiseCardsAboveDesktop();
+            var slot = RaiseCardsAboveDesktop();
+            _topBar.SetDesktopShown(true, slot);
+            _dock.EnsureAboveDesktop();
+            _cornerReveal.Raise();
             return;
         }
+        _topBar.SetDesktopShown(false, 0);
         foreach (var window in _windows)
         {
             window.ReturnBelowOrdinaryWindows();
         }
     }
 
-    private void RaiseCardsAboveDesktop()
+    private nint RaiseCardsAboveDesktop()
     {
-        // Under the taskbar so the taskbar stays reachable; each following card goes
-        // below the previous one to keep the stacking order between the cards.
-        var slot = NativeMethods.FindWindowW("Shell_TrayWnd", null);
-        if (slot == 0)
-        {
-            slot = DockNativeMethods.HwndTopmost;
-        }
+        // Under the taskbar when the taskbar itself sits above the raised desktop
+        // surface; each following card goes below the previous one to keep stacking.
+        var slot = FindCardRaiseSlot();
         foreach (var window in _windows.Where(window => window.IsVisible))
         {
             window.RaiseAboveDesktop(slot);
@@ -1036,6 +1063,35 @@ public sealed class WidgetCoordinator : IDisposable
                 slot = handle;
             }
         }
+        return slot;
+    }
+
+    private static nint FindCardRaiseSlot()
+    {
+        var desktopSurface = DesktopSurfaceWatcher.FindDesktopSurfaceWindow(out _);
+        nint lowestTaskbarAboveDesktop = 0;
+        var className = new System.Text.StringBuilder(32);
+        NativeMethods.EnumWindows((window, _) =>
+        {
+            if (desktopSurface != 0 && window == desktopSurface)
+            {
+                return false;
+            }
+            if ((NativeMethods.GetExStyleOf(window) & NativeMethods.WsExTopmost) == 0)
+            {
+                return true;
+            }
+            className.Clear();
+            if (DockNativeMethods.GetClassNameW(window, className, className.Capacity) > 0
+                && TaskbarCornerReveal.IsTaskbarClass(className.ToString()))
+            {
+                lowestTaskbarAboveDesktop = window;
+            }
+            return true;
+        }, 0);
+        return lowestTaskbarAboveDesktop != 0
+            ? lowestTaskbarAboveDesktop
+            : DockNativeMethods.HwndTopmost;
     }
 
     private void OnWindowStateChanged(WidgetWindowBase window)

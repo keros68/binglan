@@ -56,7 +56,11 @@ internal sealed class TopBarAppBarController : IDisposable
 
     internal bool IsReserved => _reservation.IsRegistered;
 
+    internal bool IsFullScreenDetected => _fullScreenDetected;
+
     internal MonitorSnapshot? Monitor => _monitor;
+
+    internal void EnsureLayer() => UpdateWindowLayer();
 
     internal void SetFullScreenDetected(bool detected)
     {
@@ -165,6 +169,7 @@ internal sealed class TopBarAppBarController : IDisposable
                         DockAppBarController.GetLiveWorkingArea(_monitor).Top,
                         adjusted.Bottom))
                 {
+                    UpdateWindowLayer();
                     return;
                 }
                 data.Rectangle = ToNative(adjusted);

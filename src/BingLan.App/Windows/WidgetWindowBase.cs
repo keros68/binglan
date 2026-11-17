@@ -460,6 +460,7 @@ public class WidgetWindowBase : Window
     public event Action<WidgetWindowBase>? OpenAppSettingsRequested;
     public event Action<WidgetWindowBase>? DeleteRequested;
     public event Action? ExitRequested;
+    internal event Action<WidgetWindowBase>? ShellRecovered;
 
     public bool IsWidgetLocked { get; private set; }
 
@@ -1536,6 +1537,7 @@ public class WidgetWindowBase : Window
                 // foreground; the card then goes back under every ordinary window.
                 NativeMethods.ShowWindow(handle, NativeMethods.SwShowNoActivate);
                 SendToBack();
+                ShellRecovered?.Invoke(this);
             }));
     }
 
@@ -1773,23 +1775,50 @@ public class WidgetWindowBase : Window
     /// <summary>
     /// Lifts the card into the topmost band at the given z-order slot — under the
     /// taskbar — while the shell shows the desktop: the raised desktop surface would
-    /// otherwise cover the card behind the wallpaper. <see cref="SendToBack"/> puts it
-    /// back once ordinary windows return.
+    /// otherwise cover the card behind the wallpaper. Promoting with
+    /// <see cref="DockNativeMethods.HwndTopmost"/> first ensures Win32 grants
+    /// <c>WS_EX_TOPMOST</c> even when <paramref name="insertAfter"/> is the last
+    /// topmost window.
     /// </summary>
     internal void RaiseAboveDesktop(nint insertAfter)
     {
         _raisedAboveDesktop = true;
         if (_source is { IsDisposed: false } source)
         {
-            NativeMethods.SetWindowPos(
-                source.Handle,
-                insertAfter,
-                0,
-                0,
-                0,
-                0,
-                NativeMethods.SwpNoMove | NativeMethods.SwpNoSize |
-                NativeMethods.SwpNoActivate | NativeMethods.SwpShowWindow);
+            if (NativeMethods.IsIconic(source.Handle) || !NativeMethods.IsWindowVisible(source.Handle))
+            {
+                NativeMethods.ShowWindow(source.Handle, NativeMethods.SwShowNoActivate);
+            }
+
+            const uint flags = NativeMethods.SwpNoMove | NativeMethods.SwpNoSize |
+                               NativeMethods.SwpNoActivate | NativeMethods.SwpShowWindow;
+            if ((NativeMethods.GetExStyleOf(source.Handle) & NativeMethods.WsExTopmost) == 0
+                || insertAfter == 0
+                || insertAfter == DockNativeMethods.HwndTopmost)
+            {
+                NativeMethods.SetWindowPos(
+                    source.Handle,
+                    DockNativeMethods.HwndTopmost,
+                    0,
+                    0,
+                    0,
+                    0,
+                    flags);
+            }
+
+            if (insertAfter != 0
+                && insertAfter != DockNativeMethods.HwndTopmost
+                && insertAfter != source.Handle)
+            {
+                NativeMethods.SetWindowPos(
+                    source.Handle,
+                    insertAfter,
+                    0,
+                    0,
+                    0,
+                    0,
+                    flags);
+            }
         }
     }
 

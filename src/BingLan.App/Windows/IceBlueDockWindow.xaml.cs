@@ -68,6 +68,7 @@ public partial class IceBlueDockWindow : Window
     private bool _renderedDesktopEntry;
     private nint _handle;
     private bool _closing;
+    private bool _isChangingVisibilityByApp;
     private bool _refreshRunning;
     private bool _refreshQueued;
     private bool _menuOpen;
@@ -186,7 +187,57 @@ public partial class IceBlueDockWindow : Window
 
     internal event Action? HideRequested;
 
+    internal event Action? ShellRecovered;
+
+    internal event Action? ShowDesktopTriggered;
+
     internal event Action<string>? CommandFailed;
+
+    internal IEnumerable<nint> ActiveDesktopHandles()
+    {
+        if (_closing || _trueFullScreenForeground || _suppressedBySystemMenu)
+        {
+            yield break;
+        }
+        if (IsVisible && !_hiddenBySmartHide && _handle != 0)
+        {
+            yield return _handle;
+        }
+        if (_handleWindow is { IsVisible: true, WindowHandle: var handle } && handle != 0)
+        {
+            yield return handle;
+        }
+    }
+
+    internal void EnsureAboveDesktop()
+    {
+        if (_closing || _trueFullScreenForeground || _suppressedBySystemMenu)
+        {
+            return;
+        }
+        if (IsVisible && !_hiddenBySmartHide && _handle != 0)
+        {
+            if (NativeMethods.IsIconic(_handle) || !NativeMethods.IsWindowVisible(_handle))
+            {
+                NativeMethods.ShowWindow(_handle, NativeMethods.SwShowNoActivate);
+            }
+            _appBar?.EnsureLayer();
+        }
+        _handleWindow?.EnsureAboveDesktop();
+    }
+
+    private void HideFromApp()
+    {
+        _isChangingVisibilityByApp = true;
+        try
+        {
+            Hide();
+        }
+        finally
+        {
+            _isChangingVisibilityByApp = false;
+        }
+    }
 
     /// <summary>Re-reads monitor and visibility settings from the dock state.</summary>
     internal void ApplyState()
@@ -325,14 +376,52 @@ public partial class IceBlueDockWindow : Window
         RefreshWindows();
     }
 
-    private static nint PreventActivation(nint hwnd, int message, nint wParam, nint lParam, ref bool handled)
+    private nint PreventActivation(nint hwnd, int message, nint wParam, nint lParam, ref bool handled)
     {
         if (message == WmMouseActivate)
         {
             handled = true;
             return MaNoActivate;
         }
+
+        if (!_closing && !_isChangingVisibilityByApp)
+        {
+            if (message == NativeMethods.WmSize && wParam == NativeMethods.SizeMinimized)
+            {
+                RecoverFromShell(minimized: true);
+            }
+            else if (message == NativeMethods.WmShowWindow && wParam == 0)
+            {
+                RecoverFromShell(minimized: false);
+            }
+            else if (message == NativeMethods.WmWindowPosChanged
+                     && (System.Runtime.InteropServices.Marshal.PtrToStructure<NativeMethods.WindowPos>(lParam).Flags
+                         & NativeMethods.SwpHideWindow) != 0)
+            {
+                RecoverFromShell(minimized: false);
+            }
+        }
         return 0;
+    }
+
+    private void RecoverFromShell(bool minimized)
+    {
+        Dispatcher.BeginInvoke(
+            DispatcherPriority.Send,
+            new Action(() =>
+            {
+                if (_closing || _handle == 0 || !IsVisible || _hiddenBySmartHide || _suppressedBySystemMenu)
+                {
+                    return;
+                }
+                if (minimized ? !NativeMethods.IsIconic(_handle) : NativeMethods.IsWindowVisible(_handle))
+                {
+                    return;
+                }
+                NativeMethods.ShowWindow(_handle, NativeMethods.SwShowNoActivate);
+                _appBar?.EnsureLayer();
+                ShellRecovered?.Invoke();
+            }));
     }
 
     private nint OnShellHook(nint hwnd, int message, nint wParam, nint lParam, ref bool handled)
@@ -699,7 +788,9 @@ public partial class IceBlueDockWindow : Window
             if (!await ShellSurfaceService.ToggleDesktopAsync())
             {
                 CommandFailed?.Invoke("无法显示桌面，请按 Win+D。");
+                return;
             }
+            ShowDesktopTriggered?.Invoke();
         };
         AddHoverZoom(button, icon);
         return button;
@@ -1893,7 +1984,7 @@ public partial class IceBlueDockWindow : Window
             || _handleWindow is not { IsDragActive: false } handle)
         {
             _morph.Snap();
-            Hide();
+            HideFromApp();
             SyncHandle();
             return;
         }
@@ -1933,7 +2024,7 @@ public partial class IceBlueDockWindow : Window
         {
             _appBar?.SetFloatingOverride(null);
         }
-        Hide();
+        HideFromApp();
         SyncHandle();
     }
 
@@ -1954,7 +2045,7 @@ public partial class IceBlueDockWindow : Window
         {
             _appBar?.SetFloatingOverride(null);
         }
-        Hide();
+        HideFromApp();
         if (!_trueFullScreenForeground && _handleAllowed && !_suppressedBySystemMenu)
         {
             _handleWindow?.Pulse();
@@ -2056,6 +2147,7 @@ public partial class IceBlueDockWindow : Window
                 PinFiles(files);
             }
         };
+        _handleWindow.ShellRecovered += () => ShellRecovered?.Invoke();
         // Create the HWND now so the handle is already positioned when it first shows.
         _ = new WindowInteropHelper(_handleWindow).EnsureHandle();
     }

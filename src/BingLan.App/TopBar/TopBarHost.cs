@@ -1,3 +1,4 @@
+using BingLan.App.Interop;
 using BingLan.App.Windows;
 using BingLan.Core.Models;
 using BingLan.Core.Services;
@@ -17,6 +18,7 @@ internal sealed class TopBarHost : IDisposable
     private readonly IPerformanceSamplingService _sampler;
     private readonly Action<string> _notify;
     private TopBarWindow? _window;
+    private bool _desktopShown;
 
     internal TopBarHost(
         TopBarState state,
@@ -30,6 +32,17 @@ internal sealed class TopBarHost : IDisposable
         _environment = environment;
         _sampler = sampler;
         _notify = notify;
+    }
+
+    internal event Action? ShellRecovered;
+
+    internal IEnumerable<nint> ActiveDesktopHandles() =>
+        _window?.ActiveDesktopHandles() ?? [];
+
+    internal void SetDesktopShown(bool shown, nint cardSlot)
+    {
+        _desktopShown = shown;
+        _window?.SetDesktopShown(shown, cardSlot);
     }
 
     internal void Apply()
@@ -49,6 +62,10 @@ internal sealed class TopBarHost : IDisposable
             else
             {
                 _window.ApplyState();
+            }
+            if (_desktopShown)
+            {
+                _window?.SetDesktopShown(true, DockNativeMethods.HwndTopmost);
             }
         }
         catch (Exception exception)
@@ -70,6 +87,7 @@ internal sealed class TopBarHost : IDisposable
     private void Open()
     {
         var window = new TopBarWindow(_state, _style, _environment, _sampler);
+        window.ShellRecovered += () => ShellRecovered?.Invoke();
         window.Closed += (_, _) =>
         {
             if (ReferenceEquals(_window, window))

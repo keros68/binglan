@@ -26,6 +26,8 @@ public partial class DockHandleWindow : Window
     private nint _handle;
     private bool _dragging;
     private bool _dragStarted;
+    private bool _closing;
+    private bool _isChangingVisibilityByApp;
     private PixelPoint _pressStartCursor;
     private PixelRect _pressStartRect;
     private readonly DockGlassSurface _glass;
@@ -35,7 +37,12 @@ public partial class DockHandleWindow : Window
         InitializeComponent();
         _glass = new DockGlassSurface(this, HandleSurface, "DockHandleBrush", "DockSurfaceBorderBrush");
         SourceInitialized += OnSourceInitialized;
+        Closing += (_, _) => _closing = true;
     }
+
+    internal event Action? ShellRecovered;
+
+    internal nint WindowHandle => _handle;
 
     /// <summary>Raised once the pointer moves past the press threshold: the owner stops hovering expansions.</summary>
     internal event Action? DragStarted;
@@ -83,8 +90,36 @@ public partial class DockHandleWindow : Window
         }
         else if (!visible && IsVisible)
         {
-            Hide();
+            _isChangingVisibilityByApp = true;
+            try
+            {
+                Hide();
+            }
+            finally
+            {
+                _isChangingVisibilityByApp = false;
+            }
         }
+    }
+
+    internal void EnsureAboveDesktop()
+    {
+        if (_closing || _handle == 0 || !IsVisible)
+        {
+            return;
+        }
+        if (NativeMethods.IsIconic(_handle) || !NativeMethods.IsWindowVisible(_handle))
+        {
+            NativeMethods.ShowWindow(_handle, NativeMethods.SwShowNoActivate);
+        }
+        NativeMethods.SetWindowPos(
+            _handle,
+            DockNativeMethods.HwndTopmost,
+            0,
+            0,
+            0,
+            0,
+            NativeMethods.SwpNoMove | NativeMethods.SwpNoSize | NativeMethods.SwpNoActivate);
     }
 
     // The three-step drag keeps the window on the pointer itself, so the move feels the
@@ -162,7 +197,7 @@ public partial class DockHandleWindow : Window
         HwndSource.FromHwnd(_handle)?.AddHook(PreventActivation);
     }
 
-    private static nint PreventActivation(nint hwnd, int message, nint wParam, nint lParam, ref bool handled)
+    private nint PreventActivation(nint hwnd, int message, nint wParam, nint lParam, ref bool handled)
     {
         if (message == WmMouseActivate)
         {
@@ -170,7 +205,44 @@ public partial class DockHandleWindow : Window
             return MaNoActivate;
         }
 
+        if (!_closing && !_isChangingVisibilityByApp)
+        {
+            if (message == NativeMethods.WmSize && wParam == NativeMethods.SizeMinimized)
+            {
+                RecoverFromShell(minimized: true);
+            }
+            else if (message == NativeMethods.WmShowWindow && wParam == 0)
+            {
+                RecoverFromShell(minimized: false);
+            }
+            else if (message == NativeMethods.WmWindowPosChanged
+                     && (System.Runtime.InteropServices.Marshal.PtrToStructure<NativeMethods.WindowPos>(lParam).Flags
+                         & NativeMethods.SwpHideWindow) != 0)
+            {
+                RecoverFromShell(minimized: false);
+            }
+        }
+
         return 0;
+    }
+
+    private void RecoverFromShell(bool minimized)
+    {
+        Dispatcher.BeginInvoke(
+            System.Windows.Threading.DispatcherPriority.Send,
+            new Action(() =>
+            {
+                if (_closing || _handle == 0 || !IsVisible)
+                {
+                    return;
+                }
+                if (minimized ? !NativeMethods.IsIconic(_handle) : NativeMethods.IsWindowVisible(_handle))
+                {
+                    return;
+                }
+                EnsureAboveDesktop();
+                ShellRecovered?.Invoke();
+            }));
     }
 
     private void OnHandleDragOver(object sender, DragEventArgs e)

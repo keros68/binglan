@@ -156,7 +156,7 @@ internal sealed class TaskbarCornerReveal : IDisposable
     }
 
     /// <summary>Puts the existing strips back above the taskbar without re-reading monitors.</summary>
-    private void Raise()
+    internal void Raise()
     {
         _lastRaise = Environment.TickCount64;
         foreach (var strip in _strips.Values)

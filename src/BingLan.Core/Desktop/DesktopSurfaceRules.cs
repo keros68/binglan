@@ -1,3 +1,5 @@
+using BingLan.Core.Dock;
+
 namespace BingLan.Core.Desktop;
 
 /// <summary>What the card windows should do about their z-order position.</summary>
@@ -41,12 +43,81 @@ public static class DesktopSurfaceRules
     public static bool CountsAsOrdinaryWindow(bool shellProcess, string className) =>
         !shellProcess || className is "CabinetWClass" or "ExploreWClass";
 
+    /// <summary>
+    /// Whether a visible, non-topmost window above the desktop surface is an ordinary
+    /// application window that proves the shell is not showing the desktop. Tool windows,
+    /// non-activating floating widgets, 1px helper windows, click-through layers and
+    /// cloaked hosts are not minimised by "show desktop", so they must not block raising
+    /// the desktop cards.
+    /// </summary>
+    public static bool CountsAsOrdinaryBlocker(
+        bool shellProcess,
+        string className,
+        bool isAppWindow,
+        bool isToolWindow,
+        bool isNoActivate,
+        bool isCloaked,
+        bool isMinimized,
+        bool isLayeredClickThrough,
+        bool isDisabled,
+        bool hasTitle,
+        int width,
+        int height) =>
+        CountsAsOrdinaryWindow(shellProcess, className)
+        && WindowActivationRules.ShouldIncludeTopLevelWindow(
+            isAppWindow,
+            isToolWindow,
+            isNoActivate,
+            isCloaked,
+            isMinimized,
+            isLayeredClickThrough,
+            isDisabled,
+            hasTitle,
+            width,
+            height);
+
+    /// <summary>
+    /// Whether a top-level window hosts the live shell desktop view (<c>SHELLDLL_DefView</c>),
+    /// which lives on <c>Progman</c> normally and moves to <c>WorkerW</c> during wallpaper
+    /// transitions or "show desktop".
+    /// </summary>
+    public static bool IsDesktopSurfaceHost(string className, bool hasShellDefView) =>
+        hasShellDefView && className is "Progman" or "WorkerW";
+
+    /// <summary>
+    /// Whether an Explorer window is the raised topmost desktop surface that covers
+    /// existing topmost toolbars and cards during "show desktop".
+    /// </summary>
+    public static bool IsTopmostShellDesktopSurface(
+        bool shellProcess,
+        string className,
+        bool isVisible,
+        bool isCloaked,
+        bool isTopmost,
+        int width,
+        int height) =>
+        shellProcess
+        && isVisible
+        && !isCloaked
+        && isTopmost
+        && width > 100
+        && height > 100
+        && className is "Progman" or "WorkerW";
+
     /// <summary>What the cards should do now, given whether they were already lifted.</summary>
     public static DesktopSurfaceAction ActionFor(bool cardsRaised, bool desktopShown) =>
-        (cardsRaised, desktopShown) switch
-        {
-            (false, true) => DesktopSurfaceAction.Raise,
-            (true, false) => DesktopSurfaceAction.Lower,
-            _ => DesktopSurfaceAction.None
-        };
+        ActionFor(cardsRaised, desktopShown, anySurfaceCovered: false);
+
+    /// <summary>
+    /// What the desktop surfaces should do now. Even when already in the shown-desktop
+    /// state, Explorer toggling "show desktop" can raise <c>WorkerW</c> above already-lifted
+    /// surfaces, so any covered surface triggers another raise pass.
+    /// </summary>
+    public static DesktopSurfaceAction ActionFor(
+        bool cardsRaised,
+        bool desktopShown,
+        bool anySurfaceCovered) =>
+        desktopShown
+            ? (!cardsRaised || anySurfaceCovered ? DesktopSurfaceAction.Raise : DesktopSurfaceAction.None)
+            : (cardsRaised ? DesktopSurfaceAction.Lower : DesktopSurfaceAction.None);
 }
