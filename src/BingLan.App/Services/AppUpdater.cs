@@ -168,7 +168,7 @@ public sealed class AppUpdater : IDisposable
 
         try
         {
-            Process.Start(new ProcessStartInfo(path, "/SILENT /SUPPRESSMSGBOXES /NORESTART /UPDATE=1")
+            Process.Start(new ProcessStartInfo(path, "/SILENT /SUPPRESSMSGBOXES /NORESTART /NOCLOSEAPPLICATIONS /UPDATE=1")
             {
                 UseShellExecute = true
             });

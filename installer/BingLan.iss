@@ -28,7 +28,7 @@ UninstallDisplayIcon={app}\BingLan.exe
 ; Tells Explorer to refresh its icon cache, so a new app icon shows after an update.
 ChangesAssociations=yes
 UninstallDisplayName=冰蓝桌面
-CloseApplications=force
+CloseApplications=no
 RestartApplications=no
 
 [Languages]
@@ -86,13 +86,35 @@ begin
     '', SW_HIDE, ewWaitUntilTerminated, ResultCode) and (ResultCode = 0);
 end;
 
-// Stops only the copy of the app installed here, not other programs with the same name.
-procedure StopInstalledApp(const ExePath: String);
+// The app starts a downloaded update silently with /UPDATE=1 and exits; the new version
+// is opened again once the files are in place.
+function RelaunchAfterUpdate(): Boolean;
 begin
+  Result := ExpandConstant('{param:UPDATE|0}') = '1';
+end;
+
+// Stops only the copy of the app installed here, not other programs with the same name.
+// During /UPDATE=1, waits briefly for graceful exit first, then forces and waits out WER.
+procedure StopInstalledApp(const ExePath: String; WaitGraceful: Boolean);
+var
+  GraceFlag: String;
+begin
+  if WaitGraceful then GraceFlag := '1' else GraceFlag := '0';
   RunPowerShell(
-    'Get-Process -Name BingLan -ErrorAction SilentlyContinue | ' +
-    'Where-Object { $_.Path -eq ' + PowerShellLiteral(ExePath) + ' } | ' +
-    'Stop-Process -Force; Start-Sleep -Milliseconds 500');
+    '$p = ' + PowerShellLiteral(ExePath) + '; ' +
+    'if (''' + GraceFlag + ''' -eq ''1'') { ' +
+    '  for ($i = 0; $i -lt 20; $i++) { ' +
+    '    $r = @(Get-Process -Name BingLan -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $p }); ' +
+    '    if ($r.Count -eq 0) { exit 0 } ' +
+    '    Start-Sleep -Milliseconds 250 ' +
+    '  } ' +
+    '} ' +
+    'for ($i = 0; $i -lt 48; $i++) { ' +
+    '  $r = @(Get-Process -Name BingLan -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $p }); ' +
+    '  if ($r.Count -eq 0) { exit 0 } ' +
+    '  $r | Stop-Process -Force -ErrorAction SilentlyContinue; ' +
+    '  Start-Sleep -Milliseconds 250 ' +
+    '}');
 end;
 
 // Before an update replaces the files, the running copy is stopped and its taskbar and
@@ -107,16 +129,9 @@ begin
   IsUpdate := FileExists(ExePath);
   if IsUpdate then
   begin
-    StopInstalledApp(ExePath);
+    StopInstalledApp(ExePath, RelaunchAfterUpdate());
     Exec(ExePath, '--restore-taskbar', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   end;
-end;
-
-// The app starts a downloaded update silently with /UPDATE=1 and exits; the new version
-// is opened again once the files are in place.
-function RelaunchAfterUpdate(): Boolean;
-begin
-  Result := ExpandConstant('{param:UPDATE|0}') = '1';
 end;
 
 // An update keeps the startup choice made in the app: the entry is written again only
@@ -146,7 +161,7 @@ begin
   if CurUninstallStep = usUninstall then
   begin
     ExePath := ExpandConstant('{app}\BingLan.exe');
-    StopInstalledApp(ExePath);
+    StopInstalledApp(ExePath, False);
 
     // Undo any taskbar or desktop icon change the app or a crashed run left behind.
     // A failed restore keeps its record, but the app is being removed, so say how to

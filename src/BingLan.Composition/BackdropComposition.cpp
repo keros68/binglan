@@ -25,12 +25,14 @@ namespace
     using winrt::Windows::UI::Composition::SpriteVisual;
     using winrt::Windows::UI::Composition::Desktop::DesktopWindowTarget;
 
-    // Thread-bound DispatcherQueue kept alive for the UI thread lifetime once created.
-    thread_local DispatcherQueueController g_threadQueue{ nullptr };
+    // Thread-bound DispatcherQueue kept alive as a detached ABI pointer for the process
+    // lifetime: releasing DispatcherQueueController from a thread_local destructor during
+    // DLL_PROCESS_DETACH after STA teardown triggers CoreUIComponents 0xc0000602.
+    thread_local void* g_threadQueue = nullptr;
 
     void EnsureDispatcherQueue()
     {
-        if (DispatcherQueue::GetForCurrentThread() != nullptr)
+        if (g_threadQueue != nullptr || DispatcherQueue::GetForCurrentThread() != nullptr)
         {
             return;
         }
@@ -44,7 +46,7 @@ namespace
         winrt::check_hresult(CreateDispatcherQueueController(
             options,
             reinterpret_cast<ABI::Windows::System::IDispatcherQueueController**>(winrt::put_abi(controller))));
-        g_threadQueue = controller;
+        g_threadQueue = winrt::detach_abi(controller);
     }
 
     struct BackdropState
