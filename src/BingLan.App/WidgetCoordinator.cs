@@ -121,7 +121,7 @@ public sealed class WidgetCoordinator : IDisposable
                 TrayTipKind.Info));
         _dock.ShellRecovered += _desktopSurfaceWatcher.ScheduleCheck;
         _dock.PreparingShowDesktop += _desktopSurfaceWatcher.PrepareForToggleDesktop;
-        _dock.ShowDesktopTriggered += _desktopSurfaceWatcher.ScheduleCheck;
+        _dock.ShowDesktopTriggered += _desktopSurfaceWatcher.ScheduleToggleDesktopCheck;
         _dock.ShowDesktopCancelled += _desktopSurfaceWatcher.CancelToggleDesktopPreparation;
         _taskbar = new TaskbarAdapter(TaskbarCheckpointPath(_store.DataDirectory));
         _taskbar.StatusChanged += OnTaskbarStatusChanged;

@@ -102,7 +102,7 @@ internal sealed class DesktopSurfaceWatcher : IDisposable
         if (IsDesktopShown)
         {
             _preRaiseUntilTick = 0;
-            ScheduleCheck();
+            ScheduleToggleDesktopCheck();
             return;
         }
 
@@ -110,7 +110,7 @@ internal sealed class DesktopSurfaceWatcher : IDisposable
         IsDesktopShown = true;
         _cardsRaised = true;
         Changed?.Invoke();
-        ScheduleCheck();
+        ScheduleToggleDesktopCheck();
     }
 
     internal void CancelToggleDesktopPreparation()
@@ -120,7 +120,18 @@ internal sealed class DesktopSurfaceWatcher : IDisposable
             return;
         }
         _preRaiseUntilTick = 0;
+        _trailingTimer.Stop();
         EvaluateImmediate();
+    }
+
+    internal void ScheduleToggleDesktopCheck()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+        ScheduleCheck();
+        ArmTrailingSettleCheck();
     }
 
     /// <summary>Schedules a settled re-evaluation after a shell desktop action.</summary>
@@ -136,15 +147,20 @@ internal sealed class DesktopSurfaceWatcher : IDisposable
         {
             _burstStartedTick = now;
             _evaluateTimer.Start();
+            return;
         }
-        else if (now - _burstStartedTick < MaxBurstDebounceMs)
+
+        // Multi-window minimise animations arrive over ~150-200 ms; extend the settle
+        // window up to a bounded cap so evaluation sees the final z-order.
+        if (now - _burstStartedTick < MaxBurstDebounceMs)
         {
-            // Multi-window minimise animations arrive over ~150-200 ms; extend the settle
-            // window up to a bounded cap so evaluation sees the final z-order.
             _evaluateTimer.Stop();
             _evaluateTimer.Start();
         }
+    }
 
+    private void ArmTrailingSettleCheck()
+    {
         // Slow multi-window minimise bursts (5+ heavy windows) can finish becoming iconic
         // ~250-400 ms after EVENT_SYSTEM_MINIMIZESTART with no completion WinEvent; the
         // trailing check also guarantees reconciliation once PreRaiseHoldMs elapses.
@@ -379,7 +395,6 @@ internal sealed class DesktopSurfaceWatcher : IDisposable
                 return;
             }
             EvaluateImmediate();
-            ScheduleCheck();
             return;
         }
         if (idObject != ObjidWindow)
@@ -395,20 +410,33 @@ internal sealed class DesktopSurfaceWatcher : IDisposable
             {
                 return;
             }
-            if (eventType is DockNativeMethods.EventObjectShow or DockNativeMethods.EventObjectHide
-                && ClassNameOf(window) is not ("WorkerW" or "Progman" or "CabinetWClass" or "ExploreWClass"))
+            if (eventType is DockNativeMethods.EventObjectShow or DockNativeMethods.EventObjectHide)
             {
+                var className = ClassNameOf(window);
+                if (className is "WorkerW" or "Progman")
+                {
+                    EvaluateImmediate();
+                    return;
+                }
+                if (className is not ("CabinetWClass" or "ExploreWClass"))
+                {
+                    return;
+                }
+            }
+        }
+        if (eventType == DockNativeMethods.EventSystemForeground && window != 0)
+        {
+            if (_cardsRaised || ClassNameOf(window) is "Progman" or "WorkerW")
+            {
+                EvaluateImmediate();
                 return;
             }
         }
-        if (eventType is DockNativeMethods.EventSystemForeground
-                or DockNativeMethods.EventSystemDesktopSwitch
-                or DockNativeMethods.EventObjectShow
-                or DockNativeMethods.EventObjectHide)
-        {
-            EvaluateImmediate();
-        }
         ScheduleCheck();
+        if (eventType == DockNativeMethods.EventSystemMinimizeStart)
+        {
+            ArmTrailingSettleCheck();
+        }
     }
 
     /// <summary>
@@ -511,6 +539,7 @@ internal sealed class DesktopSurfaceWatcher : IDisposable
         if (shown)
         {
             _preRaiseUntilTick = 0;
+            _trailingTimer.Stop();
         }
         var holdPreRaise = !shown
             && _preRaiseUntilTick != 0
