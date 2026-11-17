@@ -1851,6 +1851,16 @@
                                         </StackPanel>
                                     </Border>
                                 </local:SettingsRow>
+                                <local:SettingsRow x:Name="DockMaximizeReleaseRow"
+                                                   Style="{StaticResource NestedSettingsRowStyle}"
+                                                   Header="最大化窗口时让出底部空间"
+                                                   Description="开启后最大化的窗口会占满高度并暂时隐藏 Dock，鼠标移到屏幕底边或把手可临时唤出；希望最大化时也常驻显示 Dock 请关闭此项">
+                                    <CheckBox x:Name="DockMaximizeReleaseCheckBox"
+                                              AutomationProperties.Name="最大化窗口时让出底部空间"
+                                              Style="{StaticResource ToggleSwitchStyle}"
+                                              Checked="DockSetting_Changed"
+                                              Unchecked="DockSetting_Changed"/>
+                                </local:SettingsRow>
                                 <local:SettingsRow Style="{StaticResource NestedSettingsRowStyle}"
                                                    Header="唤出方式"
                                                    Description="Dock 隐藏后如何重新显示。原生任务栏一直显示时，鼠标停在任务栏上不会唤出 Dock：默认用把手唤出；选“只用屏幕底边”则不显示把手，把鼠标推到屏幕最底边唤出">
@@ -1862,15 +1872,6 @@
                                         <ComboBoxItem Content="只用把手" Tag="HandleOnly"/>
                                         <ComboBoxItem Content="只用屏幕底边（不显示把手）" Tag="EdgeOnly"/>
                                     </ComboBox>
-                                </local:SettingsRow>
-                                <local:SettingsRow Style="{StaticResource NestedSettingsRowStyle}"
-                                                   Header="最大化窗口时让出底部空间"
-                                                   Description="开启后最大化的窗口可以占满整个工作区高度，Dock 暂时隐藏；鼠标移到屏幕底边可临时唤出。仅影响“始终显示，保留底部空间”">
-                                    <CheckBox x:Name="DockMaximizeReleaseCheckBox"
-                                              AutomationProperties.Name="最大化窗口时让出底部空间"
-                                              Style="{StaticResource ToggleSwitchStyle}"
-                                              Checked="DockSetting_Changed"
-                                              Unchecked="DockSetting_Changed"/>
                                 </local:SettingsRow>
                                 <local:SettingsRow Header="显示 Windows 开始菜单入口"
                                                    Description="显示在 Dock 左端，点击打开原生开始菜单；此设置只保存在本机，不随主题导入或导出"

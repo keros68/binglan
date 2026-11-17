@@ -35,11 +35,13 @@ public static class DesktopModeRules
             case DesktopMode.IceBlueHybrid:
                 dock.IsEnabled = true;
                 dock.VisibilityMode = DockVisibilityMode.ReserveWorkArea;
+                dock.ReleaseWhenMaximized = false;
                 taskbar.Mode = TaskbarMode.Transparent;
                 break;
             case DesktopMode.AppleStyle:
                 dock.IsEnabled = true;
                 dock.VisibilityMode = DockVisibilityMode.ReserveWorkArea;
+                dock.ReleaseWhenMaximized = false;
                 taskbar.Mode = TaskbarMode.SmartHide;
                 break;
             default:
@@ -137,6 +139,21 @@ public static class DesktopModeRules
             weight += 2;
             changed.Dock = true;
         }
+        else if (dockOn)
+        {
+            if (dock.VisibilityMode == DockVisibilityMode.SmartHide)
+            {
+                differences.Add("Dock 改为智能隐藏");
+                weight += 1;
+                changed.Dock = true;
+            }
+            else if (dock.ReleaseWhenMaximized)
+            {
+                differences.Add("Dock 开启了最大化让出底部空间");
+                weight += 1;
+                changed.Dock = true;
+            }
+        }
 
         var taskbarMatches = mode switch
         {
@@ -159,6 +176,24 @@ public static class DesktopModeRules
         }
 
         return differences;
+    }
+
+    public static string GetDockVisibilitySummary(DockState dock)
+    {
+        ArgumentNullException.ThrowIfNull(dock);
+        if (!dock.IsEnabled)
+        {
+            return "已关闭";
+        }
+
+        if (dock.VisibilityMode == DockVisibilityMode.SmartHide)
+        {
+            return "智能隐藏";
+        }
+
+        return dock.ReleaseWhenMaximized
+            ? "始终显示（最大化时让出底部空间）"
+            : "始终显示，保留底部空间";
     }
 
     public static string GetTaskbarName(TaskbarMode mode) => mode switch

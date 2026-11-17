@@ -6488,6 +6488,17 @@ internal static class Program
                 .Single(item => (string)item.Tag == nameof(DockRevealMode.EdgeOnly));
             Pump();
             Assert(dock.RevealMode == DockRevealMode.EdgeOnly && dockApplied == 5, "切换唤出方式应保存并立即应用");
+
+            Require<RadioButton>(window, "DockSmartHideRadio").IsChecked = true;
+            Pump();
+            Assert(!Require<FrameworkElement>(window, "DockMaximizeReleaseRow").IsEnabled,
+                "选智能隐藏时最大化让出开关应禁用");
+            Require<RadioButton>(window, "DockReserveRadio").IsChecked = true;
+            Pump();
+            Assert(Require<FrameworkElement>(window, "DockMaximizeReleaseRow").IsEnabled
+                    && !dock.ReleaseWhenMaximized
+                    && Require<CheckBox>(window, "DockMaximizeReleaseCheckBox").IsChecked != true,
+                "从智能隐藏切回始终显示时应恢复启用并清除残留的最大化让出开关");
         }
         finally
         {
@@ -6614,6 +6625,20 @@ internal static class Program
                     && Require<FrameworkElement>(window, "DesktopModeDriftPanel").Visibility == Visibility.Collapsed
                     && tags.All(tag => Require<FrameworkElement>(window, tag).Visibility == Visibility.Collapsed),
                 "恢复默认后应回到苹果式且清除自定义标记");
+
+            Require<CheckBox>(window, "DockMaximizeReleaseCheckBox").IsChecked = true;
+            Pump();
+            Assert(dock.ReleaseWhenMaximized
+                    && Require<TextBlock>(window, "SchemeDockStateText").Text == "始终显示（最大化时让出底部空间）"
+                    && Require<FrameworkElement>(window, "SchemeDockCustomTag").Visibility == Visibility.Visible
+                    && Require<TextBlock>(window, "DesktopModeStatusText").Text.Contains("Dock 开启了最大化让出底部空间", StringComparison.Ordinal),
+                "开启最大化让出时首页摘要与偏离提示应明确标出");
+            ClickButton(restore);
+            Assert(!dock.ReleaseWhenMaximized
+                    && Require<CheckBox>(window, "DockMaximizeReleaseCheckBox").IsChecked != true
+                    && Require<TextBlock>(window, "SchemeDockStateText").Text == "始终显示，保留底部空间"
+                    && Require<FrameworkElement>(window, "SchemeDockCustomTag").Visibility == Visibility.Collapsed,
+                "恢复方案默认后应关闭最大化让出并恢复始终显示摘要");
 
             Require<Expander>(window, "TaskbarSection").IsExpanded = false;
             ClickButton(Require<Button>(window, "SchemeTaskbarAdjustButton"));

@@ -258,9 +258,11 @@ public partial class IceBlueDockWindow : Window
     }
 
     // A reserved dock whose AppBar registration failed would float over windows, so it
-    // falls back to smart hide until the reservation succeeds.
+    // falls back to smart hide until the reservation succeeds (without blinking during
+    // Explorer restart recovery).
     private bool UsesSmartHide =>
-        _state.VisibilityMode == DockVisibilityMode.SmartHide || _appBar?.IsReserved != true;
+        _state.VisibilityMode == DockVisibilityMode.SmartHide
+        || (_appBar is not { IsReserved: true } && _appBar is not { IsRecovering: true });
 
     internal void RefreshWindows()
     {
@@ -1627,16 +1629,11 @@ public partial class IceBlueDockWindow : Window
         {
             _vacatedForMaximized = shouldVacate;
             ApplyState();
-            if (!UsesSmartHide)
-            {
-                // The strip is reserved again and ApplyState has shown the dock.
-                return;
-            }
         }
 
         if (!UsesSmartHide)
         {
-            _appBar.SetFullScreenDetected(fullScreen);
+            _appBar.SetFullScreenDetected(trueFullScreen);
             return;
         }
 

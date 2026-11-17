@@ -811,6 +811,8 @@ static void TestAppBarPositionGuard()
     Assert(check.NeedsResubmit(1400, strip.Top), "资源管理器少保留时同样应重提");
     Assert(!check.NeedsResubmit(strip.Top, strip.Top), "工作区恢复后不再重提");
     Assert(check.NeedsResubmit(1100, strip.Top), "再次出现偏差时应重新纠正");
+    check.Reset();
+    Assert(check.NeedsResubmit(1100, strip.Top), "重置后对同一边界应允许重新提交");
 
     long now = 10_000;
     for (var i = 0; i < AppBarPositionGuard.BurstLimit; i++)
@@ -865,6 +867,35 @@ static void TestAppBarReservation()
 
     reservation.Apply(true);
     AssertEqual(0, reservation.Apply(true).Count, "已注册状态下重复预留保持安静");
+
+    Assert(
+        reservation.Apply(true, targetChanged: true).SequenceEqual([AppBarMessage.Unregister, AppBarMessage.Register]),
+        "已注册时切换显示器应先释放旧屏再注册新屏");
+    Assert(reservation.IsRegistered, "切换显示器重注册后应保持已注册状态");
+
+    reservation.Release();
+    AssertEqual(
+        AppBarMessage.Register,
+        Single(reservation.Apply(true, targetChanged: true)),
+        "未注册时切换显示器只需注册一次");
+
+    var monitor = new PixelRect(0, 0, 1920, 1080);
+    var negativeTopMonitor = new PixelRect(0, -1080, 1920, 0);
+    Assert(
+        AppBarReservationState.IsValidStrip(new PixelRect(0, 976, 1920, 1080), monitor, 76),
+        "落在目标显示器底部的正常预留条带应有效");
+    Assert(
+        AppBarReservationState.IsValidStrip(new PixelRect(0, -104, 1920, 0), negativeTopMonitor, 76),
+        "上下叠屏上方显示器的负坐标底边条带应有效");
+    Assert(
+        !AppBarReservationState.IsValidStrip(new PixelRect(0, 1080, 1920, 1080), monitor, 76),
+        "高度折叠为零的条带不应视为有效预留");
+    Assert(
+        !AppBarReservationState.IsValidStrip(new PixelRect(0, 1040, 1920, 1080), monitor, 76),
+        "被系统挤压到小于 Dock 最小厚度的条带不应视为有效预留");
+    Assert(
+        !AppBarReservationState.IsValidStrip(new PixelRect(0, 0, 1920, 104), negativeTopMonitor, 76),
+        "被推到相邻显示器上的越界条带不应视为有效预留");
 }
 
 static void TestDockPinIdentityKey()

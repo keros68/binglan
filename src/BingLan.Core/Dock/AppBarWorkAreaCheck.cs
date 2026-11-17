@@ -28,4 +28,6 @@ public sealed class AppBarWorkAreaCheck
         _answeredEdge = workAreaEdge;
         return true;
     }
+
+    public void Reset() => _answeredEdge = null;
 }

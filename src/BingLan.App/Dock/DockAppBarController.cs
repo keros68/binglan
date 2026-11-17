@@ -36,6 +36,7 @@ internal sealed class DockAppBarController : IDisposable
     private PixelRect? _floatingOverride;
     private bool _fullScreenDetected;
     private bool _positioning;
+    private bool _applying;
     private bool _disposed;
     private int _recoveryGeneration;
 
@@ -71,6 +72,8 @@ internal sealed class DockAppBarController : IDisposable
     internal PixelRect Bounds { get; private set; }
 
     internal bool IsReserved => _reservation.IsRegistered;
+
+    internal bool IsRecovering { get; private set; }
 
     internal MonitorSnapshot? Monitor => _monitor;
 
@@ -115,14 +118,28 @@ internal sealed class DockAppBarController : IDisposable
         double edgeGapDip)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+        var monitorChanged = _monitor is not null
+            && !string.Equals(_monitor.DeviceName, monitor.DeviceName, StringComparison.OrdinalIgnoreCase);
         _monitor = monitor;
         _reserveWorkArea = reserveWorkArea;
         _contentLengthDip = Math.Max(DockLayoutMetrics.EmptyLengthDip, contentLengthDip);
         _thicknessDip = thicknessDip;
         _edgeGapDip = edgeGapDip;
+        if (!reserveWorkArea)
+        {
+            IsRecovering = false;
+        }
 
-        Dispatch(_reservation.Apply(reserveWorkArea));
-        Position();
+        _applying = true;
+        try
+        {
+            Dispatch(_reservation.Apply(reserveWorkArea, monitorChanged));
+            Position();
+        }
+        finally
+        {
+            _applying = false;
+        }
     }
 
     public void Dispose()
@@ -132,6 +149,7 @@ internal sealed class DockAppBarController : IDisposable
             return;
         }
         _recoveryGeneration++;
+        IsRecovering = false;
         _deferredPosition.Stop();
         Dispatch(_reservation.Release());
         _source.RemoveHook(WindowProc);
@@ -143,6 +161,7 @@ internal sealed class DockAppBarController : IDisposable
         foreach (var message in messages)
         {
             _positionGuard.Reset();
+            _workAreaCheck.Reset();
             var data = CreateData();
             if (message == AppBarMessage.Register)
             {
@@ -150,6 +169,10 @@ internal sealed class DockAppBarController : IDisposable
                 if (DockNativeMethods.SHAppBarMessage(DockNativeMethods.AbmNew, ref data) == 0)
                 {
                     _reservation.MarkRegisterFailed();
+                }
+                else
+                {
+                    IsRecovering = false;
                 }
             }
             else
@@ -175,43 +198,29 @@ internal sealed class DockAppBarController : IDisposable
             var stripThickness = thicknessPixels + edgeGapPixels;
 
             PixelRect strip;
-            if (_reservation.IsRegistered)
+            if (_reservation.IsRegistered && TryReserveStrip(_monitor, thicknessPixels, stripThickness) is { } reserved)
             {
-                var requested = DockGeometry.Calculate(
-                    _monitor.Bounds,
-                    Edge,
-                    Math.Min(stripThickness, _monitor.Bounds.Height));
-                var data = CreateData();
-                data.Edge = (uint)Edge;
-                data.Rectangle = ToNative(requested);
-                DockNativeMethods.SHAppBarMessage(DockNativeMethods.AbmQueryPos, ref data);
-                var adjusted = ToPixel(data.Rectangle) with
-                {
-                    Top = data.Rectangle.Bottom - Math.Min(stripThickness, _monitor.Bounds.Height)
-                };
-                // Explorer already holds an unchanged strip; setting it again would only
-                // notify the other AppBars and invite them to answer in kind — unless the
-                // work area shows Explorer reserving more than that strip.
-                if (_positionGuard.NeedsSubmit(adjusted)
-                    || _workAreaCheck.NeedsResubmit(
-                        GetLiveWorkingArea(_monitor).Bottom,
-                        adjusted.Top))
-                {
-                    data.Rectangle = ToNative(adjusted);
-                    DockNativeMethods.SHAppBarMessage(DockNativeMethods.AbmSetPos, ref data);
-                    UiDiagnostics.Hit(UiActivity.AppBarSetPosition);
-                    _positionGuard.Submitted(adjusted);
-                    _reservedStrip = ToPixel(data.Rectangle);
-                }
-                strip = _reservedStrip;
+                strip = reserved;
             }
             else
             {
+                if (_reservation.IsRegistered)
+                {
+                    Dispatch(_reservation.Release());
+                    if (!_applying)
+                    {
+                        _window.Dispatcher.BeginInvoke(
+                            DispatcherPriority.Background,
+                            () => EnvironmentChanged?.Invoke());
+                    }
+                }
+
                 var workArea = GetLiveWorkingArea(_monitor);
+                var fallbackArea = workArea.HasArea ? workArea : _monitor.Bounds;
                 strip = DockGeometry.Calculate(
-                    workArea,
+                    fallbackArea,
                     Edge,
-                    Math.Min(stripThickness, workArea.Height));
+                    Math.Min(stripThickness, fallbackArea.Height));
             }
 
             var requestedLength = Math.Max(1, (int)Math.Round(_contentLengthDip * scale));
@@ -243,6 +252,73 @@ internal sealed class DockAppBarController : IDisposable
         }
     }
 
+    private PixelRect? TryReserveStrip(MonitorSnapshot monitor, int thicknessPixels, int stripThickness)
+    {
+        var requestedHeight = Math.Min(stripThickness, monitor.Bounds.Height);
+        var requested = DockGeometry.Calculate(monitor.Bounds, Edge, requestedHeight);
+        var data = CreateData();
+        data.Edge = (uint)Edge;
+        data.Rectangle = ToNative(requested);
+        if (DockNativeMethods.SHAppBarMessage(DockNativeMethods.AbmQueryPos, ref data) == 0)
+        {
+            // Explorer may silently drop an AppBar registration (for example across
+            // monitor changes or shell hiccups); try registering once before falling back.
+            _reservation.ResetRegistration();
+            Dispatch(_reservation.Apply(true));
+            if (!_reservation.IsRegistered)
+            {
+                return null;
+            }
+
+            data = CreateData();
+            data.Edge = (uint)Edge;
+            data.Rectangle = ToNative(requested);
+            if (DockNativeMethods.SHAppBarMessage(DockNativeMethods.AbmQueryPos, ref data) == 0)
+            {
+                return null;
+            }
+        }
+
+        var queried = ToPixel(data.Rectangle);
+        var adjusted = queried with
+        {
+            Top = queried.Bottom - requestedHeight
+        };
+        if (!AppBarReservationState.IsValidStrip(adjusted, monitor.Bounds, thicknessPixels))
+        {
+            return null;
+        }
+
+        // Explorer already holds an unchanged strip; setting it again would only
+        // notify the other AppBars and invite them to answer in kind — unless the
+        // work area shows Explorer reserving more than that strip.
+        if (_positionGuard.NeedsSubmit(adjusted)
+            || _workAreaCheck.NeedsResubmit(
+                GetLiveWorkingArea(monitor).Bottom,
+                adjusted.Top))
+        {
+            data.Rectangle = ToNative(adjusted);
+            if (DockNativeMethods.SHAppBarMessage(DockNativeMethods.AbmSetPos, ref data) == 0)
+            {
+                return null;
+            }
+
+            UiDiagnostics.Hit(UiActivity.AppBarSetPosition);
+            var actual = ToPixel(data.Rectangle);
+            if (!AppBarReservationState.IsValidStrip(actual, monitor.Bounds, thicknessPixels))
+            {
+                return null;
+            }
+
+            _positionGuard.Submitted(adjusted);
+            _reservedStrip = actual;
+        }
+
+        return AppBarReservationState.IsValidStrip(_reservedStrip, monitor.Bounds, thicknessPixels)
+            ? _reservedStrip
+            : null;
+    }
+
     private nint WindowProc(nint hwnd, int message, nint wParam, nint lParam, ref bool handled)
     {
         if (_disposed)
@@ -252,11 +328,13 @@ internal sealed class DockAppBarController : IDisposable
 
         if ((uint)message == _taskbarCreatedMessage)
         {
+            IsRecovering = _reserveWorkArea;
             _reservation.ResetRegistration();
             _positionGuard.Reset();
+            _workAreaCheck.Reset();
             var recoveryGeneration = ++_recoveryGeneration;
             _window.Dispatcher.BeginInvoke(
-                DispatcherPriority.Background,
+                DispatcherPriority.Normal,
                 () => _ = RecoverAfterExplorerRestartAsync(recoveryGeneration));
             return 0;
         }
@@ -312,27 +390,37 @@ internal sealed class DockAppBarController : IDisposable
 
     private async Task RecoverAfterExplorerRestartAsync(int recoveryGeneration)
     {
-        for (var attempt = 1; attempt <= ExplorerRecoveryAttemptCount; attempt++)
+        try
         {
-            if (_disposed || recoveryGeneration != _recoveryGeneration)
+            for (var attempt = 1; attempt <= ExplorerRecoveryAttemptCount; attempt++)
             {
-                return;
-            }
+                if (_disposed || recoveryGeneration != _recoveryGeneration)
+                {
+                    return;
+                }
 
-            if (!_reserveWorkArea)
-            {
-                break;
-            }
+                if (!_reserveWorkArea)
+                {
+                    break;
+                }
 
-            Dispatch(_reservation.Apply(true));
-            if (_reservation.IsRegistered)
-            {
-                break;
-            }
+                Dispatch(_reservation.Apply(true));
+                if (_reservation.IsRegistered)
+                {
+                    break;
+                }
 
-            if (attempt < ExplorerRecoveryAttemptCount)
+                if (attempt < ExplorerRecoveryAttemptCount)
+                {
+                    await Task.Delay(ExplorerRecoveryDelay);
+                }
+            }
+        }
+        finally
+        {
+            if (recoveryGeneration == _recoveryGeneration)
             {
-                await Task.Delay(ExplorerRecoveryDelay);
+                IsRecovering = false;
             }
         }
 

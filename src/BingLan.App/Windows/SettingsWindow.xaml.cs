@@ -2527,9 +2527,7 @@ public partial class SettingsWindow : Window
             SchemeDockStateText,
             SchemeDockCustomTag,
             _dockState.IsEnabled,
-            !_dockState.IsEnabled
-                ? "已关闭"
-                : _dockState.VisibilityMode == DockVisibilityMode.SmartHide ? "智能隐藏" : "始终显示，保留底部空间",
+            DesktopModeRules.GetDockVisibilitySummary(_dockState),
             match.DockChanged);
         if (_topBarState is { } topBar)
         {
@@ -2591,6 +2589,12 @@ public partial class SettingsWindow : Window
             _ when topBar => "顶端信息条在屏幕顶部，底部只用 Windows 任务栏。",
             _ => "当前只用 Windows 任务栏。开启 Dock 或信息条后，桌面方案会显示为自定义。"
         };
+        if (dock
+            && _dockState.VisibilityMode == DockVisibilityMode.ReserveWorkArea
+            && _dockState.ReleaseWhenMaximized)
+        {
+            BarsRelationText.Text += " 已开启“最大化窗口时让出底部空间”，窗口最大化时 Dock 会暂时收起。";
+        }
     }
 
     private void DesktopMode_Checked(object sender, RoutedEventArgs e)
@@ -2738,6 +2742,8 @@ public partial class SettingsWindow : Window
             LoadDockLook();
             DockIconSizeText.Text = $"{_dockState.IconSize:0}";
             DockMaximizeReleaseCheckBox.IsChecked = _dockState.ReleaseWhenMaximized;
+            DockMaximizeReleaseRow.IsEnabled =
+                _dockState.VisibilityMode == DockVisibilityMode.ReserveWorkArea;
             DockRevealModeComboBox.SelectedItem = DockRevealModeComboBox.Items
                 .OfType<ComboBoxItem>()
                 .First(item => (string)item.Tag == _dockState.RevealMode.ToString());
@@ -2806,17 +2812,34 @@ public partial class SettingsWindow : Window
 
     private void DockSetting_Changed(object sender, RoutedEventArgs e)
     {
-        if (_loadingDock || DockEnabledCheckBox is null || DockMonitorComboBox is null)
+        if (_loadingDock || DockEnabledCheckBox is null || DockMonitorComboBox is null || DockMaximizeReleaseRow is null)
         {
             return;
         }
 
         _dockState.IsEnabled = DockEnabledCheckBox.IsChecked == true;
         DockOptionsPanel.IsEnabled = _dockState.IsEnabled;
+        var previousVisibility = _dockState.VisibilityMode;
         _dockState.VisibilityMode = DockSmartHideRadio.IsChecked == true
             ? DockVisibilityMode.SmartHide
             : DockVisibilityMode.ReserveWorkArea;
+        if (previousVisibility == DockVisibilityMode.SmartHide
+            && _dockState.VisibilityMode == DockVisibilityMode.ReserveWorkArea
+            && ReferenceEquals(sender, DockReserveRadio))
+        {
+            _loadingDock = true;
+            try
+            {
+                DockMaximizeReleaseCheckBox.IsChecked = false;
+            }
+            finally
+            {
+                _loadingDock = false;
+            }
+        }
         _dockState.ReleaseWhenMaximized = DockMaximizeReleaseCheckBox.IsChecked == true;
+        DockMaximizeReleaseRow.IsEnabled =
+            _dockState.VisibilityMode == DockVisibilityMode.ReserveWorkArea;
         if (DockRevealModeComboBox?.SelectedItem is ComboBoxItem { Tag: string revealTag }
             && Enum.TryParse<DockRevealMode>(revealTag, out var revealMode))
         {

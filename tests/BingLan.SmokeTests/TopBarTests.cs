@@ -185,6 +185,27 @@ public static class TopBarTests
         drifted = DesktopModeRules.Match(dock, taskbar, topBar);
         Assert(drifted is { Mode: DesktopMode.WindowsNative, TopBarChanged: true, DockChanged: false, TaskbarChanged: false },
             "只开顶栏时按 Windows 原生描述，摘要只标出顶端信息条");
+
+        DesktopModeRules.Apply(DesktopMode.AppleStyle, dock, taskbar, topBar, experience);
+        Assert(DesktopModeRules.GetDockVisibilitySummary(dock) == "始终显示，保留底部空间",
+            "方案默认应显示始终显示并保留底部空间");
+        dock.ReleaseWhenMaximized = true;
+        drifted = DesktopModeRules.Match(dock, taskbar, topBar);
+        Assert(drifted is { Mode: DesktopMode.AppleStyle, DockChanged: true }
+                && drifted.Differences.Contains("Dock 开启了最大化让出底部空间"),
+            "开启最大化让出时应在偏离详情和 Dock 摘要标记中体现");
+        Assert(DesktopModeRules.GetDockVisibilitySummary(dock) == "始终显示（最大化时让出底部空间）",
+            "摘要应区分始终显示与最大化让出状态");
+        DesktopModeRules.Apply(DesktopMode.AppleStyle, dock, taskbar, topBar, experience);
+        Assert(!dock.ReleaseWhenMaximized, "重新应用桌面方案应复位最大化让出开关");
+
+        dock.VisibilityMode = DockVisibilityMode.SmartHide;
+        drifted = DesktopModeRules.Match(dock, taskbar, topBar);
+        Assert(drifted is { Mode: DesktopMode.AppleStyle, DockChanged: true }
+                && drifted.Differences.Contains("Dock 改为智能隐藏"),
+            "切为智能隐藏时应体现 Dock 偏离");
+        Assert(DesktopModeRules.GetDockVisibilitySummary(dock) == "智能隐藏",
+            "智能隐藏摘要应显示智能隐藏");
     }
 
     private static void TestAttentionQueue()
