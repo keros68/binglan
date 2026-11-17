@@ -120,7 +120,9 @@ public sealed class WidgetCoordinator : IDisposable
                 message,
                 TrayTipKind.Info));
         _dock.ShellRecovered += _desktopSurfaceWatcher.ScheduleCheck;
+        _dock.PreparingShowDesktop += _desktopSurfaceWatcher.PrepareForToggleDesktop;
         _dock.ShowDesktopTriggered += _desktopSurfaceWatcher.ScheduleCheck;
+        _dock.ShowDesktopCancelled += _desktopSurfaceWatcher.CancelToggleDesktopPreparation;
         _taskbar = new TaskbarAdapter(TaskbarCheckpointPath(_store.DataDirectory));
         _taskbar.StatusChanged += OnTaskbarStatusChanged;
         _taskbar.AutoHideTakenOver += () =>
@@ -978,6 +980,13 @@ public sealed class WidgetCoordinator : IDisposable
         window.IsVisibleChanged += (_, e) =>
         {
             if (e.NewValue is true && _desktopSurfaceWatcher.IsDesktopShown)
+            {
+                window.RaiseAboveDesktop(FindCardRaiseSlot());
+            }
+        };
+        window.ContentRendered += (_, _) =>
+        {
+            if (_desktopSurfaceWatcher.IsDesktopShown && window.IsVisible)
             {
                 window.RaiseAboveDesktop(FindCardRaiseSlot());
             }

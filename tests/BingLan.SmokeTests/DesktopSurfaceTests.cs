@@ -27,6 +27,12 @@ internal static class DesktopSurfaceTests
             "普通窗口出现后即使曾被遮挡也应回落到普通窗口下方");
         Check(DesktopSurfaceRules.ActionFor(false, false) == DesktopSurfaceAction.None,
             "未提升且桌面未显示时应不动");
+        Check(DesktopSurfaceRules.ActionFor(true, false, anySurfaceCovered: false, holdPreRaise: true) == DesktopSurfaceAction.None,
+            "主动显示桌面预提升窗口期内普通窗口尚在最小化动画中时不应提前回落闪烁");
+        Check(DesktopSurfaceRules.ActionFor(true, true, anySurfaceCovered: true, holdPreRaise: true) == DesktopSurfaceAction.Raise,
+            "预提升期间若置顶 WorkerW 盖过任一受控表面仍应立即补提");
+        Check(DesktopSurfaceRules.ActionFor(true, false, anySurfaceCovered: false, holdPreRaise: false) == DesktopSurfaceAction.Lower,
+            "预提升窗口期结束后若未进入显示桌面状态应回落到普通窗口下方");
     }
 
     internal static void TestSurfaceHostAndBlockerFiltering()

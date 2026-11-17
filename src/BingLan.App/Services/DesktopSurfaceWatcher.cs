@@ -15,17 +15,25 @@ namespace BingLan.App.Services;
 /// </summary>
 internal sealed class DesktopSurfaceWatcher : IDisposable
 {
+    private static readonly TimeSpan FastCoalesceDelay = TimeSpan.FromMilliseconds(16);
     private static readonly TimeSpan SettleDelay = TimeSpan.FromMilliseconds(150);
+    private static readonly TimeSpan TrailingSettleDelay = TimeSpan.FromMilliseconds(500);
+    private const long MinImmediateIntervalMs = 15;
     private const long MaxBurstDebounceMs = 200;
+    private const long PreRaiseHoldMs = 450;
     private const int ObjidWindow = 0;
 
     private readonly Func<IReadOnlyList<nint>> _cardHandles;
     private readonly NativeMethods.WinEventProc _hookCallback;
     private readonly List<nint> _hooks = [];
+    private readonly DispatcherTimer _fastTimer;
     private readonly DispatcherTimer _evaluateTimer;
+    private readonly DispatcherTimer _trailingTimer;
     private nint _shellShowHook;
     private uint _shellProcessId;
+    private long _lastEvaluateTick;
     private long _burstStartedTick;
+    private long _preRaiseUntilTick;
     private bool _started;
     private bool _cardsRaised;
     private bool _disposed;
@@ -35,12 +43,25 @@ internal sealed class DesktopSurfaceWatcher : IDisposable
         _cardHandles = cardHandles;
         // Keep the delegate alive for as long as the hook exists.
         _hookCallback = OnWinEvent;
+        var dispatcher = Dispatcher.CurrentDispatcher;
+        _fastTimer = new DispatcherTimer(
+            FastCoalesceDelay,
+            DispatcherPriority.Render,
+            OnFastTick,
+            dispatcher);
+        _fastTimer.Stop();
         _evaluateTimer = new DispatcherTimer(
             SettleDelay,
-            DispatcherPriority.Background,
+            DispatcherPriority.Input,
             OnEvaluateTick,
-            Dispatcher.CurrentDispatcher);
+            dispatcher);
         _evaluateTimer.Stop();
+        _trailingTimer = new DispatcherTimer(
+            TrailingSettleDelay,
+            DispatcherPriority.Background,
+            OnTrailingTick,
+            dispatcher);
+        _trailingTimer.Stop();
     }
 
     /// <summary>
@@ -67,6 +88,41 @@ internal sealed class DesktopSurfaceWatcher : IDisposable
         ScheduleCheck();
     }
 
+    /// <summary>
+    /// Pre-lifts monitored desktop surfaces right before the app itself asks Explorer
+    /// to toggle "show desktop", so cards are already above <c>Progman</c>/<c>WorkerW</c>
+    /// on the very first frame it rises instead of blinking behind the wallpaper.
+    /// </summary>
+    internal void PrepareForToggleDesktop()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+        if (IsDesktopShown)
+        {
+            _preRaiseUntilTick = 0;
+            ScheduleCheck();
+            return;
+        }
+
+        _preRaiseUntilTick = Environment.TickCount64 + PreRaiseHoldMs;
+        IsDesktopShown = true;
+        _cardsRaised = true;
+        Changed?.Invoke();
+        ScheduleCheck();
+    }
+
+    internal void CancelToggleDesktopPreparation()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+        _preRaiseUntilTick = 0;
+        EvaluateImmediate();
+    }
+
     /// <summary>Schedules a settled re-evaluation after a shell desktop action.</summary>
     internal void ScheduleCheck()
     {
@@ -80,22 +136,28 @@ internal sealed class DesktopSurfaceWatcher : IDisposable
         {
             _burstStartedTick = now;
             _evaluateTimer.Start();
-            return;
         }
-
-        // Multi-window minimise animations arrive over ~150-200 ms; extend the settle
-        // window up to a bounded cap so evaluation sees the final z-order.
-        if (now - _burstStartedTick < MaxBurstDebounceMs)
+        else if (now - _burstStartedTick < MaxBurstDebounceMs)
         {
+            // Multi-window minimise animations arrive over ~150-200 ms; extend the settle
+            // window up to a bounded cap so evaluation sees the final z-order.
             _evaluateTimer.Stop();
             _evaluateTimer.Start();
         }
+
+        // Slow multi-window minimise bursts (5+ heavy windows) can finish becoming iconic
+        // ~250-400 ms after EVENT_SYSTEM_MINIMIZESTART with no completion WinEvent; the
+        // trailing check also guarantees reconciliation once PreRaiseHoldMs elapses.
+        _trailingTimer.Stop();
+        _trailingTimer.Start();
     }
 
     public void Dispose()
     {
         _disposed = true;
+        _fastTimer.Stop();
         _evaluateTimer.Stop();
+        _trailingTimer.Stop();
         if (_shellShowHook != 0)
         {
             NativeMethods.UnhookWinEvent(_shellShowHook);
@@ -240,7 +302,7 @@ internal sealed class DesktopSurfaceWatcher : IDisposable
         _shellProcessId = shellProcessId;
         _shellShowHook = NativeMethods.SetWinEventHook(
             DockNativeMethods.EventObjectShow,
-            DockNativeMethods.EventObjectHide,
+            DockNativeMethods.EventObjectReorder,
             nint.Zero,
             _hookCallback,
             shellProcessId,
@@ -248,9 +310,46 @@ internal sealed class DesktopSurfaceWatcher : IDisposable
             DockNativeMethods.WineventOutOfContext);
     }
 
+    private void EvaluateImmediate()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+        var now = Environment.TickCount64;
+        if (now - _lastEvaluateTick >= MinImmediateIntervalMs)
+        {
+            _fastTimer.Stop();
+            Evaluate();
+            return;
+        }
+        if (!_fastTimer.IsEnabled)
+        {
+            _fastTimer.Start();
+        }
+    }
+
+    private void OnFastTick(object? sender, EventArgs e)
+    {
+        _fastTimer.Stop();
+        if (!_disposed)
+        {
+            Evaluate();
+        }
+    }
+
     private void OnEvaluateTick(object? sender, EventArgs e)
     {
         _evaluateTimer.Stop();
+        if (!_disposed)
+        {
+            Evaluate();
+        }
+    }
+
+    private void OnTrailingTick(object? sender, EventArgs e)
+    {
+        _trailingTimer.Stop();
         if (!_disposed)
         {
             Evaluate();
@@ -267,7 +366,23 @@ internal sealed class DesktopSurfaceWatcher : IDisposable
         uint eventTime)
     {
         UiDiagnostics.Hit(UiActivity.DesktopEvent);
-        if (_disposed || idObject != ObjidWindow || idChild != 0)
+        if (_disposed || idChild != 0)
+        {
+            return;
+        }
+        if (eventType == DockNativeMethods.EventObjectReorder)
+        {
+            // Top-level z-order changes report the desktop root window (commonly with
+            // OBJID_CLIENT = -4). Ignore child-control reorders inside Explorer windows.
+            if (window != 0 && window != DockNativeMethods.GetDesktopWindow())
+            {
+                return;
+            }
+            EvaluateImmediate();
+            ScheduleCheck();
+            return;
+        }
+        if (idObject != ObjidWindow)
         {
             return;
         }
@@ -286,6 +401,13 @@ internal sealed class DesktopSurfaceWatcher : IDisposable
                 return;
             }
         }
+        if (eventType is DockNativeMethods.EventSystemForeground
+                or DockNativeMethods.EventSystemDesktopSwitch
+                or DockNativeMethods.EventObjectShow
+                or DockNativeMethods.EventObjectHide)
+        {
+            EvaluateImmediate();
+        }
         ScheduleCheck();
     }
 
@@ -300,6 +422,7 @@ internal sealed class DesktopSurfaceWatcher : IDisposable
     private void Evaluate()
     {
         using var _ = UiDiagnostics.Measure("桌面状态评估");
+        _lastEvaluateTick = Environment.TickCount64;
         var desktopSurface = FindDesktopSurfaceWindow(out var shellProcess);
         RefreshShellShowHook(shellProcess);
         var found = desktopSurface != 0;
@@ -385,10 +508,21 @@ internal sealed class DesktopSurfaceWatcher : IDisposable
             }, 0);
         }
         var shown = DesktopSurfaceRules.IsDesktopShown(found, blockers);
+        if (shown)
+        {
+            _preRaiseUntilTick = 0;
+        }
+        var holdPreRaise = !shown
+            && _preRaiseUntilTick != 0
+            && _lastEvaluateTick < _preRaiseUntilTick;
         var anySurfaceCovered = shown && surfacesAbove < surfaces.Count;
-        var action = DesktopSurfaceRules.ActionFor(_cardsRaised, shown, anySurfaceCovered);
-        IsDesktopShown = shown;
-        _cardsRaised = shown;
+        var action = DesktopSurfaceRules.ActionFor(_cardsRaised, shown, anySurfaceCovered, holdPreRaise);
+        if (!holdPreRaise)
+        {
+            _preRaiseUntilTick = 0;
+            IsDesktopShown = shown;
+            _cardsRaised = shown;
+        }
         if (action == DesktopSurfaceAction.None)
         {
             return;

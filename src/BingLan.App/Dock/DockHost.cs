@@ -31,7 +31,11 @@ internal sealed class DockHost : IDisposable
 
     internal event Action? ShellRecovered;
 
+    internal event Action? PreparingShowDesktop;
+
     internal event Action? ShowDesktopTriggered;
+
+    internal event Action? ShowDesktopCancelled;
 
     internal IEnumerable<nint> ActiveDesktopHandles() =>
         _window?.ActiveDesktopHandles() ?? [];
@@ -95,7 +99,9 @@ internal sealed class DockHost : IDisposable
         window.SettingsRequested += _openSettings;
         window.CommandFailed += _notify;
         window.ShellRecovered += () => ShellRecovered?.Invoke();
+        window.PreparingShowDesktop += () => PreparingShowDesktop?.Invoke();
         window.ShowDesktopTriggered += () => ShowDesktopTriggered?.Invoke();
+        window.ShowDesktopCancelled += () => ShowDesktopCancelled?.Invoke();
         window.HideRequested += () =>
         {
             _state.IsEnabled = false;

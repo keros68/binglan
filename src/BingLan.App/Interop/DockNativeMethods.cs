@@ -22,6 +22,7 @@ internal static class DockNativeMethods
     internal const uint EventObjectCreate = 0x8000;
     internal const uint EventObjectShow = 0x8002;
     internal const uint EventObjectHide = 0x8003;
+    internal const uint EventObjectReorder = 0x8004;
     internal const uint EventObjectNameChange = 0x800C;
     internal const uint EventObjectStateChange = 0x800A;
     internal const uint EventObjectCloaked = 0x8017;
@@ -252,6 +253,9 @@ internal static class DockNativeMethods
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     internal static extern int GetClassNameW(nint hwnd, StringBuilder className, int maximumCount);
+
+    [DllImport("user32.dll")]
+    internal static extern nint GetDesktopWindow();
 
     [DllImport("user32.dll")]
     internal static extern nint GetShellWindow();

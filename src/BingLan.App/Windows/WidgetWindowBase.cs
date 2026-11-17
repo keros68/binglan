@@ -1790,8 +1790,7 @@ public class WidgetWindowBase : Window
                 NativeMethods.ShowWindow(source.Handle, NativeMethods.SwShowNoActivate);
             }
 
-            const uint flags = NativeMethods.SwpNoMove | NativeMethods.SwpNoSize |
-                               NativeMethods.SwpNoActivate | NativeMethods.SwpShowWindow;
+            const uint flags = NativeMethods.SwpNoMove | NativeMethods.SwpNoSize | NativeMethods.SwpNoActivate;
             if ((NativeMethods.GetExStyleOf(source.Handle) & NativeMethods.WsExTopmost) == 0
                 || insertAfter == 0
                 || insertAfter == DockNativeMethods.HwndTopmost)

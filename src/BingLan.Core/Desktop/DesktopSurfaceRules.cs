@@ -117,7 +117,20 @@ public static class DesktopSurfaceRules
         bool cardsRaised,
         bool desktopShown,
         bool anySurfaceCovered) =>
+        ActionFor(cardsRaised, desktopShown, anySurfaceCovered, holdPreRaise: false);
+
+    /// <summary>
+    /// What the desktop surfaces should do now, accounting for a brief pre-raise window
+    /// initiated right before the app itself asks Explorer to toggle "show desktop" so
+    /// cards are already above <c>Progman</c>/<c>WorkerW</c> before it rises (preventing
+    /// a wallpaper blink while ordinary windows are still mid-minimise).
+    /// </summary>
+    public static DesktopSurfaceAction ActionFor(
+        bool cardsRaised,
+        bool desktopShown,
+        bool anySurfaceCovered,
+        bool holdPreRaise) =>
         desktopShown
             ? (!cardsRaised || anySurfaceCovered ? DesktopSurfaceAction.Raise : DesktopSurfaceAction.None)
-            : (cardsRaised ? DesktopSurfaceAction.Lower : DesktopSurfaceAction.None);
+            : (holdPreRaise ? DesktopSurfaceAction.None : (cardsRaised ? DesktopSurfaceAction.Lower : DesktopSurfaceAction.None));
 }
