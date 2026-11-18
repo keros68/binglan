@@ -72,7 +72,7 @@ internal interface ITopBarEnvironment
     void OpenComponentSettings(DesktopComponentKind kind);
 
     /// <summary>Brings one window of an app that asked for attention to the front.</summary>
-    bool ActivateWindow(nint handle);
+    bool ActivateWindow(nint handle, uint processId = 0);
 
     /// <summary>
     /// The desktop files and Start-menu programs the search box offers. Potentially
@@ -140,6 +140,7 @@ public sealed partial class TopBarWindow : Window
     private bool _trueFullScreenForeground;
     private bool _desktopShown;
     private bool _menuOpen;
+    private NonActivatingPopupMenu? _barMenu;
     private int _tick;
     private TextBlock? _inputMethodBadgeText;
     private TextBlock? _inputMethodNameText;
@@ -487,7 +488,8 @@ public sealed partial class TopBarWindow : Window
         var changed = (int)wParam switch
         {
             HshellFlash => MarkFlashed(lParam),
-            HshellWindowActivated or HshellRudeAppActivated or HshellWindowDestroyed => _attention.Cleared(lParam),
+            HshellWindowActivated or HshellRudeAppActivated => ClearActivatedAttention(lParam),
+            HshellWindowDestroyed => _attention.Closed(lParam),
             _ => false
         };
         if (changed)
@@ -499,15 +501,64 @@ public sealed partial class TopBarWindow : Window
 
     private bool MarkFlashed(nint window)
     {
+        if (window == 0 || !DockNativeMethods.IsWindow(window))
+        {
+            return false;
+        }
+
         // A flash often names a hidden message window; the process lets the bar show
-        // the app's name and lets marks survive on its visible windows.
+        // the app's name, coalesce duplicate flashes, and clear once the app activates.
+        DockNativeMethods.GetWindowThreadProcessId(window, out var rawProcessId);
+        var executablePath = rawProcessId != 0 ? WindowCatalog.ExecutablePathOf(rawProcessId) : null;
+        var className = new StringBuilder(64);
+        DockNativeMethods.GetClassNameW(window, className, className.Capacity);
+        var foreground = DockNativeMethods.GetForegroundWindow();
+        var foregroundMinimized = foreground != 0 && DockNativeMethods.IsIconic(foreground);
+        if (!AttentionFlashRules.ShouldRecordFlash(
+                window,
+                isLiveWindow: true,
+                rawProcessId,
+                (uint)Environment.ProcessId,
+                executablePath,
+                className.ToString(),
+                foreground,
+                EffectiveAttentionProcessId(foreground),
+                foregroundMinimized))
+        {
+            return false;
+        }
+
+        return _attention.Flashed(
+            window,
+            AttentionFlashRules.EffectiveProcessId(rawProcessId, executablePath));
+    }
+
+    private bool ClearActivatedAttention(nint window)
+    {
+        var active = window != 0 ? window : DockNativeMethods.GetForegroundWindow();
+        return active != 0 && _attention.Cleared(active, EffectiveAttentionProcessId(active));
+    }
+
+    private static uint EffectiveAttentionProcessId(nint window)
+    {
+        if (window == 0)
+        {
+            return 0;
+        }
         DockNativeMethods.GetWindowThreadProcessId(window, out var processId);
-        return _attention.Flashed(window, processId);
+        return processId == 0
+            ? 0
+            : AttentionFlashRules.EffectiveProcessId(processId, WindowCatalog.ExecutablePathOf(processId));
     }
 
     private void OnClosing(object? sender, System.ComponentModel.CancelEventArgs e)
     {
         _closing = true;
+        if (_barMenu is { } barMenu)
+        {
+            barMenu.IsOpen = false;
+            _barMenu = null;
+        }
         _environment.CloseTrayOverflow();
         EndSearchSession();
         _everythingSearch?.Dispose();
@@ -3177,8 +3228,9 @@ public sealed partial class TopBarWindow : Window
             _attention.RemoveRange(_attention.OrderedWindows
                 .Where(handle => !DockNativeMethods.IsWindow(handle))
                 .ToArray());
+            var activeHandles = _attention.OrderedWindows.ToHashSet();
             foreach (var stale in _attentionNames.Keys
-                .Where(handle => !DockNativeMethods.IsWindow(handle))
+                .Where(handle => !activeHandles.Contains(handle))
                 .ToList())
             {
                 _attentionNames.Remove(stale);
@@ -3191,10 +3243,14 @@ public sealed partial class TopBarWindow : Window
             _attentionPanel.Children.Clear();
             foreach (var window in shown)
             {
+                var processId = _attention.ProcessOf(window);
                 if (!_attentionNames.TryGetValue(window, out var name))
                 {
-                    name = ResolveAttentionName(running, groups, window, _attention.ProcessOf(window));
-                    _attentionNames[window] = name;
+                    name = ResolveAttentionName(running, groups, window, processId);
+                    if (!string.Equals(name, "消息", StringComparison.Ordinal))
+                    {
+                        _attentionNames[window] = name;
+                    }
                 }
 
                 var button = new Button
@@ -3211,12 +3267,15 @@ public sealed partial class TopBarWindow : Window
                     Tag = window
                 };
                 System.Windows.Automation.AutomationProperties.SetName(button, $"{name}有新消息");
+                var capturedWindow = window;
+                var capturedProcessId = processId;
                 button.Click += (_, _) =>
                 {
-                    if (button.Tag is nint handle)
+                    if (_attention.Cleared(capturedWindow, capturedProcessId))
                     {
-                        _environment.ActivateWindow(handle);
+                        RefreshAttention();
                     }
+                    _environment.ActivateWindow(capturedWindow, capturedProcessId);
                 };
                 _attentionPanel.Children.Add(button);
             }
@@ -3240,16 +3299,34 @@ public sealed partial class TopBarWindow : Window
         uint processId)
     {
         var group = groups.FirstOrDefault(candidate =>
-            candidate.Windows.Any(item => item.Handle == window))
+                candidate.Windows.Any(item => item.Handle == window))
             // A flash often names a hidden message window; its process names the app.
             ?? groups.FirstOrDefault(candidate =>
                 processId != 0 && candidate.Windows.Any(item => item.ProcessId == processId));
-        if (group is not null && !string.IsNullOrWhiteSpace(group.DisplayName))
+        var executablePath = group?.Windows
+                .Select(item => item.ExecutablePath)
+                .FirstOrDefault(path => !string.IsNullOrWhiteSpace(path))
+            ?? (processId != 0 ? WindowCatalog.ExecutablePathOf(processId) : null);
+        var fileDescription = !string.IsNullOrWhiteSpace(executablePath)
+            && !DockAppResolver.IsFrameHost(executablePath)
+            && !DockAppResolver.IsPackagedPath(executablePath)
+                ? DockAppResolver.GetFileDescription(executablePath)
+                : null;
+        var trackedTitle = running.FirstOrDefault(candidate => candidate.Handle == window)?.Title;
+        if (string.IsNullOrWhiteSpace(trackedTitle) && window != 0)
         {
-            return group.DisplayName;
+            var buffer = new StringBuilder(128);
+            if (DockNativeMethods.GetWindowTextW(window, buffer, buffer.Capacity) > 0)
+            {
+                trackedTitle = buffer.ToString().Trim();
+            }
         }
-        var tracked = running.FirstOrDefault(candidate => candidate.Handle == window);
-        return !string.IsNullOrWhiteSpace(tracked?.Title) ? tracked!.Title : "消息";
+
+        return AttentionFlashRules.ChooseDisplayName(
+            fileDescription,
+            group?.DisplayName,
+            executablePath,
+            trackedTitle);
     }
 
     // ---------------------------------------------------------------- appearance
@@ -3315,6 +3392,17 @@ public sealed partial class TopBarWindow : Window
         if (_appBar?.Monitor is not { } monitor || _closing)
         {
             return;
+        }
+
+        if (_attention.OrderedWindows.Count > 0)
+        {
+            var activeWindow = DockNativeMethods.GetForegroundWindow();
+            if (activeWindow != 0
+                && !DockNativeMethods.IsIconic(activeWindow)
+                && _attention.Cleared(activeWindow, EffectiveAttentionProcessId(activeWindow)))
+            {
+                RefreshAttention();
+            }
         }
 
         var bounds = _appBar.Bounds;
@@ -3393,6 +3481,10 @@ public sealed partial class TopBarWindow : Window
             }
             else
             {
+                if (_barMenu is { } openBarMenu)
+                {
+                    openBarMenu.IsOpen = false;
+                }
                 CloseTodoFlyout();
                 CloseClockFlyout();
                 HideFromApp();
@@ -3404,7 +3496,7 @@ public sealed partial class TopBarWindow : Window
     {
         bounds = default;
         window = DockNativeMethods.GetForegroundWindow();
-        if (window == 0 || window == _handle || DockNativeMethods.IsIconic(window))
+        if (window == 0 || window == _handle || window == (_barMenu?.PopupHandle ?? 0) || DockNativeMethods.IsIconic(window))
         {
             return false;
         }
@@ -3432,7 +3524,7 @@ public sealed partial class TopBarWindow : Window
 
     private void BuildContextMenu()
     {
-        var menu = new ContextMenu().DismissOnOutsideClick();
+        var menu = new ContextMenu();
         var settings = new MenuItem { Header = "在冰蓝桌面中设置…" };
         settings.Click += (_, _) => _environment.OpenTopBarSettings();
         var exit = new MenuItem { Header = "退出冰蓝桌面" };
@@ -3442,5 +3534,44 @@ public sealed partial class TopBarWindow : Window
         menu.Opened += (_, _) => _menuOpen = true;
         menu.Closed += (_, _) => _menuOpen = false;
         ContextMenu = menu;
+
+        ContextMenuOpening += (_, args) => args.Handled = true;
+        Surface.MouseRightButtonUp += (_, args) =>
+        {
+            args.Handled = true;
+            Dispatcher.BeginInvoke(OpenBarContextMenu, DispatcherPriority.Input);
+        };
+    }
+
+    private void OpenBarContextMenu()
+    {
+        if (_closing || !IsVisible)
+        {
+            return;
+        }
+
+        if (_barMenu is { IsOpen: true } existing)
+        {
+            existing.IsOpen = false;
+        }
+        var surfaceColor = (Color)ColorConverter.ConvertFromString(DesktopStyleRules.TopBar(_style, _state).Surface);
+        var darkSurface = (0.2126d * surfaceColor.R + 0.7152d * surfaceColor.G + 0.0722d * surfaceColor.B) / 255d <= 0.6d;
+        var menu = new NonActivatingPopupMenu(Surface, PlacementMode.Mouse, darkSurface);
+        menu.AddItem("在冰蓝桌面中设置…", _environment.OpenTopBarSettings);
+        menu.AddItem("退出冰蓝桌面", _environment.ExitApp);
+        menu.Opened += (_, _) =>
+        {
+            _menuOpen = true;
+            _barMenu = menu;
+        };
+        menu.Closed += (_, _) =>
+        {
+            if (ReferenceEquals(_barMenu, menu))
+            {
+                _menuOpen = false;
+                _barMenu = null;
+            }
+        };
+        menu.IsOpen = true;
     }
 }

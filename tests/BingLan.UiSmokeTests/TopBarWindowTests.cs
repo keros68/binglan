@@ -1835,7 +1835,7 @@ internal static class TopBarWindowTests
 
         public void OpenComponentSettings(DesktopComponentKind kind) => ComponentRequested = kind;
 
-        public bool ActivateWindow(nint handle) => false;
+        public bool ActivateWindow(nint handle, uint processId = 0) => false;
 
         public void ExitApp()
         {

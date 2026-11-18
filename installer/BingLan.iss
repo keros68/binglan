@@ -2,7 +2,7 @@
 ; installer\obj\publish and passes the version with /DAppVersion=x.y.z.
 
 #ifndef AppVersion
-  #define AppVersion "0.2.73"
+  #define AppVersion "0.2.74"
 #endif
 
 [Setup]

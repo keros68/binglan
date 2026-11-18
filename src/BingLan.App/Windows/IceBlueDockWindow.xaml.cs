@@ -15,12 +15,10 @@ using BingLan.App.Services;
 using BingLan.Core.Dock;
 using BingLan.Core.Models;
 using Button = System.Windows.Controls.Button;
-using ContextMenu = System.Windows.Controls.ContextMenu;
 using DataObject = System.Windows.DataObject;
 using DragDropEffects = System.Windows.DragDropEffects;
 using DragEventArgs = System.Windows.DragEventArgs;
 using Image = System.Windows.Controls.Image;
-using MenuItem = System.Windows.Controls.MenuItem;
 using MouseEventArgs = System.Windows.Input.MouseEventArgs;
 using Orientation = System.Windows.Controls.Orientation;
 using Point = System.Windows.Point;
@@ -85,7 +83,7 @@ public partial class IceBlueDockWindow : Window
     private readonly DockMorphAnimator _morph;
     private readonly DockGlassSurface _glass;
     private bool _trueFullScreenForeground;
-    private ContextMenu? _openMenu;
+    private NonActivatingPopupMenu? _openMenu;
     private DateTimeOffset _lastReservationAttempt;
     private readonly DockAttention _attention = new();
     private readonly DockToggleCooldown _toggleCooldown = new(() => Environment.TickCount64);
@@ -438,7 +436,8 @@ public partial class IceBlueDockWindow : Window
         var changed = (int)wParam switch
         {
             HshellFlash => MarkFlashed(lParam),
-            HshellWindowActivated or HshellRudeAppActivated or HshellWindowDestroyed => _attention.Cleared(lParam),
+            HshellWindowActivated or HshellRudeAppActivated => ClearActivatedAttention(lParam),
+            HshellWindowDestroyed => _attention.Closed(lParam),
             _ => false
         };
         if (changed)
@@ -458,18 +457,68 @@ public partial class IceBlueDockWindow : Window
 
     private bool MarkFlashed(nint window)
     {
+        if (window == 0 || !DockNativeMethods.IsWindow(window))
+        {
+            return false;
+        }
+
         // Apps like chat clients flash through hidden message windows; remembering the
         // process lets the mark survive on the app's visible windows in the dock, and a
         // count published in the flashed title ("微信(3)") becomes the badge number.
-        DockNativeMethods.GetWindowThreadProcessId(window, out var processId);
+        DockNativeMethods.GetWindowThreadProcessId(window, out var rawProcessId);
+        var executablePath = rawProcessId != 0 ? WindowCatalog.ExecutablePathOf(rawProcessId) : null;
+        var className = new StringBuilder(64);
+        DockNativeMethods.GetClassNameW(window, className, className.Capacity);
+        var foreground = DockNativeMethods.GetForegroundWindow();
+        var foregroundMinimized = foreground != 0 && DockNativeMethods.IsIconic(foreground);
+        if (!AttentionFlashRules.ShouldRecordFlash(
+                window,
+                isLiveWindow: true,
+                rawProcessId,
+                (uint)Environment.ProcessId,
+                executablePath,
+                className.ToString(),
+                foreground,
+                EffectiveAttentionProcessId(foreground),
+                foregroundMinimized))
+        {
+            return false;
+        }
+
         var title = new StringBuilder(256);
         DockNativeMethods.GetWindowTextW(window, title, title.Capacity);
-        return _attention.Flashed(window, processId, UnreadBadgeRules.ParseCount(title.ToString()));
+        return _attention.Flashed(
+            window,
+            AttentionFlashRules.EffectiveProcessId(rawProcessId, executablePath),
+            UnreadBadgeRules.ParseCount(title.ToString()));
+    }
+
+    private bool ClearActivatedAttention(nint window)
+    {
+        var active = window != 0 ? window : DockNativeMethods.GetForegroundWindow();
+        return active != 0 && _attention.Cleared(active, EffectiveAttentionProcessId(active));
+    }
+
+    private static uint EffectiveAttentionProcessId(nint window)
+    {
+        if (window == 0)
+        {
+            return 0;
+        }
+        DockNativeMethods.GetWindowThreadProcessId(window, out var processId);
+        return processId == 0
+            ? 0
+            : AttentionFlashRules.EffectiveProcessId(processId, WindowCatalog.ExecutablePathOf(processId));
     }
 
     private void OnClosing(object? sender, CancelEventArgs e)
     {
         _closing = true;
+        if (_openMenu is { } menu)
+        {
+            menu.IsOpen = false;
+            _openMenu = null;
+        }
         EndExternalDrag();
         _glass.Dispose();
         _morph.Snap();
@@ -552,7 +601,7 @@ public partial class IceBlueDockWindow : Window
             // The row is built from the fitted size; the reserved length follows it.
             UpdateEffectiveIconSize(monitor, items);
         }
-        var signature = $"{_effectiveIconSize}|{_state.ShowStartMenuButton}|{_state.ShowDesktopButton}|{_dockOverflowing}|{BuildSignature(items)}|{string.Join(",", items.Select(item => _attention.UnreadCount(item.Group)))}";
+        var signature = $"{_effectiveIconSize}|{_state.ShowStartMenuButton}|{_state.ShowDesktopButton}|{_dockOverflowing}|{BuildSignature(items)}|{string.Join(",", items.Select(item => $"{(_attention.Wants(item.Group) ? '!' : '-')}{_attention.UnreadCount(item.Group)}"))}";
         if (string.Equals(signature, _lastSignature, StringComparison.Ordinal))
         {
             return;
@@ -651,22 +700,16 @@ public partial class IceBlueDockWindow : Window
         AutomationProperties.SetName(button, "查看全部应用");
         button.Click += (_, _) =>
         {
-            var menu = CreateMenu();
+            var menu = CreateMenu(button, PlacementMode.Top);
             foreach (var item in _items)
             {
-                var entry = new MenuItem { Header = DisplayNameOf(item) };
-                if (_visuals.TryGetValue(item.Key, out var visual) && visual.Icon is { } icon)
-                {
-                    entry.Icon = new Image { Source = icon, Width = 16, Height = 16 };
-                }
+                var icon = _visuals.TryGetValue(item.Key, out var visual) ? visual.Icon : null;
                 var captured = item;
-                entry.Click += (_, _) => Dispatcher.BeginInvoke(
+                menu.AddItem(
+                    DisplayNameOf(item),
                     () => Invoke(captured),
-                    DispatcherPriority.Input);
-                menu.Items.Add(entry);
+                    icon);
             }
-            menu.PlacementTarget = button;
-            menu.Placement = System.Windows.Controls.Primitives.PlacementMode.Top;
             menu.IsOpen = true;
         };
         return button;
@@ -897,11 +940,33 @@ public partial class IceBlueDockWindow : Window
             }
         };
         var iconScale = AddHoverZoom(button, icon);
+        button.ContextMenuOpening += (_, eventArgs) => eventArgs.Handled = true;
         button.MouseRightButtonUp += (_, eventArgs) =>
         {
             if (button.Tag is not DockItem current) return;
             eventArgs.Handled = true;
-            OpenItemMenu(current, DisplayNameOf(current));
+            var currentName = DisplayNameOf(current);
+            Dispatcher.BeginInvoke(
+                () =>
+                {
+                    if (!_closing && IsVisible)
+                    {
+                        OpenItemMenu(current, currentName);
+                    }
+                },
+                DispatcherPriority.Input);
+        };
+        button.PreviewKeyDown += (_, eventArgs) =>
+        {
+            if ((eventArgs.Key == Key.Apps || (eventArgs.Key == Key.F10 && Keyboard.Modifiers == ModifierKeys.Shift))
+                && button.Tag is DockItem current)
+            {
+                eventArgs.Handled = true;
+                if (!eventArgs.IsRepeat)
+                {
+                    OpenItemMenu(current, DisplayNameOf(current), button);
+                }
+            }
         };
         button.PreviewMouseLeftButtonDown += (_, eventArgs) =>
         {
@@ -1129,9 +1194,11 @@ public partial class IceBlueDockWindow : Window
         }
     }
 
-    private void OpenItemMenu(DockItem item, string name)
+    private void OpenItemMenu(DockItem item, string name, UIElement? anchor = null)
     {
-        var menu = CreateMenu();
+        var menu = anchor is null
+            ? CreateMenu()
+            : CreateMenu(anchor, PlacementMode.Top);
         if (item.Group is { } group)
         {
             if (item.HasMultipleWindows)
@@ -1139,23 +1206,21 @@ public partial class IceBlueDockWindow : Window
                 foreach (var window in group.Windows)
                 {
                     var captured = window;
-                    menu.Items.Add(MenuItem(
+                    menu.AddItem(
                         string.IsNullOrWhiteSpace(captured.Title) ? name : captured.Title,
-                        () => Dispatcher.BeginInvoke(
-                            () => _ = FocusWindowFromMenuAsync(captured, name),
-                            DispatcherPriority.Input)));
+                        () => _ = FocusWindowFromMenuAsync(captured, name));
                 }
-                menu.Items.Add(new Separator());
+                menu.AddSeparator();
             }
 
             var launchPin = item.Pinned ?? DockAppResolver.CreatePin(item, name);
             if (launchPin is not null)
             {
-                menu.Items.Add(MenuItem("启动新实例", async () => Report(await WindowCommandService.LaunchAsync(launchPin))));
+                menu.AddItem("启动新实例", async () => Report(await WindowCommandService.LaunchAsync(launchPin)));
             }
-            menu.Items.Add(MenuItem(
+            menu.AddItem(
                 item.HasMultipleWindows ? $"关闭全部 {item.WindowCount} 个窗口" : "关闭窗口",
-                () => Report(WindowCommandService.Close(group.Windows))));
+                () => Report(WindowCommandService.Close(group.Windows)));
         }
 
         var isPathPin = item.Pinned is { } pathPin && DockPinRules.IsPathPin(pathPin);
@@ -1168,67 +1233,85 @@ public partial class IceBlueDockWindow : Window
             && !DockAppResolver.IsFrameHost(executablePath)
             && !DockAppResolver.IsPackagedPath(executablePath))
         {
-            menu.Items.Add(MenuItem(
+            menu.AddItem(
                 "打开文件位置",
-                async () => Report(await Task.Run(() => WindowCommandService.OpenFileLocation(executablePath)))));
+                async () => Report(await Task.Run(() => WindowCommandService.OpenFileLocation(executablePath))));
         }
 
-        if (menu.Items.Count > 0)
+        if (menu.HasItems)
         {
-            menu.Items.Add(new Separator());
+            menu.AddSeparator();
         }
         if (!isPathPin && item.Pinned is { } iconPin && DockAppResolver.IconStore is { } iconStore)
         {
-            menu.Items.Add(MenuItem("更换图标…", () => ChangeIcon(item, iconPin, iconStore)));
+            menu.AddItem("更换图标…", () => ChangeIcon(item, iconPin, iconStore));
             if (iconPin.IconFile is not null)
             {
-                menu.Items.Add(MenuItem("恢复默认图标", () => SetIcon(item, iconPin, iconStore, null)));
+                menu.AddItem("恢复默认图标", () => SetIcon(item, iconPin, iconStore, null));
             }
         }
         if (item.Pinned is { } pinned)
         {
-            menu.Items.Add(MenuItem("从 Dock 取消固定", () =>
+            menu.AddItem("从 Dock 取消固定", () =>
             {
                 if (DockPinRules.Unpin(_state, DockPinRules.IdentityKey(pinned)))
                 {
                     DockAppResolver.IconStore?.Delete(pinned.IconFile);
                     PinsChanged();
                 }
-            }));
+            });
         }
         else if (DockAppResolver.CreatePin(item, name) is { } pin)
         {
-            menu.Items.Add(MenuItem("固定到 Dock", () =>
+            menu.AddItem("固定到 Dock", () =>
             {
                 if (DockPinRules.Pin(_state, pin))
                 {
                     PinsChanged();
                 }
-            }));
-            menu.Items.Add(MenuItem("不在 Dock 中显示此应用", () =>
+            });
+            menu.AddItem("不在 Dock 中显示此应用", () =>
             {
                 if (DockPinRules.Hide(_state, pin))
                 {
                     PinsChanged();
                 }
-            }));
+            });
         }
-        menu.Items.Add(MenuItem("Dock 设置…", () => SettingsRequested?.Invoke()));
+        menu.AddItem("Dock 设置…", () => SettingsRequested?.Invoke());
         menu.IsOpen = true;
     }
 
     private void OnDockSurfaceRightClick(object sender, MouseButtonEventArgs e)
     {
-        var menu = CreateMenu();
-        menu.Items.Add(MenuItem("添加应用…", PickAppToPin));
-        menu.Items.Add(MenuItem("Dock 设置…", () => SettingsRequested?.Invoke()));
-        menu.Items.Add(MenuItem("关闭冰蓝 Dock", () => HideRequested?.Invoke()));
-        menu.IsOpen = true;
+        e.Handled = true;
+        Dispatcher.BeginInvoke(
+            () =>
+            {
+                if (_closing || !IsVisible)
+                {
+                    return;
+                }
+                var menu = CreateMenu();
+                menu.AddItem("添加应用…", PickAppToPin);
+                menu.AddItem("Dock 设置…", () => SettingsRequested?.Invoke());
+                menu.AddItem("关闭冰蓝 Dock", () => HideRequested?.Invoke());
+                menu.IsOpen = true;
+            },
+            DispatcherPriority.Input);
     }
 
-    private ContextMenu CreateMenu()
+    private NonActivatingPopupMenu CreateMenu(
+        UIElement? placementTarget = null,
+        PlacementMode placement = PlacementMode.Mouse)
     {
-        var menu = new ContextMenu { Placement = PlacementMode.Mouse }.DismissOnOutsideClick();
+        if (_openMenu is { IsOpen: true } existing)
+        {
+            existing.IsOpen = false;
+        }
+        var darkSurface = TryFindResource("DockSurfaceBrush") is SolidColorBrush brush
+            && (0.2126d * brush.Color.R + 0.7152d * brush.Color.G + 0.0722d * brush.Color.B) / 255d <= 0.6d;
+        var menu = new NonActivatingPopupMenu(placementTarget ?? DockSurface, placement, darkSurface);
         menu.Opened += (_, _) =>
         {
             _menuOpen = true;
@@ -1236,20 +1319,13 @@ public partial class IceBlueDockWindow : Window
         };
         menu.Closed += (_, _) =>
         {
-            _menuOpen = false;
             if (ReferenceEquals(_openMenu, menu))
             {
+                _menuOpen = false;
                 _openMenu = null;
             }
         };
         return menu;
-    }
-
-    private static MenuItem MenuItem(string header, Action action)
-    {
-        var item = new MenuItem { Header = header };
-        item.Click += (_, _) => action();
-        return item;
     }
 
     private void OnItemMouseMove(object sender, MouseEventArgs e)
@@ -1706,6 +1782,18 @@ public partial class IceBlueDockWindow : Window
         }
 
         using var _ = UiDiagnostics.Measure("Dock 前台判定");
+
+        if (_attention.Count > 0)
+        {
+            var activeWindow = DockNativeMethods.GetForegroundWindow();
+            if (activeWindow != 0
+                && !DockNativeMethods.IsIconic(activeWindow)
+                && _attention.Cleared(activeWindow, EffectiveAttentionProcessId(activeWindow)))
+            {
+                _lastSignature = string.Empty;
+                RefreshWindows();
+            }
+        }
 
         // Native menus own this interaction. The taskbar foreground window has no
         // useful menu bounds, so overlap detection alone would reveal the Dock over it.
@@ -2259,7 +2347,7 @@ public partial class IceBlueDockWindow : Window
             DockNativeMethods.GetForegroundWindow(),
             searchHolder,
             searchBorrowed);
-        if (window == 0 || window == _handle || window == _openMenu.PopupHandle() || DockNativeMethods.IsIconic(window))
+        if (window == 0 || window == _handle || window == (_openMenu?.PopupHandle ?? 0) || DockNativeMethods.IsIconic(window))
         {
             return false;
         }

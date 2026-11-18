@@ -48,6 +48,9 @@ internal static class TopBarNativeMethods
         out nint result);
 
     internal const int LeftMouseButton = 0x01;
+    internal const int RightMouseButton = 0x02;
+    internal const int MiddleMouseButton = 0x04;
+    internal const int EscapeKey = 0x1B;
 
     // The search box's global focus hotkey, registered on the bar's own window.
     internal const int WmHotkey = 0x0312;
@@ -76,6 +79,9 @@ internal static class TopBarNativeMethods
         var state = GetAsyncKeyState(key);
         return (state & 0x8000) != 0 || (state & 0x1) != 0;
     }
+
+    /// <summary>Whether the key or mouse button is physically held down right now.</summary>
+    internal static bool IsKeyCurrentlyDown(int key) => (GetAsyncKeyState(key) & 0x8000) != 0;
 
     /// <summary>
     /// Reads and discards the "pressed since the last call" latch. The click that opens

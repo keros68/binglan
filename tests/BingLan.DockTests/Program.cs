@@ -63,6 +63,7 @@ Run("拖拽文件命令行参数转义与悬停 500ms 唤起状态机", TestDock
 Run("Dock 顶层窗口过滤规则：排除零尺寸、穿透阴影与无标题禁用辅助窗", TestTopLevelWindowFilterRules);
 Run("Dock 激活目标选择：WPS 最小化主窗优先于未最小化的禁用辅助窗", TestSelectActivationTarget);
 Run("Dock 权限隔离提示文案：区分目标提权、前台提权与常规拦截", TestActivationBlockedMessages);
+Run("免激活右键菜单防闪退与外部点击收起状态机", TestMenuDismissState);
 
 if (failures.Count > 0)
 {
@@ -149,6 +150,10 @@ static void TestDockAttention()
     Assert(
         attention.MarkedWindows.Contains(999),
         "不在枚举里的闪烁句柄应保留标记");
+    Assert(!attention.Closed(888) && attention.Wants(hidden), "同进程无关辅助窗口销毁不应清掉未读提醒");
+    Assert(attention.Cleared(301, 7) && !attention.Wants(hidden), "激活同进程的可见主窗口应清除隐藏消息窗口标记");
+
+    attention.Flashed(999, 7);
     attention.RemoveRange([999]);
     Assert(!attention.Wants(hidden), "隐藏闪烁窗口销毁后标记清除");
 }
@@ -2061,6 +2066,120 @@ static void TestActivationBlockedMessages()
         "无法打开 Windows 开始菜单，请稍后重试。",
         WindowActivationRules.FormatStartMenuBlockedMessage(taskbarElevated: false, foregroundElevated: false),
         "常规开始菜单失败应保留既有提示");
+}
+
+static void TestMenuDismissState()
+{
+    // 触屏本 / 精密触控板双指轻点打开菜单时，打开瞬间右键尚未完全松开：不得把同一次抬起当成外部点击闪退。
+    var state = new MenuDismissState();
+    state.Start(initialForeground: 100, anyMouseCurrentlyHeld: true, escapeCurrentlyHeld: false);
+    Assert(!state.IsMouseArmed && state.IsEscapeArmed, "按键尚未松开时鼠标外部收起保持未就绪");
+    Assert(
+        !state.ShouldCloseOnPoll(
+            anyMouseCurrentlyHeld: true,
+            anyMousePressedLatch: false,
+            escapeCurrentlyHeld: false,
+            escapePressedLatch: false,
+            pointerInsideMenu: false,
+            currentForeground: 100,
+            menuPopupHandle: 500,
+            systemMenuForeground: false,
+            out var armedMouse,
+            out _),
+        "打开点击尚未松开时菜单保持打开");
+    Assert(!armedMouse, "仍按住时不提前就绪");
+
+    Assert(
+        !state.ShouldCloseOnPoll(
+            anyMouseCurrentlyHeld: false,
+            anyMousePressedLatch: false,
+            escapeCurrentlyHeld: false,
+            escapePressedLatch: false,
+            pointerInsideMenu: false,
+            currentForeground: 100,
+            menuPopupHandle: 500,
+            systemMenuForeground: false,
+            out armedMouse,
+            out _),
+        "打开点击刚松开当拍只完成就绪并清空残余按键位，不关闭菜单");
+    Assert(armedMouse && state.IsMouseArmed, "松开后进入外部点击监测就绪态");
+
+    // 菜单内的点击不提前关掉弹窗，交由菜单项自身执行命令。
+    Assert(
+        !state.ShouldCloseOnPoll(
+            anyMouseCurrentlyHeld: true,
+            anyMousePressedLatch: true,
+            escapeCurrentlyHeld: false,
+            escapePressedLatch: false,
+            pointerInsideMenu: true,
+            currentForeground: 100,
+            menuPopupHandle: 500,
+            systemMenuForeground: false,
+            out _,
+            out _),
+        "菜单内部按下左键不应由外部监测提前关闭");
+
+    // 悬停在菜单内时后台窗口自然切换前台不误关菜单；移出菜单后点击外部或切换管理员窗口立即收起。
+    Assert(
+        !state.ShouldCloseOnPoll(
+            anyMouseCurrentlyHeld: false,
+            anyMousePressedLatch: false,
+            escapeCurrentlyHeld: false,
+            escapePressedLatch: false,
+            pointerInsideMenu: true,
+            currentForeground: 200,
+            menuPopupHandle: 500,
+            systemMenuForeground: false,
+            out _,
+            out _),
+        "指针位于菜单内部时前台变化不误关菜单");
+
+    Assert(
+        state.ShouldCloseOnPoll(
+            anyMouseCurrentlyHeld: false,
+            anyMousePressedLatch: true,
+            escapeCurrentlyHeld: false,
+            escapePressedLatch: false,
+            pointerInsideMenu: false,
+            currentForeground: 200,
+            menuPopupHandle: 500,
+            systemMenuForeground: false,
+            out _,
+            out _),
+        "松开就绪后在菜单外点击应立即收起菜单");
+
+    // 逃逸键与点击提权窗口（UIPI 下无按键锁存但前台句柄变化）同样可收起。
+    var escapeState = new MenuDismissState();
+    escapeState.Start(initialForeground: 100, anyMouseCurrentlyHeld: false, escapeCurrentlyHeld: false);
+    Assert(
+        escapeState.ShouldCloseOnPoll(
+            anyMouseCurrentlyHeld: false,
+            anyMousePressedLatch: false,
+            escapeCurrentlyHeld: false,
+            escapePressedLatch: true,
+            pointerInsideMenu: true,
+            currentForeground: 100,
+            menuPopupHandle: 500,
+            systemMenuForeground: false,
+            out _,
+            out _),
+        "按 Esc 应立即收起菜单");
+
+    var elevatedSwitchState = new MenuDismissState();
+    elevatedSwitchState.Start(initialForeground: 100, anyMouseCurrentlyHeld: false, escapeCurrentlyHeld: false);
+    Assert(
+        elevatedSwitchState.ShouldCloseOnPoll(
+            anyMouseCurrentlyHeld: false,
+            anyMousePressedLatch: false,
+            escapeCurrentlyHeld: false,
+            escapePressedLatch: false,
+            pointerInsideMenu: false,
+            currentForeground: 300,
+            menuPopupHandle: 500,
+            systemMenuForeground: false,
+            out _,
+            out _),
+        "指针在菜单外且前台切换到其他窗口时应立即收起菜单");
 }
 
 static void Assert(bool condition, string message)

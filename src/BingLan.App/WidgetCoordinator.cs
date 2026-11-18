@@ -2984,17 +2984,73 @@ public sealed class WidgetCoordinator : IDisposable
 
         public void OpenComponentSettings(DesktopComponentKind kind) => owner.OpenSettings(kind);
 
-        public bool ActivateWindow(nint handle)
+        public bool ActivateWindow(nint handle, uint processId = 0)
         {
-            if (handle == 0)
+            if (handle == 0 && processId == 0)
             {
                 return false;
             }
 
-            // The bar never takes focus itself, so Windows may refuse the switch: the
-            // same flash fallback the dock uses tells the user where the window is.
-            return WindowCommandService.Focus(
-                new TrackedWindow(handle, 0, "窗口", null, null, false, false)).Succeeded;
+            // A visible window can be raised directly; a hidden message window delegates to
+            // the owning process's live window or its tray-reveal / launch path off-thread.
+            if (handle != 0
+                && DockNativeMethods.IsWindow(handle)
+                && DockNativeMethods.IsWindowVisible(handle)
+                && !NativeMethods.IsWindowCloaked(handle))
+            {
+                return WindowCommandService.Focus(
+                    new TrackedWindow(handle, processId, "窗口", null, null, false, DockNativeMethods.IsIconic(handle))).Succeeded;
+            }
+
+            if (processId == 0 && handle != 0 && DockNativeMethods.IsWindow(handle))
+            {
+                DockNativeMethods.GetWindowThreadProcessId(handle, out processId);
+            }
+            if (processId == 0)
+            {
+                return false;
+            }
+
+            _ = ActivateProcessAttentionAsync(processId);
+            return true;
+        }
+
+        private async Task ActivateProcessAttentionAsync(uint processId)
+        {
+            var running = await Task.Run(() => new WindowCatalog().Capture());
+            var processWindows = running.Where(window => window.ProcessId == processId).ToArray();
+            if (processWindows.Length > 0)
+            {
+                var group = WindowGrouping.Group(processWindows)[0];
+                var target = processWindows.FirstOrDefault(window => !window.IsMinimized) ?? processWindows[0];
+                _ = await WindowCommandService.FocusAsync(
+                    target,
+                    DockNativeMethods.IsIconic(target.Handle),
+                    group.DisplayName);
+                return;
+            }
+
+            var executablePath = await Task.Run(() => WindowCatalog.ExecutablePathOf(processId));
+            if (string.IsNullOrWhiteSpace(executablePath)
+                || DockAppResolver.IsFrameHost(executablePath)
+                || DockAppResolver.IsPackagedPath(executablePath))
+            {
+                return;
+            }
+
+            var pinned = owner._state.Dock.PinnedApps.FirstOrDefault(candidate =>
+                    !string.IsNullOrWhiteSpace(candidate.ExecutablePath)
+                    && string.Equals(
+                        WindowGrouping.NormalizeExecutablePath(candidate.ExecutablePath),
+                        WindowGrouping.NormalizeExecutablePath(executablePath),
+                        StringComparison.OrdinalIgnoreCase))
+                ?? new DockPinnedApp
+                {
+                    DisplayName = DockAppResolver.GetFileDescription(executablePath)
+                        ?? Path.GetFileNameWithoutExtension(executablePath),
+                    ExecutablePath = executablePath
+                };
+            _ = await WindowCommandService.RevealOrLaunchAsync(pinned);
         }
 
         public void ExitApp() => owner.Exit();

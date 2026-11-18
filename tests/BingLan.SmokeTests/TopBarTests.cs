@@ -244,6 +244,44 @@ public static class TopBarTests
         Assert(overflow == 2, "剩余折叠计数");
         (shown, overflow) = TopBarAttentionQueue.ResolveDisplay([], 3);
         Assert(shown.Count == 0 && overflow == 0, "空队列无溢出");
+
+        // 同一应用的多个隐藏消息窗口闪烁时合并为一条，激活该应用的可见主窗口后一并清除。
+        var dedupQueue = new TopBarAttentionQueue();
+        Assert(dedupQueue.Flashed(9001, 42), "隐藏消息窗口首次闪烁入队");
+        Assert(!dedupQueue.Flashed(9002, 42), "同一进程第二个隐藏消息窗口不重复生成消息项");
+        Assert(dedupQueue.OrderedWindows.SequenceEqual([9001]), "同一应用只保留一条顶栏消息提示");
+        Assert(dedupQueue.Closed(9001), "首个隐藏窗口销毁时顺延到仍存活的闪烁窗口");
+        Assert(dedupQueue.OrderedWindows.SequenceEqual([9002]) && dedupQueue.ProcessOf(9002) == 42, "顺延后保留进程归属");
+        Assert(dedupQueue.Cleared(3001, 42), "激活同进程的可见主窗口应清除隐藏窗口残留的消息提示");
+        Assert(dedupQueue.OrderedWindows.Count == 0, "激活主窗口后顶栏不再残留消息提示");
+
+        // 应用宿主共享进程（ApplicationFrameHost）按句柄独立计数，不跨应用误合并或误清。
+        var frameHostPid = AttentionFlashRules.EffectiveProcessId(88, @"C:\Windows\System32\ApplicationFrameHost.exe");
+        Assert(frameHostPid == 0, "ApplicationFrameHost 不参与按进程合并");
+        Assert(dedupQueue.Flashed(7001, frameHostPid) && dedupQueue.Flashed(7002, frameHostPid), "两个打包应用窗口分别保留");
+        Assert(dedupQueue.Cleared(7001, frameHostPid) && dedupQueue.OrderedWindows.SequenceEqual([7002]), "激活其中一个打包应用不清另一个");
+
+        // 过滤系统外壳、通知宿主、输入法及已处于前台的应用自身的闪烁，避免产生无法消除的“消息”。
+        Assert(!AttentionFlashRules.ShouldRecordFlash(
+                8001, true, 50, 99, @"C:\Windows\SystemApps\ShellExperienceHost_cw5n1h2txyewy\ShellExperienceHost.exe",
+                "Windows.UI.Core.CoreWindow", 200, 20, false),
+            "系统通知宿主闪烁不应生成顶栏消息");
+        Assert(!AttentionFlashRules.ShouldRecordFlash(
+                8002, true, 51, 99, @"C:\Windows\explorer.exe", "Shell_TrayWnd", 200, 20, false),
+            "任务栏自身闪烁不应生成顶栏消息");
+        Assert(AttentionFlashRules.ShouldRecordFlash(
+                8003, true, 51, 99, @"C:\Windows\explorer.exe", "CabinetWClass", 200, 20, false),
+            "文件资源管理器窗口不在前台时的闪烁允许提示");
+        Assert(!AttentionFlashRules.ShouldRecordFlash(
+                9001, true, 42, 99, @"D:\Program Files\Tencent\Weixin\Weixin.exe", "Qt51514QWindowIcon",
+                3001, 42, foregroundIsMinimized: false),
+            "微信主窗口已处于前台未最小化时，其隐藏窗口闪烁不应挂出常驻消息");
+        Assert(AttentionFlashRules.ShouldRecordFlash(
+                9001, true, 42, 99, @"D:\Program Files\Tencent\Weixin\Weixin.exe", "Qt51514QWindowIcon",
+                3001, 42, foregroundIsMinimized: true),
+            "微信主窗口已最小化时，其隐藏窗口闪烁仍应提示");
+        Assert(AttentionFlashRules.ChooseDisplayName("微信", null, @"D:\App\Weixin.exe", "") == "微信",
+            "托盘驻留无可见窗口时优先显示程序友好名称而非泛化的“消息”");
     }
 
     private static void TestModuleRules()
