@@ -98,10 +98,10 @@ internal static class DockShortcuts
     }
 
     /// <summary>
-    /// Classifies a dropped file-system path for dock drag-and-drop without blocking on
-    /// slow network shares when <paramref name="allowUncDiskProbe"/> is false.
+    /// Classifies a dropped file-system path using its real target and directory state.
+    /// File-system and shortcut reads run through the background entry points below.
     /// </summary>
-    internal static DroppedPathInfo InspectDroppedPath(string path, bool allowUncDiskProbe)
+    private static DroppedPathInfo InspectDroppedPath(string path)
     {
         if (string.IsNullOrWhiteSpace(path))
         {
@@ -112,11 +112,6 @@ internal static class DockShortcuts
         if (DockFileDropRules.IsExecutablePath(trimmed))
         {
             return new DroppedPathInfo(path, trimmed, IsDirectory: false, IsProgram: true);
-        }
-
-        if (!allowUncDiskProbe && IsUncPath(trimmed))
-        {
-            return new DroppedPathInfo(path, trimmed, LooksLikeDirectory(trimmed), IsProgram: false);
         }
 
         if (string.Equals(Path.GetExtension(trimmed), ".lnk", StringComparison.OrdinalIgnoreCase))
@@ -131,29 +126,24 @@ internal static class DockShortcuts
                     IsProgram: true);
             }
 
-            var targetIsDirectory = !allowUncDiskProbe && IsUncPath(resolved.TargetPath)
-                ? LooksLikeDirectory(resolved.TargetPath)
-                : Directory.Exists(resolved.TargetPath);
+            var targetIsDirectory = Directory.Exists(resolved.TargetPath);
             return new DroppedPathInfo(path, resolved.TargetPath, targetIsDirectory, IsProgram: false);
         }
 
         return new DroppedPathInfo(path, trimmed, Directory.Exists(trimmed), IsProgram: false);
     }
 
-    private static bool IsUncPath(string path) =>
-        path.StartsWith(@"\\", StringComparison.Ordinal)
-        || path.StartsWith("//", StringComparison.Ordinal);
+    internal static Task<IReadOnlyList<DroppedPathInfo>> InspectDroppedPathsAsync(IEnumerable<string> paths) =>
+        Task.Run<IReadOnlyList<DroppedPathInfo>>(() => paths
+            .Select(InspectDroppedPath)
+            .ToArray());
 
-    private static bool LooksLikeDirectory(string path)
-    {
-        if (path.EndsWith(Path.DirectorySeparatorChar) || path.EndsWith(Path.AltDirectorySeparatorChar))
-        {
-            return true;
-        }
-
-        var trimmedEnd = path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        return string.IsNullOrEmpty(Path.GetExtension(trimmedEnd));
-    }
+    /// <summary>Reads dropped files, folders and shortcuts off the caller's thread.</summary>
+    internal static Task<IReadOnlyList<DockPinnedApp>> CreatePinsAsync(IEnumerable<string> paths) =>
+        Task.Run<IReadOnlyList<DockPinnedApp>>(() => paths
+            .Select(path => CreatePin(path) ?? CreatePathPin(path))
+            .OfType<DockPinnedApp>()
+            .ToArray());
 
     /// <summary>A pin for a program or a shortcut to one, or null for anything else.</summary>
     internal static DockPinnedApp? CreatePin(string path)

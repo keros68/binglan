@@ -248,28 +248,40 @@ public static class FileMappingService
             .ToArray();
     }
 
-    public static int AddExisting(FileBoxState box, IEnumerable<string> paths)
-    {
-        var comparer = StringComparer.OrdinalIgnoreCase;
-        var known = box.Items.Select(x => x.Path).ToHashSet(comparer);
-        var added = 0;
+    public static int AddExisting(FileBoxState box, IEnumerable<string> paths) =>
+        AddPaths(box, paths, checkExistence: true);
 
+    /// <summary>
+    /// Commits full paths whose existence was checked during background preparation.
+    /// Only mapping records are updated; a final dedupe handles overlapping imports.
+    /// </summary>
+    public static int AddPrepared(FileBoxState box, IEnumerable<string> fullPaths) =>
+        AddPaths(box, fullPaths, checkExistence: false);
+
+    private static int AddPaths(FileBoxState box, IEnumerable<string> paths, bool checkExistence)
+    {
+        var known = box.Items.Select(x => x.Path).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var added = 0;
         foreach (var rawPath in paths)
         {
-            string path;
-            try
+            var path = rawPath;
+            if (checkExistence)
             {
-                path = System.IO.Path.GetFullPath(rawPath);
+                try
+                {
+                    path = Path.GetFullPath(rawPath);
+                }
+                catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+                {
+                    continue;
+                }
             }
-            catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
-            {
-                continue;
-            }
-            if ((!File.Exists(path) && !Directory.Exists(path)) || !known.Add(path))
+            if (known.Contains(path) || (checkExistence && !File.Exists(path) && !Directory.Exists(path)))
             {
                 continue;
             }
 
+            known.Add(path);
             box.Items.Add(new FileMappingState
             {
                 Path = path,

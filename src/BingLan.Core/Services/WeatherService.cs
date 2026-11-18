@@ -20,10 +20,15 @@ public sealed class WeatherService
     private readonly HttpClient _httpClient;
     private readonly TimeProvider _time;
     private readonly SemaphoreSlim _refreshGate = new(1, 1);
-    private int _consecutiveFailures;
-    private DateTimeOffset? _nextRetryAt;
-    private WeatherSnapshot? _lastSuccess;
-    private string? _locationKey;
+    // Refreshes are serialized; readers on the UI thread see one complete location state.
+    private volatile LocationState _state = new(null, null, null, 0, null);
+
+    private sealed record LocationState(
+        string? Key,
+        WeatherSnapshot? LastSuccess,
+        WeatherSnapshot? LastSnapshot,
+        int ConsecutiveFailures,
+        DateTimeOffset? NextRetryAt);
 
     public WeatherService()
         : this(null, null)
@@ -40,24 +45,45 @@ public sealed class WeatherService
         _time = time ?? TimeProvider.System;
     }
 
-    public DateTimeOffset? NextRetryAt => _nextRetryAt;
+    public DateTimeOffset? NextRetryAt => _state.NextRetryAt;
 
     // 退避是强制的调度建议：失败后调用方应等待 ShouldAttemptRefresh 放行再重试。
-    public bool ShouldAttemptRefresh(DateTimeOffset now) =>
-        _consecutiveFailures == 0 || _nextRetryAt is null || now >= _nextRetryAt.Value;
+    public bool ShouldAttemptRefresh(DateTimeOffset now) => ShouldAttemptRefresh(_state, now);
+
+    private static bool ShouldAttemptRefresh(LocationState state, DateTimeOffset now) =>
+        state.ConsecutiveFailures == 0 || state.NextRetryAt is null || now >= state.NextRetryAt.Value;
 
     public bool ShouldAttemptRefresh(
         DateTimeOffset now,
         string city,
         double latitude,
-        double longitude) =>
-        !string.Equals(_locationKey, CreateLocationKey(city, latitude, longitude), StringComparison.Ordinal) ||
-        ShouldAttemptRefresh(now);
+        double longitude)
+    {
+        var state = _state;
+        return !string.Equals(state.Key, CreateLocationKey(city, latitude, longitude), StringComparison.Ordinal) ||
+               ShouldAttemptRefresh(state, now);
+    }
 
-    public WeatherSnapshot? GetLastSnapshot(string city, double latitude, double longitude) =>
-        string.Equals(_locationKey, CreateLocationKey(city, latitude, longitude), StringComparison.Ordinal)
-            ? _lastSuccess
+    public WeatherSnapshot? GetLastSnapshot(string city, double latitude, double longitude)
+    {
+        var state = _state;
+        return string.Equals(state.Key, CreateLocationKey(city, latitude, longitude), StringComparison.Ordinal)
+            ? state.LastSnapshot
             : null;
+    }
+
+    public bool IsAutomaticRefreshDue(DateTimeOffset now, string city, double latitude, double longitude)
+    {
+        var state = _state;
+        if (!string.Equals(state.Key, CreateLocationKey(city, latitude, longitude), StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        return ShouldAttemptRefresh(state, now) &&
+               (state.LastSnapshot is not { Status: WeatherStatus.Fresh, UpdatedAt: { } last }
+                || now - last >= SuccessRefreshInterval);
+    }
 
     // 指数退避：1、2、4、8、16、30 分钟封顶，避免无限快速重试。
     public static TimeSpan ComputeRetryDelay(int consecutiveFailures)
@@ -88,12 +114,11 @@ public sealed class WeatherService
         try
         {
             var locationKey = CreateLocationKey(trimmedCity, latitude, longitude);
-            if (!string.Equals(_locationKey, locationKey, StringComparison.Ordinal))
+            var state = _state;
+            if (!string.Equals(state.Key, locationKey, StringComparison.Ordinal))
             {
-                _locationKey = locationKey;
-                _lastSuccess = null;
-                _consecutiveFailures = 0;
-                _nextRetryAt = null;
+                state = new LocationState(locationKey, null, null, 0, null);
+                _state = state;
             }
 
             try
@@ -101,36 +126,48 @@ public sealed class WeatherService
                 var json = await _httpClient
                     .GetStringAsync(BuildRequestUrl(latitude, longitude), cancellationToken)
                     .ConfigureAwait(false);
-                var snapshot = ParseForecast(json, trimmedCity, _time.GetLocalNow());
-                _lastSuccess = snapshot;
-                _consecutiveFailures = 0;
-                _nextRetryAt = null;
+                WeatherSnapshot snapshot;
+                try
+                {
+                    snapshot = ParseForecast(json, trimmedCity, _time.GetLocalNow());
+                }
+                catch (Exception exception) when (exception is KeyNotFoundException
+                    or InvalidOperationException or FormatException)
+                {
+                    throw new JsonException("天气数据字段无效", exception);
+                }
+                _state = new LocationState(locationKey, snapshot, snapshot, 0, null);
                 return snapshot;
             }
             catch (Exception exception) when (exception is OperationCanceledException
                 or HttpRequestException
                 or JsonException)
             {
-                _consecutiveFailures++;
-                _nextRetryAt = _time.GetLocalNow() + ComputeRetryDelay(_consecutiveFailures);
+                var failures = state.ConsecutiveFailures + 1;
+                var retryAt = _time.GetLocalNow() + ComputeRetryDelay(failures);
                 var message = exception switch
                 {
                     OperationCanceledException => "请求超时",
                     JsonException => "返回数据无法解析",
                     _ => "网络请求失败"
                 };
-                if (_lastSuccess is not null)
-                {
-                    return _lastSuccess with
+                var snapshot = state.LastSuccess is not null
+                    ? state.LastSuccess with
                     {
                         Status = WeatherStatus.CachedFallback,
                         FromCache = true,
                         ErrorMessage = message
-                    };
-                }
-                return new WeatherSnapshot(
-                    WeatherStatus.Failed, trimmedCity,
-                    null, null, null, null, "", false, null, message);
+                    }
+                    : new WeatherSnapshot(
+                        WeatherStatus.Failed, trimmedCity,
+                        null, null, null, null, "", false, null, message);
+                _state = state with
+                {
+                    LastSnapshot = snapshot,
+                    ConsecutiveFailures = failures,
+                    NextRetryAt = retryAt
+                };
+                return snapshot;
             }
         }
         finally

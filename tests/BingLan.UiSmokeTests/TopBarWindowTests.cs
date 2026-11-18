@@ -388,6 +388,22 @@ internal static class TopBarWindowTests
             {
                 throw new InvalidOperationException("天气模块悬停应提供高低温与湿度详情");
             }
+            var freshWeather = environment.Weather!;
+            foreach (var status in new[] { WeatherStatus.CachedFallback, WeatherStatus.Failed })
+            {
+                environment.Weather = freshWeather with
+                {
+                    Status = status,
+                    FromCache = status == WeatherStatus.CachedFallback,
+                    ErrorMessage = "网络请求失败"
+                };
+                bar.ApplyState();
+                Assert(ElementByName(bar, "天气模块").ToolTip is ToolTip { Content: TextBlock failureDetail }
+                       && TextOfTextBlock(failureDetail).Contains("刷新失败：网络请求失败"),
+                    $"天气 {status} 状态应在悬停详情展示失败原因");
+            }
+            environment.Weather = freshWeather;
+            bar.ApplyState();
             // System facts arrive from a background read; wait for them to land, then
             // hold them to the real thing: a dash or fallback label on this machine
             // means the underlying API call is dead, not that the value is unknown.

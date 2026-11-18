@@ -15,6 +15,7 @@ internal static class FileBoxRuleTests
         TestShellEntryAndMissingRules();
         TestCollectGoneIdsAndParentDirectories();
         TestAddSystemEntryDedupe();
+        TestPreparedImportPreservesMappingsAndDoesNotRecheckFiles();
         TestRelinkKeepsIdAndOrder();
         TestRelinkRejectsShellEntriesAndMissingTargets();
         TestRenameChangesOnlyTheDisplayName();
@@ -25,6 +26,39 @@ internal static class FileBoxRuleTests
         TestDeleteOriginalRules();
         TestDeleteOriginalSettingDefaultsOff();
         TestHeaderToolsOnHoverDefaultsOff();
+    }
+
+    private static void TestPreparedImportPreservesMappingsAndDoesNotRecheckFiles()
+    {
+        var temp = Path.Combine(Path.GetTempPath(), $"BingLan-prepared-import-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(temp);
+        try
+        {
+            var existing = Path.Combine(temp, "已有.txt");
+            var prepared = Path.Combine(temp, "已准备.txt");
+            File.WriteAllText(existing, "保留");
+            File.WriteAllText(prepared, "准备");
+            var box = new FileBoxState();
+            FileMappingService.AddExisting(box, [existing]);
+            var original = box.Items.Single();
+            original.Title = "自定名称";
+
+            // A file can disappear between background preparation and the UI commit.
+            // Commit must only merge records; later missing-path probes update the tile.
+            Assert(File.Exists(prepared), "准备导入的文件应存在");
+            File.Delete(prepared);
+            Assert(FileMappingService.AddPrepared(box, [existing.ToUpperInvariant(), prepared, prepared]) == 1,
+                "提交准备结果应只添加新映射，不重新访问已检查的文件");
+            Assert(box.Items.Count == 2 && ReferenceEquals(box.Items[0], original)
+                && original.Title == "自定名称" && original.Path == existing,
+                "重叠导入应保留已有映射的标识、名称和顺序");
+            Assert(box.Items.Select(item => item.Order).SequenceEqual([0, 1]), "导入后顺序应连续");
+            Assert(File.ReadAllText(existing) == "保留", "提交映射不得改动原文件");
+        }
+        finally
+        {
+            Directory.Delete(temp, true);
+        }
     }
 
     // 标题栏按钮悬停显示是选择开启的外观偏好：新状态与 v37 升级后都默认关闭，开启后保存重载保留。

@@ -156,6 +156,8 @@ internal static class Program
         Run("卡片显示后与切换窗口后位于普通窗口下方", TestCardsStayBehindWindows, failures);
         Run("开始菜单应用列表可直接固定到 Dock", TestStartMenuApps, failures);
         Run("固定项保留快捷方式的启动参数与工作目录", TestPinKeepsShortcutArguments, failures);
+        Run("Dock 拖入路径在后台解析且保留真实类型与快捷方式参数", DockFileSystemTests.PrepareDroppedPaths, failures);
+        Run("Dock 后台检查保留缺失文件与程序的失败提示", () => DockFileSystemTests.LaunchMissingTargets(PumpUntil), failures);
         Run("应用列表打开时其他窗口仍可用且按钮可见", TestAppPickerKeepsAppUsable, failures);
         Run("内置开源字体从程序中加载并带对应字重", TestBundledFonts, failures);
         Run("自动隐藏任务栏边缘不被组件占用", TestTaskbarRevealEdgeGuard, failures);
@@ -180,6 +182,7 @@ internal static class Program
         Run("桌面分组盒图标与列表视图切换", TestFileBoxViewModeSwitch, failures);
         Run("托盘框选新建分组盒，Esc 与误触取消", TestBoxMarqueeCreateFileBox, failures);
         Run("分组盒重建列表时图标仍走后台提取", TestFileBoxReloadIconsOffUiThread, failures);
+        Run("分组盒导入跳过已有路径并合并重叠请求", TestFileBoxImportPreparesOnlyNewPaths, failures);
         Run("卡片图标取高分辨率帧而非 32px 拉伸", TestIconProviderReturnsHighResolutionFrames, failures);
         Run("旧图标不被 Jumbo 透明占位缩成小点", TestSmallShellIconFrames, failures);
         Run("屏幕阅读器名称、Tab 顺序与实际 DPI 边界", TestAccessibilityAndKeyboardNavigation, failures);
@@ -4639,6 +4642,96 @@ internal static class Program
         }
     }
 
+    private static void TestFileBoxImportPreparesOnlyNewPaths()
+    {
+        var temp = Path.Combine(Path.GetTempPath(), $"BingLan-import-prepare-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(temp);
+        var existing = Path.Combine(temp, "已有.txt");
+        var added = Path.Combine(temp, "新增.txt");
+        var overlapping = Path.Combine(temp, "重叠.txt");
+        File.WriteAllText(existing, "原内容");
+        File.WriteAllText(added, "新内容");
+        File.WriteAllText(overlapping, "重叠内容");
+        var state = new FileBoxState();
+        FileMappingService.AddExisting(state, [existing]);
+        var original = state.Items.Single();
+        original.Title = "原名称";
+        var window = new FileBoxWindow(state);
+        var preparedPaths = new System.Collections.Concurrent.ConcurrentBag<string>();
+        ImageSource? LoadIcon(string path)
+        {
+            Assert(!window.Dispatcher.CheckAccess(), "导入图标应在后台提取");
+            preparedPaths.Add(path);
+            return null;
+        }
+        try
+        {
+            var repeated = window.AddMappingsAsync([existing.ToUpperInvariant(), existing], LoadIcon);
+            PumpUntil(() => repeated.IsCompleted, "重复导入未完成");
+            Assert(repeated.GetAwaiter().GetResult() == 0 && preparedPaths.IsEmpty,
+                "重复导入不应读取已有路径的图标");
+
+            var mixedPaths = new[]
+            {
+                existing, Path.Combine(temp, ".", "新增.txt"), added, Path.Combine(temp, "不存在.txt")
+            }.Select(path =>
+            {
+                Assert(window.Dispatcher.CheckAccess(), "惰性导入来源应先在调用线程读取");
+                return path;
+            });
+            var mixed = window.AddMappingsAsync(mixedPaths, LoadIcon);
+            PumpUntil(() => mixed.IsCompleted, "混合导入未完成");
+            Assert(mixed.GetAwaiter().GetResult() == 1 && preparedPaths.ToArray().SequenceEqual([added]),
+                "混合导入应只准备一次真实存在的新路径");
+
+            var first = window.AddMappingsAsync([overlapping], LoadIcon);
+            var second = window.AddMappingsAsync([overlapping], LoadIcon);
+            PumpUntil(() => first.IsCompleted && second.IsCompleted, "重叠导入未完成");
+            Assert(first.GetAwaiter().GetResult() + second.GetAwaiter().GetResult() == 1
+                && state.Items.Count == 3, "重叠导入最终只能保留一份映射");
+            Assert(ReferenceEquals(state.Items[0], original) && original.Title == "原名称",
+                "导入应保留已有映射及其自定名称");
+            Assert(Require<ItemsControl>(window, "FileList").Items.Count == 3,
+                "窗口列表应与提交后的映射一致");
+            Assert(File.ReadAllText(existing) == "原内容" && File.ReadAllText(added) == "新内容",
+                "导入不得修改原文件");
+
+            var manual = Path.Combine(temp, "手动新增.txt");
+            var missing = Path.Combine(temp, "不存在.txt");
+            File.WriteAllText(manual, "手动内容");
+            File.Delete(existing);
+            var iconCount = preparedPaths.Count;
+            var withStatus = window.AddMappingsWithStatusAsync(
+                [existing, added, manual, manual, "\0", missing, missing], LoadIcon);
+            PumpUntil(() => withStatus.IsCompleted, "手动混合导入未完成");
+            withStatus.GetAwaiter().GetResult();
+            var status = Require<TextBlock>(window, "StatusText");
+            Assert(status.Text == "已新增 1 项；4 项路径无效，已跳过",
+                "手动导入应按原始输入数量报告无效路径，包含已映射但丢失的路径");
+            Assert(preparedPaths.Count == iconCount + 1 && preparedPaths.Count(path => path == manual) == 1,
+                "手动导入应只为新增且存在的路径提取一次图标");
+
+            var allInvalid = window.AddMappingsWithStatusAsync([existing, existing], LoadIcon);
+            PumpUntil(() => allInvalid.IsCompleted, "无效映射重复导入未完成");
+            allInvalid.GetAwaiter().GetResult();
+            Assert(status.Text == "2 项路径无效，已跳过", "全部无效时不应显示已在分组盒中");
+            var allKnown = window.AddMappingsWithStatusAsync([added, added], LoadIcon);
+            PumpUntil(() => allKnown.IsCompleted, "已有映射重复导入未完成");
+            allKnown.GetAwaiter().GetResult();
+            Assert(status.Text == "这些项目已经在分组盒中" && preparedPaths.Count == iconCount + 1,
+                "已存在的重复映射应保留状态说明且不重复提取图标");
+            Assert(!File.Exists(existing) && File.ReadAllText(added) == "新内容"
+                && File.ReadAllText(manual) == "手动内容", "状态统计与导入不得改动原文件");
+        }
+        finally
+        {
+            window.CanClose = true;
+            window.Close();
+            Pump();
+            Directory.Delete(temp, true);
+        }
+    }
+
     // 初始后台图标加载尚未完成的窗口上触发排序（重建整个列表），图标仍应保持后台
     // 提取：重建后立刻断言图标为空，之后由后台任务回填。
     private static void TestFileBoxReloadIconsOffUiThread()
@@ -7944,8 +8037,10 @@ internal static class Program
                 Pump();
                 Assert(!box.IsAutoCollapseTimerRunning, "右键菜单打开时应暂停自动收起倒计时");
 
+                var closedEventRaised = false;
+                box.ContextMenu.Closed += (_, _) => closedEventRaised = true;
                 box.ContextMenu.IsOpen = false;
-                Pump();
+                PumpUntil(() => closedEventRaised, "菜单未完成关闭");
                 Assert(box.IsAutoCollapseTimerRunning, "菜单关闭后应重新启动倒计时");
 
                 CardMotionAnimator.AreSystemAnimationsEnabled = () => false;

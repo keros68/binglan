@@ -1420,23 +1420,44 @@ public partial class FileBoxWindow : WidgetWindowBase
         }
     }
 
-    internal async Task<int> AddMappingsAsync(IEnumerable<string> paths)
+    internal async Task<int> AddMappingsAsync(
+        IEnumerable<string> paths, Func<string, ImageSource?>? iconLoader = null) =>
+        (await PrepareAndAddMappingsAsync(paths, countInvalid: false, iconLoader)).Added;
+
+    private async Task<(int Added, int Invalid, int Total)> PrepareAndAddMappingsAsync(
+        IEnumerable<string> paths, bool countInvalid, Func<string, ImageSource?>? iconLoader = null)
     {
-        var candidates = paths
-            .Select(TryGetFullPath)
+        var knownPaths = _items.Select(tile => tile.Path).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var normalized = paths.Select(TryGetFullPath).ToArray();
+        var candidates = normalized
             .OfType<string>()
             .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Where(path => countInvalid || !knownPaths.Contains(path))
             .ToArray();
-        var existingCandidates = await Task.Run(
-            () => candidates.Where(path => File.Exists(path) || Directory.Exists(path)).ToArray());
-        var preparedIcons = await Task.Run(() => LoadIcons(existingCandidates));
+        if (candidates.Length == 0)
+        {
+            return (0, countInvalid ? normalized.Length : 0, normalized.Length);
+        }
+
+        var (existingCandidates, preparedIcons, invalid) = await Task.Run(() =>
+        {
+            var existing = candidates.Where(path => File.Exists(path) || Directory.Exists(path))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var invalidCount = countInvalid ? normalized.Count(path => path is null || !existing.Contains(path)) : 0;
+            var newPaths = candidates.Where(path => existing.Contains(path) && !knownPaths.Contains(path)).ToArray();
+            return (newPaths, LoadIcons(newPaths, iconLoader ?? ShellIconProvider.GetIcon), invalidCount);
+        });
+        if (existingCandidates.Length == 0)
+        {
+            return (0, invalid, normalized.Length);
+        }
 
         CaptureState();
         var existingIds = State.Items.Select(item => item.Id).ToHashSet();
-        var added = FileMappingService.AddExisting(State, existingCandidates);
+        var added = FileMappingService.AddPrepared(State, existingCandidates);
         if (added == 0)
         {
-            return 0;
+            return (0, invalid, normalized.Length);
         }
 
         var addedTiles = new List<FileTile>(added);
@@ -1455,7 +1476,7 @@ public partial class FileBoxWindow : WidgetWindowBase
         {
             AnimateTileEnter(addedTiles);
         }
-        return added;
+        return (added, invalid, normalized.Length);
     }
 
     internal int RemoveGoneMappings(IReadOnlySet<Guid> goneIds)
@@ -1473,16 +1494,14 @@ public partial class FileBoxWindow : WidgetWindowBase
 
     internal void SetOperationStatus(string message) => StatusText.Text = message;
 
-    private async Task AddMappingsWithStatusAsync(IEnumerable<string> paths)
+    internal async Task AddMappingsWithStatusAsync(
+        IEnumerable<string> paths, Func<string, ImageSource?>? iconLoader = null)
     {
-        var list = paths.ToList();
-        var invalid = await Task.Run(() => list.Count(path => TryGetFullPath(path) is not { } full
-            || (!File.Exists(full) && !Directory.Exists(full))));
-        var added = await AddMappingsAsync(list);
+        var (added, invalid, total) = await PrepareAndAddMappingsAsync(paths, countInvalid: true, iconLoader);
         var skipped = invalid > 0 ? $"{invalid} 项路径无效，已跳过" : string.Empty;
         StatusText.Text = added > 0
             ? skipped.Length > 0 ? $"已新增 {added} 项；{skipped}" : $"已新增 {added} 项"
-            : skipped.Length > 0 && invalid == list.Count ? skipped : "这些项目已经在分组盒中" + (skipped.Length > 0 ? $"；{skipped}" : string.Empty);
+            : skipped.Length > 0 && invalid == total ? skipped : "这些项目已经在分组盒中" + (skipped.Length > 0 ? $"；{skipped}" : string.Empty);
     }
 
     private void RefreshTile(FileTile tile)
@@ -1569,14 +1588,15 @@ public partial class FileBoxWindow : WidgetWindowBase
         }
     }
 
-    private static IReadOnlyDictionary<string, ImageSource?> LoadIcons(IEnumerable<string> paths)
+    private static IReadOnlyDictionary<string, ImageSource?> LoadIcons(
+        IEnumerable<string> paths, Func<string, ImageSource?> iconLoader)
     {
         var icons = new Dictionary<string, ImageSource?>(StringComparer.OrdinalIgnoreCase);
         foreach (var path in paths)
         {
             try
             {
-                icons[path] = ShellIconProvider.GetIcon(path);
+                icons[path] = iconLoader(path);
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {

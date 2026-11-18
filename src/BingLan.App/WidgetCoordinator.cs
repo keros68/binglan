@@ -2711,7 +2711,6 @@ public sealed class WidgetCoordinator : IDisposable
     private sealed class TopBarEnvironment(WidgetCoordinator owner) : ITopBarEnvironment
     {
         private volatile bool _weatherInFlight;
-        private DateTimeOffset? _lastWeatherSuccess;
 
         public bool Use24HourClock => owner.InformationState().Use24HourClock;
 
@@ -2734,20 +2733,15 @@ public sealed class WidgetCoordinator : IDisposable
                 return;
             }
 
+            var city = information.WeatherCity;
+            var latitude = information.WeatherLatitude!.Value;
+            var longitude = information.WeatherLongitude!.Value;
             var now = DateTimeOffset.Now;
-            if (!owner._weatherService.ShouldAttemptRefresh(
+            if (!owner._weatherService.IsAutomaticRefreshDue(
                     now,
-                    information.WeatherCity,
-                    information.WeatherLatitude!.Value,
-                    information.WeatherLongitude!.Value))
-            {
-                return;
-            }
-
-            // The bar rides the one-second sampling tick, so it has to keep the 15-minute
-            // success interval itself; the service's retry gate alone is not a cadence.
-            if (_lastWeatherSuccess is { } last
-                && now - last < WeatherService.SuccessRefreshInterval)
+                    city,
+                    latitude,
+                    longitude))
             {
                 return;
             }
@@ -2757,14 +2751,7 @@ public sealed class WidgetCoordinator : IDisposable
             {
                 try
                 {
-                    var snapshot = await owner._weatherService.RefreshAsync(
-                        information.WeatherCity,
-                        information.WeatherLatitude!.Value,
-                        information.WeatherLongitude!.Value);
-                    if (snapshot.Status == WeatherStatus.Fresh)
-                    {
-                        _lastWeatherSuccess = now;
-                    }
+                    await owner._weatherService.RefreshAsync(city, latitude, longitude);
                 }
                 finally
                 {

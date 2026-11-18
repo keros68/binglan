@@ -153,24 +153,23 @@ internal static class WindowCommandService
     internal static async Task<WindowCommandResult> OpenFilesAsync(
         DockItem item,
         string displayName,
-        IReadOnlyList<string> rawPaths)
+        IReadOnlyList<DroppedPathInfo> droppedPaths)
     {
-        var existingFiles = await Task.Run(() =>
+        var preparation = await Task.Run(() =>
         {
-            var infos = rawPaths
-                .Select(path => DockShortcuts.InspectDroppedPath(path, allowUncDiskProbe: true))
-                .ToArray();
-            return DockFileDropRules.SelectOpenTargets(infos).Where(File.Exists).ToArray();
+            var files = DockFileDropRules.SelectOpenTargets(droppedPaths).Where(File.Exists).ToArray();
+            var launch = files.Length > 0 ? ResolveFileLaunch(item) : default;
+            return (Files: files, Launch: launch);
         });
+        var existingFiles = preparation.Files;
         if (existingFiles.Length == 0)
         {
             return new WindowCommandResult(false, "所拖入的文件已不存在");
         }
 
-        var executablePath = ResolveDesktopExecutable(item);
-        if (executablePath is not null)
+        if (preparation.Launch.ExecutablePath is { } executablePath)
         {
-            var result = await LaunchWithFilesAsync(item, executablePath, displayName, existingFiles);
+            var result = await LaunchWithFilesAsync(item, executablePath, preparation.Launch.WorkingDirectory, displayName, existingFiles);
             if (result.Succeeded && item.Group is { Windows.Count: > 0 } group)
             {
                 RaiseForDrag(group);
@@ -190,10 +189,10 @@ internal static class WindowCommandService
                 return new WindowCommandResult(true, $"已用 {displayName} 打开所拖入的文件");
             }
 
-            var fallbackExe = ResolveFallbackExecutable(item);
-            if (fallbackExe is not null)
+            var fallbackLaunch = await Task.Run(() => ResolveFileLaunch(item, allowPackagedExecutable: true));
+            if (fallbackLaunch.ExecutablePath is { } fallbackExe)
             {
-                var fallback = await LaunchWithFilesAsync(item, fallbackExe, displayName, existingFiles);
+                var fallback = await LaunchWithFilesAsync(item, fallbackExe, fallbackLaunch.WorkingDirectory, displayName, existingFiles);
                 if (fallback.Succeeded && item.Group is { Windows.Count: > 0 } group)
                 {
                     RaiseForDrag(group);
@@ -229,24 +228,37 @@ internal static class WindowCommandService
             }
         }
 
-        if (string.IsNullOrWhiteSpace(app.ExecutablePath) || !File.Exists(app.ExecutablePath))
+        var executablePath = app.ExecutablePath;
+        if (string.IsNullOrWhiteSpace(executablePath))
+        {
+            return new WindowCommandResult(false, $"找不到 {app.DisplayName} 的程序文件");
+        }
+        var preferredWorkingDirectory = app.WorkingDirectory;
+        var launch = await Task.Run(() =>
+        {
+            if (!File.Exists(executablePath))
+            {
+                return (Exists: false, WorkingDirectory: (string?)null);
+            }
+            // A shortcut's working directory may be on an offline network share.
+            var workingDirectory = preferredWorkingDirectory is { } folder && Directory.Exists(folder)
+                ? folder
+                : Path.GetDirectoryName(executablePath);
+            return (Exists: true, WorkingDirectory: workingDirectory);
+        });
+        if (!launch.Exists)
         {
             return new WindowCommandResult(false, $"找不到 {app.DisplayName} 的程序文件");
         }
 
-        // Start in the folder the shortcut named, like Explorer does; if that folder is
-        // gone (for example after an update), the program's own folder is the fallback.
-        var workingDirectory = app.WorkingDirectory is { } folder && Directory.Exists(folder)
-            ? folder
-            : Path.GetDirectoryName(app.ExecutablePath);
-        return await StartAsync(app.ExecutablePath, app.DisplayName, app.Arguments, workingDirectory);
+        return await StartAsync(executablePath, app.DisplayName, app.Arguments, launch.WorkingDirectory);
     }
 
     // A pinned folder opens in Explorer and a file in its default program.
     private static async Task<WindowCommandResult> OpenPathAsync(DockPinnedApp item)
     {
         var path = item.TargetPath!;
-        if (!Directory.Exists(path) && !File.Exists(path))
+        if (!await Task.Run(() => Directory.Exists(path) || File.Exists(path)))
         {
             return new WindowCommandResult(false, "文件或文件夹已不存在");
         }
@@ -274,7 +286,7 @@ internal static class WindowCommandService
             return await LaunchAsync(app);
         }
 
-        var processIds = RunningProcessIds(app.ExecutablePath!);
+        var processIds = await Task.Run(() => RunningProcessIds(app.ExecutablePath!));
         if (processIds.Count == 0)
         {
             return await LaunchAsync(app);
@@ -586,16 +598,20 @@ internal static class WindowCommandService
     private const ushort VkMenu = 0x12;
     private const ushort VkLeftWindows = 0x5B;
 
-    private static string? ResolveDesktopExecutable(DockItem item) =>
-        CandidateExecutables(item).FirstOrDefault(path =>
+    private static (string? ExecutablePath, string? WorkingDirectory) ResolveFileLaunch(
+        DockItem item,
+        bool allowPackagedExecutable = false)
+    {
+        var executablePath = CandidateExecutables(item).FirstOrDefault(path =>
             !DockAppResolver.IsFrameHost(path)
-            && !DockAppResolver.IsPackagedPath(path)
+            && (allowPackagedExecutable || !DockAppResolver.IsPackagedPath(path))
             && File.Exists(path));
-
-    private static string? ResolveFallbackExecutable(DockItem item) =>
-        CandidateExecutables(item).FirstOrDefault(path =>
-            !DockAppResolver.IsFrameHost(path)
-            && File.Exists(path));
+        var workingDirectory = executablePath is null ? null
+            : item.Pinned?.WorkingDirectory is { } folder && Directory.Exists(folder)
+                ? folder
+                : Path.GetDirectoryName(executablePath);
+        return (executablePath, workingDirectory);
+    }
 
     private static IEnumerable<string> CandidateExecutables(DockItem item)
     {
@@ -619,13 +635,11 @@ internal static class WindowCommandService
     private static Task<WindowCommandResult> LaunchWithFilesAsync(
         DockItem item,
         string executablePath,
+        string? workingDirectory,
         string displayName,
         IReadOnlyList<string> filePaths)
     {
         var arguments = DockFileDropRules.BuildLaunchArguments(item.Pinned?.Arguments, filePaths);
-        var workingDirectory = item.Pinned?.WorkingDirectory is { } folder && Directory.Exists(folder)
-            ? folder
-            : Path.GetDirectoryName(executablePath);
         return StartAsync(executablePath, displayName, arguments, workingDirectory);
     }
 

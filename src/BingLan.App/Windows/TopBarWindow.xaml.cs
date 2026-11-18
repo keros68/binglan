@@ -3140,7 +3140,8 @@ public sealed partial class TopBarWindow : Window
         lines.Add(snapshot.UpdatedAt is { } updated
             ? $"更新于 {updated:HH:mm}"
             : "尚无数据");
-        if (snapshot.Status == WeatherStatus.Failed && !string.IsNullOrEmpty(snapshot.ErrorMessage))
+        if (snapshot.Status is WeatherStatus.Failed or WeatherStatus.CachedFallback
+            && !string.IsNullOrEmpty(snapshot.ErrorMessage))
         {
             lines.Add($"刷新失败：{snapshot.ErrorMessage}");
         }

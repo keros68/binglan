@@ -122,7 +122,7 @@ internal static class CleanDesktopTests
         }
     }
 
-    internal static void TestEmptyStateFallsBackToBackup()
+    internal static void TestStateFallsBackToBackup(bool primaryMissing)
     {
         var temp = Path.Combine(Path.GetTempPath(), $"BingLan-null-state-{Guid.NewGuid():N}");
         try
@@ -133,9 +133,16 @@ internal static class CleanDesktopTests
             store.Save(state);
             store.Save(state);
 
-            File.WriteAllText(store.StatePath, "null");
+            if (primaryMissing)
+            {
+                File.Delete(store.StatePath);
+            }
+            else
+            {
+                File.WriteAllText(store.StatePath, "null");
+            }
             var recovered = store.Load();
-            Check(recovered.OnboardingCompleted, "主状态为空时应从备份恢复");
+            Check(recovered.OnboardingCompleted, "主状态缺失或为空时应从备份恢复");
 
             store.Save(recovered);
             Check(store.Load().OnboardingCompleted, "恢复后的保存应可读");

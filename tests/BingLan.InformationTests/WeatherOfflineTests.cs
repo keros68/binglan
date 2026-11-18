@@ -48,8 +48,16 @@ internal static class WeatherOfflineTests
         AssertEqual("局部多云", snapshot.Condition, "天气现象");
         Assert(snapshot.UpdatedAt is not null, "记录更新时间");
         Assert(!snapshot.FromCache, "非缓存");
+        AssertEqual(snapshot, service.GetLastSnapshot("北京", 39.9, 116.4), "共享快照保存成功状态");
         AssertEqual(1, stub.CallCount, "只请求一次");
         Assert(service.ShouldAttemptRefresh(DateTimeOffset.Now), "成功后立即可再次刷新");
+        var refreshedAt = snapshot.UpdatedAt!.Value;
+        Assert(!service.IsAutomaticRefreshDue(refreshedAt, "北京", 39.9, 116.4), "自动刷新应等待同一地点的成功间隔");
+        Assert(!service.IsAutomaticRefreshDue(refreshedAt.AddMinutes(15).AddTicks(-1), "北京", 39.9, 116.4), "成功间隔到期前不能自动重试");
+        Assert(service.IsAutomaticRefreshDue(refreshedAt.AddMinutes(15), "北京", 39.9, 116.4), "成功间隔到期后自动刷新");
+        Assert(service.IsAutomaticRefreshDue(refreshedAt, "上海", 31.23, 121.47), "切换城市不能继承旧城市的成功间隔");
+        Assert(service.IsAutomaticRefreshDue(refreshedAt, "北京", 40.1, 116.4), "同名地点纬度变化应立即刷新");
+        Assert(service.IsAutomaticRefreshDue(refreshedAt, "北京", 39.9, 116.8), "同名地点经度变化应立即刷新");
     }
 
     public static void TimeoutFailure()
@@ -84,6 +92,8 @@ internal static class WeatherOfflineTests
 
         AssertEqual(WeatherStatus.Failed, snapshot.Status, "500 状态");
         AssertEqual("网络请求失败", snapshot.ErrorMessage, "500 消息");
+        AssertEqual(snapshot, service.GetLastSnapshot("北京", 39.9, 116.4), "首次失败也应提供共享快照");
+        Assert(!service.ShouldAttemptRefresh(DateTimeOffset.Now, "北京", 39.9, 116.4), "失败快照与城市退避一致");
     }
 
     public static void CacheFallback()
@@ -109,6 +119,14 @@ internal static class WeatherOfflineTests
         AssertEqual("局部多云", snapshot.Condition, "缓存保留现象");
         AssertEqual(fresh.UpdatedAt, snapshot.UpdatedAt, "缓存保留原更新时间");
         AssertEqual("网络请求失败", snapshot.ErrorMessage, "缓存附带失败原因");
+        AssertEqual(snapshot, service.GetLastSnapshot("北京", 39.9, 116.4), "共享快照应保留缓存回退和失败原因");
+        var retryAt = service.NextRetryAt!.Value;
+        Assert(!service.IsAutomaticRefreshDue(retryAt.AddTicks(-1), "北京", 39.9, 116.4), "缓存回退应等待失败退避结束");
+        Assert(service.IsAutomaticRefreshDue(retryAt, "北京", 39.9, 116.4), "缓存回退在退避到期后重试，不再等待原成功间隔");
+        Assert(service.IsAutomaticRefreshDue(retryAt.AddTicks(-1), "上海", 31.23, 121.47), "切换城市不继承旧城市的失败退避");
+        var repeatedFailure = Await(service.RefreshAsync("北京", 39.9, 116.4));
+        AssertEqual(fresh.UpdatedAt, repeatedFailure.UpdatedAt, "连续失败仍沿用最近成功数据的时间");
+        AssertEqual(WeatherStatus.CachedFallback, repeatedFailure.Status, "连续失败保留成功缓存");
     }
 
     public static void LocationChangeDropsOldCache()
@@ -138,6 +156,46 @@ internal static class WeatherOfflineTests
         Assert(
             service.GetLastSnapshot("北京", 39.9, 116.4) is null,
             "切换城市后旧城市缓存不应作为当前快照");
+        AssertEqual(changed, service.GetLastSnapshot("上海", 31.23, 121.47), "新城市展示自身失败状态");
+
+        LocationChangeWhileRefreshInFlight();
+    }
+
+    private static void LocationChangeWhileRefreshInFlight()
+    {
+        var oldResponse = new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var newResponse = new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var newRequestStarted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var requests = new List<string>();
+        var stub = new StubHttpMessageHandler
+        {
+            Behavior = (request, _) =>
+            {
+                requests.Add(request.RequestUri!.Query);
+                if (requests.Count == 2)
+                {
+                    newRequestStarted.SetResult(true);
+                }
+                return requests.Count == 1 ? oldResponse.Task : newResponse.Task;
+            }
+        };
+        var service = new WeatherService(stub);
+        var oldRefresh = service.RefreshAsync("北京", 39.9, 116.4);
+        var newRefresh = service.RefreshAsync("上海", 31.23, 121.47);
+        AssertEqual(1, stub.CallCount, "切换城市时已有请求保持串行");
+        Assert(service.ShouldAttemptRefresh(DateTimeOffset.Now, "上海", 31.23, 121.47), "新城市不继承在途城市的等待状态");
+
+        oldResponse.SetResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(ForecastJson) });
+        AssertEqual("北京", Await(oldRefresh).City, "旧请求保留原城市");
+        Await(newRequestStarted.Task);
+        Assert(service.GetLastSnapshot("上海", 31.23, 121.47) is null, "新城市等待期间不能展示旧城市的成功快照");
+        Assert(requests[1].Contains("latitude=31.23") && requests[1].Contains("longitude=121.47"), "后续请求使用新城市坐标");
+
+        newResponse.SetResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(ForecastJson) });
+        var changed = Await(newRefresh);
+        AssertEqual("上海", changed.City, "后续请求完成后展示新城市");
+        AssertEqual(changed, service.GetLastSnapshot("上海", 31.23, 121.47), "共享快照跟随新城市");
+        Assert(service.GetLastSnapshot("北京", 39.9, 116.4) is null, "旧城市的迟到结果不能作为新城市快照");
     }
 
     public static void BackoffSchedule()
@@ -207,18 +265,30 @@ internal static class WeatherOfflineTests
 
     public static void MalformedJson()
     {
-        var stub = new StubHttpMessageHandler
+        foreach (var json in new[]
         {
-            Behavior = (_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            "这不是 JSON",
+            "{}",
+            "{\"current\":null}",
+            "{\"current\":{\"temperature_2m\":null}}",
+            "{\"current\":{\"temperature_2m\":20,\"relative_humidity_2m\":2.5}}"
+        })
+        {
+            var stub = new StubHttpMessageHandler
             {
-                Content = new StringContent("这不是 JSON")
-            })
-        };
-        var service = new WeatherService(stub);
-        var snapshot = Await(service.RefreshAsync("北京", 39.9, 116.4));
+                Behavior = (_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(json)
+                })
+            };
+            var service = new WeatherService(stub);
+            var snapshot = Await(service.RefreshAsync("北京", 39.9, 116.4));
 
-        AssertEqual(WeatherStatus.Failed, snapshot.Status, "非法 JSON 状态");
-        AssertEqual("返回数据无法解析", snapshot.ErrorMessage, "非法 JSON 消息");
+            AssertEqual(WeatherStatus.Failed, snapshot.Status, "非法天气数据状态");
+            AssertEqual("返回数据无法解析", snapshot.ErrorMessage, "非法天气数据消息");
+            AssertEqual(snapshot, service.GetLastSnapshot("北京", 39.9, 116.4), "解析失败进入共享状态");
+            Assert(!service.ShouldAttemptRefresh(DateTimeOffset.Now), "解析失败后退避");
+        }
     }
 
     private static T Await<T>(Task<T> task)

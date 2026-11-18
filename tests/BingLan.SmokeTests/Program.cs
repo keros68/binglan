@@ -77,7 +77,8 @@ Run("清爽桌面无记录时关闭仍恢复显示", CleanDesktopTests.TestTurnO
 Run("清爽桌面接手无记录的隐藏图标", CleanDesktopTests.TestAdoptionOfOrphanedHiddenIcons);
 Run("清爽桌面检查点往返与拒绝", CleanDesktopTests.TestCheckpointRoundTripAndRejection);
 Run("清爽桌面设置迁移", CleanDesktopTests.TestSettingMigration);
-Run("空状态文件从备份恢复且不覆盖备份", CleanDesktopTests.TestEmptyStateFallsBackToBackup);
+Run("空状态文件从备份恢复且不覆盖备份", () => CleanDesktopTests.TestStateFallsBackToBackup(primaryMissing: false));
+Run("主状态文件缺失时从备份恢复", () => CleanDesktopTests.TestStateFallsBackToBackup(primaryMissing: true));
 Run("整体风格迁移与取值范围", ThemeStyleTests.TestStyleMigrationAndLimits);
 Run("卡片外观配色与居中时钟布局", ThemeStyleTests.TestGlassAndCenterClockPreset);
 Run("内置卡片是否跟随全局外观", ThemeStyleTests.TestComponentLookFollowsSharedMaterial);

@@ -108,7 +108,7 @@ public partial class IceBlueDockWindow : Window
     private bool _hoveredDragOpensWithApp;
     private bool _externalDragActive;
     private string[]? _cachedDragPaths;
-    private IReadOnlyList<DroppedPathInfo> _cachedDragInfos = [];
+    private Task<IReadOnlyList<DroppedPathInfo>>? _cachedDragInfoTask;
 
     internal IceBlueDockWindow(DockState state)
     {
@@ -1170,7 +1170,7 @@ public partial class IceBlueDockWindow : Window
         {
             menu.Items.Add(MenuItem(
                 "打开文件位置",
-                () => Report(WindowCommandService.OpenFileLocation(executablePath))));
+                async () => Report(await Task.Run(() => WindowCommandService.OpenFileLocation(executablePath)))));
         }
 
         if (menu.Items.Count > 0)
@@ -1345,8 +1345,13 @@ public partial class IceBlueDockWindow : Window
             _dragHoverTimer.Start();
         }
 
-        var action = DockFileDropRules.Decide(current, GetCachedDroppedPathInfos(files));
-        if (action == DockFileDropAction.OpenWithApp)
+        var inspection = InspectDragPathsAsync(files);
+        // Accept a quick copy-only drop while the first disk read is pending. The
+        // drop awaits the real classification before opening files or pinning paths.
+        var opensWithApp = inspection.IsCompletedSuccessfully
+            ? DockFileDropRules.Decide(current, inspection.Result) == DockFileDropAction.OpenWithApp
+            : files.Length > 0 && DockFileDropRules.CanOpenFiles(current);
+        if (opensWithApp)
         {
             e.Effects = (e.AllowedEffects & DragDropEffects.Copy) != 0
                 ? DragDropEffects.Copy
@@ -1399,18 +1404,17 @@ public partial class IceBlueDockWindow : Window
         }
     }
 
-    private IReadOnlyList<DroppedPathInfo> GetCachedDroppedPathInfos(string[] paths)
+    private Task<IReadOnlyList<DroppedPathInfo>> InspectDragPathsAsync(string[] paths)
     {
-        if (_cachedDragPaths is not null && _cachedDragPaths.SequenceEqual(paths, StringComparer.Ordinal))
+        if (_cachedDragInfoTask is not null && _cachedDragPaths is not null
+            && _cachedDragPaths.SequenceEqual(paths, StringComparer.Ordinal))
         {
-            return _cachedDragInfos;
+            return _cachedDragInfoTask;
         }
 
-        _cachedDragPaths = paths;
-        _cachedDragInfos = paths
-            .Select(path => DockShortcuts.InspectDroppedPath(path, allowUncDiskProbe: false))
-            .ToArray();
-        return _cachedDragInfos;
+        _cachedDragPaths = paths.ToArray();
+        _cachedDragInfoTask = DockShortcuts.InspectDroppedPathsAsync(_cachedDragPaths);
+        return _cachedDragInfoTask;
     }
 
     private void SetDragTargetVisual(DockButtonParts parts, bool opensWithApp)
@@ -1457,7 +1461,7 @@ public partial class IceBlueDockWindow : Window
         _dragHover.Clear();
         ClearDragTargetVisual();
         _cachedDragPaths = null;
-        _cachedDragInfos = [];
+        _cachedDragInfoTask = null;
     }
 
     private bool IsCursorInsideDockWindow()
@@ -1473,29 +1477,33 @@ public partial class IceBlueDockWindow : Window
             && cursor.Y >= rect.Top && cursor.Y < rect.Bottom;
     }
 
-    private async Task OpenFilesWithItemAsync(DockItem item, IReadOnlyList<string> paths) =>
+    private async Task OpenFilesWithItemAsync(DockItem item, IReadOnlyList<DroppedPathInfo> paths) =>
         Report(await WindowCommandService.OpenFilesAsync(item, DisplayNameOf(item), paths));
 
-    private void OnItemDrop(DockItem target, DragEventArgs e)
+    private async void OnItemDrop(DockItem target, DragEventArgs e)
     {
-        EndExternalDrag();
         if (e.Data.GetData(System.Windows.DataFormats.FileDrop) is string[] files)
         {
             e.Handled = true;
-            var infos = files
-                .Select(path => DockShortcuts.InspectDroppedPath(path, allowUncDiskProbe: false))
-                .ToArray();
+            var inspection = InspectDragPathsAsync(files);
+            EndExternalDrag();
+            var infos = await inspection;
+            if (_closing)
+            {
+                return;
+            }
             if (DockFileDropRules.Decide(target, infos) == DockFileDropAction.OpenWithApp)
             {
-                _ = OpenFilesWithItemAsync(target, files);
+                await OpenFilesWithItemAsync(target, infos);
             }
             else
             {
-                PinFiles(files);
+                await PinFilesAsync(files);
             }
             return;
         }
 
+        EndExternalDrag();
         DropPin(e, target);
     }
 
@@ -1514,12 +1522,16 @@ public partial class IceBlueDockWindow : Window
 
     // Programs, folders and files dropped on the dock are pinned, as are shortcuts to
     // them; only their paths are recorded.
-    private void PinFiles(IEnumerable<string> paths)
+    private async Task PinFilesAsync(IEnumerable<string> paths)
     {
+        var apps = await DockShortcuts.CreatePinsAsync(paths);
+        if (_closing)
+        {
+            return;
+        }
+
         var pinned = 0;
-        foreach (var app in paths
-                     .Select(path => DockShortcuts.CreatePin(path) ?? DockShortcuts.CreatePathPin(path))
-                     .OfType<DockPinnedApp>())
+        foreach (var app in apps)
         {
             if (DockPinRules.Pin(_state, app))
             {
@@ -1571,7 +1583,7 @@ public partial class IceBlueDockWindow : Window
         if (!e.Handled && e.Data.GetData(System.Windows.DataFormats.FileDrop) is string[] files)
         {
             e.Handled = true;
-            PinFiles(files);
+            _ = PinFilesAsync(files);
             return;
         }
 
@@ -2150,7 +2162,7 @@ public partial class IceBlueDockWindow : Window
         {
             if (!_closing)
             {
-                PinFiles(files);
+                _ = PinFilesAsync(files);
             }
         };
         _handleWindow.ShellRecovered += () => ShellRecovered?.Invoke();

@@ -42,11 +42,6 @@ public sealed class LocalStateStore
     {
         Directory.CreateDirectory(DataDirectory);
         ApplyPendingRestore();
-        if (!File.Exists(StatePath))
-        {
-            return CreateDefault();
-        }
-
         if (TryLoad(StatePath, out var state, out var storedVersion))
         {
             if (storedVersion > AppState.CurrentSchemaVersion)
@@ -82,7 +77,10 @@ public sealed class LocalStateStore
         // for restoring later, and the app starts from defaults instead of failing on start.
         lock (_saveGate)
         {
-            CopyStateToBackup("widgets-unreadable");
+            if (File.Exists(StatePath))
+            {
+                CopyStateToBackup("widgets-unreadable");
+            }
         }
         return CreateDefault();
     }
