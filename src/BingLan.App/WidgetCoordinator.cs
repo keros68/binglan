@@ -979,9 +979,16 @@ public sealed class WidgetCoordinator : IDisposable
         // raised desktop surface; lift it with the others.
         window.IsVisibleChanged += (_, e) =>
         {
-            if (e.NewValue is true && _desktopSurfaceWatcher.IsDesktopShown)
+            if (e.NewValue is true)
             {
-                window.RaiseAboveDesktop(FindCardRaiseSlot());
+                if (_desktopSurfaceWatcher.IsDesktopShown)
+                {
+                    window.RaiseAboveDesktop(FindCardRaiseSlot());
+                }
+                else
+                {
+                    window.ReturnBelowOrdinaryWindows();
+                }
             }
         };
         window.ContentRendered += (_, _) =>

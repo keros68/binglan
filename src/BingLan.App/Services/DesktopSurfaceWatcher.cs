@@ -15,6 +15,7 @@ namespace BingLan.App.Services;
 /// </summary>
 internal sealed class DesktopSurfaceWatcher : IDisposable
 {
+    private static readonly uint CurrentProcessId = (uint)Environment.ProcessId;
     private static readonly TimeSpan FastCoalesceDelay = TimeSpan.FromMilliseconds(16);
     private static readonly TimeSpan SettleDelay = TimeSpan.FromMilliseconds(150);
     private static readonly TimeSpan TrailingSettleDelay = TimeSpan.FromMilliseconds(500);
@@ -36,6 +37,7 @@ internal sealed class DesktopSurfaceWatcher : IDisposable
     private long _preRaiseUntilTick;
     private bool _started;
     private bool _cardsRaised;
+    private bool _raisedForTopmostSurface;
     private bool _disposed;
 
     internal DesktopSurfaceWatcher(Func<IReadOnlyList<nint>> cardHandles)
@@ -82,6 +84,7 @@ internal sealed class DesktopSurfaceWatcher : IDisposable
         Hook(DockNativeMethods.EventSystemForeground, DockNativeMethods.EventSystemForeground);
         Hook(DockNativeMethods.EventSystemMinimizeStart, DockNativeMethods.EventSystemMinimizeEnd);
         Hook(DockNativeMethods.EventSystemDesktopSwitch, DockNativeMethods.EventSystemDesktopSwitch);
+        Hook(DockNativeMethods.EventObjectShow, DockNativeMethods.EventObjectShow);
         Hook(DockNativeMethods.EventObjectCloaked, DockNativeMethods.EventObjectUncloaked);
         _ = FindDesktopSurfaceWindow(out var shellProcess);
         RefreshShellShowHook(shellProcess);
@@ -109,6 +112,7 @@ internal sealed class DesktopSurfaceWatcher : IDisposable
         _preRaiseUntilTick = Environment.TickCount64 + PreRaiseHoldMs;
         IsDesktopShown = true;
         _cardsRaised = true;
+        _raisedForTopmostSurface = false;
         Changed?.Invoke();
         ScheduleToggleDesktopCheck();
     }
@@ -193,6 +197,19 @@ internal sealed class DesktopSurfaceWatcher : IDisposable
     /// </summary>
     internal static nint FindDesktopSurfaceWindow(out uint shellProcessId)
     {
+        FindDesktopSurfaces(out var topmostSurface, out var baseSurface, out _, out shellProcessId);
+        return topmostSurface != 0 ? topmostSurface : baseSurface;
+    }
+
+    private static void FindDesktopSurfaces(
+        out nint topmostSurface,
+        out nint baseSurface,
+        out string baseSurfaceClass,
+        out uint shellProcessId)
+    {
+        topmostSurface = 0;
+        baseSurface = 0;
+        baseSurfaceClass = string.Empty;
         shellProcessId = 0;
         var progman = NativeMethods.FindWindowW("Progman", null);
         if (progman != 0)
@@ -204,8 +221,8 @@ internal sealed class DesktopSurfaceWatcher : IDisposable
             NativeMethods.GetWindowThreadProcessId(shell, out shellProcessId);
         }
 
-        nint topmostSurface = 0;
         nint defViewHost = 0;
+        var defViewClass = string.Empty;
         if (progman != 0)
         {
             if (IsTopmostDesktopCandidate(progman, "Progman", shellProcessId))
@@ -215,6 +232,7 @@ internal sealed class DesktopSurfaceWatcher : IDisposable
             if (NativeMethods.FindWindowExW(progman, 0, "SHELLDLL_DefView", null) != 0)
             {
                 defViewHost = progman;
+                defViewClass = "Progman";
             }
         }
 
@@ -234,6 +252,7 @@ internal sealed class DesktopSurfaceWatcher : IDisposable
                 && NativeMethods.FindWindowExW(worker, 0, "SHELLDLL_DefView", null) != 0)
             {
                 defViewHost = worker;
+                defViewClass = "WorkerW";
                 if (shellProcessId == 0)
                 {
                     shellProcessId = workerProcess;
@@ -246,11 +265,16 @@ internal sealed class DesktopSurfaceWatcher : IDisposable
             }
         }
 
-        return topmostSurface != 0
-            ? topmostSurface
-            : defViewHost != 0
-                ? defViewHost
-                : progman;
+        if (defViewHost != 0)
+        {
+            baseSurface = defViewHost;
+            baseSurfaceClass = defViewClass;
+        }
+        else if (progman != 0)
+        {
+            baseSurface = progman;
+            baseSurfaceClass = "Progman";
+        }
     }
 
     private static bool IsTopmostDesktopCandidate(nint window, string className, uint shellProcessId)
@@ -264,7 +288,8 @@ internal sealed class DesktopSurfaceWatcher : IDisposable
         {
             return false;
         }
-        var isTopmost = (NativeMethods.GetExStyleOf(window) & NativeMethods.WsExTopmost) != 0;
+        var exStyle = NativeMethods.GetExStyleOf(window);
+        var isTopmost = (exStyle & NativeMethods.WsExTopmost) != 0;
         if (!isTopmost)
         {
             return false;
@@ -274,6 +299,11 @@ internal sealed class DesktopSurfaceWatcher : IDisposable
         {
             return false;
         }
+        var isClickThrough = (exStyle & NativeMethods.WsExTransparent) != 0;
+        var isTransparentLayered = (exStyle & NativeMethods.WsExLayered) != 0
+            && NativeMethods.GetLayeredWindowAttributes(window, out _, out var alpha, out var flags)
+            && (flags & NativeMethods.LwaAlpha) != 0
+            && alpha == 0;
         return DesktopSurfaceRules.IsTopmostShellDesktopSurface(
             shellProcess: true,
             className,
@@ -281,7 +311,9 @@ internal sealed class DesktopSurfaceWatcher : IDisposable
             isCloaked,
             isTopmost,
             rect.Right - rect.Left,
-            rect.Bottom - rect.Top);
+            rect.Bottom - rect.Top,
+            isClickThrough,
+            isTransparentLayered);
     }
 
     private void Hook(uint eventMin, uint eventMax)
@@ -395,6 +427,10 @@ internal sealed class DesktopSurfaceWatcher : IDisposable
                 return;
             }
             EvaluateImmediate();
+            if (_cardsRaised)
+            {
+                ScheduleCheck();
+            }
             return;
         }
         if (idObject != ObjidWindow)
@@ -410,27 +446,66 @@ internal sealed class DesktopSurfaceWatcher : IDisposable
             {
                 return;
             }
-            if (eventType is DockNativeMethods.EventObjectShow or DockNativeMethods.EventObjectHide)
+            if (eventType == DockNativeMethods.EventObjectShow)
             {
                 var className = ClassNameOf(window);
                 if (className is "WorkerW" or "Progman")
                 {
                     EvaluateImmediate();
+                    ScheduleCheck();
                     return;
                 }
-                if (className is not ("CabinetWClass" or "ExploreWClass"))
+                if (_cardsRaised)
+                {
+                    EvaluateAndFollowUpWhileRaised();
+                    return;
+                }
+                if (className is not ("CabinetWClass" or "ExploreWClass" or "#32770" or "OperationStatusWindow"))
                 {
                     return;
                 }
             }
+            else if (eventType == DockNativeMethods.EventObjectHide)
+            {
+                var className = ClassNameOf(window);
+                if (className is "WorkerW" or "Progman")
+                {
+                    EvaluateImmediate();
+                    if (_cardsRaised)
+                    {
+                        ScheduleCheck();
+                    }
+                    return;
+                }
+                if (className is not ("CabinetWClass" or "ExploreWClass" or "#32770" or "OperationStatusWindow"))
+                {
+                    return;
+                }
+            }
+            else if (eventType == DockNativeMethods.EventObjectUncloaked && _cardsRaised)
+            {
+                EvaluateAndFollowUpWhileRaised();
+                return;
+            }
         }
         if (eventType == DockNativeMethods.EventSystemForeground && window != 0)
         {
-            if (_cardsRaised || ClassNameOf(window) is "Progman" or "WorkerW")
+            if (_cardsRaised)
             {
-                EvaluateImmediate();
+                EvaluateAndFollowUpWhileRaised();
                 return;
             }
+            if (ClassNameOf(window) is "Progman" or "WorkerW")
+            {
+                EvaluateImmediate();
+                ScheduleCheck();
+                return;
+            }
+        }
+        if (eventType == DockNativeMethods.EventSystemMinimizeEnd && _cardsRaised)
+        {
+            EvaluateAndFollowUpWhileRaised();
+            return;
         }
         ScheduleCheck();
         if (eventType == DockNativeMethods.EventSystemMinimizeStart)
@@ -440,30 +515,60 @@ internal sealed class DesktopSurfaceWatcher : IDisposable
     }
 
     /// <summary>
-    /// Reads whether the desktop surface covers the cards: the live desktop surface
-    /// (<c>WorkerW</c> or <c>Progman</c>) has no visible, un-minimised ordinary window
-    /// above it. Tool windows, non-activating widgets, 1px helper windows, topmost
-    /// windows, DWM-cloaked hosts and Explorer's shell windows do not count. Also
-    /// checks whether every monitored BingLan surface currently sits above the desktop
-    /// surface so a <c>WorkerW</c> raised over already-lifted windows triggers a re-lift.
+    /// Evaluates immediately so raised cards drop without lag when an ordinary window
+    /// is already visible, and schedules settled follow-up checks if cards remain raised
+    /// (for apps that fire <c>EVENT_SYSTEM_FOREGROUND</c> before becoming visible, sized
+    /// or uncloaked, or before Explorer finishes lowering <c>WorkerW</c>).
+    /// </summary>
+    private void EvaluateAndFollowUpWhileRaised()
+    {
+        EvaluateImmediate();
+        if (_cardsRaised)
+        {
+            ScheduleCheck();
+            ArmTrailingSettleCheck();
+        }
+    }
+
+    /// <summary>
+    /// Reads whether the desktop surface covers the cards: Explorer has raised the live
+    /// desktop surface (<c>WorkerW</c> or <c>Progman</c>) and no visible, un-minimised
+    /// ordinary window is left above the base desktop surface. Even when a topmost
+    /// <c>WorkerW</c> exists, enumeration continues down to the non-topmost base surface
+    /// so newly opened non-fullscreen windows are always counted.
     /// </summary>
     private void Evaluate()
     {
         using var _ = UiDiagnostics.Measure("桌面状态评估");
         _lastEvaluateTick = Environment.TickCount64;
-        var desktopSurface = FindDesktopSurfaceWindow(out var shellProcess);
+        FindDesktopSurfaces(out var topmostSurface, out var baseSurface, out var baseSurfaceClass, out var shellProcess);
         RefreshShellShowHook(shellProcess);
-        var found = desktopSurface != 0;
+        var effectiveSurface = topmostSurface != 0 ? topmostSurface : baseSurface;
+        var found = effectiveSurface != 0;
         var blockers = 0;
         var surfaces = _cardHandles()
             .Where(handle => handle != 0 && DockNativeMethods.IsWindow(handle))
             .ToHashSet();
+        var visibleSurfaces = surfaces
+            .Where(handle => NativeMethods.IsWindowVisible(handle) && !NativeMethods.IsIconic(handle))
+            .ToHashSet();
         var surfacesAbove = 0;
+        var visibleSurfacesAbove = 0;
         if (found)
         {
+            var passedEffectiveSurface = false;
             NativeMethods.EnumWindows((window, _) =>
             {
-                if (window == desktopSurface)
+                if (window == effectiveSurface)
+                {
+                    passedEffectiveSurface = true;
+                    if (baseSurface == 0 || window == baseSurface)
+                    {
+                        return false;
+                    }
+                    return true;
+                }
+                if (baseSurface != 0 && window == baseSurface)
                 {
                     return false;
                 }
@@ -473,7 +578,14 @@ internal sealed class DesktopSurfaceWatcher : IDisposable
                 }
                 if (surfaces.Contains(window))
                 {
-                    surfacesAbove++;
+                    if (!passedEffectiveSurface)
+                    {
+                        surfacesAbove++;
+                        if (visibleSurfaces.Contains(window))
+                        {
+                            visibleSurfacesAbove++;
+                        }
+                    }
                     return true;
                 }
                 if (NativeMethods.IsWindowCloaked(window))
@@ -532,10 +644,22 @@ internal sealed class DesktopSurfaceWatcher : IDisposable
                     blockers++;
                 }
                 // A few are enough to prove ordinary windows are still around.
-                return blockers < 3;
+                return !(passedEffectiveSurface && blockers >= 3);
             }, 0);
+
+            if (blockers == 0 && IsForegroundWindowBlocking(surfaces, shellProcess))
+            {
+                blockers++;
+            }
         }
-        var shown = DesktopSurfaceRules.IsDesktopShown(found, blockers);
+        var surfaceRaised = DesktopSurfaceRules.IsDesktopSurfaceRaised(
+            desktopSurfaceIsTopmost: topmostSurface != 0,
+            cardsRaised: _cardsRaised,
+            raisedForTopmostSurface: _raisedForTopmostSurface,
+            baseSurfaceClass,
+            visibleSurfaces.Count,
+            visibleSurfacesAbove);
+        var shown = DesktopSurfaceRules.IsDesktopShown(found, blockers, surfaceRaised);
         if (shown)
         {
             _preRaiseUntilTick = 0;
@@ -551,12 +675,58 @@ internal sealed class DesktopSurfaceWatcher : IDisposable
             _preRaiseUntilTick = 0;
             IsDesktopShown = shown;
             _cardsRaised = shown;
+            _raisedForTopmostSurface = shown && (_raisedForTopmostSurface || topmostSurface != 0);
         }
         if (action == DesktopSurfaceAction.None)
         {
             return;
         }
         Changed?.Invoke();
+    }
+
+    private static bool IsForegroundWindowBlocking(HashSet<nint> surfaces, uint shellProcess)
+    {
+        var foreground = DockNativeMethods.GetForegroundWindow();
+        if (foreground == 0 || surfaces.Contains(foreground))
+        {
+            return false;
+        }
+        NativeMethods.GetWindowThreadProcessId(foreground, out var process);
+        if (process == CurrentProcessId)
+        {
+            return false;
+        }
+        var isVisible = NativeMethods.IsWindowVisible(foreground);
+        var isMinimized = NativeMethods.IsIconic(foreground);
+        if (!isVisible || isMinimized)
+        {
+            return false;
+        }
+        var isCloaked = NativeMethods.IsWindowCloaked(foreground);
+        var exStyle = NativeMethods.GetExStyleOf(foreground);
+        var isTopmost = (exStyle & NativeMethods.WsExTopmost) != 0;
+        var isLayeredClickThrough = (exStyle & NativeMethods.WsExLayered) != 0
+            && (exStyle & NativeMethods.WsExTransparent) != 0;
+        var width = 0;
+        var height = 0;
+        if (DockNativeMethods.GetWindowRect(foreground, out var rect))
+        {
+            width = rect.Right - rect.Left;
+            height = rect.Bottom - rect.Top;
+        }
+        return DesktopSurfaceRules.CountsAsForegroundBlocker(
+            hasWindow: true,
+            isOwnProcess: false,
+            isMonitoredDesktopSurface: false,
+            shellProcess: shellProcess != 0 && process == shellProcess,
+            ClassNameOf(foreground),
+            isVisible,
+            isMinimized,
+            isCloaked,
+            isTopmost,
+            isLayeredClickThrough,
+            width,
+            height);
     }
 
     private static string ClassNameOf(nint window)

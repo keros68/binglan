@@ -413,7 +413,7 @@ public sealed partial class TopBarWindow : Window
 
         if (_searchWindow is { } window && !_searchActive)
         {
-            window.ReturnBelowTopmost();
+            window.ReturnBelowOrdinaryWindows();
         }
     }
 
@@ -1830,6 +1830,10 @@ public sealed partial class TopBarWindow : Window
                 {
                     window.RaiseAboveDesktop(DockNativeMethods.HwndTopmost);
                 }
+                else if (!_searchActive)
+                {
+                    window.ReturnBelowOrdinaryWindows();
+                }
             }
             else
             {
@@ -2748,6 +2752,7 @@ public sealed partial class TopBarWindow : Window
         _searchPreviousForeground = DockNativeMethods.GetForegroundWindow();
         if (_searchWindow is { } searchWindow)
         {
+            searchWindow.SetSessionActive(true, _desktopShown);
             searchWindow.Show();
             searchWindow.RecoverPlacement();
         }
@@ -2856,7 +2861,12 @@ public sealed partial class TopBarWindow : Window
         }
         if (_state.SearchPresentation == SearchPresentation.Icon)
         {
+            _searchWindow?.SetSessionActive(false, desktopShown: false);
             _searchWindow?.HideFromApp();
+        }
+        else
+        {
+            _searchWindow?.SetSessionActive(false, _desktopShown);
         }
         // Reserved bars return to the idle cadence after borrowing the fast input tick.
         _foregroundTimer.Interval = _appBar?.IsReserved == true && _todoFlyout is null && _clockFlyout is null
@@ -3437,6 +3447,10 @@ public sealed partial class TopBarWindow : Window
                 if (_desktopShown)
                 {
                     floating.RaiseAboveDesktop(DockNativeMethods.HwndTopmost);
+                }
+                else if (!_searchActive)
+                {
+                    floating.ReturnBelowOrdinaryWindows();
                 }
             }
         }

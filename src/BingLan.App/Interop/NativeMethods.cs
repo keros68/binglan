@@ -57,6 +57,7 @@ internal static class NativeMethods
     internal const long WsExNoActivate = 0x08000000L;
     internal const long WsExTopmost = 0x00000008L;
     internal const long WsExTransparent = 0x00000020L;
+    internal const uint LwaAlpha = 0x00000002;
 
     internal const uint SwpNoSize = 0x0001;
     internal const uint SwpNoMove = 0x0002;
@@ -153,6 +154,14 @@ internal static class NativeMethods
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool IsWindowVisible(nint window);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool GetLayeredWindowAttributes(
+        nint window,
+        out uint colorKey,
+        out byte alpha,
+        out uint flags);
 
     internal static long GetExStyleOf(nint window) => GetWindowLongPtr(window, GwlExStyle);
 

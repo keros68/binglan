@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
@@ -21,6 +22,8 @@ public partial class SearchWindow : Window
     private bool _allowClose;
     private bool _layoutChanging;
     private bool _isChangingVisibilityByApp;
+    private bool _raisedAboveDesktop;
+    private bool _sessionActive;
     private HwndSource? _source;
 
     internal SearchWindow(TopBarState state, Border search, Action save)
@@ -40,6 +43,10 @@ public partial class SearchWindow : Window
             var style = (long)NativeMethods.GetWindowLongPtr(handle, NativeMethods.GwlExStyle);
             NativeMethods.SetWindowLongPtr(handle, NativeMethods.GwlExStyle,
                 (nint)(style | NativeMethods.WsExToolWindow | DockNativeMethods.WsExNoActivate));
+            if (!_raisedAboveDesktop && !_sessionActive)
+            {
+                SendToBackCore();
+            }
         };
         Loaded += (_, _) => RecoverPlacement();
         DpiChanged += (_, _) => Dispatcher.BeginInvoke(RecoverPlacement);
@@ -84,8 +91,38 @@ public partial class SearchWindow : Window
         }
     }
 
+    internal void SetSessionActive(bool active, bool desktopShown)
+    {
+        _sessionActive = active;
+        if (active)
+        {
+            if (_source is { IsDisposed: false } source && !_raisedAboveDesktop)
+            {
+                NativeMethods.SetWindowPos(
+                    source.Handle,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    NativeMethods.SwpNoMove | NativeMethods.SwpNoSize | NativeMethods.SwpNoActivate);
+            }
+            return;
+        }
+
+        if (desktopShown)
+        {
+            RaiseAboveDesktop(DockNativeMethods.HwndTopmost);
+        }
+        else
+        {
+            ReturnBelowOrdinaryWindows();
+        }
+    }
+
     internal void RaiseAboveDesktop(nint insertAfter)
     {
+        _raisedAboveDesktop = true;
         if (_source is not { IsDisposed: false } source)
         {
             return;
@@ -94,8 +131,7 @@ public partial class SearchWindow : Window
         {
             NativeMethods.ShowWindow(source.Handle, NativeMethods.SwShowNoActivate);
         }
-        const uint flags = NativeMethods.SwpNoMove | NativeMethods.SwpNoSize |
-                           NativeMethods.SwpNoActivate | NativeMethods.SwpShowWindow;
+        const uint flags = NativeMethods.SwpNoMove | NativeMethods.SwpNoSize | NativeMethods.SwpNoActivate;
         if ((NativeMethods.GetExStyleOf(source.Handle) & NativeMethods.WsExTopmost) == 0
             || insertAfter == 0
             || insertAfter == DockNativeMethods.HwndTopmost)
@@ -108,14 +144,22 @@ public partial class SearchWindow : Window
         }
     }
 
-    internal void ReturnBelowTopmost()
+    internal void ReturnBelowOrdinaryWindows()
     {
-        if (_source is { IsDisposed: false } source
-            && (NativeMethods.GetExStyleOf(source.Handle) & NativeMethods.WsExTopmost) != 0)
+        _raisedAboveDesktop = false;
+        if (!_sessionActive)
+        {
+            SendToBackCore();
+        }
+    }
+
+    private void SendToBackCore()
+    {
+        if (_source is { IsDisposed: false } source)
         {
             NativeMethods.SetWindowPos(
                 source.Handle,
-                DockNativeMethods.HwndNoTopmost,
+                DockNativeMethods.HwndBottom,
                 0,
                 0,
                 0,
@@ -126,6 +170,11 @@ public partial class SearchWindow : Window
 
     private nint WindowProc(nint window, int message, nint wParam, nint lParam, ref bool handled)
     {
+        if (message == NativeMethods.WmWindowPosChanging)
+        {
+            KeepOnDesktopLayer(lParam);
+        }
+
         if (!_allowClose && !_isChangingVisibilityByApp)
         {
             if (message == NativeMethods.WmSize && wParam == NativeMethods.SizeMinimized)
@@ -137,13 +186,29 @@ public partial class SearchWindow : Window
                 RecoverFromShell(minimized: false);
             }
             else if (message == NativeMethods.WmWindowPosChanged
-                     && (System.Runtime.InteropServices.Marshal.PtrToStructure<NativeMethods.WindowPos>(lParam).Flags
+                     && (Marshal.PtrToStructure<NativeMethods.WindowPos>(lParam).Flags
                          & NativeMethods.SwpHideWindow) != 0)
             {
                 RecoverFromShell(minimized: false);
             }
         }
         return 0;
+    }
+
+    private void KeepOnDesktopLayer(nint lParam)
+    {
+        if (_raisedAboveDesktop || _sessionActive)
+        {
+            return;
+        }
+
+        var position = Marshal.PtrToStructure<NativeMethods.WindowPos>(lParam);
+        if ((position.Flags & NativeMethods.SwpNoZOrder) == 0
+            && position.InsertAfter != DockNativeMethods.HwndBottom)
+        {
+            position.InsertAfter = DockNativeMethods.HwndBottom;
+            Marshal.StructureToPtr(position, lParam, false);
+        }
     }
 
     private void RecoverFromShell(bool minimized)
@@ -162,6 +227,10 @@ public partial class SearchWindow : Window
                     return;
                 }
                 NativeMethods.ShowWindow(handle, NativeMethods.SwShowNoActivate);
+                if (!_raisedAboveDesktop && !_sessionActive)
+                {
+                    SendToBackCore();
+                }
                 ShellRecovered?.Invoke();
             }));
     }

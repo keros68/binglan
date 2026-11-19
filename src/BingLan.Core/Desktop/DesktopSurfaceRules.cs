@@ -32,16 +32,66 @@ public static class DesktopSurfaceRules
     /// the cards cannot flip the verdict.
     /// </summary>
     public static bool IsDesktopShown(bool desktopSurfaceFound, int ordinaryWindowsAboveSurface) =>
-        desktopSurfaceFound && ordinaryWindowsAboveSurface == 0;
+        IsDesktopShown(desktopSurfaceFound, ordinaryWindowsAboveSurface, desktopSurfaceRaised: true);
+
+    /// <summary>
+    /// Whether the shell is actively showing the desktop: the desktop surface exists,
+    /// has actually been raised over the desktop layer (rather than sitting passively at
+    /// the shell bottom on an empty desktop), and no visible ordinary window is open.
+    /// </summary>
+    public static bool IsDesktopShown(
+        bool desktopSurfaceFound,
+        int ordinaryWindowsAboveSurface,
+        bool desktopSurfaceRaised) =>
+        desktopSurfaceFound
+        && ordinaryWindowsAboveSurface == 0
+        && desktopSurfaceRaised;
+
+    /// <summary>
+    /// Whether Explorer's desktop surface (<c>WorkerW</c> or <c>Progman</c>) is raised
+    /// above the normal desktop layer. On an ordinary empty desktop (fresh boot, closing
+    /// the last app, or minimising windows individually / via Win+M) <c>Progman</c> stays
+    /// below <c>HWND_BOTTOM</c>, so all visible desktop surfaces already sit above it and
+    /// must remain non-topmost so newly launched windows naturally appear on top of them.
+    /// </summary>
+    public static bool IsDesktopSurfaceRaised(
+        bool desktopSurfaceIsTopmost,
+        bool cardsRaised,
+        bool raisedForTopmostSurface,
+        string baseSurfaceClassName,
+        int visibleSurfaceCount,
+        int visibleSurfacesAboveDesktop)
+    {
+        if (desktopSurfaceIsTopmost)
+        {
+            return true;
+        }
+
+        if (!cardsRaised)
+        {
+            return visibleSurfaceCount > 0 && visibleSurfacesAboveDesktop < visibleSurfaceCount;
+        }
+
+        // In Win32 the shell window (Progman) is pinned below HWND_BOTTOM unless topmost;
+        // once topmost is gone and no surface sits below Progman, "show desktop" is inactive.
+        if (baseSurfaceClassName == "Progman"
+            && (visibleSurfaceCount == 0 || visibleSurfacesAboveDesktop >= visibleSurfaceCount))
+        {
+            return false;
+        }
+
+        return !raisedForTopmostSurface || baseSurfaceClassName != "Progman";
+    }
 
     /// <summary>
     /// Whether a window above the surface counts as ordinary. Windows of the shell's
     /// own process are its surface windows (wallpaper, taskbars) — except the
-    /// file-manager windows, which run in explorer.exe too but are ordinary windows:
-    /// one being open means the desktop is not shown, and the cards must go below it.
+    /// file-manager windows and standard shell dialogs (Run, Properties, file progress),
+    /// which run in explorer.exe too but are ordinary windows that cards must stay below.
     /// </summary>
     public static bool CountsAsOrdinaryWindow(bool shellProcess, string className) =>
-        !shellProcess || className is "CabinetWClass" or "ExploreWClass";
+        !shellProcess
+        || className is "CabinetWClass" or "ExploreWClass" or "#32770" or "OperationStatusWindow";
 
     /// <summary>
     /// Whether a visible, non-topmost window above the desktop surface is an ordinary
@@ -77,6 +127,38 @@ public static class DesktopSurfaceRules
             height);
 
     /// <summary>
+    /// Whether the live foreground window proves the user is interacting with a visible,
+    /// non-topmost application window (including tool-styled launchers or login dialogs
+    /// that <see cref="CountsAsOrdinaryBlocker"/> skips while passive in the background).
+    /// Topmost shell flyouts (Start menu, Quick Settings) are excluded so opening them
+    /// during "show desktop" does not drop cards behind a still-topmost <c>WorkerW</c>.
+    /// </summary>
+    public static bool CountsAsForegroundBlocker(
+        bool hasWindow,
+        bool isOwnProcess,
+        bool isMonitoredDesktopSurface,
+        bool shellProcess,
+        string className,
+        bool isVisible,
+        bool isMinimized,
+        bool isCloaked,
+        bool isTopmost,
+        bool isLayeredClickThrough,
+        int width,
+        int height) =>
+        hasWindow
+        && !isOwnProcess
+        && !isMonitoredDesktopSurface
+        && CountsAsOrdinaryWindow(shellProcess, className)
+        && isVisible
+        && !isMinimized
+        && !isCloaked
+        && !isTopmost
+        && !isLayeredClickThrough
+        && width > 1
+        && height > 1;
+
+    /// <summary>
     /// Whether a top-level window hosts the live shell desktop view (<c>SHELLDLL_DefView</c>),
     /// which lives on <c>Progman</c> normally and moves to <c>WorkerW</c> during wallpaper
     /// transitions or "show desktop".
@@ -95,11 +177,15 @@ public static class DesktopSurfaceRules
         bool isCloaked,
         bool isTopmost,
         int width,
-        int height) =>
+        int height,
+        bool isClickThrough = false,
+        bool isTransparentLayered = false) =>
         shellProcess
         && isVisible
         && !isCloaked
         && isTopmost
+        && !isClickThrough
+        && !isTransparentLayered
         && width > 100
         && height > 100
         && className is "Progman" or "WorkerW";

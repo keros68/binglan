@@ -5223,6 +5223,51 @@ internal static class Program
             window.ReturnBelowOrdinaryWindows();
             PumpUntil(() => (GetWindowLongPtr(handle, GwlExStyle) & WsExTopmost) == 0,
                 "锚点测试回落后组件应离开置顶带");
+
+            // Regression: hiding and re-showing a card in normal desktop state must keep
+            // it below ordinary non-fullscreen windows rather than showing above them.
+            var ordinaryApp = new Window
+            {
+                Width = 220,
+                Height = 160,
+                Left = 280,
+                Top = 240,
+                Title = "模拟非全屏软件",
+                ShowInTaskbar = false,
+                ShowActivated = false
+            };
+            ShowAndPump(ordinaryApp);
+            try
+            {
+                var appHandle = new WindowInteropHelper(ordinaryApp).Handle;
+                window.HideFromApp();
+                Pump();
+                window.Show();
+                Pump();
+                Assert((GetWindowLongPtr(handle, GwlExStyle) & WsExTopmost) == 0,
+                    "重新显示后组件不应进入置顶带");
+                var sawApp = false;
+                var cardBelowApp = false;
+                BingLan.App.Interop.NativeMethods.EnumWindows((candidate, _) =>
+                {
+                    if (candidate == appHandle)
+                    {
+                        sawApp = true;
+                    }
+                    else if (candidate == handle)
+                    {
+                        cardBelowApp = sawApp;
+                        return false;
+                    }
+                    return true;
+                }, 0);
+                Assert(cardBelowApp, "非全屏软件窗口应排在桌面组件上方");
+            }
+            finally
+            {
+                ordinaryApp.Close();
+                Pump();
+            }
         }
         finally
         {

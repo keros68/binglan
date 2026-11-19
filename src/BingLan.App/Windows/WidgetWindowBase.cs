@@ -307,6 +307,7 @@ public class WidgetWindowBase : Window
             if (e.NewValue is true && _source is { IsDisposed: false })
             {
                 RecoverPlacementOnShow();
+                SendToBack();
             }
         };
         LocationChanged += (_, _) => PlacementChanged();
@@ -1226,6 +1227,7 @@ public class WidgetWindowBase : Window
         RefreshNativeWindowShape();
         RefreshBackdrop();
         RecoverPlacementOnShow();
+        SendToBack();
     }
 
     private void RecoverPlacementOnShow()
