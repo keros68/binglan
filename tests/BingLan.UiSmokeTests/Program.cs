@@ -5196,33 +5196,37 @@ internal static class Program
             // Regression: when the slot passed to RaiseAboveDesktop is the bottom-most
             // topmost window, a single SetWindowPos(card, slot) in Win32 leaves the card
             // non-topmost. Raising must still promote the card into WS_EX_TOPMOST.
-            var anchor = new Window
+            var anchor = new TodoWidgetWindow(TodoService.CreateDefaultWidget())
             {
                 Width = 40,
                 Height = 40,
                 Left = 120,
                 Top = 120,
-                WindowStyle = WindowStyle.None,
-                ShowInTaskbar = false,
-                ShowActivated = false,
-                Topmost = true
+                ShowActivated = false
             };
             ShowAndPump(anchor);
             try
             {
                 var anchorHandle = new WindowInteropHelper(anchor).Handle;
+                anchor.RaiseAboveDesktop(BingLan.App.Interop.DockNativeMethods.HwndTopmost);
                 window.RaiseAboveDesktop(anchorHandle);
                 PumpUntil(() => (GetWindowLongPtr(handle, GwlExStyle) & WsExTopmost) != 0,
                     "排在置顶带末尾窗口之后提升时，组件仍须获得 WS_EX_TOPMOST");
+
+                WidgetWindowBase.ReturnBelowOrdinaryWindows([window, anchor]);
+                Assert((GetWindowLongPtr(handle, GwlExStyle) & WsExTopmost) == 0
+                    && (GetWindowLongPtr(anchorHandle, GwlExStyle) & WsExTopmost) == 0,
+                    "批量回落后两个组件都应立即离开置顶层");
+                Assert(IsWindowVisible(handle) && IsWindowVisible(anchorHandle), "批量回落应保持组件可见");
             }
             finally
             {
                 anchor.Close();
                 Pump();
             }
-            window.ReturnBelowOrdinaryWindows();
-            PumpUntil(() => (GetWindowLongPtr(handle, GwlExStyle) & WsExTopmost) == 0,
-                "锚点测试回落后组件应离开置顶带");
+            window.RaiseAboveDesktop(BingLan.App.Interop.DockNativeMethods.HwndTop, topmost: false);
+            Assert((GetWindowLongPtr(handle, GwlExStyle) & WsExTopmost) == 0,
+                "普通层桌面背景应只在普通层提升组件");
 
             // Regression: hiding and re-showing a card in normal desktop state must keep
             // it below ordinary non-fullscreen windows rather than showing above them.
@@ -5240,6 +5244,8 @@ internal static class Program
             try
             {
                 var appHandle = new WindowInteropHelper(ordinaryApp).Handle;
+                Assert(IsAbove(appHandle, handle), "新普通窗口应自然盖住在普通层提升的组件");
+                window.ReturnBelowOrdinaryWindows();
                 window.HideFromApp();
                 Pump();
                 window.Show();
@@ -5262,6 +5268,67 @@ internal static class Program
                     return true;
                 }, 0);
                 Assert(cardBelowApp, "非全屏软件窗口应排在桌面组件上方");
+
+                // Floating SearchWindow must also stay below ordinary non-fullscreen windows
+                // when idle and after a search session ends, rather than sitting at HWND_NOTOPMOST.
+                var floatingSearch = new SearchWindow(
+                    new TopBarState { SearchPresentation = SearchPresentation.Floating },
+                    new System.Windows.Controls.Border(),
+                    static () => { });
+                ShowAndPump(floatingSearch);
+                try
+                {
+                    var searchHandle = floatingSearch.WindowHandle;
+                    Assert(searchHandle != 0, "独立搜索框句柄应已创建");
+                    floatingSearch.RaiseAboveDesktop(BingLan.App.Interop.DockNativeMethods.HwndTopmost);
+                    PumpUntil(() => (GetWindowLongPtr(searchHandle, GwlExStyle) & WsExTopmost) != 0,
+                        "显示桌面期间独立搜索框应进入置顶带");
+                    floatingSearch.ReturnBelowOrdinaryWindows();
+                    PumpUntil(() => (GetWindowLongPtr(searchHandle, GwlExStyle) & WsExTopmost) == 0,
+                        "退出显示桌面后独立搜索框应离开置顶带");
+                    var sawAppBeforeSearch = false;
+                    var searchBelowApp = false;
+                    BingLan.App.Interop.NativeMethods.EnumWindows((candidate, _) =>
+                    {
+                        if (candidate == appHandle)
+                        {
+                            sawAppBeforeSearch = true;
+                        }
+                        else if (candidate == searchHandle)
+                        {
+                            searchBelowApp = sawAppBeforeSearch;
+                            return false;
+                        }
+                        return true;
+                    }, 0);
+                    Assert(searchBelowApp, "退出显示桌面后待机独立搜索框应回落到非全屏软件下方");
+
+                    floatingSearch.SetSessionActive(true, desktopShown: false);
+                    Pump();
+                    floatingSearch.SetSessionActive(false, desktopShown: false);
+                    Pump();
+                    sawAppBeforeSearch = false;
+                    searchBelowApp = false;
+                    BingLan.App.Interop.NativeMethods.EnumWindows((candidate, _) =>
+                    {
+                        if (candidate == appHandle)
+                        {
+                            sawAppBeforeSearch = true;
+                        }
+                        else if (candidate == searchHandle)
+                        {
+                            searchBelowApp = sawAppBeforeSearch;
+                            return false;
+                        }
+                        return true;
+                    }, 0);
+                    Assert(searchBelowApp, "结束搜索会话后独立搜索框应回到非全屏软件下方");
+                }
+                finally
+                {
+                    floatingSearch.Shutdown();
+                    Pump();
+                }
             }
             finally
             {

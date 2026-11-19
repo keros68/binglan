@@ -8,45 +8,16 @@ internal static class DesktopSurfaceTests
 {
     internal static void TestShownStateAndActions()
     {
-        Check(DesktopSurfaceRules.IsDesktopShown(true, 0), "桌面表面已抬高且无普通窗口时应判定为显示桌面");
-        Check(!DesktopSurfaceRules.IsDesktopShown(true, 0, desktopSurfaceRaised: false),
-            "空桌面但桌面表面仍位于桌面层底部（开机、关闭全部窗口或 Win+M）时不应判定为显示桌面");
-        Check(DesktopSurfaceRules.IsDesktopShown(true, 0, desktopSurfaceRaised: true),
-            "桌面表面实际抬起且无普通窗口时应判定为显示桌面");
-        Check(!DesktopSurfaceRules.IsDesktopShown(true, 1, desktopSurfaceRaised: true),
-            "即使存在置顶 WorkerW，只要有非全屏普通窗口打开就必须退出显示桌面");
-        Check(!DesktopSurfaceRules.IsDesktopShown(true, 1), "仍有普通窗口在上时不应判定为显示桌面");
-        Check(!DesktopSurfaceRules.IsDesktopShown(true, 7), "多个普通窗口在上时不应判定为显示桌面");
-        Check(!DesktopSurfaceRules.IsDesktopShown(false, 0), "找不到桌面表面时不应判定为显示桌面");
-
-        Check(!DesktopSurfaceRules.IsDesktopSurfaceRaised(
-                desktopSurfaceIsTopmost: false, cardsRaised: false, raisedForTopmostSurface: false,
-                baseSurfaceClassName: "Progman", visibleSurfaceCount: 5, visibleSurfacesAboveDesktop: 5),
-            "开机或空桌面且所有卡片均已在 Progman 之上时不应把卡片提升进置顶带");
-        Check(!DesktopSurfaceRules.IsDesktopSurfaceRaised(
-                desktopSurfaceIsTopmost: false, cardsRaised: false, raisedForTopmostSurface: false,
-                baseSurfaceClassName: "WorkerW", visibleSurfaceCount: 4, visibleSurfacesAboveDesktop: 4),
-            "壁纸轮播 WorkerW 位于卡片下方时不应误提升卡片");
-        Check(DesktopSurfaceRules.IsDesktopSurfaceRaised(
-                desktopSurfaceIsTopmost: true, cardsRaised: false, raisedForTopmostSurface: false,
-                baseSurfaceClassName: "Progman", visibleSurfaceCount: 5, visibleSurfacesAboveDesktop: 5),
-            "Windows 11 将桌面表面抬入置顶带时应识别为桌面表面抬起");
-        Check(DesktopSurfaceRules.IsDesktopSurfaceRaised(
-                desktopSurfaceIsTopmost: false, cardsRaised: false, raisedForTopmostSurface: false,
-                baseSurfaceClassName: "WorkerW", visibleSurfaceCount: 5, visibleSurfacesAboveDesktop: 0),
-            "Windows 10 非置顶 WorkerW 盖过桌面层卡片时应识别为桌面表面抬起");
-        Check(!DesktopSurfaceRules.IsDesktopSurfaceRaised(
-                desktopSurfaceIsTopmost: false, cardsRaised: true, raisedForTopmostSurface: true,
-                baseSurfaceClassName: "Progman", visibleSurfaceCount: 5, visibleSurfacesAboveDesktop: 5),
-            "Windows 11 置顶 WorkerW 撤下且基底为 Progman 时应结束提升状态");
-        Check(!DesktopSurfaceRules.IsDesktopSurfaceRaised(
-                desktopSurfaceIsTopmost: false, cardsRaised: true, raisedForTopmostSurface: false,
-                baseSurfaceClassName: "Progman", visibleSurfaceCount: 5, visibleSurfacesAboveDesktop: 5),
-            "预提升窗口期结束后若基底仍为非置顶 Progman 且无卡片被盖住，应回落到桌面层底部");
-        Check(DesktopSurfaceRules.IsDesktopSurfaceRaised(
-                desktopSurfaceIsTopmost: false, cardsRaised: true, raisedForTopmostSurface: false,
-                baseSurfaceClassName: "WorkerW", visibleSurfaceCount: 5, visibleSurfacesAboveDesktop: 5),
-            "Windows 10 显示桌面提升期间保持状态直到普通窗口出现");
+        Check(DesktopSurfaceRules.IsDesktopShown(true, 0, hasActiveApplication: false),
+            "桌面表面存在且无普通窗口时应判定为显示桌面");
+        Check(!DesktopSurfaceRules.IsDesktopShown(true, 1, hasActiveApplication: false),
+            "仍有普通窗口在上时不应判定为显示桌面");
+        Check(!DesktopSurfaceRules.IsDesktopShown(false, 0, hasActiveApplication: false),
+            "找不到桌面表面时不应判定为显示桌面");
+        var desktopShown = DesktopSurfaceRules.IsDesktopShown(true, 0, hasActiveApplication: true);
+        Check(!desktopShown, "普通窗口恢复前台时，即使暂时排在 WorkerW 后面，也应结束显示桌面状态");
+        Check(DesktopSurfaceRules.ActionFor(true, desktopShown) == DesktopSurfaceAction.Lower,
+            "普通窗口恢复前台时应立即回落已提升的组件");
 
         Check(DesktopSurfaceRules.ActionFor(false, true) == DesktopSurfaceAction.Raise,
             "未提升且桌面已显示时应提升");
@@ -62,12 +33,6 @@ internal static class DesktopSurfaceTests
             "普通窗口出现后即使曾被遮挡也应回落到普通窗口下方");
         Check(DesktopSurfaceRules.ActionFor(false, false) == DesktopSurfaceAction.None,
             "未提升且桌面未显示时应不动");
-        Check(DesktopSurfaceRules.ActionFor(true, false, anySurfaceCovered: false, holdPreRaise: true) == DesktopSurfaceAction.None,
-            "主动显示桌面预提升窗口期内普通窗口尚在最小化动画中时不应提前回落闪烁");
-        Check(DesktopSurfaceRules.ActionFor(true, true, anySurfaceCovered: true, holdPreRaise: true) == DesktopSurfaceAction.Raise,
-            "预提升期间若置顶 WorkerW 盖过任一受控表面仍应立即补提");
-        Check(DesktopSurfaceRules.ActionFor(true, false, anySurfaceCovered: false, holdPreRaise: false) == DesktopSurfaceAction.Lower,
-            "预提升窗口期结束后若未进入显示桌面状态应回落到普通窗口下方");
     }
 
     internal static void TestSurfaceHostAndBlockerFiltering()
@@ -91,14 +56,6 @@ internal static class DesktopSurfaceTests
         Check(!DesktopSurfaceRules.IsTopmostShellDesktopSurface(
                 shellProcess: false, "WorkerW", isVisible: true, isCloaked: false, isTopmost: true, width: 1920, height: 1080),
             "非外壳进程的置顶窗口不应误判为桌面表面");
-        Check(!DesktopSurfaceRules.IsTopmostShellDesktopSurface(
-                shellProcess: true, "WorkerW", isVisible: true, isCloaked: false, isTopmost: true, width: 1920, height: 1080,
-                isClickThrough: true),
-            "鼠标穿透的置顶 WorkerW 不应误判为显示桌面表面");
-        Check(!DesktopSurfaceRules.IsTopmostShellDesktopSurface(
-                shellProcess: true, "WorkerW", isVisible: true, isCloaked: false, isTopmost: true, width: 1920, height: 1080,
-                isClickThrough: false, isTransparentLayered: true),
-            "全透明分层 WorkerW 不应误判为显示桌面表面");
 
         // 普通应用窗口与文件资源管理器窗口应阻断“显示桌面”状态。
         Check(DesktopSurfaceRules.CountsAsOrdinaryBlocker(
@@ -161,6 +118,16 @@ internal static class DesktopSurfaceTests
             "前台可见的非置顶外部软件窗口（即使使用工具窗口样式）也应让冰蓝卡片回落");
         Check(!DesktopSurfaceRules.CountsAsForegroundBlocker(
                 hasWindow: true, isOwnProcess: false, isMonitoredDesktopSurface: false,
+                shellProcess: false, "Application", isVisible: true, isMinimized: true, isCloaked: false,
+                isTopmost: false, isLayeredClickThrough: false, width: 184, height: 30),
+            "前台句柄短暂残留在已最小化应用时应允许组件提升");
+        Check(DesktopSurfaceRules.CountsAsForegroundBlocker(
+                hasWindow: true, isOwnProcess: false, isMonitoredDesktopSurface: false,
+                shellProcess: false, "Application", isVisible: true, isMinimized: true, isCloaked: false,
+                isTopmost: false, isLayeredClickThrough: false, width: 184, height: 30, isRestoring: true),
+            "收到还原事件时，即使窗口仍标记为最小化，也应先让组件回落");
+        Check(!DesktopSurfaceRules.CountsAsForegroundBlocker(
+                hasWindow: true, isOwnProcess: false, isMonitoredDesktopSurface: false,
                 shellProcess: false, "Windows.UI.Core.CoreWindow",
                 isVisible: true, isMinimized: false, isCloaked: false,
                 isTopmost: true, isLayeredClickThrough: false, width: 640, height: 720),
@@ -177,6 +144,19 @@ internal static class DesktopSurfaceTests
                 isVisible: true, isMinimized: false, isCloaked: false,
                 isTopmost: false, isLayeredClickThrough: false, width: 1920, height: 1080),
             "显示桌面期间 WorkerW 获得前台不应阻断卡片提升");
+
+        Check(DesktopSurfaceRules.ShouldEvaluateWindowShowWhileRaised(
+                isAppWindow: false, isNoActivate: false, isLayeredClickThrough: false),
+            "提升期间普通顶层窗口显示应触发回落评估与复查");
+        Check(DesktopSurfaceRules.ShouldEvaluateWindowShowWhileRaised(
+                isAppWindow: true, isNoActivate: true, isLayeredClickThrough: false),
+            "显式声明 WS_EX_APPWINDOW 的窗口显示应触发回落评估");
+        Check(!DesktopSurfaceRules.ShouldEvaluateWindowShowWhileRaised(
+                isAppWindow: false, isNoActivate: true, isLayeredClickThrough: false),
+            "免激活气泡提示与输入法候选窗显示不应触发桌面反复扫描");
+        Check(!DesktopSurfaceRules.ShouldEvaluateWindowShowWhileRaised(
+                isAppWindow: false, isNoActivate: false, isLayeredClickThrough: true),
+            "鼠标穿透透明层显示不应触发桌面反复扫描");
     }
 
     internal static void TestOrdinaryWindowClassification()

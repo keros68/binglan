@@ -66,6 +66,7 @@ internal static class DockNativeMethods
     internal const uint IldTransparent = 0x00000001;
 
     internal static readonly nint HwndNoTopmost = -2;
+    internal static readonly nint HwndTop = 0;
     internal static readonly nint HwndBottom = 1;
     internal static readonly nint HwndTopmost = -1;
     internal const uint SwpAsyncWindowPos = 0x4000;

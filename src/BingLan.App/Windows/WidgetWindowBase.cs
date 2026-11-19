@@ -1756,6 +1756,43 @@ public class WidgetWindowBase : Window
         SendToBackCore();
     }
 
+    internal static void ReturnBelowOrdinaryWindows(IReadOnlyList<WidgetWindowBase> windows)
+    {
+        if (windows.Count == 0)
+        {
+            return;
+        }
+
+        // Clear the desktop-layer flags before Win32 applies the shared Z-order change.
+        foreach (var window in windows)
+        {
+            window._raisedAboveDesktop = false;
+        }
+
+        const uint flags = NativeMethods.SwpNoMove | NativeMethods.SwpNoSize | NativeMethods.SwpNoActivate;
+        var batch = NativeMethods.BeginDeferWindowPos(windows.Count);
+        foreach (var window in windows)
+        {
+            if (batch == 0)
+            {
+                break;
+            }
+            if (window.WindowHandle is var handle && handle != 0)
+            {
+                batch = NativeMethods.DeferWindowPos(batch, handle, DockNativeMethods.HwndBottom, 0, 0, 0, 0, flags);
+            }
+        }
+        if (batch != 0 && NativeMethods.EndDeferWindowPos(batch))
+        {
+            return;
+        }
+
+        foreach (var window in windows)
+        {
+            window.SendToBackCore();
+        }
+    }
+
     private void SendToBackCore()
     {
         if (_source is { IsDisposed: false } source)
@@ -1775,14 +1812,9 @@ public class WidgetWindowBase : Window
     internal nint WindowHandle => _source is { IsDisposed: false } source ? source.Handle : 0;
 
     /// <summary>
-    /// Lifts the card into the topmost band at the given z-order slot — under the
-    /// taskbar — while the shell shows the desktop: the raised desktop surface would
-    /// otherwise cover the card behind the wallpaper. Promoting with
-    /// <see cref="DockNativeMethods.HwndTopmost"/> first ensures Win32 grants
-    /// <c>WS_EX_TOPMOST</c> even when <paramref name="insertAfter"/> is the last
-    /// topmost window.
+    /// Places the card above the wallpaper in the shell desktop's current Z-order band.
     /// </summary>
-    internal void RaiseAboveDesktop(nint insertAfter)
+    internal void RaiseAboveDesktop(nint insertAfter, bool topmost = true)
     {
         _raisedAboveDesktop = true;
         if (_source is { IsDisposed: false } source)
@@ -1792,34 +1824,7 @@ public class WidgetWindowBase : Window
                 NativeMethods.ShowWindow(source.Handle, NativeMethods.SwShowNoActivate);
             }
 
-            const uint flags = NativeMethods.SwpNoMove | NativeMethods.SwpNoSize | NativeMethods.SwpNoActivate;
-            if ((NativeMethods.GetExStyleOf(source.Handle) & NativeMethods.WsExTopmost) == 0
-                || insertAfter == 0
-                || insertAfter == DockNativeMethods.HwndTopmost)
-            {
-                NativeMethods.SetWindowPos(
-                    source.Handle,
-                    DockNativeMethods.HwndTopmost,
-                    0,
-                    0,
-                    0,
-                    0,
-                    flags);
-            }
-
-            if (insertAfter != 0
-                && insertAfter != DockNativeMethods.HwndTopmost
-                && insertAfter != source.Handle)
-            {
-                NativeMethods.SetWindowPos(
-                    source.Handle,
-                    insertAfter,
-                    0,
-                    0,
-                    0,
-                    0,
-                    flags);
-            }
+            NativeMethods.PutAboveDesktop(source.Handle, insertAfter, topmost);
         }
     }
 

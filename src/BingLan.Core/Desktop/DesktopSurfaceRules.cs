@@ -8,7 +8,7 @@ public enum DesktopSurfaceAction
     /// <summary>Nothing changed that concerns the cards.</summary>
     None,
 
-    /// <summary>Lift the cards into the topmost band, under the taskbar.</summary>
+    /// <summary>Lift the cards just above the desktop surface.</summary>
     Raise,
 
     /// <summary>Put the cards back below every ordinary window.</summary>
@@ -16,12 +16,8 @@ public enum DesktopSurfaceAction
 }
 
 /// <summary>
-/// Rules that keep the desktop cards visible while the shell shows the desktop.
-/// Pressing "show desktop" makes Explorer minimise every ordinary window and raise
-/// the desktop surface above the non-topmost band, which covers the cards that sit
-/// at the bottom of that band behind the wallpaper. Only the topmost band is left
-/// alone, so while that state lasts the cards are lifted into it — under the taskbar
-/// so the taskbar stays reachable — and put back once ordinary windows return.
+/// Rules that keep cards above the wallpaper while the shell shows the desktop
+/// and return them to the bottom of the ordinary window order when apps return.
 /// </summary>
 public static class DesktopSurfaceRules
 {
@@ -31,57 +27,11 @@ public static class DesktopSurfaceRules
     /// state from the other windows (not from the cards' own position) means lifting
     /// the cards cannot flip the verdict.
     /// </summary>
-    public static bool IsDesktopShown(bool desktopSurfaceFound, int ordinaryWindowsAboveSurface) =>
-        IsDesktopShown(desktopSurfaceFound, ordinaryWindowsAboveSurface, desktopSurfaceRaised: true);
-
-    /// <summary>
-    /// Whether the shell is actively showing the desktop: the desktop surface exists,
-    /// has actually been raised over the desktop layer (rather than sitting passively at
-    /// the shell bottom on an empty desktop), and no visible ordinary window is open.
-    /// </summary>
     public static bool IsDesktopShown(
         bool desktopSurfaceFound,
         int ordinaryWindowsAboveSurface,
-        bool desktopSurfaceRaised) =>
-        desktopSurfaceFound
-        && ordinaryWindowsAboveSurface == 0
-        && desktopSurfaceRaised;
-
-    /// <summary>
-    /// Whether Explorer's desktop surface (<c>WorkerW</c> or <c>Progman</c>) is raised
-    /// above the normal desktop layer. On an ordinary empty desktop (fresh boot, closing
-    /// the last app, or minimising windows individually / via Win+M) <c>Progman</c> stays
-    /// below <c>HWND_BOTTOM</c>, so all visible desktop surfaces already sit above it and
-    /// must remain non-topmost so newly launched windows naturally appear on top of them.
-    /// </summary>
-    public static bool IsDesktopSurfaceRaised(
-        bool desktopSurfaceIsTopmost,
-        bool cardsRaised,
-        bool raisedForTopmostSurface,
-        string baseSurfaceClassName,
-        int visibleSurfaceCount,
-        int visibleSurfacesAboveDesktop)
-    {
-        if (desktopSurfaceIsTopmost)
-        {
-            return true;
-        }
-
-        if (!cardsRaised)
-        {
-            return visibleSurfaceCount > 0 && visibleSurfacesAboveDesktop < visibleSurfaceCount;
-        }
-
-        // In Win32 the shell window (Progman) is pinned below HWND_BOTTOM unless topmost;
-        // once topmost is gone and no surface sits below Progman, "show desktop" is inactive.
-        if (baseSurfaceClassName == "Progman"
-            && (visibleSurfaceCount == 0 || visibleSurfacesAboveDesktop >= visibleSurfaceCount))
-        {
-            return false;
-        }
-
-        return !raisedForTopmostSurface || baseSurfaceClassName != "Progman";
-    }
+        bool hasActiveApplication) =>
+        desktopSurfaceFound && ordinaryWindowsAboveSurface == 0 && !hasActiveApplication;
 
     /// <summary>
     /// Whether a window above the surface counts as ordinary. Windows of the shell's
@@ -127,9 +77,9 @@ public static class DesktopSurfaceRules
             height);
 
     /// <summary>
-    /// Whether the live foreground window proves the user is interacting with a visible,
-    /// non-topmost application window (including tool-styled launchers or login dialogs
-    /// that <see cref="CountsAsOrdinaryBlocker"/> skips while passive in the background).
+    /// Whether a foreground or restoring window is a visible, non-topmost application
+    /// window, including tool-styled launchers or login dialogs that
+    /// <see cref="CountsAsOrdinaryBlocker"/> skips while passive in the background.
     /// Topmost shell flyouts (Start menu, Quick Settings) are excluded so opening them
     /// during "show desktop" does not drop cards behind a still-topmost <c>WorkerW</c>.
     /// </summary>
@@ -145,18 +95,31 @@ public static class DesktopSurfaceRules
         bool isTopmost,
         bool isLayeredClickThrough,
         int width,
-        int height) =>
+        int height,
+        bool isRestoring = false) =>
         hasWindow
         && !isOwnProcess
         && !isMonitoredDesktopSurface
         && CountsAsOrdinaryWindow(shellProcess, className)
         && isVisible
-        && !isMinimized
+        && (!isMinimized || isRestoring)
         && !isCloaked
         && !isTopmost
         && !isLayeredClickThrough
         && width > 1
         && height > 1;
+
+    /// <summary>
+    /// Whether an <c>EVENT_OBJECT_SHOW</c> on a non-shell top-level window while cards are
+    /// raised should trigger immediate evaluation and exit settle checks. Passive tooltips,
+    /// IME popups and click-through overlays (<c>WS_EX_NOACTIVATE</c> without
+    /// <c>WS_EX_APPWINDOW</c>, or layered transparent) cannot lower cards and are skipped.
+    /// </summary>
+    public static bool ShouldEvaluateWindowShowWhileRaised(
+        bool isAppWindow,
+        bool isNoActivate,
+        bool isLayeredClickThrough) =>
+        !isLayeredClickThrough && (!isNoActivate || isAppWindow);
 
     /// <summary>
     /// Whether a top-level window hosts the live shell desktop view (<c>SHELLDLL_DefView</c>),
@@ -177,15 +140,11 @@ public static class DesktopSurfaceRules
         bool isCloaked,
         bool isTopmost,
         int width,
-        int height,
-        bool isClickThrough = false,
-        bool isTransparentLayered = false) =>
+        int height) =>
         shellProcess
         && isVisible
         && !isCloaked
         && isTopmost
-        && !isClickThrough
-        && !isTransparentLayered
         && width > 100
         && height > 100
         && className is "Progman" or "WorkerW";
@@ -203,20 +162,7 @@ public static class DesktopSurfaceRules
         bool cardsRaised,
         bool desktopShown,
         bool anySurfaceCovered) =>
-        ActionFor(cardsRaised, desktopShown, anySurfaceCovered, holdPreRaise: false);
-
-    /// <summary>
-    /// What the desktop surfaces should do now, accounting for a brief pre-raise window
-    /// initiated right before the app itself asks Explorer to toggle "show desktop" so
-    /// cards are already above <c>Progman</c>/<c>WorkerW</c> before it rises (preventing
-    /// a wallpaper blink while ordinary windows are still mid-minimise).
-    /// </summary>
-    public static DesktopSurfaceAction ActionFor(
-        bool cardsRaised,
-        bool desktopShown,
-        bool anySurfaceCovered,
-        bool holdPreRaise) =>
         desktopShown
             ? (!cardsRaised || anySurfaceCovered ? DesktopSurfaceAction.Raise : DesktopSurfaceAction.None)
-            : (holdPreRaise ? DesktopSurfaceAction.None : (cardsRaised ? DesktopSurfaceAction.Lower : DesktopSurfaceAction.None));
+            : (cardsRaised ? DesktopSurfaceAction.Lower : DesktopSurfaceAction.None);
 }

@@ -139,6 +139,7 @@ public sealed partial class TopBarWindow : Window
     private bool _isChangingVisibilityByApp;
     private bool _trueFullScreenForeground;
     private bool _desktopShown;
+    private bool _desktopTopmost;
     private bool _menuOpen;
     private NonActivatingPopupMenu? _barMenu;
     private int _tick;
@@ -380,9 +381,10 @@ public sealed partial class TopBarWindow : Window
         }
     }
 
-    internal void SetDesktopShown(bool shown, nint cardSlot)
+    internal void SetDesktopShown(bool shown, nint cardSlot, bool topmost)
     {
         _desktopShown = shown;
+        _desktopTopmost = topmost;
         if (_closing)
         {
             return;
@@ -406,7 +408,7 @@ public sealed partial class TopBarWindow : Window
                 && _searchWindow is { IsVisible: true } floating
                 && !_searchWindowHiddenForFullScreen)
             {
-                floating.RaiseAboveDesktop(cardSlot);
+                floating.RaiseAboveDesktop(cardSlot, topmost);
             }
             return;
         }
@@ -1828,7 +1830,8 @@ public sealed partial class TopBarWindow : Window
                 window.Show();
                 if (_desktopShown)
                 {
-                    window.RaiseAboveDesktop(DockNativeMethods.HwndTopmost);
+                    window.RaiseAboveDesktop(_desktopTopmost ? DockNativeMethods.HwndTopmost : DockNativeMethods.HwndTop,
+                        _desktopTopmost);
                 }
                 else if (!_searchActive)
                 {
@@ -2752,7 +2755,7 @@ public sealed partial class TopBarWindow : Window
         _searchPreviousForeground = DockNativeMethods.GetForegroundWindow();
         if (_searchWindow is { } searchWindow)
         {
-            searchWindow.SetSessionActive(true, _desktopShown);
+            searchWindow.SetSessionActive(true, _desktopShown, _desktopTopmost);
             searchWindow.Show();
             searchWindow.RecoverPlacement();
         }
@@ -2866,7 +2869,7 @@ public sealed partial class TopBarWindow : Window
         }
         else
         {
-            _searchWindow?.SetSessionActive(false, _desktopShown);
+            _searchWindow?.SetSessionActive(false, _desktopShown, _desktopTopmost);
         }
         // Reserved bars return to the idle cadence after borrowing the fast input tick.
         _foregroundTimer.Interval = _appBar?.IsReserved == true && _todoFlyout is null && _clockFlyout is null
@@ -3446,7 +3449,8 @@ public sealed partial class TopBarWindow : Window
                 _searchWindowHiddenForFullScreen = false;
                 if (_desktopShown)
                 {
-                    floating.RaiseAboveDesktop(DockNativeMethods.HwndTopmost);
+                    floating.RaiseAboveDesktop(_desktopTopmost ? DockNativeMethods.HwndTopmost : DockNativeMethods.HwndTop,
+                        _desktopTopmost);
                 }
                 else if (!_searchActive)
                 {

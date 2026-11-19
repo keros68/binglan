@@ -91,7 +91,7 @@ public partial class SearchWindow : Window
         }
     }
 
-    internal void SetSessionActive(bool active, bool desktopShown)
+    internal void SetSessionActive(bool active, bool desktopShown, bool desktopTopmost = true)
     {
         _sessionActive = active;
         if (active)
@@ -112,7 +112,12 @@ public partial class SearchWindow : Window
 
         if (desktopShown)
         {
-            RaiseAboveDesktop(DockNativeMethods.HwndTopmost);
+            if (!_raisedAboveDesktop
+                || (_source is { IsDisposed: false } current
+                    && NativeMethods.IsTopmostWindow(current.Handle) != desktopTopmost))
+            {
+                RaiseAboveDesktop(desktopTopmost ? DockNativeMethods.HwndTopmost : DockNativeMethods.HwndTop, desktopTopmost);
+            }
         }
         else
         {
@@ -120,7 +125,7 @@ public partial class SearchWindow : Window
         }
     }
 
-    internal void RaiseAboveDesktop(nint insertAfter)
+    internal void RaiseAboveDesktop(nint insertAfter, bool topmost = true)
     {
         _raisedAboveDesktop = true;
         if (_source is not { IsDisposed: false } source)
@@ -131,17 +136,7 @@ public partial class SearchWindow : Window
         {
             NativeMethods.ShowWindow(source.Handle, NativeMethods.SwShowNoActivate);
         }
-        const uint flags = NativeMethods.SwpNoMove | NativeMethods.SwpNoSize | NativeMethods.SwpNoActivate;
-        if ((NativeMethods.GetExStyleOf(source.Handle) & NativeMethods.WsExTopmost) == 0
-            || insertAfter == 0
-            || insertAfter == DockNativeMethods.HwndTopmost)
-        {
-            NativeMethods.SetWindowPos(source.Handle, DockNativeMethods.HwndTopmost, 0, 0, 0, 0, flags);
-        }
-        if (insertAfter != 0 && insertAfter != DockNativeMethods.HwndTopmost && insertAfter != source.Handle)
-        {
-            NativeMethods.SetWindowPos(source.Handle, insertAfter, 0, 0, 0, 0, flags);
-        }
+        NativeMethods.PutAboveDesktop(source.Handle, insertAfter, topmost);
     }
 
     internal void ReturnBelowOrdinaryWindows()

@@ -19,6 +19,7 @@ internal sealed class TopBarHost : IDisposable
     private readonly Action<string> _notify;
     private TopBarWindow? _window;
     private bool _desktopShown;
+    private bool _desktopTopmost;
 
     internal TopBarHost(
         TopBarState state,
@@ -39,10 +40,11 @@ internal sealed class TopBarHost : IDisposable
     internal IEnumerable<nint> ActiveDesktopHandles() =>
         _window?.ActiveDesktopHandles() ?? [];
 
-    internal void SetDesktopShown(bool shown, nint cardSlot)
+    internal void SetDesktopShown(bool shown, nint cardSlot, bool topmost)
     {
         _desktopShown = shown;
-        _window?.SetDesktopShown(shown, cardSlot);
+        _desktopTopmost = topmost;
+        _window?.SetDesktopShown(shown, cardSlot, topmost);
     }
 
     internal void Apply()
@@ -65,7 +67,8 @@ internal sealed class TopBarHost : IDisposable
             }
             if (_desktopShown)
             {
-                _window?.SetDesktopShown(true, DockNativeMethods.HwndTopmost);
+                _window?.SetDesktopShown(true, _desktopTopmost ? DockNativeMethods.HwndTopmost : DockNativeMethods.HwndTop,
+                    _desktopTopmost);
             }
         }
         catch (Exception exception)

@@ -57,7 +57,6 @@ internal static class NativeMethods
     internal const long WsExNoActivate = 0x08000000L;
     internal const long WsExTopmost = 0x00000008L;
     internal const long WsExTransparent = 0x00000020L;
-    internal const uint LwaAlpha = 0x00000002;
 
     internal const uint SwpNoSize = 0x0001;
     internal const uint SwpNoMove = 0x0002;
@@ -141,6 +140,51 @@ internal static class NativeMethods
         int height,
         uint flags);
 
+    [DllImport("user32.dll", SetLastError = true)]
+    internal static extern nint BeginDeferWindowPos(int windowCount);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    internal static extern nint DeferWindowPos(
+        nint batch, nint window, nint insertAfter, int x, int y, int width, int height, uint flags);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool EndDeferWindowPos(nint batch);
+
+    private const uint GwHwndPrev = 3;
+
+    [DllImport("user32.dll")]
+    private static extern nint GetWindow(nint window, uint command);
+
+    internal static nint GetNormalWindowAbove(nint window)
+    {
+        var above = window != 0 ? GetWindow(window, GwHwndPrev) : 0;
+        return above != 0 && !IsTopmostWindow(above) ? above : DockNativeMethods.HwndTop;
+    }
+
+    internal static bool IsTopmostWindow(nint window) =>
+        (GetExStyleOf(window) & WsExTopmost) != 0;
+
+    internal static void PutAboveDesktop(nint window, nint insertAfter, bool topmost)
+    {
+        const uint flags = SwpNoMove | SwpNoSize | SwpNoActivate;
+        var isTopmost = IsTopmostWindow(window);
+        if (topmost && (!isTopmost || insertAfter == DockNativeMethods.HwndTopmost))
+        {
+            // Inserting after the last topmost window alone might leave this window
+            // in the ordinary band. Explicitly promote it before placing it in the band.
+            SetWindowPos(window, DockNativeMethods.HwndTopmost, 0, 0, 0, 0, flags);
+        }
+        else if (!topmost && isTopmost)
+        {
+            SetWindowPos(window, DockNativeMethods.HwndNoTopmost, 0, 0, 0, 0, flags);
+        }
+        if (insertAfter != window && (!topmost || insertAfter != DockNativeMethods.HwndTopmost))
+        {
+            SetWindowPos(window, insertAfter, 0, 0, 0, 0, flags);
+        }
+    }
+
     internal const int SwShowNoActivate = 4;
 
     [DllImport("user32.dll")]
@@ -154,14 +198,6 @@ internal static class NativeMethods
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool IsWindowVisible(nint window);
-
-    [DllImport("user32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    internal static extern bool GetLayeredWindowAttributes(
-        nint window,
-        out uint colorKey,
-        out byte alpha,
-        out uint flags);
 
     internal static long GetExStyleOf(nint window) => GetWindowLongPtr(window, GwlExStyle);
 

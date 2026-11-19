@@ -187,11 +187,7 @@ public partial class IceBlueDockWindow : Window
 
     internal event Action? ShellRecovered;
 
-    internal event Action? PreparingShowDesktop;
-
     internal event Action? ShowDesktopTriggered;
-
-    internal event Action? ShowDesktopCancelled;
 
     internal event Action<string>? CommandFailed;
 
@@ -832,10 +828,8 @@ public partial class IceBlueDockWindow : Window
         AutomationProperties.SetHelpText(button, "最小化所有窗口显示桌面，再次点击恢复；全屏时可按 Win+D");
         button.Click += async (_, _) =>
         {
-            PreparingShowDesktop?.Invoke();
             if (!await ShellSurfaceService.ToggleDesktopAsync())
             {
-                ShowDesktopCancelled?.Invoke();
                 CommandFailed?.Invoke("无法显示桌面，请按 Win+D。");
                 return;
             }
