@@ -206,11 +206,6 @@ public sealed partial class WidgetCoordinator : IDisposable
             {
                 ShowFileBox(box);
             }
-
-            if (_windows.Count == 0)
-            {
-                AddTodo();
-            }
         }
         ApplyDisplayRecovery();
         WindowScreenRecovery.SettleLayout();
@@ -268,14 +263,6 @@ public sealed partial class WidgetCoordinator : IDisposable
         {
             if (_state.CleanDesktopEnabled)
             {
-                var places = _state.DesktopExperience.GetComponent(DesktopComponentKind.QuickLaunch);
-                if (!places.IsVisible)
-                {
-                    places.IsVisible = true;
-                    ApplyQuickPlaces();
-                    _settingsWindow?.RefreshDesktopExperience();
-                }
-
                 var (succeeded, restoredWhenFailed, originalKnown, _) = await _cleanDesktop.ResumeOrEnableAsync();
                 if (succeeded)
                 {

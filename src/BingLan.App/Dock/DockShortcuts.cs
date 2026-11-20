@@ -56,7 +56,8 @@ internal static class DockShortcuts
         ReadStartMenuApps(preserveLaunchVariants: false);
 
     internal static IReadOnlyList<DockPinnedApp> ReadStartMenuApps(bool preserveLaunchVariants,
-        IDictionary<DockPinnedApp, string>? startMenuFolders = null)
+        IDictionary<DockPinnedApp, string>? startMenuFolders = null,
+        IEnumerable<string>? startMenuRoots = null)
     {
         var options = new EnumerationOptions
         {
@@ -64,8 +65,9 @@ internal static class DockShortcuts
             IgnoreInaccessible = true,
             AttributesToSkip = FileAttributes.ReparsePoint | FileAttributes.System
         };
-        var apps = new Dictionary<string, DockPinnedApp>(StringComparer.OrdinalIgnoreCase);
-        foreach (var folder in new[]
+        var apps = new Dictionary<string, DockPinnedApp>(preserveLaunchVariants
+            ? StringComparer.Ordinal : StringComparer.OrdinalIgnoreCase);
+        foreach (var folder in startMenuRoots ?? new[]
                  {
                      Environment.GetFolderPath(Environment.SpecialFolder.StartMenu),
                      Environment.GetFolderPath(Environment.SpecialFolder.CommonStartMenu)
@@ -105,8 +107,26 @@ internal static class DockShortcuts
         return apps.Values.OrderBy(app => app.DisplayName, StringComparer.CurrentCultureIgnoreCase).ToArray();
 
         string Key(string path, DockPinnedApp app) => preserveLaunchVariants
-            ? path + '\0' + app.Arguments + '\0' + app.WorkingDirectory
-            : path;
+            ? LaunchVariantKey(path, app.Arguments, app.WorkingDirectory) : path;
+    }
+
+    internal static string LaunchVariantKey(string path, string? arguments, string? workingDirectory)
+    {
+        var target = NormalizePath(path);
+        var directory = workingDirectory is { Length: > 0 }
+            ? NormalizePath(workingDirectory).TrimEnd('\\', '/') : null;
+        if (Path.IsPathFullyQualified(target)
+            && string.Equals(directory, Path.GetDirectoryName(target)?.TrimEnd('\\', '/'), StringComparison.OrdinalIgnoreCase))
+            directory = null;
+        // Windows paths ignore case; arguments belong to the program and retain it.
+        return string.Join('\0', target.TrimEnd('\\', '/').ToUpperInvariant(), arguments, directory?.ToUpperInvariant());
+
+        static string NormalizePath(string path)
+        {
+            if (!Path.IsPathFullyQualified(path)) return path;
+            try { return Path.GetFullPath(path); }
+            catch (Exception exception) when (exception is ArgumentException or IOException or NotSupportedException) { return path; }
+        }
     }
 
     /// <summary>

@@ -77,6 +77,10 @@ internal sealed class TopBarAppBarController : IDisposable
     internal void Apply(MonitorSnapshot monitor, bool reserveWorkArea, double heightDip, double? compactWidthDip = null)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+        if (_monitor?.Bounds != monitor.Bounds || _monitor?.WorkingArea != monitor.WorkingArea)
+        {
+            TaskbarEdgeGuard.InvalidateNativeTaskbarLayout(monitor.Bounds);
+        }
         _monitor = monitor;
         _reserveWorkArea = reserveWorkArea;
         _heightDip = Math.Max(1d, heightDip);
@@ -234,6 +238,7 @@ internal sealed class TopBarAppBarController : IDisposable
 
         if ((uint)message == _taskbarCreatedMessage)
         {
+            InvalidateNativeTaskbarLayout();
             _reservation.ResetRegistration();
             var recoveryGeneration = ++_recoveryGeneration;
             _window.Dispatcher.BeginInvoke(
@@ -269,13 +274,13 @@ internal sealed class TopBarAppBarController : IDisposable
             case NativeMethods.WmSettingChange
                 when wParam == NativeMethods.SpiSetWorkArea:
                 _window.Dispatcher.BeginInvoke(DispatcherPriority.Background,
-                    () => EnvironmentChanged?.Invoke());
+                    NotifyEnvironmentChanged);
                 break;
             case DockNativeMethods.WmDisplayChange:
             case DockNativeMethods.WmDpiChanged:
                 _window.Dispatcher.BeginInvoke(
                     DispatcherPriority.Background,
-                    () => EnvironmentChanged?.Invoke());
+                    NotifyEnvironmentChanged);
                 break;
         }
 
@@ -313,8 +318,24 @@ internal sealed class TopBarAppBarController : IDisposable
             return;
         }
 
+        InvalidateNativeTaskbarLayout();
         Position();
         ExplorerRestarted?.Invoke();
+    }
+
+    private void InvalidateNativeTaskbarLayout()
+    {
+        if (_monitor is not null)
+        {
+            TaskbarEdgeGuard.InvalidateNativeTaskbarLayout(_monitor.Bounds);
+        }
+    }
+
+    private void NotifyEnvironmentChanged()
+    {
+        if (_disposed) return;
+        InvalidateNativeTaskbarLayout();
+        EnvironmentChanged?.Invoke();
     }
 
     private void NotifyAppBar(uint message, nint parameter)

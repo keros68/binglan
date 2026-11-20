@@ -21,8 +21,10 @@ internal static class TaskbarEdgeGuard
     internal sealed record NativeTaskbarLayout(DockEdge Edge, CoreRect Bounds, bool AutoHidden);
 
     // Shared by the top bar's placement and foreground checks. Half a second bounds
-    // enumeration cost while still noticing native taskbar relocation during use.
+    // enumeration cost; owning layout notifications invalidate before repositioning.
     private static readonly Dictionary<CoreRect, (long ReadAt, NativeTaskbarLayout? Layout)> NativeLayouts = [];
+
+    internal static void InvalidateNativeTaskbarLayout(CoreRect monitor) => NativeLayouts.Remove(monitor);
 
     internal static NativeTaskbarLayout? GetNativeTaskbarLayout(CoreRect monitor)
     {

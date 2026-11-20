@@ -28,21 +28,8 @@ internal sealed record LauncherPanelEntry(TopBarSearchCandidate Candidate, strin
         {
             var target = Pinned?.AppUserModelId is { Length: > 0 } id
                 ? "aumid:" + id : Pinned?.TargetPath ?? Pinned?.ExecutablePath ?? Candidate.Path;
-            target = NormalizePath(target);
-            var directory = Pinned?.WorkingDirectory is { Length: > 0 } workingDirectory
-                ? NormalizePath(workingDirectory).TrimEnd('\\', '/') : null;
-            if (Path.IsPathFullyQualified(target)
-                && string.Equals(directory, Path.GetDirectoryName(target)?.TrimEnd('\\', '/'), StringComparison.OrdinalIgnoreCase))
-                directory = null;
-            return string.Join('\0', target.TrimEnd('\\', '/').ToUpperInvariant(), Pinned?.Arguments, directory?.ToUpperInvariant());
+            return DockShortcuts.LaunchVariantKey(target, Pinned?.Arguments, Pinned?.WorkingDirectory);
         }
-    }
-
-    private static string NormalizePath(string path)
-    {
-        if (!Path.IsPathFullyQualified(path)) return path;
-        try { return Path.GetFullPath(path); }
-        catch (Exception exception) when (exception is ArgumentException or IOException or NotSupportedException) { return path; }
     }
 }
 
@@ -73,6 +60,7 @@ public partial class LauncherPanelWindow : Window
     private readonly DesktopStyleState _style;
     private readonly Dictionary<string, ImageSource?> _iconCache = new(StringComparer.OrdinalIgnoreCase);
     private CancellationTokenSource? _searchCancellation;
+    private Task _searchRowsReady = Task.CompletedTask;
     private LauncherPanelSnapshot? _snapshot;
     private EverythingSearchClient? _everything;
     private ContextMenu? _menu;
@@ -82,6 +70,7 @@ public partial class LauncherPanelWindow : Window
     private string? _category;
     private nint _handle;
     private int _searchVersion;
+    private int _renderedSearchVersion = -1;
     private bool _closed;
     private bool _dismissing;
     private bool _composing;
@@ -327,11 +316,14 @@ public partial class LauncherPanelWindow : Window
     private async Task SearchAsync()
     {
         if (_closed || _dismissing || _composing || _snapshot is not { } snapshot) return;
+        snapshot = IncludeGroupEntries(snapshot);
         CancelSearch();
         var cancellation = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
         _searchCancellation = cancellation;
         var token = cancellation.Token;
         var version = _searchVersion;
+        var rowsReady = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _searchRowsReady = rowsReady.Task;
         var query = SearchBox.Text.Trim();
         var filter = _queryWasEmpty ? PanelFilter.All : _filter;
         var supplemental = _supplemental;
@@ -340,7 +332,9 @@ public partial class LauncherPanelWindow : Window
             var results = await Task.Run(() => BuildRows(snapshot, supplemental, query, filter), token);
             if (!IsCurrent(version, token)) return;
             Render(results, preserveSelection: false);
+            _renderedSearchVersion = version;
             UpdateFilters();
+            rowsReady.TrySetResult();
             if (query.Length == 0 || filter == PanelFilter.Apps) return;
             StatusText.Text = "正在补充本机搜索结果…";
             var indexed = await WindowsIndexSearchClient.SearchAsync(query, token);
@@ -368,6 +362,7 @@ public partial class LauncherPanelWindow : Window
         {
             if (IsCurrent(version, token)) StatusText.Text = "本机搜索暂不可用，可继续使用已有项目";
         }
+        finally { rowsReady.TrySetResult(); }
     }
 
     private bool IsCurrent(int version, CancellationToken token) => !_closed && !token.IsCancellationRequested && version == _searchVersion;
@@ -548,7 +543,7 @@ public partial class LauncherPanelWindow : Window
                 args.Handled = true;
                 break;
             case Key.Return:
-                if (ResultsList.SelectedItem is PanelRow selected) QueueOpen(selected.Entry, Keyboard.Modifiers == ModifierKeys.Control);
+                _ = OpenSelectionAsync(Keyboard.Modifiers == ModifierKeys.Control);
                 args.Handled = true;
                 break;
             case Key.Left when !SearchBox.IsKeyboardFocusWithin:
@@ -693,14 +688,28 @@ public partial class LauncherPanelWindow : Window
                 ? path : null;
     }
 
-    private void QueueOpen(LauncherPanelEntry entry, bool locate)
+    private async Task OpenSelectionAsync(bool locate)
     {
-        Dispatcher.BeginInvoke(() => _ = OpenAsync(entry, locate), DispatcherPriority.Input);
+        if (_closed || _dismissing || _composing) return;
+        _debounce.Stop();
+        if (_renderedSearchVersion != _searchVersion && _searchCancellation is null) _ = SearchAsync();
+        var version = _searchVersion;
+        await _searchRowsReady;
+        if (!IsActivationCurrent(version) || _renderedSearchVersion != version) return;
+        if (ResultsList.SelectedItem is PanelRow selected) QueueOpen(selected.Entry, locate, version);
     }
 
-    private async Task OpenAsync(LauncherPanelEntry entry, bool locate)
+    private bool IsActivationCurrent(int? version) =>
+        !_closed && !_dismissing && (version is null || (!_composing && version == _searchVersion));
+
+    private void QueueOpen(LauncherPanelEntry entry, bool locate, int? searchVersion = null)
     {
-        if (_closed || _dismissing || _openingTarget) return;
+        Dispatcher.BeginInvoke(() => _ = OpenAsync(entry, locate, searchVersion), DispatcherPriority.Input);
+    }
+
+    private async Task OpenAsync(LauncherPanelEntry entry, bool locate, int? searchVersion = null)
+    {
+        if (!IsActivationCurrent(searchVersion) || _openingTarget) return;
         var path = LocalPath(entry);
         if (locate && path is null) return;
         _openingTarget = true;
@@ -708,7 +717,7 @@ public partial class LauncherPanelWindow : Window
         {
             if (path is not null && (locate || string.IsNullOrWhiteSpace(entry.Pinned?.AppUserModelId))
                 && !await CheckLocalTargetAsync(path)) return;
-            if (_closed || _dismissing) return;
+            if (!IsActivationCurrent(searchVersion)) return;
             ClosePanel(restoreForeground: false, animate: false);
             _openTarget(entry, locate);
         }

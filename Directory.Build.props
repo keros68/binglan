@@ -1,5 +1,5 @@
 <Project>
   <PropertyGroup>
-    <Version Condition="'$(Version)' == ''">0.2.76</Version>
+    <Version Condition="'$(Version)' == ''">0.2.77</Version>
   </PropertyGroup>
 </Project>

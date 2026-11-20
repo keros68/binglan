@@ -5,6 +5,7 @@ using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Automation.Peers;
 using System.Windows.Controls;
+using BingLan.App.Dock;
 using BingLan.App.Services;
 using BingLan.App.Taskbar;
 using BingLan.App.Interop;
@@ -75,6 +76,7 @@ internal static class ShellSurfaceTests
         show(dock);
         try
         {
+            TestTaskbarLayoutRefresh(dock, pump);
             var flags = BindingFlags.Instance | BindingFlags.NonPublic;
             var yieldToMenu = typeof(IceBlueDockWindow).GetMethod("YieldToSystemMenu", flags)!;
             var showDock = typeof(IceBlueDockWindow).GetMethod("ShowDock", flags)!;
@@ -165,6 +167,66 @@ internal static class ShellSurfaceTests
             "本机启动面板入口开关不能进入主题包");
         Assert(!JsonSerializer.Serialize(theme).Contains("ShowDesktopButton", StringComparison.Ordinal),
             "本机“显示桌面”按钮开关不能进入主题包");
+    }
+
+    private static void TestTaskbarLayoutRefresh(IceBlueDockWindow dock, Action pump)
+    {
+        const BindingFlags privateInstance = BindingFlags.Instance | BindingFlags.NonPublic;
+        var appBar = (DockAppBarController)typeof(IceBlueDockWindow)
+            .GetField("_appBar", privateInstance)!.GetValue(dock)!;
+        var monitor = appBar.Monitor!;
+        var cache = (Dictionary<PixelRect, (long ReadAt, TaskbarEdgeGuard.NativeTaskbarLayout? Layout)>)
+            typeof(TaskbarEdgeGuard).GetField("NativeLayouts", BindingFlags.Static | BindingFlags.NonPublic)!
+                .GetValue(null)!;
+        var otherMonitor = new PixelRect(int.MinValue, 0, int.MinValue + 1920, 1080);
+        var unrelated = (Environment.TickCount64, (TaskbarEdgeGuard.NativeTaskbarLayout?)null);
+        var previous = cache.TryGetValue(otherMonitor, out var previousValue);
+        var stale = new TaskbarEdgeGuard.NativeTaskbarLayout(DockEdge.Left,
+            monitor.Bounds with { Right = monitor.Bounds.Left + monitor.Bounds.Width / 3 }, false);
+        var hook = typeof(DockAppBarController).GetMethod("WindowProc", privateInstance)!;
+        try
+        {
+            TaskbarEdgeGuard.InvalidateNativeTaskbarLayout(monitor.Bounds);
+            dock.ApplyState();
+            var expectedBounds = appBar.Bounds;
+            var nativeLayout = TaskbarEdgeGuard.GetNativeTaskbarLayout(monitor.Bounds);
+            cache[otherMonitor] = unrelated;
+
+            foreach (var message in new[] { NativeMethods.WmSettingChange,
+                DockNativeMethods.WmDisplayChange, DockNativeMethods.WmDpiChanged })
+            {
+                cache[monitor.Bounds] = (Environment.TickCount64, stale);
+                dock.ApplyState();
+                Assert(appBar.Bounds != expectedBounds,
+                    "缓存中的旧侧边应复现 Dock 水平位置错误，普通内容重排仍复用缓存");
+                hook.Invoke(appBar, [(nint)0, message,
+                    message == NativeMethods.WmSettingChange ? (nint)NativeMethods.SpiSetWorkArea : (nint)0,
+                    (nint)0, false]);
+                // Another consumer may read the old layout before the queued work runs.
+                cache[monitor.Bounds] = (Environment.TickCount64, stale);
+                pump();
+                Assert(appBar.Bounds == expectedBounds
+                    && TaskbarEdgeGuard.GetNativeTaskbarLayout(monitor.Bounds) == nativeLayout,
+                    "工作区、显示器或缩放变化应在重排前刷新当前显示器的任务栏位置");
+                Assert(cache[otherMonitor] == unrelated,
+                    "当前显示器的布局通知不能清空其他显示器的缓存");
+            }
+
+            cache[monitor.Bounds] = (Environment.TickCount64, stale);
+            var taskbarCreated = (uint)typeof(DockAppBarController)
+                .GetField("_taskbarCreatedMessage", privateInstance)!.GetValue(appBar)!;
+            hook.Invoke(appBar, [(nint)0, (int)taskbarCreated, (nint)0, (nint)0, false]);
+            pump();
+            Assert(appBar.Bounds == expectedBounds
+                && TaskbarEdgeGuard.GetNativeTaskbarLayout(monitor.Bounds) == nativeLayout,
+                "Explorer 重建后智能隐藏 Dock 应使用新读取的原生任务栏位置");
+        }
+        finally
+        {
+            TaskbarEdgeGuard.InvalidateNativeTaskbarLayout(monitor.Bounds);
+            if (previous) cache[otherMonitor] = previousValue;
+            else cache.Remove(otherMonitor);
+        }
     }
 
     private static void TestOverflowChevron()

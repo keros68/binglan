@@ -23,9 +23,11 @@ BingLan Desktop (冰蓝桌面) is a Windows 11 desktop companion built with .NET
 - **Desktop info**: time and date, greeting, weather, and CPU / RAM / network are separate cards, each with its own font, size, colour, and position; the clock card offers four layout presets (classic, minimal digits, date poster, and vertical digits) plus 12/24-hour and date visibility toggles. Cards sit on the desktop layer, never cover other app windows, and stay visible after Win+D.
 - **To-dos and notes**: the to-do card switches between today's list and a 1–5-week calendar with lunar dates; both share the same tasks, and the card folds to a title bar showing the open count (or all-done status once finished). Supports deadlines with optional times, events, countdowns, and linked files, and highlights tasks close to their deadline. Notes support multiline text.
 - **File groups**: map desktop files, folders, and apps into boxes, sorted by type automatically, foldable to a title bar showing the item count, with optional 5-second mouse-leave auto-collapse per box, multi-select, bulk remove, and move between boxes. Boxes record paths only and never move original files. Deleting originals is an optional setting, off by default; each deletion asks first and goes to the Recycle Bin.
-- **Quick launch**: a row of line icons for This PC, Desktop, Documents, Downloads, Pictures, and the Recycle Bin by default; icons, names, and targets are customizable.
-- **Dock**: pinned and running apps in separate sections, with unread badges, window switching, a Start menu button, and a Show desktop button. Drag a program, file, or folder onto empty dock space to pin it, or drop files onto an app icon to open them with that app (hovering for ~0.5 s over a running app raises its window). When apps do not fit, icons shrink and the dock scrolls horizontally. With smart hide, it collapses into a draggable handle and expands on hover or file drag.
+- **Quick launch**: a row of icons for This PC, Desktop, Documents, Downloads, Pictures, and the Recycle Bin by default. Icons, names, and targets are customizable. Turning the row off in Desktop components keeps it hidden after restart.
+- **Launcher panel** lists apps, files, and folders. Open it from the Dock or tray menu. Browse apps by category, search across sources, and save entries to custom groups. Right-click an entry to pin it to the Dock or send it to a file group. The panel supports clear and frosted glass.
+- **Dock**: pinned and running apps in separate sections, with unread badges and window switching. The Start menu, launcher panel, and Show desktop buttons can each be hidden. Drag a program, file, or folder onto empty dock space to pin it, or drop files onto an app icon to open them with that app (hovering for ~0.5 s over a running app raises its window). When apps do not fit, icons shrink and the dock scrolls horizontally. With smart hide, it collapses into a draggable handle and expands on hover or file drag.
 - **Taskbar**: default, transparent, blurred, or auto-hide. The original state comes back on exit or after a crash.
+- **Taskbar position**: change the side in Windows Settings. BingLan adjusts its bars to the usable space on each screen.
 - **Top bar**: a full-width status bar at the top of the screen showing time, to-do summary, weather, performance, battery, volume, network, and input method, with a search field. Searches desktop entries, Start-menu apps, and files indexed by Windows; supports pinyin initials and a global hotkey (Ctrl+Alt+F by default); Everything integration is optional. An optional "Apple-style" desktop mode is available.
 - **Multiple monitors**: cards remember a position for each monitor setup. When an external monitor is unplugged, cards move onto the remaining screens and return to their places when it is plugged back in.
 - **Look**: light glass, dark glass, or no backing with a one-click recommended clear look; four layout presets for landscape and portrait; optional grid snapping; read-only import of fonts and colours from a Rainmeter skin. Themes can be exported and shared without names, cities, to-dos, or file paths.
@@ -45,7 +47,7 @@ The interface is in Simplified Chinese.
 
 ## Get started
 
-Stable version: [v0.2.76](https://github.com/keros68/binglan/releases/tag/v0.2.76) · [Installer](https://github.com/keros68/binglan/releases/download/v0.2.76/BingLan-Setup-0.2.76.exe) · [Portable](https://github.com/keros68/binglan/releases/download/v0.2.76/BingLan-0.2.76-portable.zip). A standalone [compatibility tool](https://github.com/keros68/binglan/releases/download/v0.2.52/BingLan-0.2.52-tray-preview.zip) is also available; see the [guide (Chinese)](docs/TRAY-PREVIEW.md).
+Stable version: [v0.2.77](https://github.com/keros68/binglan/releases/tag/v0.2.77) · [Installer](https://github.com/keros68/binglan/releases/download/v0.2.77/BingLan-Setup-0.2.77.exe) · [Portable](https://github.com/keros68/binglan/releases/download/v0.2.77/BingLan-0.2.77-portable.zip). A standalone [compatibility tool](https://github.com/keros68/binglan/releases/download/v0.2.52/BingLan-0.2.52-tray-preview.zip) is also available; see the [guide (Chinese)](docs/TRAY-PREVIEW.md).
 
 1. Open [Releases](https://github.com/keros68/binglan/releases/latest) and download `BingLan-Setup-*.exe` (installer) or `BingLan-*-portable.zip` (portable).
 2. Installer: run it — it installs for the current user and needs no administrator rights. Portable: unzip anywhere and run `BingLan.exe` inside. Both include the .NET runtime and are not code-signed yet, so Windows asks for confirmation on first run.
@@ -69,7 +71,7 @@ Requires the .NET 10 SDK and PowerShell 7. Building the installer also needs Inn
 ```powershell
 dotnet build .\BingLan.slnx -c Release
 dotnet run --project .\tests\BingLan.SmokeTests\BingLan.SmokeTests.csproj -c Release
-pwsh -NoProfile -File .\installer\build.ps1 -Version 0.2.76
+pwsh -NoProfile -File .\installer\build.ps1 -Version 0.2.77
 ```
 
 Full test commands, the technical design, and the current implementation are in the [development notes (Chinese)](docs/DEVELOPMENT.md); installer details are in [docs/INSTALLER.md](docs/INSTALLER.md).

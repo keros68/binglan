@@ -18,21 +18,7 @@ internal static class DockFileSystemTests
             var missing = Path.Combine(directory, "missing.txt");
             var shortcutPath = Path.Combine(directory, "program.lnk");
             var executable = Path.Combine(Environment.SystemDirectory, "cmd.exe");
-            object shell = Activator.CreateInstance(Type.GetTypeFromProgID("WScript.Shell")!)!;
-            object? shortcut = null;
-            try
-            {
-                dynamic link = shortcut = ((dynamic)shell).CreateShortcut(shortcutPath);
-                link.TargetPath = executable;
-                link.Arguments = "/c exit 0";
-                link.WorkingDirectory = directory;
-                link.Save();
-            }
-            finally
-            {
-                if (shortcut is not null) Marshal.FinalReleaseComObject(shortcut);
-                Marshal.FinalReleaseComObject(shell);
-            }
+            CreateShortcut(shortcutPath, executable, "/c exit 0", directory);
 
             string[] paths = [folder, file, shortcutPath, missing];
             var infos = ReadOffCallerThread<DroppedPathInfo>(DockShortcuts.InspectDroppedPathsAsync, paths);
@@ -52,10 +38,49 @@ internal static class DockFileSystemTests
                 "后台解析应保留快捷方式参数与工作目录");
             Assert(Directory.Exists(folder) && File.ReadAllText(file) == "Dock path mapping regression"
                 && File.Exists(shortcutPath), "准备固定项不能修改原文件");
+
+            var startMenu = Directory.CreateDirectory(Path.Combine(directory, "StartMenu")).FullName;
+            var defaultDirectory = Path.GetDirectoryName(executable)!;
+            CreateShortcut(Path.Combine(startMenu, "Upper.lnk"), executable, "/c echo MixedCase", "");
+            CreateShortcut(Path.Combine(startMenu, "Lower.lnk"), executable, "/c echo mixedcase", defaultDirectory);
+            CreateShortcut(Path.Combine(startMenu, "Equivalent.lnk"), executable.ToUpperInvariant(),
+                "/c echo MixedCase", defaultDirectory.ToUpperInvariant() + Path.DirectorySeparatorChar);
+            CreateShortcut(Path.Combine(startMenu, "OtherDirectory.lnk"), executable, "/c echo MixedCase", directory);
+            var folders = new Dictionary<DockPinnedApp, string>();
+            var variants = DockShortcuts.ReadStartMenuApps(preserveLaunchVariants: true, folders, [startMenu])
+                .Where(pin => string.Equals(pin.ExecutablePath, executable, StringComparison.OrdinalIgnoreCase)).ToArray();
+            Assert(variants.Length == 3
+                && variants.Count(pin => pin.Arguments == "/c echo MixedCase") == 2
+                && variants.Count(pin => pin.Arguments == "/c echo mixedcase") == 1,
+                "启动变体应保留参数大小写和不同工作目录，并合并等效的 Windows 路径与默认工作目录");
+            Assert(variants.All(pin => folders.GetValueOrDefault(pin) == "StartMenu"),
+                "去重后的启动变体应保留开始菜单文件夹信息");
+            var legacy = DockShortcuts.ReadStartMenuApps(preserveLaunchVariants: false, startMenuRoots: [startMenu]);
+            Assert(legacy.Count(pin => string.Equals(pin.ExecutablePath, executable, StringComparison.OrdinalIgnoreCase)) == 1,
+                "Dock 的默认开始菜单列表应继续只按程序目标去重");
         }
         finally
         {
             Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    private static void CreateShortcut(string path, string target, string arguments, string workingDirectory)
+    {
+        object shell = Activator.CreateInstance(Type.GetTypeFromProgID("WScript.Shell")!)!;
+        object? shortcut = null;
+        try
+        {
+            dynamic link = shortcut = ((dynamic)shell).CreateShortcut(path);
+            link.TargetPath = target;
+            link.Arguments = arguments;
+            link.WorkingDirectory = workingDirectory;
+            link.Save();
+        }
+        finally
+        {
+            if (shortcut is not null) Marshal.FinalReleaseComObject(shortcut);
+            Marshal.FinalReleaseComObject(shell);
         }
     }
 

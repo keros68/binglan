@@ -209,7 +209,7 @@ public sealed partial class WidgetCoordinator
                 if (indexed.Contains(saved.Key)) continue;
                 if (saved.FallbackPin is { } pin)
                     AddPin(pin, "已保存入口", isSavedFallback: true);
-                else if (saved.FallbackPath is { } path && Path.IsPathFullyQualified(path))
+                else if (saved.FallbackPath is { } path && (Path.IsPathFullyQualified(path) || FileMappingService.IsShellEntry(path)))
                     Add(path, saved.FallbackName, "已保存入口", ClassifyLauncherPath(path), isSavedFallback: true);
             }
             return new LauncherPanelSnapshot(entries, favorites, useEverything);

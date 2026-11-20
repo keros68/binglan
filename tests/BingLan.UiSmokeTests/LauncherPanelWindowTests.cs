@@ -37,7 +37,9 @@ internal static class LauncherPanelWindowTests
         try
         {
             BrowseAndSearch(ShowFromUser, pump, until);
+            EnterUsesCurrentQuery(ShowFromUser, pump, until);
             GroupsGlobalSearchAndDockPin(ShowFromUser, pump, until);
+            SupplementalGroupMembers(ShowFromUser, pump, until);
             PurposeCategoriesAndOverrides(ShowFromUser, pump, until);
             ContinuousGridAndIcons(ShowFromUser, pump, until);
             SendToFileBox(ShowFromUser, pump, until);
@@ -48,6 +50,177 @@ internal static class LauncherPanelWindowTests
         {
             host.Close();
         }
+    }
+
+    private static void EnterUsesCurrentQuery(Action<Window> show, Action pump, Action<Func<bool>, string> until)
+    {
+        var suffix = Guid.NewGuid().ToString("N");
+        LauncherPanelEntry Entry(string name) => new(new TopBarSearchCandidate(TopBarSearchItemKind.App,
+            name + suffix, name + ".exe", Environment.ProcessPath!), "开始菜单",
+            new DockPinnedApp { DisplayName = name + suffix, ExecutablePath = Environment.ProcessPath!, Arguments = name });
+        var first = Entry("Alpha");
+        var second = Entry("Beta");
+        var snapshot = new LauncherPanelSnapshot([first, second], [], false);
+        foreach (var locate in new[] { false, true })
+        {
+            var opened = new List<(LauncherPanelEntry Entry, bool Locate)>();
+            var panel = Create(() => Task.FromResult(snapshot), (entry, location) => opened.Add((entry, location)));
+            try
+            {
+                show(panel);
+                until(() => panel.VisibleEntries.Count == 2, "即时回车候选未载入");
+                var search = Require<TextBox>(panel, "SearchBox");
+                if (!locate)
+                {
+                    search.Text = first.Candidate.DisplayName;
+                    Press(panel, Key.Return);
+                }
+                search.Text = second.Candidate.DisplayName;
+                if (locate) _ = ActivateSelection(panel, locate: true);
+                else Press(panel, Key.Return);
+                until(() => opened.Count == 1, "即时回车应完成当前查询的首阶段并打开结果");
+                Assert(opened[0].Entry.Key == second.Key && opened[0].Locate == locate,
+                    "Enter 与 Ctrl+Enter 不得使用输入变化前的选中项");
+            }
+            finally { panel.Close(); }
+        }
+
+        var launches = 0;
+        var guarded = Create(() => Task.FromResult(snapshot), (_, _) => launches++);
+        try
+        {
+            show(guarded);
+            until(() => guarded.VisibleEntries.Count == 2, "取消回车候选未载入");
+            var search = Require<TextBox>(guarded, "SearchBox");
+            search.Text = "zzzz-no-match-" + suffix;
+            var emptyActivation = ActivateSelection(guarded, locate: false);
+            until(() => emptyActivation.IsCompleted, "空查询结果的回车未完成");
+            pump();
+            Assert(launches == 0 && guarded.VisibleEntries.Count == 0, "无匹配时不得回退打开旧选中项");
+
+            search.Text = first.Candidate.DisplayName;
+            var cancelled = ActivateSelection(guarded, locate: true);
+            search.Text = second.Candidate.DisplayName;
+            until(() => cancelled.IsCompleted && guarded.VisibleEntries.Count == 1
+                && guarded.VisibleEntries[0].Key == second.Key, "新输入应取消等待中的定位操作");
+            Assert(launches == 0, "等待首阶段期间输入变化不得打开任一候选");
+
+            Press(guarded, Key.Return);
+            typeof(LauncherPanelWindow).GetMethod("SuspendForComposition", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .Invoke(guarded, []);
+            pump();
+            Assert(launches == 0 && guarded.IsVisible, "IME 组合开始应取消已经排队的回车");
+            typeof(LauncherPanelWindow).GetMethod("ResumeAfterComposition", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .Invoke(guarded, []);
+            until(() => guarded.VisibleEntries.Count == 1, "IME 组合结束后应恢复查询");
+            pump();
+            Assert(launches == 0, "IME 恢复查询不得重放旧回车");
+        }
+        finally { guarded.Close(); }
+
+        var navigated = Create(() => Task.FromResult(snapshot), (entry, _) =>
+        {
+            Assert(entry.Key == second.Key, "当前结果的显式选择不能被首条结果替换");
+            launches++;
+        });
+        try
+        {
+            show(navigated);
+            until(() => navigated.VisibleEntries.Count == 2, "键盘选择候选未载入");
+            SelectResult(navigated, second);
+            Press(navigated, Key.Return);
+            until(() => launches == 1, "当前选中项应可直接打开");
+        }
+        finally { navigated.Close(); }
+    }
+
+    private static Task ActivateSelection(LauncherPanelWindow panel, bool locate) =>
+        (Task)typeof(LauncherPanelWindow).GetMethod("OpenSelectionAsync", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .Invoke(panel, [locate])!;
+
+    private static void SupplementalGroupMembers(Action<Window> show, Action pump, Action<Func<bool>, string> until)
+    {
+        var groups = new List<LauncherGroupState> { new() { Name = "索引资料" } };
+        var saves = 0;
+        var snapshot = new LauncherPanelSnapshot([], [], false);
+        var panel = new LauncherPanelWindow(() => Task.FromResult(snapshot),
+            (_, _) => throw new InvalidOperationException("分组整理不得打开项目"), () => [],
+            (_, _) => Task.FromResult("完成"), 0, MonitorCatalog.GetAll().First(),
+            readGroups: () => groups, saveOrganizer: () => saves++);
+        try
+        {
+            show(panel);
+            until(() => Require<TextBlock>(panel, "EmptyHint").IsVisible, "空面板未载入");
+            foreach (var source in new[] { "Windows 索引", "Everything" })
+            {
+                var name = source + Guid.NewGuid().ToString("N");
+                var path = Path.Combine(Path.GetTempPath(), name + ".txt");
+                var entry = new LauncherPanelEntry(new TopBarSearchCandidate(TopBarSearchItemKind.File,
+                    name, name + ".txt", path), source);
+                var search = Require<TextBox>(panel, "SearchBox");
+                search.Text = name;
+                until(() => SearchRowsCurrent(panel), "索引注入前应完成首阶段");
+                typeof(LauncherPanelWindow).GetMethod("CancelSearch", BindingFlags.Instance | BindingFlags.NonPublic)!
+                    .Invoke(panel, []);
+                // Supply the same incremental rows as an index reply without relying on this machine's index.
+                var build = typeof(LauncherPanelWindow).GetMethod("BuildRows", BindingFlags.Static | BindingFlags.NonPublic)!;
+                var filter = Enum.Parse(typeof(LauncherPanelWindow).GetNestedType("PanelFilter", BindingFlags.NonPublic)!, "All");
+                var rows = build.Invoke(null, [snapshot, new[] { entry }, name, filter]);
+                typeof(LauncherPanelWindow).GetMethod("Render", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.DeclaredOnly)!
+                    .Invoke(panel, [rows, false]);
+                SelectResult(panel, entry);
+                Press(panel, Key.Apps);
+                pump();
+                var menu = OpenMenu(panel);
+                var join = menu.Items.OfType<MenuItem>().Single(item => Equals(item.Header, "加入面板分组"));
+                if (source == "Windows 索引")
+                {
+                    join.Items.OfType<MenuItem>().Single(item => Equals(item.Header, groups[0].Name))
+                        .RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+                    menu.IsOpen = false;
+                }
+                else
+                {
+                    join.Items.OfType<MenuItem>().Single(item => Equals(item.Header, "新建分组…"))
+                        .RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+                    menu.IsOpen = false;
+                    until(() => Require<FrameworkElement>(panel, "GroupEditor").IsVisible, "索引结果的新分组编辑器未打开");
+                    Require<TextBox>(panel, "GroupNameEditor").Text = "Everything资料";
+                    Click(panel, "SaveGroupButton");
+                }
+                var group = source == "Windows 索引" ? groups[0] : groups[^1];
+                Assert(group.Members.Single().FallbackPath == path && group.Members[0].Key == entry.Key,
+                    "索引入口应立即保存原路径及稳定键");
+                // A Dock refresh may finish with a snapshot captured before the group edit.
+                typeof(LauncherPanelWindow).GetField("_snapshot", BindingFlags.Instance | BindingFlags.NonPublic)!
+                    .SetValue(panel, snapshot);
+                search.Text = "";
+                until(() => SearchRowsCurrent(panel)
+                    && Require<ScrollViewer>(panel, "BrowseNavigation").IsVisible, "清空查询应恢复分组导航");
+                SelectCategory(panel, group.Name);
+                until(() => panel.VisibleEntries.Count == 1 && panel.VisibleEntries[0].Key == entry.Key,
+                    "索引入口加入分组后应在同次面板会话清空查询仍可见");
+            }
+            Assert(saves == 2, "现有分组和新建分组应各保存一次");
+
+            foreach (var path in new[] { "shell:MyComputerFolder", "shell:RecycleBinFolder" })
+            {
+                var entry = new LauncherPanelEntry(new TopBarSearchCandidate(TopBarSearchItemKind.Folder,
+                    path, path, path), "分组盒");
+                var member = (LauncherGroupMember)typeof(LauncherPanelWindow)
+                    .GetMethod("DescribeMember", BindingFlags.Static | BindingFlags.NonPublic)!.Invoke(null, [entry])!;
+                Assert(member.FallbackPath == path && member.Key == entry.Key,
+                    "Shell 系统入口的分组后备路径应保留原有稳定键");
+            }
+        }
+        finally { panel.Close(); }
+    }
+
+    private static bool SearchRowsCurrent(LauncherPanelWindow panel)
+    {
+        const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
+        return Equals(typeof(LauncherPanelWindow).GetField("_searchVersion", flags)!.GetValue(panel),
+            typeof(LauncherPanelWindow).GetField("_renderedSearchVersion", flags)!.GetValue(panel));
     }
 
     private static void GroupsGlobalSearchAndDockPin(Action<Window> show, Action pump,
@@ -473,6 +646,9 @@ internal static class LauncherPanelWindowTests
         var completion = new TaskCompletionSource<LauncherPanelSnapshot>(TaskCreationOptions.RunContinuationsAsynchronously);
         var panel = Create(() => completion.Task, (_, _) => throw new InvalidOperationException("已关闭面板不得启动项目"));
         show(panel);
+        Press(panel, Key.Return);
+        pump();
+        Assert(panel.IsVisible && panel.VisibleEntries.Count == 0, "候选载入前的回车应安静等待新输入");
         panel.Close();
         completion.SetResult(new LauncherPanelSnapshot([], [], false));
         until(() => completion.Task.IsCompleted, "延迟候选未完成");

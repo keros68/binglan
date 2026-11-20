@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
 using BingLan.Core.Models;
+using BingLan.Core.Services;
 using BingLan.Core.TopBar;
 
 namespace BingLan.App.Windows;
@@ -11,6 +12,7 @@ public partial class LauncherPanelWindow
     private string? _searchSource;
     private bool _changingSourceFilter;
     private LauncherPanelEntry? _pendingGroupMember;
+    private readonly Dictionary<string, LauncherPanelEntry> _groupEntries = new(StringComparer.Ordinal);
 
     private void ResetSearchScope()
     {
@@ -123,7 +125,8 @@ public partial class LauncherPanelWindow
             GroupNameEditor.Focus();
             return;
         }
-        if (_pendingGroupMember is { } entry) _ = LauncherGroupRules.TryAdd(group, DescribeMember(entry));
+        if (_pendingGroupMember is { } entry && LauncherGroupRules.TryAdd(group, DescribeMember(entry)))
+            RememberGroupEntry(entry);
         EndGroupEditing();
         _saveOrganizer();
         if (_queryWasEmpty) SelectBrowse(PanelFilter.All, group: group.Id.ToString("N"));
@@ -144,6 +147,7 @@ public partial class LauncherPanelWindow
             choice.Click += (_, _) =>
             {
                 if (!LauncherGroupRules.TryAdd(group, member)) return;
+                RememberGroupEntry(row.Entry);
                 _saveOrganizer();
                 Render(_unfilteredRows, preserveSelection: true);
                 StatusText.Text = $"已加入「{group.Name}」";
@@ -170,7 +174,18 @@ public partial class LauncherPanelWindow
     }
 
     private static LauncherGroupMember DescribeMember(LauncherPanelEntry entry) =>
-        new(entry.Key, entry.Pinned is null ? LocalPath(entry) : null, entry.Candidate.DisplayName, entry.Pinned);
+        new(entry.Key, entry.Pinned is null
+            ? LocalPath(entry) ?? (FileMappingService.IsShellEntry(entry.Candidate.Path) ? entry.Candidate.Path : null)
+            : null, entry.Candidate.DisplayName, entry.Pinned);
+
+    private void RememberGroupEntry(LauncherPanelEntry entry) =>
+        _groupEntries[entry.Key] = entry with { Source = "已保存入口", IsSavedFallback = true };
+
+    private LauncherPanelSnapshot IncludeGroupEntries(LauncherPanelSnapshot snapshot) =>
+        _groupEntries.Count == 0 ? snapshot : snapshot with
+        {
+            Entries = snapshot.Entries.Concat(_groupEntries.Values).ToArray()
+        };
 
     private sealed record SourceOption(string? Key, string Name)
     {

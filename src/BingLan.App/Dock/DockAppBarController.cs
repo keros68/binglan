@@ -37,6 +37,7 @@ internal sealed class DockAppBarController : IDisposable
     private bool _fullScreenDetected;
     private bool _positioning;
     private bool _applying;
+    private bool _refreshNativeTaskbarLayout;
     private bool _disposed;
     private int _recoveryGeneration;
 
@@ -57,6 +58,11 @@ internal sealed class DockAppBarController : IDisposable
                 _deferredPosition!.Stop();
                 if (!_disposed)
                 {
+                    if (_refreshNativeTaskbarLayout)
+                    {
+                        _refreshNativeTaskbarLayout = false;
+                        InvalidateNativeTaskbarLayout();
+                    }
                     Position();
                 }
             },
@@ -120,6 +126,10 @@ internal sealed class DockAppBarController : IDisposable
         ObjectDisposedException.ThrowIf(_disposed, this);
         var monitorChanged = _monitor is not null
             && !string.Equals(_monitor.DeviceName, monitor.DeviceName, StringComparison.OrdinalIgnoreCase);
+        if (_monitor?.Bounds != monitor.Bounds || _monitor?.WorkingArea != monitor.WorkingArea)
+        {
+            TaskbarEdgeGuard.InvalidateNativeTaskbarLayout(monitor.Bounds);
+        }
         _monitor = monitor;
         _reserveWorkArea = reserveWorkArea;
         _contentLengthDip = Math.Max(DockLayoutMetrics.EmptyLengthDip, contentLengthDip);
@@ -335,6 +345,7 @@ internal sealed class DockAppBarController : IDisposable
 
         if ((uint)message == _taskbarCreatedMessage)
         {
+            InvalidateNativeTaskbarLayout();
             IsRecovering = _reserveWorkArea;
             _reservation.ResetRegistration();
             _positionGuard.Reset();
@@ -381,19 +392,22 @@ internal sealed class DockAppBarController : IDisposable
             case NativeMethods.WmSettingChange
                 when wParam == NativeMethods.SpiSetWorkArea && !_reservation.IsRegistered:
                 _window.Dispatcher.BeginInvoke(DispatcherPriority.Background,
-                    () => EnvironmentChanged?.Invoke());
+                    NotifyEnvironmentChanged);
                 break;
             case NativeMethods.WmSettingChange
                 when wParam == NativeMethods.SpiSetWorkArea
-                    && _reservation.IsRegistered
-                    && !_deferredPosition.IsEnabled:
-                _deferredPosition.Start();
+                    && _reservation.IsRegistered:
+                _refreshNativeTaskbarLayout = true;
+                if (!_deferredPosition.IsEnabled)
+                {
+                    _deferredPosition.Start();
+                }
                 break;
             case DockNativeMethods.WmDisplayChange:
             case DockNativeMethods.WmDpiChanged:
                 _window.Dispatcher.BeginInvoke(
                     DispatcherPriority.Background,
-                    () => EnvironmentChanged?.Invoke());
+                    NotifyEnvironmentChanged);
                 break;
         }
 
@@ -441,8 +455,24 @@ internal sealed class DockAppBarController : IDisposable
             return;
         }
 
+        InvalidateNativeTaskbarLayout();
         Position();
         ExplorerRestarted?.Invoke();
+    }
+
+    private void InvalidateNativeTaskbarLayout()
+    {
+        if (_monitor is not null)
+        {
+            TaskbarEdgeGuard.InvalidateNativeTaskbarLayout(_monitor.Bounds);
+        }
+    }
+
+    private void NotifyEnvironmentChanged()
+    {
+        if (_disposed) return;
+        InvalidateNativeTaskbarLayout();
+        EnvironmentChanged?.Invoke();
     }
 
     internal static PixelRect GetLiveWorkingArea(MonitorSnapshot monitor) =>

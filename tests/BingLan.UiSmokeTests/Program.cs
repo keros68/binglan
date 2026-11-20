@@ -218,7 +218,7 @@ internal static class Program
         Run("待办按 Enter 提交后文字写入状态", TestTodoEnterCommitsText, failures);
         Run("待办勾选后各行仍可被辅助技术访问", TestTodoRowsStayAccessible, failures);
         Run("托盘隐藏与显示桌面组件", TestTrayToggleDesktop, failures);
-        Run("只开顶栏时共享采样保持运行", TestTopBarOnlyKeepsSamplerAlive, failures);
+        Run("只开顶栏时共享采样保持运行并保留隐藏组件", TestTopBarOnlyKeepsSamplerAlive, failures);
         Run("Shell 隐藏或最小化组件后自动恢复显示", TestShellHideAndMinimizeRecovery, failures);
         Run("显示桌面时组件提升到任务栏下方、恢复后回落", TestDesktopSurfaceRaiseAndLower, failures);
         Run("显示桌面判定每次事件突发只执行一次，不遗留计时器", TestDesktopSurfaceWatcherChecksOncePerBurst, failures);
@@ -4978,13 +4978,22 @@ internal static class Program
         }
     }
 
-    // 社区反馈的冻结配置：信息组件全部关闭、只留顶栏。顶栏的时间/天气/性能都靠共享
-    // 采样服务的 Sampled 事件刷新，而原先启动它的只有信息卡片窗口的加载逻辑——卡片
-    // 删光或从未创建时，顶栏从启动起就停止更新，重启也无法自愈。
     private static void TestTopBarOnlyKeepsSamplerAlive()
     {
         var temp = Path.Combine(Path.GetTempPath(), $"BingLan-sampler-{Guid.NewGuid():N}");
         Directory.CreateDirectory(temp);
+        var store = new LocalStateStore(temp);
+        var savedState = new AppState { CleanDesktopEnabled = true };
+        var savedTodo = TodoService.CreateDefaultWidget();
+        savedState.TodoWidgets.Add(savedTodo);
+        foreach (var component in savedState.DesktopExperience.Components)
+        {
+            component.IsVisible = false;
+        }
+        savedState.TopBar.IsEnabled = true;
+        store.Save(savedState);
+        // An unknown original state exercises clean-desktop startup without changing Explorer icons.
+        File.WriteAllText(WidgetCoordinator.CleanDesktopCheckpointPath(temp) + ".invalid", string.Empty);
         var coordinator = new WidgetCoordinator(interactiveQa: true, dataDirectory: temp);
         try
         {
@@ -4993,18 +5002,6 @@ internal static class Program
                     System.Reflection.BindingFlags.NonPublic)
                 ?.GetValue(coordinator) as AppState ??
                 throw new InvalidOperationException("应用状态没有创建");
-            foreach (var kind in new[]
-                     {
-                         DesktopComponentKind.TimeDate,
-                         DesktopComponentKind.Greeting,
-                         DesktopComponentKind.Weather,
-                         DesktopComponentKind.Performance
-                     })
-            {
-                state.DesktopExperience.GetComponent(kind).IsVisible = false;
-            }
-            state.TopBar.IsEnabled = true;
-
             coordinator.Start();
             // The shell steps ride the dispatcher queue; within the logon window they
             // also wait for the desktop to settle, so the wait outlasts that delay.
@@ -5020,6 +5017,15 @@ internal static class Program
             Assert(
                 Application.Current.Windows.OfType<TopBarWindow>().Any(window => window.IsLoaded),
                 "顶栏窗口应随启动打开");
+            Assert(
+                !state.DesktopExperience.GetComponent(DesktopComponentKind.Todo).IsVisible
+                && state.TodoWidgets.Count == 1 && state.TodoWidgets[0].Id == savedTodo.Id,
+                "只开顶栏时应保留已隐藏的待办及其标识");
+            Assert(
+                !state.DesktopExperience.GetComponent(DesktopComponentKind.QuickLaunch).IsVisible,
+                "清爽桌面启动应保留已隐藏的快捷入口");
+            Assert(!Application.Current.Windows.OfType<WidgetWindowBase>().Any(window => window.IsVisible),
+                "启动后桌面组件应保持隐藏");
 
             state.TopBar.IsEnabled = false;
             InvokeApplyTopBar(coordinator);
