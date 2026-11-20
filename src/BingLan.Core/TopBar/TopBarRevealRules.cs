@@ -24,10 +24,7 @@ public static class TopBarRevealRules
 }
 
 /// <summary>
-/// Whether the top edge of a monitor is free to reserve: only a working area whose top
-/// sits below the monitor top (a taskbar moved to the top, Windows 10) blocks it. An
-/// auto-hiding taskbar does not shrink the working area, so that case stays undetected
-/// and is handled by the formal QA matrix.
+/// Whether the top edge is free to reserve, including a separately confirmed native taskbar.
 /// </summary>
 public static class TopBarReserveRules
 {
@@ -44,6 +41,8 @@ public static class TopBarReserveRules
         bool requested,
         bool currentlyReserved,
         PixelRect monitorBounds,
-        PixelRect workingArea) =>
-        requested && (currentlyReserved || IsTopEdgeFree(monitorBounds, workingArea));
+        PixelRect workingArea,
+        bool nativeTopEdgeOccupied = false) =>
+        requested && !nativeTopEdgeOccupied
+            && (currentlyReserved || IsTopEdgeFree(monitorBounds, workingArea));
 }

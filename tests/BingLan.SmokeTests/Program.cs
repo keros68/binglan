@@ -33,6 +33,9 @@ Run("桌面项目导入去重、排序与持久化", TestDesktopGrouping);
 Run("桌面软件、文件夹和文件安全分类", TestDesktopClassification);
 Run("文件盒系统入口、失效判定与重新定位", FileBoxRuleTests.Run);
 Run("位置、尺寸和内容重启保留", TestPersistence);
+Run("启动面板外观 v48 迁移与独立设置保存", TestLauncherAppearancePersistence);
+Run("启动面板分组迁移、多组关联与保存", TestLauncherGroupsPersistence);
+Run("启动面板用途分类、维护入口与人工归类保存", TestLauncherAppCategories);
 Run("卡片按显示器排列记住位置", DisplayLayoutTests.TestPositionPerArrangement);
 Run("按排列记住的位置保存与 v21 迁移", DisplayLayoutTests.TestPersistenceAndMigration);
 Run("隐藏卡片重新显示时按工作区收拢越界位置", DisplayLayoutTests.TestResolveShownBounds);
@@ -132,6 +135,68 @@ void Run(string name, Action test)
     catch (Exception ex)
     {
         failures.Add($"失败：{name} - {ex}");
+    }
+}
+
+static void TestLauncherAppCategories()
+{
+    Assert(LauncherAppCategoryRules.Classify("办公", @"C:\Program Files\Microsoft Office\WINWORD.EXE", null)
+        == LauncherAppCategory.Office, "已知程序应按文件名分类并忽略大小写");
+    Assert(LauncherAppCategoryRules.Classify("地图", @"C:\QGIS\bin\qgis-ltr-bin.exe", null)
+        == LauncherAppCategory.MapsAndEngineering, "QGIS 应进入地图与工程");
+    Assert(LauncherAppCategoryRules.Classify("开发", @"C:/Tools/Code.exe", "--profile personal")
+        == LauncherAppCategory.Development, "正斜杠路径与启动参数应保留用途分类");
+    Assert(LauncherAppCategoryRules.Classify("游戏", @"C:\Games\Steam.exe", null)
+        == LauncherAppCategory.Games, "已知游戏入口应归类");
+    Assert(LauncherAppCategoryRules.Classify("卸载 Chrome", @"C:\Apps\chrome.exe", null)
+        == LauncherAppCategory.Auxiliary
+        && LauncherAppCategoryRules.Classify("Chrome", @"C:\Apps\chrome.exe", "--uninstall")
+        == LauncherAppCategory.Auxiliary, "维护入口应优先于程序本身的用途");
+    Assert(LauncherAppCategoryRules.Classify("Visual Studio Installer", @"C:\Tools\vs_installer.exe", null)
+        == LauncherAppCategory.Auxiliary, "独立安装器应进入辅助入口");
+    Assert(LauncherAppCategoryRules.Classify("检查更新", @"C:\Tools\Updater.exe", null)
+        == LauncherAppCategory.Auxiliary
+        && LauncherAppCategoryRules.Classify("Discord", @"C:\Tools\Update.exe", "--processStart Discord.exe")
+        == LauncherAppCategory.Unclassified, "更新启动器须区分更新入口和应用启动包装器");
+    Assert(LauncherAppCategoryRules.Classify("Calculator",
+        "shell:AppsFolder\\Microsoft.WindowsCalculator_8wekyb3d8bbwe!App", null)
+        == LauncherAppCategory.SystemTools, "已知打包程序身份应可识别");
+    Assert(LauncherAppCategoryRules.Classify("供应商软件", @"C:\Apps\tool.exe", null, @"Programs\ArcGIS")
+        == LauncherAppCategory.MapsAndEngineering, "专用开始菜单文件夹可作为辅助线索");
+    Assert(LauncherAppCategoryRules.Classify("Office 游戏地图工具", @"C:\Tools\unknown.exe", null, @"C:\Office\Tools")
+        == LauncherAppCategory.Unclassified, "泛化名称与近似文件夹不能决定用途");
+    Assert(LauncherAppCategoryRules.Classify("未知", "bad\0target", null)
+        == LauncherAppCategory.Unclassified, "无效路径应安全保留为未分类");
+    Assert(LauncherAppCategoryRules.DisplayName(LauncherAppCategory.Unclassified) == "未分类"
+        && LauncherAppCategoryRules.DisplayName(LauncherAppCategory.Auxiliary) == "辅助入口",
+        "分类标题应使用统一显示名称");
+
+    var temp = Directory.CreateTempSubdirectory("BingLanLauncherCategories-");
+    try
+    {
+        var store = new LocalStateStore(temp.FullName);
+        File.WriteAllText(store.StatePath, """{ "SchemaVersion": 51 }""");
+        var state = store.Load();
+        Assert(state.SchemaVersion == AppState.CurrentSchemaVersion && state.LauncherAppCategoryOverrides.Count == 0,
+            "旧配置应迁移为空的人工分类");
+        const string app = "C:\\TOOLS\\WORK.EXE\0--project Office\0";
+        state.LauncherAppCategoryOverrides[app] = LauncherAppCategory.MapsAndEngineering;
+        state.LauncherAppCategoryOverrides["second"] = LauncherAppCategory.Unclassified;
+        state.LauncherAppCategoryOverrides[""] = LauncherAppCategory.Office;
+        state.LauncherAppCategoryOverrides["invalid"] = (LauncherAppCategory)999;
+        var overrides = state.LauncherAppCategoryOverrides;
+        store.Save(state);
+        Assert(ReferenceEquals(state.LauncherAppCategoryOverrides, overrides),
+            "分类规范化应保留窗口持有的人工分类引用");
+        var loaded = store.Load();
+        Assert(loaded.LauncherAppCategoryOverrides.Count == 2
+            && loaded.LauncherAppCategoryOverrides[app] == LauncherAppCategory.MapsAndEngineering
+            && loaded.LauncherAppCategoryOverrides["second"] == LauncherAppCategory.Unclassified,
+            "人工分类与手动未分类应保存，非法数据应清理");
+    }
+    finally
+    {
+        temp.Delete(recursive: true);
     }
 }
 
@@ -1393,6 +1458,107 @@ static void TestPersistence()
         {
             Directory.Delete(temp, true);
         }
+    }
+}
+
+static void TestLauncherAppearancePersistence()
+{
+    var temp = Directory.CreateTempSubdirectory("BingLan-launcher-");
+    try
+    {
+        var store = new LocalStateStore(temp.FullName);
+        File.WriteAllText(store.StatePath, """{ "SchemaVersion": 48 }""");
+        var state = store.Load();
+        Assert(state.SchemaVersion == AppState.CurrentSchemaVersion
+            && state.LauncherAppearance is { FollowCardLook: true, SurfaceOpacity: 0.46, CornerRadius: 24 }
+            && state.LauncherAppearance.ResolveGlass(state.Style).Surface == "#75D8F3FF",
+            "旧状态应使用默认的透色玻璃");
+
+        state.LauncherAppearance.FollowCardLook = false;
+        state.LauncherAppearance.SurfaceColor = "#beeeda";
+        state.LauncherAppearance.SurfaceOpacity = 0.31;
+        state.LauncherAppearance.CornerRadius = 8;
+        store.Save(state);
+        var saved = store.Load();
+        Assert(saved.LauncherAppearance is
+            { FollowCardLook: false, SurfaceColor: "#BEEEDA", SurfaceOpacity: 0.31, CornerRadius: 8 }
+            && saved.LauncherAppearance.ResolveGlass(new DesktopStyleState { Glass = GlassMode.Dark }).Surface == "#4FBEEEDA",
+            "自定义材质应在重启后恢复，并独立于全局外观");
+
+        saved.LauncherAppearance.SurfaceColor = "bad";
+        saved.LauncherAppearance.SurfaceOpacity = -0.5;
+        saved.LauncherAppearance.CornerRadius = 90;
+        Assert(saved.LauncherAppearance is
+            { SurfaceColor: LauncherAppearanceState.DefaultSurfaceColor, SurfaceOpacity: 0.12, CornerRadius: 32 },
+            "应规范化非法底色和越界数值");
+    }
+    finally
+    {
+        temp.Delete(recursive: true);
+    }
+}
+
+static void TestLauncherGroupsPersistence()
+{
+    var temp = Directory.CreateTempSubdirectory("BingLan-launcher-groups-");
+    try
+    {
+        var store = new LocalStateStore(temp.FullName);
+        File.WriteAllText(store.StatePath, """{ "SchemaVersion": 50 }""");
+        var state = store.Load();
+        Assert(state.SchemaVersion == AppState.CurrentSchemaVersion && state.LauncherGroups.Count == 0,
+            "旧配置应迁移为空的启动面板分组");
+        Assert(LauncherGroupRules.TryCreate(state.LauncherGroups, " 办公 ", out var office)
+            && office!.Name == "办公", "新分组名称应去掉首尾空白");
+        Assert(LauncherGroupRules.TryCreate(state.LauncherGroups, "Work", out var work), "应能新建第二个分组");
+        Assert(!LauncherGroupRules.TryCreate(state.LauncherGroups, " work ", out _)
+            && !LauncherGroupRules.TryCreate(state.LauncherGroups, "全部", out _),
+            "重复名称与保留名称应拒绝");
+
+        var file = new LauncherGroupMember("file:REPORT", @"C:\Reports\报告.docx", "报告");
+        Assert(LauncherGroupRules.TryAdd(office!, file) && LauncherGroupRules.TryAdd(work!, file),
+            "同一入口应能加入多个分组");
+        Assert(!LauncherGroupRules.TryAdd(office!, file), "同组应按稳定键去重");
+        Assert(LauncherGroupRules.TryAdd(work!, new LauncherGroupMember("app:WORK", FallbackPin: new DockPinnedApp
+        {
+            DisplayName = "办公工具",
+            ExecutablePath = @"C:\Tools\Work.exe",
+            Arguments = "--workspace Office",
+            WorkingDirectory = @"C:\Work"
+        })), "分组应接收带有专用参数的应用入口");
+
+        var officeId = office!.Id;
+        var projectId = work!.Id;
+        var groupList = state.LauncherGroups;
+        store.Save(state);
+        Assert(ReferenceEquals(state.LauncherGroups, groupList),
+            "保存规范化应保留窗口持有的分组列表引用");
+        var restored = store.Load();
+        Assert(restored.LauncherGroups.Select(group => group.Id).SequenceEqual([officeId, projectId])
+            && restored.LauncherGroups[1].Name == "Work"
+            && restored.LauncherGroups.All(group => group.Members[0] == file)
+            && restored.LauncherGroups[1].Members[1].FallbackPin is
+                { Arguments: "--workspace Office", WorkingDirectory: @"C:\Work" },
+            "分组标识、多组关联和搜索入口的回退路径应跨重启保留");
+        Assert(LauncherGroupRules.Remove(restored.LauncherGroups[0], file.Key)
+            && restored.LauncherGroups[1].Members[0] == file,
+            "移出一个分组应保留其他组关联");
+        store.Save(restored);
+        Assert(store.Load().LauncherGroups[0].Members.Count == 0, "移出分组应保存");
+
+        var repaired = LauncherGroupRules.Normalize(
+        [
+            new() { Id = Guid.Empty, Name = " 资料 ", Members = [file, file] },
+            new() { Name = "资料", Members = [new("file:OTHER", @"C:\Reports\其他.txt", "其他")] },
+            new() { Name = "其他组", Members = [new("")] }
+        ]);
+        Assert(repaired.Count == 2 && repaired[0].Id != Guid.Empty
+            && repaired[0].Members.Count == 2 && repaired[1].Members.Count == 0,
+            "规范化应修复空标识、合并重名组并清理重复及空成员键");
+    }
+    finally
+    {
+        temp.Delete(recursive: true);
     }
 }
 

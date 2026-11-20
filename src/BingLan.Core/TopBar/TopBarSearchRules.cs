@@ -68,8 +68,9 @@ public static class TopBarSearchRules
     /// </summary>
     public static IReadOnlyList<TopBarSearchCandidate> Search(
         IEnumerable<TopBarSearchCandidate> candidates,
-        string query) =>
-        SearchCore(candidates, query, allowFuzzy: true);
+        string query,
+        int limit = MaxResults) =>
+        SearchCore(candidates, query, allowFuzzy: true, limit);
 
     /// <summary>
     /// Keeps already-rendered stage-1 results in their exact order and appends ranked,
@@ -148,7 +149,8 @@ public static class TopBarSearchRules
     private static IReadOnlyList<TopBarSearchCandidate> SearchCore(
         IEnumerable<TopBarSearchCandidate> candidates,
         string query,
-        bool allowFuzzy)
+        bool allowFuzzy,
+        int limit = MaxResults)
     {
         var tokens = query.Split(QuerySeparators, StringSplitOptions.RemoveEmptyEntries)
             .Select(token => token.Trim().ToLowerInvariant())
@@ -203,7 +205,7 @@ public static class TopBarSearchRules
             .ThenBy(entry => entry.Candidate.Kind)
             .ThenBy(entry => entry.Candidate.DisplayName, StringComparer.CurrentCultureIgnoreCase)
             .ThenBy(entry => entry.Candidate.Path, StringComparer.OrdinalIgnoreCase)
-            .Take(MaxResults)
+            .Take(limit)
             .Select(entry => entry.Candidate)
             .ToArray();
     }

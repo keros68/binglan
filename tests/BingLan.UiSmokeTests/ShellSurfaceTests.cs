@@ -69,8 +69,9 @@ internal static class ShellSurfaceTests
             "主副屏任务栏移动时都应立即复位两角细条");
         Assert(!TaskbarCornerReveal.IsTaskbarClass("CabinetWClass"), "资源管理器窗口移动不能触发细条复位");
 
-        var state = new DockState { IsEnabled = true, VisibilityMode = DockVisibilityMode.SmartHide };
+        var state = new DockState { IsEnabled = true, VisibilityMode = DockVisibilityMode.SmartHide, ShowLauncherButton = false };
         var dock = new IceBlueDockWindow(state);
+        dock.LauncherRequested += () => { };
         show(dock);
         try
         {
@@ -118,10 +119,10 @@ internal static class ShellSurfaceTests
             Assert(entries.Count == 2
                     && AutomationProperties.GetName(entries[^1]) == "显示桌面"
                     && entries[^1].Tag is null,
-                "“显示桌面”按钮应在 Dock 右端，且不是可拖动应用项");
+                "显示桌面应跟在开始菜单之后，且不参与应用拖动");
             Assert((double)length.Invoke(dock, null)!
-                    == DockLayoutMetrics.ContentLengthForItems(2, state.IconSize) + DockLayoutMetrics.DividerDip,
-                "Dock 宽度应计入“显示桌面”按钮与分隔线");
+                    == DockLayoutMetrics.ContentLengthForItems(2, state.IconSize),
+                "功能入口之间不分隔");
             state.ShowDesktopButton = false;
             Apply();
             Apply();
@@ -132,6 +133,22 @@ internal static class ShellSurfaceTests
                 "开始入口应固定在应用前面");
             Assert((double)length.Invoke(dock, null)! == DockLayoutMetrics.ContentLengthForItems(2, state.IconSize) + DockLayoutMetrics.DividerDip,
                 "Dock 宽度应计入入口、应用和分隔线");
+
+            state.ShowLauncherButton = true;
+            state.ShowDesktopButton = true;
+            apply.Invoke(dock, [apps]);
+            Assert(panel.Children.OfType<Button>().Take(3).Select(AutomationProperties.GetName)
+                .SequenceEqual(["打开 Windows 开始菜单", "打开启动面板", "显示桌面"]),
+                "三个入口应依次显示在应用左侧");
+            Assert(panel.Children.OfType<Border>().Count() == 1
+                && (double)length.Invoke(dock, null)! == DockLayoutMetrics.ContentLengthForItems(4, state.IconSize) + DockLayoutMetrics.DividerDip,
+                "功能组与应用之间只分隔一次");
+            state.ShowStartMenuButton = false;
+            state.ShowLauncherButton = false;
+            state.ShowDesktopButton = false;
+            apply.Invoke(dock, [apps]);
+            Assert(panel.Children.Count == 1 && panel.Children[0] is Button appButton && appButton.Tag is DockItem,
+                "隐藏三个入口后只显示应用，不留分隔线");
         }
         finally
         {
@@ -144,6 +161,8 @@ internal static class ShellSurfaceTests
         var theme = ThemeRules.Export(appState, "系统入口验证", new ThemeArea(0, 0, 1920, 1080), new Version(0, 2, 25));
         Assert(!JsonSerializer.Serialize(theme).Contains("ShowStartMenuButton", StringComparison.Ordinal),
             "本机开始菜单开关不能进入主题包");
+        Assert(!JsonSerializer.Serialize(theme).Contains("ShowLauncherButton", StringComparison.Ordinal),
+            "本机启动面板入口开关不能进入主题包");
         Assert(!JsonSerializer.Serialize(theme).Contains("ShowDesktopButton", StringComparison.Ordinal),
             "本机“显示桌面”按钮开关不能进入主题包");
     }

@@ -35,6 +35,16 @@ public static class TopBarModuleRules
             TodoService.BelongsToTodayList(item, target)));
     }
 
+    /// <summary>The next timed open to-do due today, from the same card as the flyout.</summary>
+    public static TodoItemState? NextTimedTodoToday(IEnumerable<TodoItemState> items, DateTime now) =>
+        items.Where(item => item.Kind == TodoItemKind.Todo && !item.IsCompleted
+                && !string.IsNullOrWhiteSpace(item.Text)
+                && item.DeadlineDate?.Date == now.Date
+                && item.DeadlineTime is { } time
+                && now.Date.Add(time.ToTimeSpan()) >= now)
+            .OrderBy(item => item.DeadlineTime)
+            .FirstOrDefault();
+
     public static TopBarBatteryStatus ClassifyBattery(int acLineStatus, int batteryFlag) =>
         acLineStatus switch
         {

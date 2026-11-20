@@ -76,6 +76,8 @@ public partial class SearchWindow : Window
     internal event Action? Dismissed;
     internal event Action? ShellRecovered;
 
+    internal Action? TransientPlacement { get; set; }
+
     internal nint WindowHandle => _source is { IsDisposed: false } source ? source.Handle : 0;
 
     internal void HideFromApp()
@@ -258,6 +260,11 @@ public partial class SearchWindow : Window
 
     internal void RecoverPlacement()
     {
+        if (TransientPlacement is { } place)
+        {
+            place();
+            return;
+        }
         WindowScreenRecovery.RestoreLayout(this, _state.SearchWindowPlacement);
         WindowScreenRecovery.EnsureOnScreen(this);
         WindowScreenRecovery.KeepOutOfReservedEdges(this);

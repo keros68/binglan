@@ -675,10 +675,10 @@
                     <Expander x:Name="AppearanceBarsLookFold"
                               Margin="0,24,0,4"
                               Style="{StaticResource SettingsFoldStyle}"
-                              AutomationProperties.Name="Dock 与顶端信息条外观">
+                              AutomationProperties.Name="Dock、启动面板与顶端信息条外观">
                         <Expander.Header>
                             <StackPanel>
-                                <TextBlock Style="{StaticResource FoldTitleStyle}" Text="Dock 与顶端信息条外观"/>
+                                <TextBlock Style="{StaticResource FoldTitleStyle}" Text="Dock、启动面板与顶端信息条外观"/>
                                 <TextBlock Style="{StaticResource CaptionStyle}" Text="默认跟随上面的全局外观，也可以单独设置颜色和浓度"/>
                             </StackPanel>
                         </Expander.Header>
@@ -732,6 +732,57 @@
                                                 AutomationProperties.Name="Dock 玻璃浓度"
                                                 ValueChanged="DockOpacity_Changed"/>
                                         <TextBlock x:Name="DockOpacityText" Style="{StaticResource ValueTextStyle}"/>
+                                    </StackPanel>
+                                </local:SettingsRow>
+                            </StackPanel>
+                            <local:SettingsRow x:Name="LauncherLookSettingsRow" Header="启动面板外观"
+                                               local:SettingsSearch.Keywords="启动面板 透明玻璃 颜色 圆角">
+                                <Border Style="{StaticResource SegmentHostStyle}">
+                                    <StackPanel Orientation="Horizontal">
+                                        <RadioButton x:Name="LauncherFollowLookRadio"
+                                                     GroupName="LauncherLook"
+                                                     Style="{StaticResource SegmentRadioStyle}"
+                                                     Content="跟随卡片外观"
+                                                     Checked="LauncherLook_Changed"/>
+                                        <RadioButton x:Name="LauncherCustomLookRadio"
+                                                     GroupName="LauncherLook"
+                                                     Style="{StaticResource SegmentRadioStyle}"
+                                                     Content="自定义"
+                                                     Checked="LauncherLook_Changed"/>
+                                    </StackPanel>
+                                </Border>
+                            </local:SettingsRow>
+                            <StackPanel x:Name="LauncherCustomLookPanel">
+                                <local:SettingsRow Style="{StaticResource NestedSettingsRowStyle}" Header="启动面板配色">
+                                    <WrapPanel x:Name="LauncherPaletteSwatches"/>
+                                </local:SettingsRow>
+                                <local:SettingsRow Style="{StaticResource NestedSettingsRowStyle}" Header="启动面板底色">
+                                    <StackPanel Orientation="Horizontal">
+                                        <Border x:Name="LauncherColorPreview" Width="30" Height="30" CornerRadius="6"
+                                                VerticalAlignment="Center" BorderThickness="1"
+                                                BorderBrush="{DynamicResource SettingsControlBorderBrush}"/>
+                                        <TextBox x:Name="LauncherColorEditor" Width="110" Margin="8,0,0,0"
+                                                 AutomationProperties.Name="启动面板底色"
+                                                 LostFocus="LauncherColorEditor_Commit"
+                                                 KeyDown="LauncherColorEditor_KeyDown"/>
+                                        <Button Margin="8,0,0,0" Content="选择颜色…" AutomationProperties.Name="选择启动面板底色"
+                                                Click="LauncherChooseColor_Click"/>
+                                    </StackPanel>
+                                </local:SettingsRow>
+                                <local:SettingsRow Style="{StaticResource NestedSettingsRowStyle}" Header="启动面板玻璃浓度">
+                                    <StackPanel Orientation="Horizontal">
+                                        <Slider x:Name="LauncherOpacitySlider" Width="200" Minimum="0.12" Maximum="1"
+                                                SmallChange="0.02" LargeChange="0.1" AutomationProperties.Name="启动面板玻璃浓度"
+                                                ValueChanged="LauncherOpacity_Changed"/>
+                                        <TextBlock x:Name="LauncherOpacityText" Style="{StaticResource ValueTextStyle}"/>
+                                    </StackPanel>
+                                </local:SettingsRow>
+                                <local:SettingsRow Style="{StaticResource NestedSettingsRowStyle}" Header="启动面板圆角">
+                                    <StackPanel Orientation="Horizontal">
+                                        <Slider x:Name="LauncherCornerRadiusSlider" Width="200" Minimum="0" Maximum="32"
+                                                IsSnapToTickEnabled="True" TickFrequency="1" SmallChange="1" LargeChange="4"
+                                                AutomationProperties.Name="启动面板圆角" ValueChanged="LauncherCornerRadius_Changed"/>
+                                        <TextBlock x:Name="LauncherCornerRadiusText" Style="{StaticResource ValueTextStyle}"/>
                                     </StackPanel>
                                 </local:SettingsRow>
                             </StackPanel>
@@ -1874,7 +1925,7 @@
                                     </ComboBox>
                                 </local:SettingsRow>
                                 <local:SettingsRow Header="显示 Windows 开始菜单入口"
-                                                   Description="显示在 Dock 左端，点击打开原生开始菜单；此设置只保存在本机，不随主题导入或导出"
+                                                   Description="点击打开 Windows 开始菜单"
                                                    local:SettingsSearch.Keywords="开始菜单">
                                     <CheckBox x:Name="DockStartMenuButtonCheckBox"
                                               AutomationProperties.Name="显示 Windows 开始菜单入口"
@@ -1882,8 +1933,17 @@
                                               Checked="DockSetting_Changed"
                                               Unchecked="DockSetting_Changed"/>
                                 </local:SettingsRow>
+                                <local:SettingsRow Header="显示启动面板入口"
+                                                   Description="关闭后仍可从冰蓝托盘打开启动面板"
+                                                   local:SettingsSearch.Keywords="启动面板 应用启动">
+                                    <CheckBox x:Name="DockLauncherButtonCheckBox"
+                                              AutomationProperties.Name="显示启动面板入口"
+                                              Style="{StaticResource ToggleSwitchStyle}"
+                                              Checked="DockSetting_Changed"
+                                              Unchecked="DockSetting_Changed"/>
+                                </local:SettingsRow>
                                 <local:SettingsRow Header="显示“显示桌面”按钮"
-                                                   Description="显示在 Dock 右端，点击收起所有窗口回到桌面，再点恢复；此设置只保存在本机"
+                                                   Description="点击收起窗口并显示桌面，再点一次恢复窗口"
                                                    local:SettingsSearch.Keywords="显示桌面 回到桌面 Win+D">
                                     <CheckBox x:Name="DockShowDesktopButtonCheckBox"
                                               AutomationProperties.Name="显示“显示桌面”按钮"
@@ -2051,7 +2111,7 @@
                                               SelectionChanged="TopBarSetting_Changed"/>
                                 </local:SettingsRow>
                                 <local:SettingsRow Header="显示方式"
-                                                   Description="始终显示时最大化的窗口从信息条下方开始，全屏应用运行时信息条退到后面，顶边被系统任务栏占用（Windows 10）时自动改为智能隐藏；智能隐藏时窗口占用顶部就隐藏，鼠标移到屏幕顶边时显示"
+                                                   Description="始终显示时预留顶部空间，全屏应用优先显示。顶边被 Windows 任务栏占用时改为智能隐藏，并让开任务栏的唤出区域"
                                                    local:SettingsSearch.Keywords="自动隐藏 预留顶部">
                                     <Border Style="{StaticResource SegmentHostStyle}">
                                         <StackPanel Orientation="Horizontal">
@@ -2085,7 +2145,7 @@
                                         <TextBlock x:Name="TopBarHeightText" Style="{StaticResource ValueTextStyle}"/>
                                     </StackPanel>
                                 </local:SettingsRow>
-                                <local:SettingsRow Header="模块" Description="勾选要在信息条上显示的内容"/>
+                                <local:SettingsRow Header="模块"/>
                                 <Border Padding="20,4,8,8" Background="{DynamicResource SettingsSurfaceHoverBrush}">
                                     <UniformGrid x:Name="TopBarModulesPanel" Columns="5" SizeChanged="TopBarModules_SizeChanged">
                                         <CheckBox x:Name="TopBarClockCheckBox" Content="时钟与日期" Margin="0,8,12,8"
@@ -2120,7 +2180,7 @@
                                               Checked="TopBarSetting_Changed" Unchecked="TopBarSetting_Changed"/>
                                 </local:SettingsRow>
                                 <local:SettingsRow Header="搜索入口"
-                                                   Description="独立搜索框可从左侧手柄拖动、右侧手柄调宽；图标模式点击后展开搜索框">
+                                                   Description="独立搜索框可拖动和调宽。使用胶囊时，从右键菜单或热键打开搜索；切回整条后恢复此设置">
                                     <ComboBox x:Name="SearchPresentationComboBox" MinWidth="160"
                                               AutomationProperties.Name="搜索入口显示方式" SelectionChanged="SearchPresentation_Changed">
                                         <ComboBoxItem Content="顶栏居中"/>
@@ -2266,6 +2326,8 @@
                                                Margin="2,10,0,0"
                                                AutomationProperties.LiveSetting="Polite"
                                                Style="{StaticResource CaptionStyle}"/>
+                                    <TextBlock x:Name="TaskbarPositionText" Margin="2,4,0,0"
+                                               Visibility="Collapsed" Style="{StaticResource CaptionStyle}"/>
                                     <!-- Windows 自动隐藏开着、而不是冰蓝桌面设置的：说明来源并给出出路。 -->
                                     <StackPanel x:Name="WindowsAutoHidePanel" Margin="2,10,0,0" Visibility="Collapsed">
                                         <TextBlock TextWrapping="Wrap"
@@ -2273,15 +2335,16 @@
                                                    Text="Windows 当前开启了“自动隐藏任务栏”，这不是冰蓝桌面设置的，所以选“系统默认”不会改动它。"/>
                                         <WrapPanel Margin="0,8,0,0">
                                             <Button Content="改为始终显示" Click="ShowTaskbarAlways_Click"/>
-                                            <Button Margin="8,0,0,0" Content="打开 Windows 任务栏设置" Click="OpenWindowsTaskbarSettings_Click"/>
                                         </WrapPanel>
                                     </StackPanel>
+                                    <Button Margin="2,10,0,0" HorizontalAlignment="Left"
+                                            Content="打开 Windows 任务栏设置" Click="OpenWindowsTaskbarSettings_Click"/>
                                 </StackPanel>
                             </Border>
                             <!-- 只在选“自动隐藏”时显示：两项都只影响任务栏弹出。 -->
                             <StackPanel x:Name="TaskbarPopupPanel" Visibility="Collapsed">
                                 <local:SettingsRow Header="鼠标仅从底部两角唤出"
-                                                   Description="任务栏自动隐藏时，鼠标碰到底边中间不弹出，移到底边左右两端才弹出；打开开始菜单等系统面板时，Windows 仍可能显示任务栏。全屏时暂停"
+                                                   Description="仅对底部自动隐藏的任务栏生效；鼠标移到底边左右两端时弹出。打开系统面板时 Windows 仍可能显示任务栏，全屏时暂停"
                                                    local:SettingsSearch.Keywords="弹出方式">
                                     <CheckBox x:Name="RevealOnlyAtCornersCheckBox"
                                               AutomationProperties.Name="鼠标仅从底部两角唤出任务栏"

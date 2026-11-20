@@ -6,6 +6,7 @@ using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Interop;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
 using System.Windows.Threading;
 using Microsoft.Win32;
 using BingLan.App.Dock;
@@ -107,6 +108,21 @@ public sealed partial class TopBarWindow : Window
     private static readonly TimeSpan SmartHideCheckInterval = TimeSpan.FromMilliseconds(150);
     private static readonly TimeSpan FullScreenCheckInterval = TimeSpan.FromMilliseconds(500);
     private const int SystemInfoTickDivisor = 5;
+    private const double CapsuleWidth = 176d;
+    private double _capsuleCompactWidth = CapsuleWidth;
+    private const double CapsuleHeight = 40d;
+    private const double CapsuleExpandedWidth = 352d;
+    private bool _capsuleExpanded;
+    private double _capsuleExpandedHeight;
+    private int _capsuleMorphGeneration;
+    private TextBlock? _capsuleSummary;
+    private TextBlock? _capsuleStatus;
+    private TextBlock? _capsuleChevron;
+    private TopBarDisplayMode? _appliedDisplayMode;
+    private readonly bool _enableExperimentalCapsule;
+    private TopBarDisplayMode DisplayMode => _enableExperimentalCapsule ? _state.DisplayMode : TopBarDisplayMode.FullWidth;
+    private bool IsCapsule => DisplayMode == TopBarDisplayMode.Capsule;
+    private SearchPresentation EffectiveSearchPresentation => IsCapsule ? SearchPresentation.Icon : _state.SearchPresentation;
     private long _lastCountdownMinute = -1;
 
     private readonly TopBarState _state;
@@ -132,6 +148,7 @@ public sealed partial class TopBarWindow : Window
     private Popup? _clockFlyout;
     private DateTime _clockMonth;
     private MonitorSnapshot? _monitor;
+    private TaskbarEdgeGuard.NativeTaskbarLayout? _nativeTaskbar;
     private nint _handle;
     private uint _shellHookMessage;
     private bool _shellHookActive;
@@ -194,6 +211,7 @@ public sealed partial class TopBarWindow : Window
     private ContextMenu? _searchContextMenu;
     private (List<TopBarSearchCandidate> Results, string Query, string? Scope)? _pendingSearchResults;
     private bool? _appliedAcrylic;
+    private DockGlassSurface? _capsuleGlass;
 
     private Window SearchInputWindow => _searchWindow is { } window ? window : this;
     private nint SearchInputHandle => new WindowInteropHelper(SearchInputWindow).Handle;
@@ -219,12 +237,14 @@ public sealed partial class TopBarWindow : Window
         TopBarState state,
         DesktopStyleState style,
         ITopBarEnvironment environment,
-        IPerformanceSamplingService sampler)
+        IPerformanceSamplingService sampler,
+        bool enableExperimentalCapsule = false)
     {
         _state = state;
         _style = style;
         _environment = environment;
         _sampler = sampler;
+        _enableExperimentalCapsule = enableExperimentalCapsule;
         InitializeComponent();
         SourceInitialized += OnSourceInitialized;
         Closing += OnClosing;
@@ -279,27 +299,36 @@ public sealed partial class TopBarWindow : Window
 
         var moduleMask = TopBarRules.ModuleOrder.Aggregate(0,
             (mask, kind) => mask | (TopBarRules.IsModuleOn(_state.Modules, kind) ? 1 << (int)kind : 0));
-        if (_moduleMask != moduleMask)
+        if (_moduleMask != moduleMask || _appliedDisplayMode != DisplayMode)
         {
             BuildModules();
             _moduleMask = moduleMask;
+            _appliedDisplayMode = DisplayMode;
         }
-        else if (_appliedSearchPresentation != _state.SearchPresentation && _searchHost is not null)
+        else if (_appliedSearchPresentation != EffectiveSearchPresentation && _searchHost is not null)
         {
             ApplySearchPresentation();
         }
         ApplySearchAppearance();
         ApplySurface();
         _autoHide = new DockAutoHideState();
+        _nativeTaskbar = TaskbarEdgeGuard.GetNativeTaskbarLayout(_monitor.Bounds);
         // The top edge is taken (a taskbar moved to the top on Windows 10): behave as
         // smart-hide instead of fighting over the space. A bar that already holds the
         // edge keeps it — its own reservation is not a foreign occupier.
         var reserve = TopBarReserveRules.ShouldReserve(
-            _state.VisibilityMode == TopBarVisibilityMode.ReserveTopEdge,
+            !IsCapsule && _state.VisibilityMode == TopBarVisibilityMode.ReserveTopEdge,
             _appBar?.IsReserved == true,
             _monitor.Bounds,
-            BingLan.App.Dock.DockAppBarController.GetLiveWorkingArea(_monitor));
-        _appBar?.Apply(_monitor, reserve, _state.Height);
+            BingLan.App.Dock.DockAppBarController.GetLiveWorkingArea(_monitor),
+            nativeTopEdgeOccupied: _nativeTaskbar?.Edge == DockEdge.Top);
+        _appBar?.Apply(_monitor, reserve,
+            IsCapsule ? (_capsuleExpanded ? _capsuleExpandedHeight : CapsuleHeight) : _state.Height,
+            IsCapsule ? (_capsuleExpanded ? CapsuleExpandedWidth : _capsuleCompactWidth) : null);
+        if (IsCapsule && _searchWindow is { IsVisible: true } searchWindow)
+        {
+            searchWindow.RecoverPlacement();
+        }
         // While a flyout is open the fast interval keeps its outside-click watch
         // prompt even in reserve mode.
         _foregroundTimer.Interval = reserve && _todoFlyout is null && _searchFlyout is null
@@ -371,7 +400,7 @@ public sealed partial class TopBarWindow : Window
         }
 
         if (!_closing
-            && _state.SearchPresentation == SearchPresentation.Floating
+            && EffectiveSearchPresentation == SearchPresentation.Floating
             && _searchWindow is { IsVisible: true } floating
             && !_searchWindowHiddenForFullScreen
             && floating.WindowHandle is var searchHandle
@@ -404,7 +433,7 @@ public sealed partial class TopBarWindow : Window
                 _appBar?.EnsureLayer();
             }
 
-            if (_state.SearchPresentation == SearchPresentation.Floating
+            if (EffectiveSearchPresentation == SearchPresentation.Floating
                 && _searchWindow is { IsVisible: true } floating
                 && !_searchWindowHiddenForFullScreen)
             {
@@ -570,7 +599,7 @@ public sealed partial class TopBarWindow : Window
         _idleSearchWindow?.Shutdown();
         _idleSearchWindow = null;
         UnregisterSearchHotkey();
-        CloseTodoFlyout();
+        CloseTodoFlyout(animate: false);
         CloseClockFlyout();
         _foregroundTimer.Stop();
         _ambientTimer.Stop();
@@ -764,10 +793,72 @@ public sealed partial class TopBarWindow : Window
         _searchBox = null;
         _searchPlaceholder = null;
         _searchFlyout = null;
-        CloseTodoFlyout();
+        CloseTodoFlyout(animate: false);
         CloseClockFlyout();
+        CapsuleHeader.Children.Clear();
+        CapsuleHeader.Visibility = IsCapsule ? Visibility.Visible : Visibility.Collapsed;
+        ModuleHeader.Visibility = IsCapsule ? Visibility.Collapsed : Visibility.Visible;
+        _capsuleSummary = null;
+        _capsuleStatus = null;
+        _capsuleChevron = null;
 
         AddSearchModule();
+
+        CenterHost.HorizontalAlignment = HorizontalAlignment.Center;
+        Surface.Padding = new Thickness(0);
+        if (IsCapsule)
+        {
+            _environment.CloseTrayOverflow();
+            CenterHost.Visibility = Visibility.Collapsed;
+            CapsuleHeader.Height = CapsuleHeight - 2;
+            var content = new Grid { Margin = new Thickness(6, 0, 6, 0) };
+            content.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(30) });
+            content.ColumnDefinitions.Add(new ColumnDefinition());
+            content.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(20) });
+            var markGlyph = new TextBlock
+            {
+                Text = "\uE73E", FontFamily = StatusIconFont, FontSize = 11,
+                HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center
+            };
+            markGlyph.SetResourceReference(TextBlock.ForegroundProperty, "FloatingGlassInkBrush");
+            var mark = new Border
+            {
+                Width = 23, Height = 23, CornerRadius = new CornerRadius(8),
+                VerticalAlignment = VerticalAlignment.Center, Child = markGlyph
+            };
+            mark.SetResourceReference(Border.BackgroundProperty, "FloatingGlassSelectedBrush");
+            content.Children.Add(mark);
+            var text = CreateValueText();
+            text.FontSize = 12;
+            text.SetResourceReference(TextBlock.ForegroundProperty, "FloatingGlassInkBrush");
+            _capsuleSummary = text;
+            Grid.SetColumn(text, 1);
+            content.Children.Add(text);
+            _capsuleChevron = new TextBlock
+            {
+                Text = "\uE70D", FontFamily = StatusIconFont, FontSize = 9,
+                VerticalAlignment = VerticalAlignment.Center,
+                HorizontalAlignment = HorizontalAlignment.Right
+            };
+            _capsuleChevron.SetResourceReference(TextBlock.ForegroundProperty, "FloatingGlassMutedBrush");
+            Grid.SetColumn(_capsuleChevron, 2);
+            content.Children.Add(_capsuleChevron);
+            var summary = new Button
+            {
+                Style = (Style)Resources["ModuleButton"],
+                Content = content,
+                HorizontalContentAlignment = HorizontalAlignment.Stretch,
+                MinHeight = CapsuleHeight - 2,
+                ToolTip = "今日待办，点击查看列表"
+            };
+            AutomationProperties.SetName(summary, "今日待办概要，点击查看列表");
+            summary.Click += (_, _) => ToggleTodoFlyout(summary);
+            CapsuleHeader.Children.Add(summary);
+            _modules[TopBarModuleKind.TodoSummary] = summary;
+            RenderModules();
+            return;
+        }
+        CenterHost.Visibility = Visibility.Visible;
 
         // The to-do module shows its own flyout instead of opening settings.
         AddTodoModule(LeftModules);
@@ -1090,6 +1181,7 @@ public sealed partial class TopBarWindow : Window
     }
 
     private TextBlock? ModuleText(TopBarModuleKind kind) =>
+        IsCapsule && kind == TopBarModuleKind.TodoSummary ? _capsuleSummary :
         _modules.TryGetValue(kind, out var module) ? module switch
         {
             Button button => ValueTextOf(button.Content),
@@ -1382,6 +1474,11 @@ public sealed partial class TopBarWindow : Window
     /// </summary>
     private void ToggleTodoFlyout(Button button)
     {
+        if (IsCapsule)
+        {
+            ToggleCapsuleDetails();
+            return;
+        }
         if (_todoFlyout?.IsOpen == true)
         {
             _todoFlyout.IsOpen = false;
@@ -1463,6 +1560,7 @@ public sealed partial class TopBarWindow : Window
             Foreground = Brushes.White,
             Opacity = 0.7
         };
+        if (IsCapsule) glyph.SetResourceReference(TextBlock.ForegroundProperty, "FloatingGlassMutedBrush");
         if (item.Kind == TodoItemKind.Event)
         {
             // Events are not checkable: a dot and the optional time, and no click action.
@@ -1479,13 +1577,15 @@ public sealed partial class TopBarWindow : Window
                 DataContext = item
             };
             eventRow.Children.Add(glyph);
-            eventRow.Children.Add(new TextBlock
+            var eventText = new TextBlock
             {
                 Text = item.Text,
                 TextWrapping = TextWrapping.Wrap,
                 MaxWidth = 270,
                 Foreground = Brushes.White
-            });
+            };
+            if (IsCapsule) eventText.SetResourceReference(TextBlock.ForegroundProperty, "FloatingGlassInkBrush");
+            eventRow.Children.Add(eventText);
             return eventRow;
         }
 
@@ -1502,6 +1602,7 @@ public sealed partial class TopBarWindow : Window
             MaxWidth = 270,
             Foreground = Brushes.White
         };
+        if (IsCapsule) text.SetResourceReference(TextBlock.ForegroundProperty, "FloatingGlassInkBrush");
         text.SetBinding(TextBlock.TextProperty, new System.Windows.Data.Binding(nameof(TodoItemState.Text)));
         var textStyle = new Style(typeof(TextBlock));
         textStyle.Triggers.Add(TodoCompletedTrigger(
@@ -1516,6 +1617,7 @@ public sealed partial class TopBarWindow : Window
             TextWrapping = TextWrapping.Wrap, Foreground = Brushes.White, Opacity = 0.7, FontSize = 11,
             Margin = new Thickness(0, 2, 0, 0)
         };
+        if (IsCapsule) deadline.SetResourceReference(TextBlock.ForegroundProperty, "FloatingGlassMutedBrush");
         deadline.SetBinding(TextBlock.TextProperty, new System.Windows.Data.Binding(nameof(TodoItemState.CountdownLabel)));
         deadline.SetBinding(ToolTipProperty, new System.Windows.Data.Binding(nameof(TodoItemState.DeadlineDescription)));
         var deadlineStyle = new Style(typeof(TextBlock));
@@ -1545,6 +1647,7 @@ public sealed partial class TopBarWindow : Window
             item.IsCompleted = !item.IsCompleted;
             TodoService.StampCompletion(item);
             _environment.TodoItemToggled();
+            RenderModules();
         };
         return row;
     }
@@ -1590,10 +1693,147 @@ public sealed partial class TopBarWindow : Window
         };
     }
 
-    private void CloseTodoFlyout()
+    private void ToggleCapsuleDetails()
+    {
+        if (_capsuleExpanded)
+        {
+            CloseTodoFlyout();
+            return;
+        }
+        var now = DateTime.Now;
+        var items = (_environment.ReadTodoList()?.Items ?? [])
+            .Where(item => !string.IsNullOrWhiteSpace(item.Text) && TodoService.BelongsToTodayList(item, now))
+            .ToList();
+        var panel = new StackPanel();
+        var heading = new DockPanel { Margin = new Thickness(0, 4, 0, 8) };
+        var date = new TextBlock
+        {
+            Text = now.ToString("M月d日"), FontSize = 11,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        date.SetResourceReference(TextBlock.ForegroundProperty, "FloatingGlassMutedBrush");
+        DockPanel.SetDock(date, System.Windows.Controls.Dock.Right);
+        heading.Children.Add(date);
+        var title = new TextBlock
+        {
+            Text = "今日待办", FontSize = 16, FontWeight = FontWeights.SemiBold
+        };
+        title.SetResourceReference(TextBlock.ForegroundProperty, "FloatingGlassInkBrush");
+        heading.Children.Add(title);
+        panel.Children.Add(heading);
+        _capsuleStatus = new TextBlock
+        {
+            FontSize = 11, Margin = new Thickness(0, 0, 0, 12)
+        };
+        _capsuleStatus.SetResourceReference(TextBlock.ForegroundProperty, "FloatingGlassMutedBrush");
+        panel.Children.Add(_capsuleStatus);
+        if (items.Count == 0)
+        {
+            var empty = new TextBlock
+            {
+                Text = "今天没有待办，享受片刻轻松。", FontSize = 12,
+                Margin = new Thickness(0, 12, 0, 18)
+            };
+            empty.SetResourceReference(TextBlock.ForegroundProperty, "FloatingGlassInkBrush");
+            panel.Children.Add(empty);
+        }
+        else
+        {
+            var rows = new StackPanel();
+            foreach (var item in items)
+            {
+                var row = CreateTodoRow(item);
+                row.Margin = new Thickness(2, 7, 2, 7);
+                rows.Children.Add(row);
+            }
+            var availableHeight = _monitor is { } monitor
+                ? DockAppBarController.GetLiveWorkingArea(monitor).Height / (monitor.Dpi / 96d) - 140d : 300d;
+            panel.Children.Add(new ScrollViewer
+            {
+                MaxHeight = Math.Clamp(availableHeight, 48d, 300d),
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+                Content = rows
+            });
+        }
+        CapsuleBody.Child = panel;
+        CapsuleBody.Visibility = Visibility.Visible;
+        _capsuleExpanded = true;
+        if (_capsuleChevron is { } chevron) chevron.Text = "\uE70E";
+        RenderModules();
+        CapsuleBody.Measure(new Size(CapsuleExpandedWidth - 2d, double.PositiveInfinity));
+        _capsuleExpandedHeight = CapsuleHeight + CapsuleBody.DesiredSize.Height + 18d;
+        MorphCapsule(expanding: true, animate: true);
+        TopBarNativeMethods.ConsumeMouseButtonDown(TopBarNativeMethods.LeftMouseButton);
+        TopBarNativeMethods.ConsumeMouseButtonDown(TopBarNativeMethods.EscapeKey);
+    }
+
+    private void MorphCapsule(bool expanding, bool animate)
+    {
+        var generation = ++_capsuleMorphGeneration;
+        var fromWidth = double.IsNaN(Surface.Width) ? Surface.ActualWidth : Surface.Width;
+        var fromHeight = double.IsNaN(Surface.Height) ? Surface.ActualHeight : Surface.Height;
+        Surface.BeginAnimation(WidthProperty, null);
+        Surface.BeginAnimation(HeightProperty, null);
+        var targetWidth = expanding ? CapsuleExpandedWidth : _capsuleCompactWidth;
+        var targetHeight = expanding ? _capsuleExpandedHeight : CapsuleHeight;
+        Surface.Width = targetWidth;
+        Surface.Height = targetHeight;
+        if (expanding) ApplyCapsuleBounds(targetWidth, targetHeight);
+
+        void Finish()
+        {
+            if (generation != _capsuleMorphGeneration) return;
+            Surface.BeginAnimation(WidthProperty, null);
+            Surface.BeginAnimation(HeightProperty, null);
+            if (!expanding)
+            {
+                CapsuleBody.Visibility = Visibility.Collapsed;
+                CapsuleBody.Child = null;
+                _capsuleStatus = null;
+                ApplyCapsuleBounds(targetWidth, targetHeight);
+            }
+        }
+
+        if (!animate || _closing || !IsVisible || !SystemParameters.ClientAreaAnimation
+            || IceBlueDockWindow.Motion != MotionLevel.Standard)
+        {
+            Finish();
+            return;
+        }
+        var duration = new Duration(TimeSpan.FromMilliseconds(220));
+        var easing = new CubicEase { EasingMode = EasingMode.EaseOut };
+        Surface.BeginAnimation(WidthProperty, new DoubleAnimation(fromWidth, targetWidth, duration)
+        {
+            EasingFunction = easing, FillBehavior = FillBehavior.Stop
+        });
+        var height = new DoubleAnimation(fromHeight, targetHeight, duration)
+        {
+            EasingFunction = easing, FillBehavior = FillBehavior.Stop
+        };
+        height.Completed += (_, _) => Finish();
+        Surface.BeginAnimation(HeightProperty, height);
+    }
+
+    private void ApplyCapsuleBounds(double width, double height)
+    {
+        if (IsCapsule && !_closing && _monitor is { } monitor)
+            _appBar?.Apply(monitor, reserveWorkArea: false, height, width);
+    }
+
+    internal bool CapsuleDetailsExpanded => _capsuleExpanded;
+    internal FrameworkElement? CapsuleDetailsElement => CapsuleBody.Child as FrameworkElement;
+
+    private void CloseTodoFlyout(bool animate = true)
     {
         _todoFlyout?.SetCurrentValue(Popup.IsOpenProperty, false);
         _todoFlyout = null;
+        if (_capsuleExpanded)
+        {
+            _capsuleExpanded = false;
+            if (_capsuleChevron is { } chevron) chevron.Text = "\uE70D";
+            MorphCapsule(expanding: false, animate);
+        }
     }
 
     /// <summary>
@@ -1603,12 +1843,22 @@ public sealed partial class TopBarWindow : Window
     /// </summary>
     private void CloseFlyoutOnOutsideClick()
     {
+        if (_capsuleExpanded && TopBarNativeMethods.IsMouseButtonDown(TopBarNativeMethods.EscapeKey))
+        {
+            CloseTodoFlyout();
+        }
         if (!TopBarNativeMethods.IsMouseButtonDown(TopBarNativeMethods.LeftMouseButton))
         {
             return;
         }
 
         DockNativeMethods.GetCursorPos(out var cursor);
+        if (_capsuleExpanded && _appBar is { } appBar
+            && !(cursor.X >= appBar.Bounds.Left && cursor.X < appBar.Bounds.Right
+                && cursor.Y >= appBar.Bounds.Top && cursor.Y < appBar.Bounds.Bottom))
+        {
+            CloseTodoFlyout();
+        }
         TryCloseOnOutsideClick(_todoFlyout, cursor);
         TryCloseOnOutsideClick(_clockFlyout, cursor);
     }
@@ -1791,7 +2041,7 @@ public sealed partial class TopBarWindow : Window
         if (_searchToggleButton is { } previousButton) CenterHost.Children.Remove(previousButton);
         _searchToggleButton = null;
         _searchWindowHiddenForFullScreen = false;
-        if (_state.SearchPresentation == SearchPresentation.TopBar)
+        if (EffectiveSearchPresentation == SearchPresentation.TopBar)
         {
             var previousWindow = _searchWindow;
             _searchWindow = null;
@@ -1825,7 +2075,8 @@ public sealed partial class TopBarWindow : Window
                 }
             }
             var window = _searchWindow;
-            if (_state.SearchPresentation == SearchPresentation.Floating)
+            window.TransientPlacement = IsCapsule ? () => PositionCapsuleSearchWindow(window) : null;
+            if (EffectiveSearchPresentation == SearchPresentation.Floating)
             {
                 window.Show();
                 if (_desktopShown)
@@ -1853,7 +2104,7 @@ public sealed partial class TopBarWindow : Window
                 CenterHost.Children.Add(button);
             }
         }
-        _appliedSearchPresentation = _state.SearchPresentation;
+        _appliedSearchPresentation = EffectiveSearchPresentation;
         _modules[TopBarModuleKind.Search] = host;
         UpdateSearchHostWidth();
         UpdateSearchPlaceholder();
@@ -1866,7 +2117,7 @@ public sealed partial class TopBarWindow : Window
     /// </summary>
     private void UpdateSearchHostWidth()
     {
-        if (_state.SearchPresentation != SearchPresentation.TopBar || _searchHost is not { } host)
+        if (EffectiveSearchPresentation != SearchPresentation.TopBar || _searchHost is not { } host)
         {
             return;
         }
@@ -2733,6 +2984,12 @@ public sealed partial class TopBarWindow : Window
         {
             return;
         }
+        if (IsCapsule)
+        {
+            UpdateForForeground();
+            if (_trueFullScreenForeground) return;
+            CloseTodoFlyout(animate: false);
+        }
 
         if (!IsVisible)
         {
@@ -2785,6 +3042,26 @@ public sealed partial class TopBarWindow : Window
         // The fast tick keeps the outside-watch prompt while the flyout can be open.
         _foregroundTimer.Interval = SmartHideCheckInterval;
         LoadSearchCandidates();
+    }
+
+    private void PositionCapsuleSearchWindow(SearchWindow searchWindow)
+    {
+        if (_appBar is not { } capsule || _monitor is not { } monitor || searchWindow.WindowHandle == 0)
+        {
+            return;
+        }
+        // Transient anchoring does not overwrite the user's floating-search placement.
+        var workArea = TaskbarEdgeGuard.AvoidNativeTaskbar(
+            DockAppBarController.GetLiveWorkingArea(monitor), monitor.Bounds);
+        var scale = monitor.Dpi / 96d;
+        var width = Math.Min(workArea.Width, (int)Math.Round(_state.SearchWindowWidth * scale));
+        var height = (int)Math.Round(searchWindow.Height * scale);
+        var left = Math.Clamp(capsule.Bounds.Left + (capsule.Bounds.Width - width) / 2,
+            workArea.Left, Math.Max(workArea.Left, workArea.Right - width));
+        var top = Math.Clamp(capsule.Bounds.Bottom + (int)Math.Round(4d * scale),
+            workArea.Top, Math.Max(workArea.Top, workArea.Bottom - height));
+        NativeMethods.SetWindowPos(searchWindow.WindowHandle, 0, left, top, width, height,
+            NativeMethods.SwpNoZOrder | NativeMethods.SwpNoActivate);
     }
 
     /// <summary>
@@ -2862,7 +3139,7 @@ public sealed partial class TopBarWindow : Window
                 _ = DockNativeMethods.SetForegroundWindow(previous);
             }
         }
-        if (_state.SearchPresentation == SearchPresentation.Icon)
+        if (EffectiveSearchPresentation == SearchPresentation.Icon)
         {
             _searchWindow?.SetSessionActive(false, desktopShown: false);
             _searchWindow?.HideFromApp();
@@ -3069,6 +3346,8 @@ public sealed partial class TopBarWindow : Window
         return brush;
     }
 
+    internal void RefreshTodoSummary() => RenderModules();
+
     private void RenderModules()
     {
         if (_closing)
@@ -3078,7 +3357,7 @@ public sealed partial class TopBarWindow : Window
 
         _tick++;
         var minute = DateTime.Now.Ticks / TimeSpan.TicksPerMinute;
-        if (_todoFlyout?.IsOpen == true && minute != _lastCountdownMinute)
+        if ((_todoFlyout?.IsOpen == true || _capsuleExpanded) && minute != _lastCountdownMinute)
         {
             _lastCountdownMinute = minute;
             // Reuse the shared sampling cadence; no timer is owned by individual rows.
@@ -3093,7 +3372,32 @@ public sealed partial class TopBarWindow : Window
         }
         if (ModuleText(TopBarModuleKind.TodoSummary) is { } todo)
         {
-            todo.Text = _environment.CountIncompleteTodos().ToString();
+            if (IsCapsule)
+            {
+                var now = DateTime.Now;
+                var items = _environment.ReadTodoList()?.Items ?? [];
+                var next = TopBarModuleRules.NextTimedTodoToday(items, now);
+                var count = items.Count(item => item.Kind == TodoItemKind.Todo && !item.IsCompleted
+                    && !string.IsNullOrWhiteSpace(item.Text) && TodoService.BelongsToTodayList(item, now));
+                todo.Text = next is not null ? $"{next.DeadlineTime:HH:mm}  {next.Text}"
+                    : count > 0 ? $"今日待办  {count}" : now.ToString(_environment.Use24HourClock ? "HH:mm" : "hh:mm tt");
+                if (_capsuleStatus is { } status)
+                    status.Text = count > 0 ? $"还有 {count} 项待办" : "待办已完成";
+                var compactWidth = next is not null ? 225d : CapsuleWidth;
+                if (_capsuleCompactWidth != compactWidth)
+                {
+                    _capsuleCompactWidth = compactWidth;
+                    if (!_capsuleExpanded)
+                    {
+                        Surface.Width = compactWidth;
+                        ApplyCapsuleBounds(compactWidth, CapsuleHeight);
+                    }
+                }
+            }
+            else
+            {
+                todo.Text = _environment.CountIncompleteTodos().ToString();
+            }
         }
         if (ModuleText(TopBarModuleKind.Weather) is { } weather)
         {
@@ -3373,7 +3677,7 @@ public sealed partial class TopBarWindow : Window
     private void ApplySurface()
     {
         var glass = DesktopStyleRules.TopBar(_style, _state);
-        var acrylic = _acrylicAvailable
+        var acrylic = !IsCapsule && _acrylicAvailable
             && DesktopStyleRules.TopBarFrostedScrim(_state, glass.Surface);
         _acrylicBackdrop = acrylic;
         // The first call must also clear the startup probe on a light surface.
@@ -3384,14 +3688,33 @@ public sealed partial class TopBarWindow : Window
                 : TaskbarNativeMethods.AccentDisabled,
             acrylic ? AcrylicScrimAbgr : 0))
             _appliedAcrylic = acrylic;
-        var surfaceHex = acrylic ? AcrylicSurfaceTint : glass.Surface;
-        var background = new SolidColorBrush((Color)ColorConverter.ConvertFromString(surfaceHex));
-        background.Freeze();
-        Surface.Background = background;
-        var border = new SolidColorBrush((Color)ColorConverter.ConvertFromString(glass.Border));
-        border.Freeze();
-        Surface.BorderBrush = border;
-        Surface.BorderThickness = new Thickness(0, 0, 0, 1);
+        Surface.BorderThickness = IsCapsule ? new Thickness(1) : new Thickness(0, 0, 0, 1);
+        Surface.CornerRadius = IsCapsule ? new CornerRadius(20) : new CornerRadius(0);
+        Surface.HorizontalAlignment = IsCapsule ? HorizontalAlignment.Center : HorizontalAlignment.Stretch;
+        Surface.VerticalAlignment = IsCapsule ? VerticalAlignment.Top : VerticalAlignment.Stretch;
+        Surface.Width = IsCapsule ? (_capsuleExpanded ? CapsuleExpandedWidth : _capsuleCompactWidth) : double.NaN;
+        Surface.Height = IsCapsule ? (_capsuleExpanded ? _capsuleExpandedHeight : CapsuleHeight) : double.NaN;
+        if (IsCapsule)
+        {
+            if (!_state.FrostedGlass)
+            {
+                _capsuleGlass?.Dispose();
+                _capsuleGlass = null;
+            }
+            if (_capsuleGlass is null)
+            {
+                Surface.SetResourceReference(Border.BackgroundProperty, "FloatingGlassSurfaceBrush");
+                Surface.SetResourceReference(Border.BorderBrushProperty, "FloatingGlassBorderBrush");
+                if (_state.FrostedGlass)
+                    _capsuleGlass = new DockGlassSurface(this, Surface, "FloatingGlassSurfaceBrush",
+                        "FloatingGlassBorderBrush", "FloatingGlassCapsuleBrush");
+            }
+            return;
+        }
+        _capsuleGlass?.Dispose();
+        _capsuleGlass = null;
+        Surface.Background = FrozenBrush(acrylic ? AcrylicSurfaceTint : glass.Surface);
+        Surface.BorderBrush = FrozenBrush(glass.Border);
     }
 
     /// <summary>Whether the current surface decided to sit on the acrylic scrim.</summary>
@@ -3405,6 +3728,13 @@ public sealed partial class TopBarWindow : Window
         if (_appBar?.Monitor is not { } monitor || _closing)
         {
             return;
+        }
+
+        if (TaskbarEdgeGuard.GetNativeTaskbarLayout(monitor.Bounds) != _nativeTaskbar)
+        {
+            var autoHide = _autoHide;
+            ApplyState();
+            _autoHide = autoHide;
         }
 
         if (_attention.OrderedWindows.Count > 0)
@@ -3436,7 +3766,7 @@ public sealed partial class TopBarWindow : Window
         var zoomed = foreground && foregroundWindow != 0 && DockNativeMethods.IsZoomed(foregroundWindow);
         var trueFullScreen = DockVacateRules.IsTrueFullScreen(fullScreen, zoomed);
         _trueFullScreenForeground = trueFullScreen;
-        if (_searchWindow is { } floating && _state.SearchPresentation == SearchPresentation.Floating)
+        if (_searchWindow is { } floating && EffectiveSearchPresentation == SearchPresentation.Floating)
         {
             if (trueFullScreen && !_searchActive && floating.IsVisible)
             {
@@ -3464,6 +3794,11 @@ public sealed partial class TopBarWindow : Window
             // A reserved bar rides above normal windows and under a full-screen app,
             // like the taskbar; nothing else moves it.
             _appBar.SetFullScreenDetected(fullScreen);
+            if (!IsVisible && !fullScreen)
+            {
+                Show();
+                _appBar.EnsureLayer();
+            }
             return;
         }
 
@@ -3476,20 +3811,25 @@ public sealed partial class TopBarWindow : Window
             && cursor.X >= bounds.Left && cursor.X < bounds.Right
             && cursor.Y >= bounds.Top && cursor.Y < bounds.Bottom;
         var overlaps = foreground && foregroundBounds.Intersects(bounds);
+        var revealBounds = IsCapsule ? bounds with
+        {
+            Top = Math.Max(monitor.Bounds.Top, bounds.Top - (int)Math.Round(6d * monitor.Dpi / 96d))
+        } : bounds;
         var input = new DockAutoHideInput(
             WindowOverlapsDock: overlaps,
             ForegroundIsFullScreen: trueFullScreen,
             PointerInRevealZone: TopBarRevealRules.IsInRevealZone(
                 cursor.X,
                 cursor.Y,
-                monitor.Bounds,
-                revealDepth),
+                revealBounds,
+                IsCapsule ? bounds.Top - revealBounds.Top + revealDepth : revealDepth),
             PointerOverDock: pointerOverBar,
-            InteractionActive: _menuOpen || _searchActive
+            InteractionActive: _menuOpen || _searchActive || _capsuleExpanded
                 || _todoFlyout?.IsOpen == true || _clockFlyout?.IsOpen == true,
             // The immediate-collapse shortcut is the dock's; the bar keeps its debounce.
-            OverlapIsMaximizedWindow: false);
-        if (_autoHide.Update(input, DateTimeOffset.UtcNow))
+            OverlapIsMaximizedWindow: IsCapsule && zoomed);
+        _autoHide.Update(input, DateTimeOffset.UtcNow);
+        if (_autoHide.IsShown != IsVisible)
         {
             if (_autoHide.IsShown)
             {
@@ -3543,6 +3883,9 @@ public sealed partial class TopBarWindow : Window
     private void BuildContextMenu()
     {
         var menu = new ContextMenu();
+        var search = new MenuItem { Header = "搜索文件与应用" };
+        search.Click += (_, _) => Dispatcher.BeginInvoke(BeginSearchSession, DispatcherPriority.Input);
+        if (_state.Modules.Search) menu.Items.Add(search);
         var settings = new MenuItem { Header = "在冰蓝桌面中设置…" };
         settings.Click += (_, _) => _environment.OpenTopBarSettings();
         var exit = new MenuItem { Header = "退出冰蓝桌面" };
@@ -3572,9 +3915,13 @@ public sealed partial class TopBarWindow : Window
         {
             existing.IsOpen = false;
         }
-        var surfaceColor = (Color)ColorConverter.ConvertFromString(DesktopStyleRules.TopBar(_style, _state).Surface);
+        var surfaceColor = IsCapsule && TryFindResource("FloatingGlassSurfaceBrush") is SolidColorBrush material
+            ? material.Color
+            : (Color)ColorConverter.ConvertFromString(DesktopStyleRules.TopBar(_style, _state).Surface);
         var darkSurface = (0.2126d * surfaceColor.R + 0.7152d * surfaceColor.G + 0.0722d * surfaceColor.B) / 255d <= 0.6d;
         var menu = new NonActivatingPopupMenu(Surface, PlacementMode.Mouse, darkSurface);
+        if (IsCapsule && _state.Modules.Search)
+            menu.AddItem("搜索文件与应用", () => Dispatcher.BeginInvoke(BeginSearchSession, DispatcherPriority.Input));
         menu.AddItem("在冰蓝桌面中设置…", _environment.OpenTopBarSettings);
         menu.AddItem("退出冰蓝桌面", _environment.ExitApp);
         menu.Opened += (_, _) =>

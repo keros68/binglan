@@ -37,6 +37,8 @@ internal sealed class TopBarHost : IDisposable
 
     internal event Action? ShellRecovered;
 
+    internal void RefreshTodoSummary() => _window?.RefreshTodoSummary();
+
     internal IEnumerable<nint> ActiveDesktopHandles() =>
         _window?.ActiveDesktopHandles() ?? [];
 

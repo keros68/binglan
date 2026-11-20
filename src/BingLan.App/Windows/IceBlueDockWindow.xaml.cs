@@ -34,6 +34,7 @@ public partial class IceBlueDockWindow : Window
 {
     private const string PinDragFormat = "BingLan.DockPin";
     private const string RunningDragFormat = "BingLan.DockRunning";
+    private const double CommandGlyphCanvasSize = 24;
     private const int WmMouseActivate = 0x0021;
     private const int MaNoActivate = 3;
     private static readonly TimeSpan SmartHideCheckInterval = TimeSpan.FromMilliseconds(150);
@@ -62,8 +63,7 @@ public partial class IceBlueDockWindow : Window
     private readonly List<DockButtonParts> _itemButtons = [];
     private string _lastSignature = string.Empty;
     private string _lastStructureKey = string.Empty;
-    private bool _renderedStartEntry;
-    private bool _renderedDesktopEntry;
+    private (bool Start, bool Launcher, bool Desktop) _renderedCommandButtons;
     private nint _handle;
     private bool _closing;
     private bool _isChangingVisibilityByApp;
@@ -182,6 +182,11 @@ public partial class IceBlueDockWindow : Window
     internal event Action? DockStateChanged;
 
     internal event Action? SettingsRequested;
+    internal event Action? LauncherRequested;
+
+    internal Func<IReadOnlyList<(Guid Id, string Title)>>? ReadFileBoxes { get; init; }
+    internal Func<Guid, string, Task<string>>? SendToFileBox { get; init; }
+    internal Func<nint, nint>? ResolvePanelForeground { get; init; }
 
     internal event Action? HideRequested;
 
@@ -597,7 +602,9 @@ public partial class IceBlueDockWindow : Window
             // The row is built from the fitted size; the reserved length follows it.
             UpdateEffectiveIconSize(monitor, items);
         }
-        var signature = $"{_effectiveIconSize}|{_state.ShowStartMenuButton}|{_state.ShowDesktopButton}|{_dockOverflowing}|{BuildSignature(items)}|{string.Join(",", items.Select(item => $"{(_attention.Wants(item.Group) ? '!' : '-')}{_attention.UnreadCount(item.Group)}"))}";
+        var commands = VisibleCommands;
+        var rowSettings = $"{_effectiveIconSize}|{commands}|{_dockOverflowing}";
+        var signature = $"{rowSettings}|{BuildSignature(items)}|{string.Join(",", items.Select(item => $"{(_attention.Wants(item.Group) ? '!' : '-')}{_attention.UnreadCount(item.Group)}"))}";
         if (string.Equals(signature, _lastSignature, StringComparison.Ordinal))
         {
             return;
@@ -605,14 +612,12 @@ public partial class IceBlueDockWindow : Window
 
         var countChanged = items.Count != _items.Count
             || items.Count(item => item.IsPinned) != _items.Count(item => item.IsPinned)
-            || _renderedStartEntry != _state.ShowStartMenuButton
-            || _renderedDesktopEntry != _state.ShowDesktopButton;
-        _renderedStartEntry = _state.ShowStartMenuButton;
-        _renderedDesktopEntry = _state.ShowDesktopButton;
+            || _renderedCommandButtons != commands;
+        _renderedCommandButtons = commands;
         _lastSignature = signature;
         _items = items;
 
-        var structureKey = $"{_effectiveIconSize}|{_state.ShowStartMenuButton}|{_state.ShowDesktopButton}|{_dockOverflowing}|{BuildStructureKey(items)}";
+        var structureKey = $"{rowSettings}|{BuildStructureKey(items)}";
         if (string.Equals(structureKey, _lastStructureKey, StringComparison.Ordinal)
             && _itemButtons.Count == items.Count)
         {
@@ -631,13 +636,21 @@ public partial class IceBlueDockWindow : Window
         _lastStructureKey = structureKey;
         _itemButtons.Clear();
         ItemPanel.Children.Clear();
-        if (_state.ShowStartMenuButton)
+        if (commands.Start)
         {
             ItemPanel.Children.Add(BuildStartMenuButton());
-            if (items.Count > 0)
-            {
-                ItemPanel.Children.Add(BuildDivider());
-            }
+        }
+        if (commands.Launcher)
+        {
+            ItemPanel.Children.Add(BuildLauncherButton());
+        }
+        if (commands.Desktop)
+        {
+            ItemPanel.Children.Add(BuildShowDesktopButton());
+        }
+        if (LeadingButtonCount > 0 && items.Count > 0)
+        {
+            ItemPanel.Children.Add(BuildDivider());
         }
         for (var index = 0; index < items.Count; index++)
         {
@@ -656,15 +669,6 @@ public partial class IceBlueDockWindow : Window
             // Too many apps even at the minimum icon: the row scrolls, and this menu
             // keeps every app reachable without hunting for the scroll position.
             ItemPanel.Children.Add(BuildOverflowButton());
-        }
-
-        if (_state.ShowDesktopButton)
-        {
-            if (items.Count > 0 || _state.ShowStartMenuButton)
-            {
-                ItemPanel.Children.Add(BuildDivider());
-            }
-            ItemPanel.Children.Add(BuildShowDesktopButton());
         }
 
         if (countChanged)
@@ -713,13 +717,7 @@ public partial class IceBlueDockWindow : Window
 
     private Button BuildStartMenuButton()
     {
-        var glyph = new Grid
-        {
-            Width = _effectiveIconSize,
-            Height = _effectiveIconSize,
-            HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Center
-        };
+        var glyph = new Grid { Width = CommandGlyphCanvasSize, Height = CommandGlyphCanvasSize };
         glyph.RowDefinitions.Add(new RowDefinition());
         glyph.RowDefinitions.Add(new RowDefinition());
         glyph.ColumnDefinitions.Add(new ColumnDefinition());
@@ -730,8 +728,8 @@ public partial class IceBlueDockWindow : Window
             {
                 var tile = new Border
                 {
-                    Margin = new Thickness(1.5),
-                    CornerRadius = new CornerRadius(Math.Max(1, _effectiveIconSize * 0.04))
+                    Margin = new Thickness(1.15),
+                    CornerRadius = new CornerRadius(1.25)
                 };
                 tile.SetResourceReference(Border.BackgroundProperty, "DockRunningDotBrush");
                 Grid.SetRow(tile, row);
@@ -740,27 +738,7 @@ public partial class IceBlueDockWindow : Window
             }
         }
 
-        var content = new StackPanel { Orientation = Orientation.Vertical };
-        content.Children.Add(glyph);
-        // Reserve the running-indicator slot so the Start entry aligns with app icons.
-        content.Children.Add(new Border
-        {
-            Width = 4,
-            Height = 4,
-            Margin = new Thickness(0, 3, 0, 0),
-            Visibility = Visibility.Hidden
-        });
-
-        var button = new Button
-        {
-            Content = content,
-            Width = _effectiveIconSize + 16,
-            Height = _effectiveIconSize + 16,
-            Style = (Style)Resources["DockItemButtonStyle"],
-            ToolTip = "打开 Windows 开始菜单；右键打开系统快捷菜单",
-            Focusable = true
-        };
-        AutomationProperties.SetName(button, "打开 Windows 开始菜单");
+        var button = BuildDockCommandButton(glyph, "打开 Windows 开始菜单", "打开 Windows 开始菜单；右键打开系统快捷菜单");
         AutomationProperties.SetHelpText(button, "单击打开 Windows 开始菜单；右键或按菜单键、Shift+F10 打开系统快捷菜单");
         button.Click += async (_, _) =>
         {
@@ -786,45 +764,13 @@ public partial class IceBlueDockWindow : Window
                 if (!e.IsRepeat) await OpenQuickLinkMenuAsync();
             }
         };
-        AddHoverZoom(button, glyph);
         return button;
     }
 
     private Button BuildShowDesktopButton()
     {
-        var glyph = new TextBlock
-        {
-            Text = "\uE7F4",
-            FontFamily = new System.Windows.Media.FontFamily("Segoe Fluent Icons, Segoe MDL2 Assets"),
-            FontSize = Math.Max(12, _effectiveIconSize * 0.62),
-            HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Center
-        };
-        glyph.SetResourceReference(TextBlock.ForegroundProperty, "DockRunningDotBrush");
-        var icon = new Grid { Width = _effectiveIconSize, Height = _effectiveIconSize };
-        icon.Children.Add(glyph);
-
-        var content = new StackPanel { Orientation = Orientation.Vertical };
-        content.Children.Add(icon);
-        // Reserve the running-indicator slot so the entry aligns with app icons.
-        content.Children.Add(new Border
-        {
-            Width = 4,
-            Height = 4,
-            Margin = new Thickness(0, 3, 0, 0),
-            Visibility = Visibility.Hidden
-        });
-
-        var button = new Button
-        {
-            Content = content,
-            Width = _effectiveIconSize + 16,
-            Height = _effectiveIconSize + 16,
-            Style = (Style)Resources["DockItemButtonStyle"],
-            ToolTip = "显示桌面；再次点击恢复窗口（快捷键 Win+D）",
-            Focusable = true
-        };
-        AutomationProperties.SetName(button, "显示桌面");
+        var glyph = CreateDockCommandOutline("M4,3.5 H20 A2,2 0 0 1 22,5.5 V15.5 A2,2 0 0 1 20,17.5 H4 A2,2 0 0 1 2,15.5 V5.5 A2,2 0 0 1 4,3.5 Z M12,17.5 V21 M7.5,21 H16.5");
+        var button = BuildDockCommandButton(glyph, "显示桌面", "显示桌面；再次点击恢复窗口（快捷键 Win+D）");
         AutomationProperties.SetHelpText(button, "最小化所有窗口显示桌面，再次点击恢复；全屏时可按 Win+D");
         button.Click += async (_, _) =>
         {
@@ -835,6 +781,60 @@ public partial class IceBlueDockWindow : Window
             }
             ShowDesktopTriggered?.Invoke();
         };
+        return button;
+    }
+
+    private Button BuildLauncherButton()
+    {
+        var glyph = CreateDockCommandOutline("M4,4 H20 A2,2 0 0 1 22,6 V18 A2,2 0 0 1 20,20 H4 A2,2 0 0 1 2,18 V6 A2,2 0 0 1 4,4 Z M2,9 H22 M6,13 H13 M6,16 H17");
+        var button = BuildDockCommandButton(glyph, "打开启动面板", "打开启动面板");
+        button.Click += (_, _) => LauncherRequested?.Invoke();
+        return button;
+    }
+
+    private static System.Windows.Shapes.Path CreateDockCommandOutline(string data)
+    {
+        var frame = new System.Windows.Shapes.Path
+        {
+            Data = Geometry.Parse(data),
+            Width = CommandGlyphCanvasSize,
+            Height = CommandGlyphCanvasSize,
+            StrokeThickness = 1.75,
+            StrokeStartLineCap = PenLineCap.Round,
+            StrokeEndLineCap = PenLineCap.Round
+        };
+        frame.SetResourceReference(System.Windows.Shapes.Shape.StrokeProperty, "DockRunningDotBrush");
+        return frame;
+    }
+
+    private Button BuildDockCommandButton(FrameworkElement glyph, string name, string toolTip)
+    {
+        var size = _effectiveIconSize * 0.72;
+        var icon = new Viewbox
+        {
+            Width = size,
+            Height = size,
+            Stretch = Stretch.Uniform,
+            Child = glyph,
+            HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        var iconSlot = new Grid { Width = _effectiveIconSize, Height = _effectiveIconSize };
+        iconSlot.Children.Add(icon);
+        // Reserve the running-indicator slot to align with the app icons.
+        var content = new StackPanel();
+        content.Children.Add(iconSlot);
+        content.Children.Add(new Border { Height = 7, Visibility = Visibility.Hidden });
+        var button = new Button
+        {
+            Content = content,
+            Width = _effectiveIconSize + 16,
+            Height = _effectiveIconSize + 16,
+            Style = (Style)Resources["DockItemButtonStyle"],
+            ToolTip = toolTip,
+            Focusable = true
+        };
+        AutomationProperties.SetName(button, name);
         AddHoverZoom(button, icon);
         return button;
     }
@@ -1231,6 +1231,18 @@ public partial class IceBlueDockWindow : Window
                 "打开文件位置",
                 async () => Report(await Task.Run(() => WindowCommandService.OpenFileLocation(executablePath))));
         }
+        var mappingPath = item.Pinned is { AppUserModelId: null } mappingPin
+            && string.IsNullOrWhiteSpace(mappingPin.Arguments)
+            && (string.IsNullOrWhiteSpace(mappingPin.WorkingDirectory)
+                || string.Equals(mappingPin.WorkingDirectory, System.IO.Path.GetDirectoryName(mappingPin.ExecutablePath),
+                    StringComparison.OrdinalIgnoreCase))
+            ? mappingPin.TargetPath ?? mappingPin.ExecutablePath
+            : null;
+        if (mappingPath is not null && System.IO.Path.IsPathFullyQualified(mappingPath)
+            && ReadFileBoxes is not null && SendToFileBox is not null)
+        {
+            menu.AddItem("发送到分组盒…", () => OpenSendToFileBoxMenu(mappingPath, anchor));
+        }
 
         if (menu.HasItems)
         {
@@ -1273,6 +1285,32 @@ public partial class IceBlueDockWindow : Window
             });
         }
         menu.AddItem("Dock 设置…", () => SettingsRequested?.Invoke());
+        menu.IsOpen = true;
+    }
+
+    private void OpenSendToFileBoxMenu(string path, UIElement? anchor)
+    {
+        if (ReadFileBoxes is not { } read || SendToFileBox is not { } send)
+        {
+            return;
+        }
+
+        var boxes = read();
+        if (boxes.Count == 0)
+        {
+            CommandFailed?.Invoke("请先新建分组盒。");
+            return;
+        }
+
+        var menu = anchor is null ? CreateMenu() : CreateMenu(anchor, PlacementMode.Top);
+        foreach (var (id, title) in boxes)
+        {
+            menu.AddItem(title, async () =>
+            {
+                var status = await send(id, path);
+                CommandFailed?.Invoke(status);
+            });
+        }
         menu.IsOpen = true;
     }
 
@@ -1726,32 +1764,36 @@ public partial class IceBlueDockWindow : Window
 
     private double ContentLengthDip()
     {
-        var hasApps = _items.Count > 0;
-        var hasStartEntry = _state.ShowStartMenuButton;
-        var hasDesktopEntry = _state.ShowDesktopButton;
-        var dividerCount = (hasStartEntry && hasApps ? 1 : 0)
-            + (_items.Any(item => item.IsPinned) && _items.Any(item => !item.IsPinned) ? 1 : 0)
-            + (hasDesktopEntry && (hasApps || hasStartEntry) ? 1 : 0);
-        var extraCells = (_dockOverflowing ? 1 : 0) + (hasDesktopEntry ? 1 : 0);
         return DockLayoutMetrics.ContentLengthForItems(
-                   _items.Count + (hasStartEntry ? 1 : 0) + extraCells,
+                   _items.Count + LeadingButtonCount + (_dockOverflowing ? 1 : 0),
                    _effectiveIconSize)
-               + (dividerCount * DockLayoutMetrics.DividerDip);
+               + (DividerCount(_items) * DockLayoutMetrics.DividerDip);
     }
+
+    private (bool Start, bool Launcher, bool Desktop) VisibleCommands =>
+        (_state.ShowStartMenuButton, _state.ShowLauncherButton && LauncherRequested is not null, _state.ShowDesktopButton);
+
+    private int LeadingButtonCount
+    {
+        get
+        {
+            var (start, launcher, desktop) = VisibleCommands;
+            return (start ? 1 : 0) + (launcher ? 1 : 0) + (desktop ? 1 : 0);
+        }
+    }
+
+    private int DividerCount(IReadOnlyList<DockItem> items) =>
+        (LeadingButtonCount > 0 && items.Count > 0 ? 1 : 0)
+        + (items.Any(item => item.IsPinned) && items.Any(item => !item.IsPinned) ? 1 : 0);
 
     private void UpdateEffectiveIconSize(MonitorSnapshot monitor, IReadOnlyList<DockItem> items)
     {
-        var hasApps = items.Count > 0;
-        var hasStartEntry = _state.ShowStartMenuButton;
-        var hasDesktopEntry = _state.ShowDesktopButton;
-        var dividerCount = (hasStartEntry && hasApps ? 1 : 0)
-            + (items.Any(item => item.IsPinned) && items.Any(item => !item.IsPinned) ? 1 : 0)
-            + (hasDesktopEntry && (hasApps || hasStartEntry) ? 1 : 0);
         // The reserved strip spans the monitor, so the row takes up to its fraction of
         // the work-area width without taking space from any window.
-        var availableDip = monitor.WorkingArea.Width * 96d / monitor.Dpi * DockLayoutMetrics.MaxExtentFraction;
-        var cellCount = items.Count + (hasStartEntry ? 1 : 0) + (hasDesktopEntry ? 1 : 0);
-        var dividersDip = dividerCount * DockLayoutMetrics.DividerDip;
+        var workArea = TaskbarEdgeGuard.AvoidNativeTaskbar(monitor.WorkingArea, monitor.Bounds);
+        var availableDip = workArea.Width * 96d / monitor.Dpi * DockLayoutMetrics.MaxExtentFraction;
+        var cellCount = items.Count + LeadingButtonCount;
+        var dividersDip = DividerCount(items) * DockLayoutMetrics.DividerDip;
         var preferred = _state.AutoIconSize
             ? DockLayoutMetrics.FitIconSize(cellCount, dividersDip, availableDip, _state.IconSize)
             : _state.IconSize;
@@ -2337,8 +2379,9 @@ public partial class IceBlueDockWindow : Window
         // window it was borrowed from: focusing the box must not read as the desktop
         // coming back and show a dock that was hidden for a maximized window in front.
         var (searchHolder, searchBorrowed) = TopBarWindow.SearchForeground;
+        var currentForeground = DockNativeMethods.GetForegroundWindow();
         window = DockForegroundRules.EffectiveForeground(
-            DockNativeMethods.GetForegroundWindow(),
+            ResolvePanelForeground?.Invoke(currentForeground) ?? currentForeground,
             searchHolder,
             searchBorrowed);
         if (window == 0 || window == _handle || window == (_openMenu?.PopupHandle ?? 0) || DockNativeMethods.IsIconic(window))

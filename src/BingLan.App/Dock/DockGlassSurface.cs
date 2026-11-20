@@ -15,13 +15,15 @@ using Window = System.Windows.Window;
 
 namespace BingLan.App.Dock;
 
-/// <summary>Shared glass lifetime, theme and animation binding for the Dock row and handle.</summary>
+/// <summary>Shared glass lifetime, theme and animation binding for floating surfaces.</summary>
 internal sealed class DockGlassSurface : IDisposable
 {
     private static readonly DependencyProperty ControllerProperty = DependencyProperty.RegisterAttached(
         "Controller", typeof(DockGlassSurface), typeof(DockGlassSurface));
     private static readonly DependencyProperty FillProperty = DependencyProperty.RegisterAttached(
         "Fill", typeof(Brush), typeof(DockGlassSurface), new PropertyMetadata(null, BrushChanged));
+    private static readonly DependencyProperty GlassFillProperty = DependencyProperty.RegisterAttached(
+        "GlassFill", typeof(Brush), typeof(DockGlassSurface), new PropertyMetadata(null, BrushChanged));
     private static readonly DependencyProperty StrokeProperty = DependencyProperty.RegisterAttached(
         "Stroke", typeof(Brush), typeof(DockGlassSurface), new PropertyMetadata(null, BrushChanged));
     private readonly Window _window;
@@ -35,10 +37,11 @@ internal sealed class DockGlassSurface : IDisposable
     private bool _disposed;
     private bool _tracking;
     private bool _usingGlassFill;
+    private bool _clearMode;
     private (Rect Rect, double RadiusX, double RadiusY, double Opacity, Color Fill, Color Stroke)? _lastVisual;
     private bool _transparency = ReadTransparency();
 
-    internal DockGlassSurface(Window window, Border surface, string fillKey, string strokeKey)
+    internal DockGlassSurface(Window window, Border surface, string fillKey, string strokeKey, string? glassFillKey = null)
     {
         _window = window;
         _surface = surface;
@@ -46,6 +49,10 @@ internal sealed class DockGlassSurface : IDisposable
         _strokeKey = strokeKey;
         surface.SetValue(ControllerProperty, this);
         surface.SetResourceReference(FillProperty, fillKey);
+        if (glassFillKey is not null)
+        {
+            surface.SetResourceReference(GlassFillProperty, glassFillKey);
+        }
         surface.SetResourceReference(StrokeProperty, strokeKey);
         window.Loaded += Loaded;
         window.IsVisibleChanged += VisibilityChanged;
@@ -55,11 +62,24 @@ internal sealed class DockGlassSurface : IDisposable
         surface.SizeChanged += SurfaceSizeChanged;
         AccessibilityThemeManager.HighContrastChanged += ThemeChanged;
         SystemEvents.PowerModeChanged += PowerModeChanged;
+        if (window.IsLoaded)
+        {
+            AttachWindow();
+            Sync(true);
+        }
     }
 
     internal bool IsActive => _backdrop is { IsShown: true };
     internal nint BackgroundHandle => _backdrop?.Handle ?? 0;
     internal PixelRect? BackgroundBounds => _backdrop?.Bounds;
+
+    internal void SetClearMode(bool clear)
+    {
+        if (_clearMode == clear) return;
+        _clearMode = clear;
+        Release();
+        Sync(true);
+    }
 
     internal void TrackAnimation(bool active)
     {
@@ -77,12 +97,17 @@ internal sealed class DockGlassSurface : IDisposable
         (sender.GetValue(ControllerProperty) as DockGlassSurface)?.Sync();
     private void Loaded(object sender, RoutedEventArgs e)
     {
+        AttachWindow();
+        Sync(true);
+    }
+
+    private void AttachWindow()
+    {
         if (_source is null)
         {
             _source = PresentationSource.FromVisual(_window) as HwndSource;
             _source?.AddHook(WindowProc);
         }
-        Sync(true);
     }
     private void VisibilityChanged(object sender, DependencyPropertyChangedEventArgs e) => Sync(true);
     private void PlacementChanged(object? sender, EventArgs e) => Sync(true);
@@ -132,10 +157,34 @@ internal sealed class DockGlassSurface : IDisposable
         try
         {
             var fill = _surface.GetValue(FillProperty) as SolidColorBrush;
+            var glassFill = _surface.GetValue(GlassFillProperty) as SolidColorBrush ?? fill;
             var stroke = _surface.GetValue(StrokeProperty) as SolidColorBrush;
-            if (_failed || !OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000)
+            if (!OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000)
                 || !_transparency || AccessibilityThemeManager.IsHighContrastEnabled || SystemParameters.HighContrast
-                || fill is null || fill.Color.A == 0)
+                || glassFill is null || glassFill.Color.A == 0)
+            {
+                Release();
+                return;
+            }
+            if (_clearMode)
+            {
+                _backdrop?.Dispose();
+                _backdrop = null;
+                _lastVisual = null;
+                // Match the native backdrop's tint strength while leaving the desktop unblurred.
+                var clearColor = glassFill.Color;
+                clearColor.A = (byte)Math.Max(1, Math.Round(clearColor.A * 0.24));
+                if (_surface.Background is not SolidColorBrush clearBrush || clearBrush.Color != clearColor)
+                {
+                    var clearFill = new SolidColorBrush(clearColor);
+                    clearFill.Freeze();
+                    _surface.Background = clearFill;
+                }
+                _surface.BorderBrush = stroke;
+                _usingGlassFill = true;
+                return;
+            }
+            if (_failed)
             {
                 Release();
                 return;
@@ -158,7 +207,7 @@ internal sealed class DockGlassSurface : IDisposable
             rect.Transform(dpi);
             _backdrop ??= new DockCompositionBackdrop();
             var visual = (Rect: rect, RadiusX: radiusX, RadiusY: radiusY,
-                Opacity: _surface.Opacity * _window.Opacity, Fill: fill.Color, Stroke: stroke?.Color ?? Colors.Transparent);
+                Opacity: _surface.Opacity * _window.Opacity, Fill: glassFill.Color, Stroke: stroke?.Color ?? Colors.Transparent);
             if (_lastVisual != visual)
             {
                 _backdrop.Update(visual.Rect, visual.RadiusX, visual.RadiusY, visual.Opacity, visual.Fill, visual.Stroke);
@@ -167,7 +216,7 @@ internal sealed class DockGlassSurface : IDisposable
             // Alpha 1 retains native layered-window hit testing over the whole surface.
             if (_surface.Background is not SolidColorBrush { Color.A: 1 })
             {
-                _surface.Background = new SolidColorBrush(Color.FromArgb(1, fill.Color.R, fill.Color.G, fill.Color.B));
+                _surface.Background = new SolidColorBrush(Color.FromArgb(1, glassFill.Color.R, glassFill.Color.G, glassFill.Color.B));
                 _surface.BorderBrush = Brushes.Transparent;
                 _usingGlassFill = true;
             }
@@ -224,6 +273,9 @@ internal sealed class DockGlassSurface : IDisposable
         AccessibilityThemeManager.HighContrastChanged -= ThemeChanged;
         SystemEvents.PowerModeChanged -= PowerModeChanged;
         _surface.ClearValue(ControllerProperty);
+        _surface.ClearValue(FillProperty);
+        _surface.ClearValue(GlassFillProperty);
+        _surface.ClearValue(StrokeProperty);
         Release();
     }
 }

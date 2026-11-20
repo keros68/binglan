@@ -28,6 +28,7 @@ internal sealed class TopBarAppBarController : IDisposable
     private readonly AppBarWorkAreaCheck _workAreaCheck = new();
     private MonitorSnapshot? _monitor;
     private double _heightDip;
+    private double? _compactWidthDip;
     private bool _reserveWorkArea;
     private bool _fullScreenDetected;
     private bool _positioning;
@@ -73,12 +74,13 @@ internal sealed class TopBarAppBarController : IDisposable
         UpdateWindowLayer();
     }
 
-    internal void Apply(MonitorSnapshot monitor, bool reserveWorkArea, double heightDip)
+    internal void Apply(MonitorSnapshot monitor, bool reserveWorkArea, double heightDip, double? compactWidthDip = null)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         _monitor = monitor;
         _reserveWorkArea = reserveWorkArea;
         _heightDip = Math.Max(1d, heightDip);
+        _compactWidthDip = compactWidthDip;
 
         Dispatch(_reservation.Apply(reserveWorkArea));
         Position();
@@ -134,6 +136,14 @@ internal sealed class TopBarAppBarController : IDisposable
         _positioning = true;
         try
         {
+            // The native taskbar may move after this bar has already reserved the top.
+            // Its confirmed edge takes precedence over our retained reservation.
+            if (TaskbarEdgeGuard.GetNativeTaskbarLayout(_monitor.Bounds)?.Edge == DockEdge.Top
+                && _reservation.IsRegistered)
+            {
+                _reserveWorkArea = false;
+                Dispatch(_reservation.Release());
+            }
             var scale = _monitor.Dpi / 96d;
             var thicknessPixels = Math.Max(1, (int)Math.Round(_heightDip * scale));
             // The reservation is one pixel shorter than the bar: a maximized window
@@ -179,11 +189,20 @@ internal sealed class TopBarAppBarController : IDisposable
             }
             else
             {
-                var workArea = DockAppBarController.GetLiveWorkingArea(_monitor);
+                var workArea = TaskbarEdgeGuard.AvoidNativeTaskbar(
+                    DockAppBarController.GetLiveWorkingArea(_monitor), _monitor.Bounds);
                 strip = DockGeometry.Calculate(
                     workArea,
                     Edge,
                     Math.Min(reservePixels, workArea.Height));
+                if (_compactWidthDip is { } compactWidth)
+                {
+                    var width = Math.Clamp((int)Math.Round(compactWidth * scale), 1, workArea.Width);
+                    var top = Math.Min(workArea.Top + (int)Math.Round(6d * scale),
+                        Math.Max(workArea.Top, workArea.Bottom - thicknessPixels));
+                    var left = workArea.Left + (workArea.Width - width) / 2;
+                    strip = new PixelRect(left, top, left + width, Math.Min(top + thicknessPixels, workArea.Bottom));
+                }
             }
 
             Bounds = strip;
@@ -248,8 +267,9 @@ internal sealed class TopBarAppBarController : IDisposable
             // A work-area change can leave Explorer holding a stale strip for the bar,
             // for example after moving to a monitor with another scale.
             case NativeMethods.WmSettingChange
-                when wParam == NativeMethods.SpiSetWorkArea && _reservation.IsRegistered:
-                _window.Dispatcher.BeginInvoke(DispatcherPriority.Background, Position);
+                when wParam == NativeMethods.SpiSetWorkArea:
+                _window.Dispatcher.BeginInvoke(DispatcherPriority.Background,
+                    () => EnvironmentChanged?.Invoke());
                 break;
             case DockNativeMethods.WmDisplayChange:
             case DockNativeMethods.WmDpiChanged:

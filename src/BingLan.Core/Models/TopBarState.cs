@@ -17,6 +17,12 @@ public enum SearchPresentation
     Icon
 }
 
+public enum TopBarDisplayMode
+{
+    FullWidth,
+    Capsule
+}
+
 /// <summary>The top bar's read-only modules, in display order. The search box sits in
 /// the bar's centre regardless of this order; its kind is here so it shares the module
 /// switch machinery with the rest.</summary>
@@ -79,6 +85,9 @@ public sealed class TopBarState
     public string? MonitorDeviceName { get; set; }
 
     public TopBarVisibilityMode VisibilityMode { get; set; } = TopBarVisibilityMode.ReserveTopEdge;
+
+    /// <summary>Machine-local layout; full width remains the default for existing profiles.</summary>
+    public TopBarDisplayMode DisplayMode { get; set; }
 
     public TopBarModuleSwitches Modules { get; set; } = new();
 
@@ -189,6 +198,10 @@ public static class TopBarRules
         if (!Enum.IsDefined(state.VisibilityMode))
         {
             state.VisibilityMode = TopBarVisibilityMode.ReserveTopEdge;
+        }
+        if (!Enum.IsDefined(state.DisplayMode))
+        {
+            state.DisplayMode = TopBarDisplayMode.FullWidth;
         }
         state.SurfaceColor = WidgetAppearanceRules.CoerceBackgroundColor(state.SurfaceColor);
         if (double.IsNaN(state.SurfaceOpacity) || double.IsInfinity(state.SurfaceOpacity))

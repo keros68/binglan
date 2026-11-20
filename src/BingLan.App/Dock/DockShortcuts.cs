@@ -52,7 +52,11 @@ internal static class DockShortcuts
     /// Programs in the current user's and the shared Start menu, one per program, sorted
     /// by name. Uninstallers, help files and other non-app entries are left out.
     /// </summary>
-    internal static IReadOnlyList<DockPinnedApp> ReadStartMenuApps()
+    internal static IReadOnlyList<DockPinnedApp> ReadStartMenuApps() =>
+        ReadStartMenuApps(preserveLaunchVariants: false);
+
+    internal static IReadOnlyList<DockPinnedApp> ReadStartMenuApps(bool preserveLaunchVariants,
+        IDictionary<DockPinnedApp, string>? startMenuFolders = null)
     {
         var options = new EnumerationOptions
         {
@@ -78,9 +82,13 @@ internal static class DockShortcuts
                 {
                     continue;
                 }
-                if (CreatePin(shortcut) is { ExecutablePath: { } path } app && !apps.ContainsKey(path))
+                if (CreatePin(shortcut) is { ExecutablePath: { } path } app)
                 {
-                    apps[path] = app;
+                    if (apps.TryAdd(Key(path, app), app) && startMenuFolders is not null
+                        && Path.GetFileName(Path.GetDirectoryName(shortcut)) is { Length: > 0 } group)
+                    {
+                        startMenuFolders.Add(app, group);
+                    }
                 }
             }
         }
@@ -92,9 +100,13 @@ internal static class DockShortcuts
         if (CreatePin(explorer) is { ExecutablePath: { } explorerPath } fileExplorer)
         {
             fileExplorer.DisplayName = "文件资源管理器";
-            apps[explorerPath] = fileExplorer;
+            apps[Key(explorerPath, fileExplorer)] = fileExplorer;
         }
         return apps.Values.OrderBy(app => app.DisplayName, StringComparer.CurrentCultureIgnoreCase).ToArray();
+
+        string Key(string path, DockPinnedApp app) => preserveLaunchVariants
+            ? path + '\0' + app.Arguments + '\0' + app.WorkingDirectory
+            : path;
     }
 
     /// <summary>

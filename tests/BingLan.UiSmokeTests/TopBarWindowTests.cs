@@ -195,6 +195,7 @@ internal static class TopBarWindowTests
         ClicksOpenSettings(show, pump);
         SurfacePaintsGlass(show, pump);
         TodoFlyoutShowsItemsAndCloses(show, pump);
+        CapsuleExpandsWithinItsSurface(show, pump);
         WeatherHoverOpensTooltip(show, pump);
         SearchShowsResultsAndOpens(show, pump);
         SearchImeKeysYieldAndOpenDefers(show, pump);
@@ -1953,6 +1954,52 @@ internal static class TopBarWindowTests
         finally
         {
             bar.Close();
+            pump();
+        }
+    }
+
+    private static void CapsuleExpandsWithinItsSurface(Action<Window> show, Action pump)
+    {
+        var state = BarState();
+        state.DisplayMode = TopBarDisplayMode.Capsule;
+        state.VisibilityMode = TopBarVisibilityMode.SmartHide;
+        using var sampler = new WindowsPerformanceSamplingService();
+        var item = new TodoItemState { Text = "今天的事项", Date = DateTime.Today };
+        var tomorrow = new TodoItemState { Text = "明天的事项", Date = DateTime.Today.AddDays(1) };
+        var environment = new FakeEnvironment { TodoList = new TopBarTodoList("待办", [item, tomorrow]) };
+        var bar = new TopBarWindow(state, new DesktopStyleState(), environment, sampler, enableExperimentalCapsule: true);
+        var previousMotion = IceBlueDockWindow.Motion;
+        IceBlueDockWindow.Motion = MotionLevel.Off;
+        show(bar);
+        try
+        {
+            var surface = (Border)bar.FindName("Surface");
+            Assert(surface.Width <= 180 && surface.Height == 40, "空闲胶囊应为紧凑状态岛");
+            Assert(!AllButtons(bar).Any(button => button.IsVisible
+                && AutomationProperties.GetName(button) == "展开搜索"), "胶囊不应常驻搜索图标");
+            var summary = ButtonByName(bar, "今日待办概要，点击查看列表");
+            Invoke(summary);
+            pump();
+            Assert(bar.CapsuleDetailsExpanded && bar.TodoFlyout is null,
+                "胶囊应在自身表面展开，不能另开待办 Popup");
+            Assert(surface.Width == 352 && surface.Height > 80, "展开应增大同一胶囊表面的宽高");
+            var texts = DescendantTextBlocks(bar.CapsuleDetailsElement!).Select(text => text.Text).ToList();
+            Assert(texts.Contains("今天的事项") && !texts.Contains("明天的事项"),
+                "展开内容应复用今日列表的日期范围");
+            Invoke(summary);
+            pump();
+            Assert(!bar.CapsuleDetailsExpanded && bar.CapsuleDetailsElement is null
+                && surface.Width <= 180 && surface.Height == 40, "再次点击应收起并恢复紧凑尺寸");
+            Invoke(summary);
+            bar.BeginSearchSession();
+            Assert(!bar.CapsuleDetailsExpanded && bar.SearchSessionActive,
+                "保留的搜索入口应收起待办并打开搜索会话");
+            bar.EndSearchSession();
+        }
+        finally
+        {
+            bar.Close();
+            IceBlueDockWindow.Motion = previousMotion;
             pump();
         }
     }

@@ -1447,7 +1447,7 @@ public partial class FileBoxWindow : WidgetWindowBase
             var newPaths = candidates.Where(path => existing.Contains(path) && !knownPaths.Contains(path)).ToArray();
             return (newPaths, LoadIcons(newPaths, iconLoader ?? ShellIconProvider.GetIcon), invalidCount);
         });
-        if (existingCandidates.Length == 0)
+        if (existingCandidates.Length == 0 || _closeCts.IsCancellationRequested)
         {
             return (0, invalid, normalized.Length);
         }
@@ -1494,7 +1494,7 @@ public partial class FileBoxWindow : WidgetWindowBase
 
     internal void SetOperationStatus(string message) => StatusText.Text = message;
 
-    internal async Task AddMappingsWithStatusAsync(
+    internal async Task<string> AddMappingsWithStatusAsync(
         IEnumerable<string> paths, Func<string, ImageSource?>? iconLoader = null)
     {
         var (added, invalid, total) = await PrepareAndAddMappingsAsync(paths, countInvalid: true, iconLoader);
@@ -1502,6 +1502,7 @@ public partial class FileBoxWindow : WidgetWindowBase
         StatusText.Text = added > 0
             ? skipped.Length > 0 ? $"已新增 {added} 项；{skipped}" : $"已新增 {added} 项"
             : skipped.Length > 0 && invalid == total ? skipped : "这些项目已经在分组盒中" + (skipped.Length > 0 ? $"；{skipped}" : string.Empty);
+        return StatusText.Text;
     }
 
     private void RefreshTile(FileTile tile)

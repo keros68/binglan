@@ -18,7 +18,7 @@ using BingLan.Core.Services;
 
 namespace BingLan.App;
 
-public sealed class WidgetCoordinator : IDisposable
+public sealed partial class WidgetCoordinator : IDisposable
 {
     private static readonly DesktopComponentKind[] InformationComponentKinds =
     [
@@ -119,6 +119,10 @@ public sealed class WidgetCoordinator : IDisposable
                 "冰蓝 Dock",
                 message,
                 TrayTipKind.Info));
+        _dock.LauncherRequested += ToggleLauncherPanel;
+        _dock.ReadFileBoxes = ReadLauncherFileBoxes;
+        _dock.SendToFileBox = SendLauncherPathToFileBoxAsync;
+        _dock.ResolvePanelForeground = ResolveLauncherForeground;
         _dock.ShellRecovered += _desktopSurfaceWatcher.ScheduleCheck;
         _dock.ShowDesktopTriggered += _desktopSurfaceWatcher.ScheduleToggleDesktopCheck;
         _taskbar = new TaskbarAdapter(TaskbarCheckpointPath(_store.DataDirectory));
@@ -685,6 +689,11 @@ public sealed class WidgetCoordinator : IDisposable
                 }
                 // Saving captures the cards again, now remembered for this arrangement.
                 WindowScreenRecovery.SettleLayout();
+                if (_state.Taskbar.RevealOnlyAtCorners)
+                {
+                    _cornerReveal.Update();
+                }
+                _settingsWindow?.RefreshTaskbarSettings();
                 ScheduleSave();
             });
 
@@ -801,6 +810,7 @@ public sealed class WidgetCoordinator : IDisposable
         _isExiting = true;
         _trayIcon.Visible = false;
         _trayIcon.Dispose();
+        _launcherPanel?.Close();
         _settingsWindow?.Close();
         _settingsWindow = null;
         SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
@@ -1117,6 +1127,10 @@ public sealed class WidgetCoordinator : IDisposable
 
         Capture(window);
         ScheduleSave();
+        if (window is TodoWidgetWindow)
+        {
+            _topBar.RefreshTodoSummary();
+        }
         if (window is FileBoxWindow && _state.FileBoxAutomationEnabled)
         {
             // Box membership changed; keep the watched folders and the gone sweep current.
@@ -1419,6 +1433,12 @@ public sealed class WidgetCoordinator : IDisposable
                 RestoreCleanDesktopIcons = RestoreCleanDesktopIconsAsync,
                 Style = _state.Style,
                 ApplyStyle = ApplyStyle,
+                LauncherAppearance = _state.LauncherAppearance,
+                ApplyLauncherAppearance = () =>
+                {
+                    _launcherPanel?.ApplyAppearance();
+                    ScheduleSave();
+                },
                 AddWidget = kind =>
                 {
                     switch (kind)
@@ -1849,6 +1869,8 @@ public sealed class WidgetCoordinator : IDisposable
         resources["DockSurfaceBrush"] = Brush(dock.Surface);
         resources["DockSurfaceBorderBrush"] = Brush(dock.Border);
         resources["DockRunningDotBrush"] = Brush(dock.RunningDot);
+        FloatingGlassPalette.Apply(resources, dock);
+        _launcherPanel?.ApplyAppearance();
         resources["PerformanceAccentBrush"] = Brush("#F5" + _state.Style.AccentColor.TrimStart('#'));
         // A whisper of the accent colour behind an entry whose deadline is due soon.
         resources["TodoDueSoonBrush"] = Brush("#26" + _state.Style.AccentColor.TrimStart('#'));
@@ -2006,6 +2028,11 @@ public sealed class WidgetCoordinator : IDisposable
             return;
         }
 
+        RemoveWidget(window);
+    }
+
+    private void RemoveWidget(WidgetWindowBase window)
+    {
         switch (window)
         {
             case TodoWidgetWindow todo:
@@ -2648,6 +2675,7 @@ public sealed class WidgetCoordinator : IDisposable
         SaveNow();
         _settingsWindow?.Close();
         _settingsWindow = null;
+        _launcherPanel?.Close();
         _mappingWatcher.Dispose();
         _dock.Dispose();
         _cornerReveal.Dispose();
@@ -2668,6 +2696,7 @@ public sealed class WidgetCoordinator : IDisposable
     private TrayIconHost BuildTrayIcon()
     {
         var trayIcon = new TrayIconHost("冰蓝桌面");
+        trayIcon.AddItem("打开启动面板", ToggleLauncherPanel);
         trayIcon.AddItem("一键整理桌面", async () => await OrganizeDesktopAsync());
         trayIcon.AddSeparator();
         _toggleDesktopMenuItem = trayIcon.AddItem("隐藏桌面组件", ToggleDesktop);

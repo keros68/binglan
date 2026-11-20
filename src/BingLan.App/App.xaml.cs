@@ -80,6 +80,11 @@ public partial class App : System.Windows.Application
         }
         _coordinator = new WidgetCoordinator(interactiveQa, dataDirectory, showOnboarding: true);
         _coordinator.Start();
+        if (interactiveQa && e.Args.Contains("--open-launcher", StringComparer.OrdinalIgnoreCase))
+        {
+            Dispatcher.BeginInvoke(_coordinator.ToggleLauncherPanel,
+                System.Windows.Threading.DispatcherPriority.ApplicationIdle);
+        }
         SessionEnding += (_, _) => _coordinator?.OnQueryEndSession();
         ListenForExitSignal(instanceName);
         // Once running, one failed action (a shell call, a damaged file) is logged and

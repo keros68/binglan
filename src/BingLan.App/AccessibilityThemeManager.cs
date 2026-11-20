@@ -1,6 +1,8 @@
 using System.ComponentModel;
 using System.Windows;
 using System.Windows.Media;
+using BingLan.App.Dock;
+using BingLan.Core.Models;
 using Application = System.Windows.Application;
 using Brushes = System.Windows.Media.Brushes;
 using Color = System.Windows.Media.Color;
@@ -118,6 +120,7 @@ internal static class AccessibilityThemeManager
             ApplyIcePalette(resources);
         }
         SettingsPalette.Apply(resources, highContrast, dark: false, translucent: false, includeShared: false);
+        FloatingGlassPalette.Apply(resources, DesktopStyleRules.Dock(new DesktopStyleState()), highContrast);
 
         if (IsHighContrastEnabled == highContrast)
         {

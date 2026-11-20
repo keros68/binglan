@@ -31,6 +31,7 @@
                                 Padding="{TemplateBinding Padding}"
                                 SnapsToDevicePixels="True">
                             <ContentPresenter VerticalAlignment="Center"
+                                              HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
                                               RecognizesAccessKey="True"/>
                         </Border>
                         <ControlTemplate.Triggers>
@@ -49,8 +50,12 @@
             VerticalAlignment="Stretch"
             BorderThickness="0,0,0,1"
             CornerRadius="0">
-        <Grid>
-            <DockPanel>
+        <Grid ClipToBounds="True">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+            <DockPanel x:Name="ModuleHeader">
                 <StackPanel x:Name="RightModules"
                             DockPanel.Dock="Right"
                             Orientation="Horizontal"/>
@@ -65,6 +70,9 @@
             <Grid x:Name="CenterHost"
                   HorizontalAlignment="Center"
                   VerticalAlignment="Center"/>
+            <Grid x:Name="CapsuleHeader" Visibility="Collapsed"/>
+            <Border x:Name="CapsuleBody" Grid.Row="1" Visibility="Collapsed"
+                    Margin="18,0,18,16"/>
         </Grid>
     </Border>
 </Window>

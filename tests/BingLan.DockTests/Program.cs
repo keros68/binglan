@@ -2,9 +2,12 @@ using BingLan.Core.Dock;
 using BingLan.Core.Models;
 using BingLan.Core.Services;
 using BingLan.Core.Themes;
+using BingLan.Core.Taskbar;
+using BingLan.Core.TopBar;
 
 var failures = new List<string>();
 Run("Dock 四边几何与负坐标", TestDockGeometry);
+Run("原生任务栏四边占用与顶栏保留预留冲突", TestNativeTaskbarGeometry);
 Run("Dock 非法厚度", TestInvalidThickness);
 Run("断开的显示器位置恢复", TestPlacementRecovery);
 Run("新排列首次出现的收拢布局", TestDisplayArrivalRules);
@@ -111,6 +114,38 @@ static void TestDockGeometry()
     Assert(monitor.HasArea, "有效显示器矩形应有面积");
     Assert(monitor.Intersects(new PixelRect(-100, 0, 100, 100)), "负坐标矩形应正确相交");
     Assert(!monitor.Intersects(new PixelRect(0, 0, 100, 100)), "仅边缘接触不应视为相交");
+}
+
+static void TestNativeTaskbarGeometry()
+{
+    var monitor = new PixelRect(-1920, -100, 0, 980);
+    foreach (var edge in Enum.GetValues<DockEdge>())
+    {
+        var taskbar = DockGeometry.Calculate(monitor, edge, 48);
+        AssertEqual<DockEdge?>(edge, TaskbarLayoutRules.GetEdge(taskbar, monitor, monitor),
+            "原生任务栏应识别所在边缘");
+        var safe = TaskbarLayoutRules.AvoidTaskbar(monitor, monitor, taskbar, edge, 0);
+        Assert(!safe.Intersects(taskbar), "安全区域应让出原生任务栏全部范围");
+    }
+    AssertEqual<DockEdge?>(null,
+        TaskbarLayoutRules.GetEdge(new PixelRect(-1800, 200, -100, 248), monitor, monitor),
+        "未知悬浮布局不应猜测任务栏边缘");
+    var retainedWorkArea = monitor with { Top = -20 };
+    var topTaskbarBelowExistingReservation = new PixelRect(-1920, -68, 0, -20);
+    AssertEqual<DockEdge?>(DockEdge.Top,
+        TaskbarLayoutRules.GetEdge(topTaskbarBelowExistingReservation, monitor, retainedWorkArea),
+        "已有顶栏预留不能掩盖工作区边界上的原生顶部任务栏");
+    Assert(!TopBarReserveRules.ShouldReserve(true, true, monitor, retainedWorkArea,
+        nativeTopEdgeOccupied: true), "确认原生顶部任务栏后必须释放已有顶栏预留");
+    Assert(TopBarReserveRules.ShouldReserve(true, true, monitor, retainedWorkArea),
+        "仅有自己的预留时应保持原有行为");
+    var hiddenTop = new PixelRect(-1920, -146, 0, -98);
+    var inset = TaskbarLayoutRules.AvoidTaskbar(monitor, monitor, hiddenTop, DockEdge.Top, 8);
+    AssertEqual(-92, inset.Top, "顶部自动隐藏时应保留原生唤出边缘");
+    Assert(!TopBarRevealRules.IsInRevealZone(-1000, -100, inset, 2),
+        "原生顶部唤出边缘不应同时唤出顶栏");
+    Assert(TopBarRevealRules.IsInRevealZone(-1000, -92, inset, 2),
+        "移到让出后的顶栏位置应可唤出");
 }
 
 static void TestInvalidThickness()
@@ -1434,6 +1469,7 @@ static void TestStartMenuMigration()
         var state = store.Load();
         AssertEqual(AppState.CurrentSchemaVersion, state.SchemaVersion, "应迁移到当前结构");
         Assert(state.Dock.ShowStartMenuButton, "开始菜单入口默认开启");
+        Assert(state.Dock.ShowLauncherButton, "旧版本数据中没有的启动面板入口默认开启");
         Assert(state.Dock.ShowDesktopButton, "旧版本数据中没有的“显示桌面”按钮默认开启");
         AssertEqual(DockRevealMode.EdgeAndHandle, state.Dock.RevealMode, "旧版本迁移后唤出方式应为底边和把手");
         AssertEqual(48d, state.Dock.IconSize, "图标大小应保留");
@@ -1455,6 +1491,7 @@ static void TestDockStateRoundTrip()
         var state = LocalStateStore.CreateDefault();
         state.Dock.IsEnabled = true;
         state.Dock.ShowStartMenuButton = false;
+        state.Dock.ShowLauncherButton = false;
         state.Dock.ShowDesktopButton = false;
         state.Dock.MonitorDeviceName = @"\\.\DISPLAY1";
         state.Dock.VisibilityMode = DockVisibilityMode.SmartHide;
@@ -1483,6 +1520,7 @@ static void TestDockStateRoundTrip()
         store.Save(state);
         var loaded = store.Load();
         Assert(!loaded.Dock.ShowStartMenuButton, "关闭开始菜单入口的个人设置应保留");
+        Assert(!loaded.Dock.ShowLauncherButton, "关闭启动面板入口的个人设置应保留");
         Assert(!loaded.Dock.ShowDesktopButton, "关闭“显示桌面”按钮的个人设置应保留");
 
         Assert(loaded.Dock.IsEnabled, "Dock 启用状态未保留");

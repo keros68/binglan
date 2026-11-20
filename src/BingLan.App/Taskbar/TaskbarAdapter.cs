@@ -30,6 +30,7 @@ internal sealed class TaskbarAdapter : IDisposable
     private static readonly TimeSpan KeepAliveInterval = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan MinimumEventReapplyInterval = TimeSpan.FromMilliseconds(150);
     private const int CompetitorCheckTicks = 10;
+    private const int AutoHideRecoveryAttemptCount = 5;
     private static readonly string[] CompetingCustomizers =
         ["TranslucentTB", "TaskbarX", "RoundedTB", "StartAllBack"];
     private static readonly HashSet<string> TaskbarClasses =
@@ -53,6 +54,9 @@ internal sealed class TaskbarAdapter : IDisposable
     private int _requestVersion;
     private uint _explorerProcessId;
     private int _heldAccent;
+    private (nint Window, uint ProcessId) _autoHideTaskbar;
+    private bool _ownsAutoHide;
+    private int _autoHideRecoveryAttempts;
 
     internal TaskbarAdapter(string checkpointPath)
     {
@@ -329,6 +333,7 @@ internal sealed class TaskbarAdapter : IDisposable
         if (GetAutoHide())
         {
             // Already hidden by the user; nothing of ours to restore later.
+            _autoHideTaskbar = ReadTaskbarIdentity();
             EnsureMessageWindow();
             SetStatus(TaskbarMode.SmartHide, string.Empty);
             return;
@@ -337,6 +342,8 @@ internal sealed class TaskbarAdapter : IDisposable
         WriteCheckpoint(new TaskbarCheckpoint { AutoHideApplied = true, OriginalAutoHide = false });
         if (SetAutoHide(true))
         {
+            _autoHideTaskbar = ReadTaskbarIdentity();
+            _ownsAutoHide = true;
             EnsureMessageWindow();
             SetStatus(TaskbarMode.SmartHide, string.Empty);
             return;
@@ -348,7 +355,7 @@ internal sealed class TaskbarAdapter : IDisposable
 
     private bool RestoreActive()
     {
-        StopKeepingTransparent();
+        StopReapplying();
         _xamlSession?.Dispose();
         _xamlSession = null;
         ActiveMode = TaskbarMode.SystemDefault;
@@ -357,7 +364,7 @@ internal sealed class TaskbarAdapter : IDisposable
 
     private async Task<bool> RestoreActiveAsync()
     {
-        StopKeepingTransparent();
+        StopReapplying();
         _xamlSession?.Dispose();
         _xamlSession = null;
         ActiveMode = TaskbarMode.SystemDefault;
@@ -408,9 +415,12 @@ internal sealed class TaskbarAdapter : IDisposable
         _keepAliveTimer.Start();
     }
 
-    private void StopKeepingTransparent()
+    private void StopReapplying()
     {
         _heldAccent = TaskbarNativeMethods.AccentDisabled;
+        _autoHideTaskbar = default;
+        _ownsAutoHide = false;
+        _autoHideRecoveryAttempts = 0;
         _reapplyTimer.Stop();
         _keepAliveTimer.Stop();
         foreach (var hook in _winEventHooks)
@@ -469,7 +479,7 @@ internal sealed class TaskbarAdapter : IDisposable
             && ReadEnvironment().CompetingCustomizer is { } customizer)
         {
             // Another tool now owns the taskbar; stop without resetting its appearance.
-            StopKeepingTransparent();
+            StopReapplying();
             var usedXaml = _xamlSession is not null;
             _xamlSession?.Dispose();
             _xamlSession = null;
@@ -502,7 +512,7 @@ internal sealed class TaskbarAdapter : IDisposable
             var compatibility = TaskbarCompatibility.Assess(TaskbarMode.Transparent, environment);
             if (!compatibility.IsSupported)
             {
-                StopKeepingTransparent();
+                StopReapplying();
                 _xamlSession?.Dispose();
                 _xamlSession = null;
                 SetStatus(TaskbarMode.SystemDefault, compatibility.Reason);
@@ -517,7 +527,7 @@ internal sealed class TaskbarAdapter : IDisposable
             }
             if (_xamlSession?.IsActive != true && _breaker.RecordFailure())
             {
-                StopKeepingTransparent();
+                StopReapplying();
                 _xamlSession?.Dispose();
                 _xamlSession = null;
                 SetStatus(TaskbarMode.SystemDefault, "任务栏背景不可用，已停止调整；下次启动时会核对恢复状态");
@@ -555,7 +565,16 @@ internal sealed class TaskbarAdapter : IDisposable
 
     private void Reapply()
     {
-        if (_disposed || !HoldsAccent)
+        if (_disposed)
+        {
+            return;
+        }
+        if (ActiveMode == TaskbarMode.SmartHide)
+        {
+            ReconcileAutoHide();
+            return;
+        }
+        if (!HoldsAccent)
         {
             return;
         }
@@ -623,9 +642,16 @@ internal sealed class TaskbarAdapter : IDisposable
                 _reapplyTimer.Stop();
                 _reapplyTimer.Start();
             }
-            else if (ActiveMode == TaskbarMode.SmartHide && message == TaskbarNativeMethods.WmSettingChange)
+            else if (ActiveMode == TaskbarMode.SmartHide
+                && ((uint)message == _taskbarCreatedMessage || message == TaskbarNativeMethods.WmSettingChange))
             {
-                Guard(CheckAutoHideTakeover);
+                var taskbar = ReadTaskbarIdentity();
+                // Explorer can report its new default state before sending TaskbarCreated.
+                // Recheck the taskbar identity after the shell has had time to settle.
+                if (taskbar != _autoHideTaskbar || !GetAutoHide())
+                {
+                    _reapplyTimer.Start();
+                }
             }
         }
         return 0;
@@ -641,8 +667,52 @@ internal sealed class TaskbarAdapter : IDisposable
 
         // The user switched auto-hide off in Windows; that choice now wins.
         TryDelete(_checkpointPath);
+        StopReapplying();
         SetStatus(TaskbarMode.SystemDefault, string.Empty);
         AutoHideTakenOver?.Invoke();
+    }
+
+    private void ReconcileAutoHide()
+    {
+        var taskbar = ReadTaskbarIdentity();
+        if (_autoHideRecoveryAttempts == 0)
+        {
+            if (taskbar.Window != 0 && taskbar == _autoHideTaskbar)
+            {
+                CheckAutoHideTakeover();
+                return;
+            }
+            _autoHideRecoveryAttempts = AutoHideRecoveryAttemptCount;
+        }
+        if (taskbar.Window != 0 && (GetAutoHide() || (_ownsAutoHide && SetAutoHide(true))))
+        {
+            _autoHideTaskbar = taskbar;
+            _autoHideRecoveryAttempts = 0;
+            return;
+        }
+        if (--_autoHideRecoveryAttempts > 0)
+        {
+            _reapplyTimer.Start();
+            return;
+        }
+
+        if (!_ownsAutoHide && taskbar.Window != 0)
+        {
+            _autoHideTaskbar = taskbar;
+            CheckAutoHideTakeover();
+            return;
+        }
+        var restored = RestoreActive();
+        SetStatus(TaskbarMode.SystemDefault, restored
+            ? "Explorer 重启后未能恢复任务栏自动隐藏，已恢复系统默认"
+            : "Explorer 重启后未能恢复任务栏自动隐藏，下次启动时会再次核对");
+    }
+
+    private static (nint Window, uint ProcessId) ReadTaskbarIdentity()
+    {
+        var window = TaskbarNativeMethods.FindWindowW("Shell_TrayWnd", null);
+        return window != 0 && TaskbarNativeMethods.GetWindowThreadProcessId(window, out var processId) != 0
+            ? (window, processId) : default;
     }
 
     private void SetStatus(TaskbarMode mode, string problem)
@@ -795,7 +865,7 @@ internal sealed class TaskbarAdapter : IDisposable
         return firstError.Length == 0;
     }
 
-    private static List<nint> FindTaskbars()
+    internal static List<nint> FindTaskbars()
     {
         var taskbars = new List<nint>();
         TaskbarNativeMethods.EnumWindows((window, _) =>

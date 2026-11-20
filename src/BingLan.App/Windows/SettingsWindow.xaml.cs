@@ -191,6 +191,7 @@ public partial class SettingsWindow : Window
         LoadDesktopExperience();
         RefreshComponentList();
         LoadDockSettings();
+        InitializeLauncherLook();
         if (_topBarState is null)
         {
             // Tests and older call sites construct the window without a top bar; every
@@ -2673,6 +2674,21 @@ public partial class SettingsWindow : Window
                 ? $"当前保持系统默认：{problem}"
                 : $"当前：{activeName}（{problem}）";
 
+        var mainMonitor = MonitorCatalog.GetAll().FirstOrDefault(monitor => monitor.IsPrimary);
+        var edge = mainMonitor is null
+            ? null
+            : TaskbarEdgeGuard.GetNativeTaskbarLayout(mainMonitor.Bounds)?.Edge;
+        var edgeName = edge switch
+        {
+            DockEdge.Left => "左侧",
+            DockEdge.Top => "顶部",
+            DockEdge.Right => "右侧",
+            DockEdge.Bottom => "底部",
+            _ => null
+        };
+        TaskbarPositionText.Visibility = edgeName is null ? Visibility.Collapsed : Visibility.Visible;
+        TaskbarPositionText.Text = edgeName is null ? string.Empty : $"主显示器任务栏位于{edgeName}";
+
         // The app owns auto-hide only in the auto-hide mode; anywhere else it is Windows' own.
         WindowsAutoHidePanel.Visibility = _taskbarState.Mode != TaskbarMode.SmartHide
             && Taskbar.TaskbarAdapter.IsWindowsAutoHideOn()
@@ -2748,6 +2764,7 @@ public partial class SettingsWindow : Window
                 .OfType<ComboBoxItem>()
                 .First(item => (string)item.Tag == _dockState.RevealMode.ToString());
             DockStartMenuButtonCheckBox.IsChecked = _dockState.ShowStartMenuButton;
+            DockLauncherButtonCheckBox.IsChecked = _dockState.ShowLauncherButton;
             DockShowDesktopButtonCheckBox.IsChecked = _dockState.ShowDesktopButton;
             DockBottomGapSlider.Value = _dockState.BottomGapDip;
             DockBottomGapText.Text = $"{_dockState.BottomGapDip:0} DIP";
@@ -2846,6 +2863,7 @@ public partial class SettingsWindow : Window
             _dockState.RevealMode = revealMode;
         }
         _dockState.ShowStartMenuButton = DockStartMenuButtonCheckBox.IsChecked == true;
+        _dockState.ShowLauncherButton = DockLauncherButtonCheckBox.IsChecked == true;
         _dockState.ShowDesktopButton = DockShowDesktopButtonCheckBox.IsChecked == true;
         if (DockMonitorComboBox.SelectedItem is ComboBoxItem { Tag: string deviceName })
         {
@@ -2911,6 +2929,15 @@ public partial class SettingsWindow : Window
                 _dockState.FollowCardLook = true;
                 ApplyDockChange("Dock 跟随卡片外观");
                 LoadDockLook();
+            });
+        }
+        if (!_maintenance.LauncherAppearance.FollowCardLook)
+        {
+            AddOverride("启动面板", "已独立设置底色、玻璃浓度与圆角", () => ShowBarsLook("Launcher"), () =>
+            {
+                _maintenance.LauncherAppearance.FollowCardLook = true;
+                _maintenance.ApplyLauncherAppearance();
+                LoadLauncherLook();
             });
         }
         if (_topBarState is { FollowCardLook: false } topBar)
@@ -3759,7 +3786,12 @@ public partial class SettingsWindow : Window
     {
         SelectNavigationPage("Appearance");
         AppearanceBarsLookFold.IsExpanded = true;
-        RevealElement(bar == "TopBar" ? TopBarLookSettingsRow : DockLookSettingsRow);
+        RevealElement(bar switch
+        {
+            "Launcher" => LauncherLookSettingsRow,
+            "TopBar" => TopBarLookSettingsRow,
+            _ => DockLookSettingsRow
+        });
     }
 
     /// <summary>

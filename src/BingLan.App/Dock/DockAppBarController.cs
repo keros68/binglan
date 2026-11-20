@@ -223,6 +223,13 @@ internal sealed class DockAppBarController : IDisposable
                     Math.Min(stripThickness, fallbackArea.Height));
             }
 
+            var nativeSafeArea = TaskbarEdgeGuard.AvoidNativeTaskbar(_monitor.Bounds, _monitor.Bounds);
+            var safeLeft = Math.Max(strip.Left, nativeSafeArea.Left);
+            var safeRight = Math.Min(strip.Right, nativeSafeArea.Right);
+            if (safeRight > safeLeft)
+            {
+                strip = strip with { Left = safeLeft, Right = safeRight };
+            }
             var requestedLength = Math.Max(1, (int)Math.Round(_contentLengthDip * scale));
             var contentLength = FloatingDockGeometry.ClampExtent(
                 requestedLength,
@@ -371,6 +378,11 @@ internal sealed class DockAppBarController : IDisposable
                 break;
             // A work-area change can leave Explorer holding a stale strip for the dock;
             // Position compares the two once things settle.
+            case NativeMethods.WmSettingChange
+                when wParam == NativeMethods.SpiSetWorkArea && !_reservation.IsRegistered:
+                _window.Dispatcher.BeginInvoke(DispatcherPriority.Background,
+                    () => EnvironmentChanged?.Invoke());
+                break;
             case NativeMethods.WmSettingChange
                 when wParam == NativeMethods.SpiSetWorkArea
                     && _reservation.IsRegistered

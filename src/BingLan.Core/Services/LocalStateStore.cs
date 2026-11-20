@@ -777,6 +777,32 @@ public sealed class LocalStateStore
         {
             state.SchemaVersion = 48;
         }
+        state.LauncherAppearance ??= new LauncherAppearanceState();
+        if (state.SchemaVersion < 49)
+        {
+            state.SchemaVersion = 49;
+        }
+        if (state.SchemaVersion < 50)
+        {
+            // Missing launcher visibility uses the DockState default.
+            state.SchemaVersion = 50;
+        }
+        state.LauncherGroups = LauncherGroupRules.Normalize(state.LauncherGroups);
+        if (state.SchemaVersion < 51)
+        {
+            state.SchemaVersion = 51;
+        }
+        state.LauncherAppCategoryOverrides ??= new Dictionary<string, LauncherAppCategory>(StringComparer.Ordinal);
+        foreach (var key in state.LauncherAppCategoryOverrides
+                     .Where(pair => string.IsNullOrWhiteSpace(pair.Key) || !Enum.IsDefined(pair.Value))
+                     .Select(pair => pair.Key).ToArray())
+        {
+            state.LauncherAppCategoryOverrides.Remove(key);
+        }
+        if (state.SchemaVersion < 52)
+        {
+            state.SchemaVersion = 52;
+        }
         state.Updates ??= new UpdateState();
         state.QuickPlaces = QuickPlaceRules.Normalize(state.QuickPlaces);
         state.DismissedDesktopCategories = (state.DismissedDesktopCategories ?? [])

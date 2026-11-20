@@ -14,7 +14,6 @@ internal sealed class FullScreenWatcher : IDisposable
 {
     private static readonly TimeSpan CheckInterval = TimeSpan.FromSeconds(2);
     private readonly DispatcherTimer _timer;
-    private readonly uint _ownProcessId = (uint)Environment.ProcessId;
 
     internal FullScreenWatcher()
     {
@@ -36,7 +35,7 @@ internal sealed class FullScreenWatcher : IDisposable
 
     private void Check()
     {
-        var fullScreen = IsForegroundFullScreen();
+        var fullScreen = IsFullScreen(DockNativeMethods.GetForegroundWindow());
         if (fullScreen == IsFullScreenInFront)
         {
             return;
@@ -46,16 +45,16 @@ internal sealed class FullScreenWatcher : IDisposable
         Changed?.Invoke();
     }
 
-    private bool IsForegroundFullScreen()
+    internal static bool IsFullScreen(nint window, nint targetMonitor = 0, bool excludeMaximized = false)
     {
-        var window = DockNativeMethods.GetForegroundWindow();
-        if (window == 0 || DockNativeMethods.IsIconic(window))
+        if (window == 0 || DockNativeMethods.IsIconic(window)
+            || (excludeMaximized && DockNativeMethods.IsZoomed(window)))
         {
             return false;
         }
 
         DockNativeMethods.GetWindowThreadProcessId(window, out var processId);
-        if (processId == _ownProcessId)
+        if (processId == (uint)Environment.ProcessId)
         {
             return false;
         }
@@ -84,6 +83,7 @@ internal sealed class FullScreenWatcher : IDisposable
             DeviceName = string.Empty
         };
         return monitor != 0
+            && (targetMonitor == 0 || targetMonitor == monitor)
             && DockNativeMethods.GetMonitorInfoW(monitor, ref info)
             && bounds.Left <= info.Monitor.Left
             && bounds.Top <= info.Monitor.Top

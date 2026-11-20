@@ -5,7 +5,7 @@ namespace BingLan.Core.Models;
 
 public sealed class AppState
 {
-    public const int CurrentSchemaVersion = 48;
+    public const int CurrentSchemaVersion = 52;
 
     public int SchemaVersion { get; set; } = CurrentSchemaVersion;
 
@@ -23,6 +23,9 @@ public sealed class AppState
     public DesktopExperienceState DesktopExperience { get; set; } =
         DesktopExperienceRules.CreateDefault();
     public DockState Dock { get; set; } = new();
+    public LauncherAppearanceState LauncherAppearance { get; set; } = new();
+    public List<LauncherGroupState> LauncherGroups { get; set; } = [];
+    public Dictionary<string, LauncherAppCategory> LauncherAppCategoryOverrides { get; set; } = new(StringComparer.Ordinal);
     public TaskbarState Taskbar { get; set; } = new();
     public TopBarState TopBar { get; set; } = new();
     public DesktopStyleState Style { get; set; } = new();

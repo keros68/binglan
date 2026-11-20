@@ -1,4 +1,9 @@
 using System.Runtime.InteropServices;
+using BingLan.App.Dock;
+using BingLan.App.Taskbar;
+using BingLan.Core.Dock;
+using BingLan.Core.Taskbar;
+using CoreRect = BingLan.Core.Dock.PixelRect;
 
 namespace BingLan.App.Interop;
 
@@ -12,6 +17,67 @@ internal static class TaskbarEdgeGuard
     private const uint AbeRight = 2;
     private const uint AbeBottom = 3;
     private const uint MonitorDefaultToNearest = 2;
+
+    internal sealed record NativeTaskbarLayout(DockEdge Edge, CoreRect Bounds, bool AutoHidden);
+
+    // Shared by the top bar's placement and foreground checks. Half a second bounds
+    // enumeration cost while still noticing native taskbar relocation during use.
+    private static readonly Dictionary<CoreRect, (long ReadAt, NativeTaskbarLayout? Layout)> NativeLayouts = [];
+
+    internal static NativeTaskbarLayout? GetNativeTaskbarLayout(CoreRect monitor)
+    {
+        var now = Environment.TickCount64;
+        if (NativeLayouts.TryGetValue(monitor, out var cached) && now - cached.ReadAt < 500)
+            return cached.Layout;
+
+        NativeTaskbarLayout? layout = null;
+        foreach (var window in TaskbarAdapter.FindTaskbars())
+        {
+            if (!DockNativeMethods.GetWindowRect(window, out var rectangle)) continue;
+            var bounds = new CoreRect(rectangle.Left, rectangle.Top, rectangle.Right, rectangle.Bottom);
+            for (uint edge = AbeLeft; edge <= AbeBottom; edge++)
+            {
+                var data = new AppBarData
+                {
+                    Size = Marshal.SizeOf<AppBarData>(), Edge = edge,
+                    Rectangle = new PixelRect { Left = monitor.Left, Top = monitor.Top, Right = monitor.Right, Bottom = monitor.Bottom }
+                };
+                if (SHAppBarMessage(AbmGetAutoHideBarEx, ref data) == window)
+                {
+                    layout = new NativeTaskbarLayout((DockEdge)edge, bounds, true);
+                    break;
+                }
+            }
+            if (layout is not null) break;
+            var nativeMonitor = new MonitorInfo { Size = Marshal.SizeOf<MonitorInfo>() };
+            if (!GetMonitorInfo(DockNativeMethods.MonitorFromWindow(window, MonitorDefaultToNearest), ref nativeMonitor)
+                || nativeMonitor.MonitorArea.Left != monitor.Left || nativeMonitor.MonitorArea.Top != monitor.Top
+                || nativeMonitor.MonitorArea.Right != monitor.Right || nativeMonitor.MonitorArea.Bottom != monitor.Bottom)
+                continue;
+            var workArea = nativeMonitor.WorkArea;
+            if (TaskbarLayoutRules.GetEdge(bounds, monitor,
+                new CoreRect(workArea.Left, workArea.Top, workArea.Right, workArea.Bottom)) is { } confirmedEdge)
+            {
+                layout = new NativeTaskbarLayout(confirmedEdge, bounds, false);
+                break;
+            }
+        }
+        // Display arrangements are few; discard old monitor keys after reconfiguration.
+        if (NativeLayouts.Count > 32) NativeLayouts.Clear();
+        NativeLayouts[monitor] = (now, layout);
+        return layout;
+    }
+
+    internal static CoreRect AvoidNativeTaskbar(CoreRect workArea, CoreRect monitor)
+    {
+        if (!workArea.HasArea || !monitor.HasArea || GetNativeTaskbarLayout(monitor) is not { } layout)
+        {
+            return workArea;
+        }
+        var safeArea = TaskbarLayoutRules.AvoidTaskbar(workArea, monitor, layout.Bounds, layout.Edge,
+            layout.AutoHidden ? RevealInsetPixels : 0);
+        return safeArea.HasArea ? safeArea : workArea;
+    }
 
     [Flags]
     internal enum AutoHideEdges

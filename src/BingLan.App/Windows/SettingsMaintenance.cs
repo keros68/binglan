@@ -53,6 +53,8 @@ public sealed class SettingsMaintenance
         (_, _, _) => new BindOutcome(false, string.Empty);
     public BingLan.Core.Models.DesktopStyleState Style { get; init; } = new();
     public Action ApplyStyle { get; init; } = () => { };
+    public BingLan.Core.Models.LauncherAppearanceState LauncherAppearance { get; init; } = new();
+    public Action ApplyLauncherAppearance { get; init; } = () => { };
     /// <summary>Creates a card of the given kind and returns its window, or null.</summary>
     public Func<NewWidgetKind, WidgetWindowBase?> AddWidget { get; init; } = _ => null;
     public Action ExitApp { get; init; } = () => { };

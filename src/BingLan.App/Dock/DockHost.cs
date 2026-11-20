@@ -33,6 +33,14 @@ internal sealed class DockHost : IDisposable
 
     internal event Action? ShowDesktopTriggered;
 
+    internal event Action? LauncherRequested;
+
+    internal Func<IReadOnlyList<(Guid Id, string Title)>>? ReadFileBoxes { get; set; }
+
+    internal Func<Guid, string, Task<string>>? SendToFileBox { get; set; }
+
+    internal Func<nint, nint>? ResolvePanelForeground { get; set; }
+
     internal IEnumerable<nint> ActiveDesktopHandles() =>
         _window?.ActiveDesktopHandles() ?? [];
 
@@ -90,7 +98,16 @@ internal sealed class DockHost : IDisposable
 
     private void Open()
     {
-        var window = new IceBlueDockWindow(_state);
+        var window = new IceBlueDockWindow(_state)
+        {
+            ReadFileBoxes = ReadFileBoxes,
+            SendToFileBox = SendToFileBox,
+            ResolvePanelForeground = ResolvePanelForeground
+        };
+        if (LauncherRequested is not null)
+        {
+            window.LauncherRequested += LauncherRequested;
+        }
         window.DockStateChanged += _stateChanged;
         window.SettingsRequested += _openSettings;
         window.CommandFailed += _notify;

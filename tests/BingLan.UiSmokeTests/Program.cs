@@ -137,6 +137,14 @@ internal static class Program
             }
         }
 
+        if (Environment.GetCommandLineArgs().Contains("--launcher-capture"))
+        {
+            Run("Dock 入口和启动面板外观预览",
+                () => LauncherPreviewCapture.Run(app, ShowAndPump, Pump, PumpUntil), failures);
+            failures.ForEach(Console.Error.WriteLine);
+            return failures.Count == 0 ? 0 : 1;
+        }
+
         Run("待办真实控件编辑与勾选", TestTodoControls, failures);
         Run("行程行不显示勾选框并显示时间", TestTodoEventRow, failures);
         Run("倒数日行不显示勾选框并显示剩余天数", TestTodoCountdownRow, failures);
@@ -240,6 +248,7 @@ internal static class Program
         Run("Dock 最大化状态钩子的过滤与即时通知", () => MaximizeStateWatcherTests.Run(ShowAndPump, Pump, PumpUntil), failures);
         Run("顶端信息条的窗口样式、模块与点击深链", () => TopBarWindowTests.Run(ShowAndPump, Pump), failures);
         Run("搜索菜单对比度、右键与键盘操作", () => TopBarWindowTests.SearchResultContextMenuStaysOpen(ShowAndPump, Pump), failures);
+        Run("启动面板浏览、搜索、启动参数与失效文件", () => LauncherPanelWindowTests.Run(ShowAndPump, Pump, PumpUntil), failures);
         Run("主题导入对话框显示名称与预览图", TestThemeImportDialogShowsNameAndPreview, failures);
         Run("三种材质与 0/12/32 圆角真实窗口无白边或锯齿", TestMaterialCornerEdgesNoWhiteHalo, failures);
         Run("空状态引导与卡片折叠增删动效", TestWp6EmptyStateAndCardMotion, failures);

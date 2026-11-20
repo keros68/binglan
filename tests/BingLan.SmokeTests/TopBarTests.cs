@@ -26,6 +26,7 @@ public static class TopBarTests
         TestDesktopModeOrchestration();
         TestAttentionQueue();
         TestModuleRules();
+        TestCapsuleSummary();
         TestRevealZoneAndTopEdge();
         TestThemeTopBarFields();
     }
@@ -35,6 +36,7 @@ public static class TopBarTests
         var state = new TopBarState();
         Assert(!state.IsEnabled, "顶栏默认关闭");
         Assert(state.VisibilityMode == TopBarVisibilityMode.ReserveTopEdge, "默认预留顶边");
+        Assert(state.DisplayMode == TopBarDisplayMode.FullWidth, "默认整条布局");
         Assert(state.MonitorDeviceName is null, "默认主屏");
         Assert(Math.Abs(state.SurfaceOpacity - 0.82d) < 0.001d, "默认不透明度");
         Assert(state.SurfaceColor == TopBarState.DefaultSurfaceColor, "默认表面色");
@@ -47,6 +49,7 @@ public static class TopBarTests
         }
 
         state.VisibilityMode = (TopBarVisibilityMode)99;
+        state.DisplayMode = (TopBarDisplayMode)99;
         state.SurfaceOpacity = 5d;
         state.SurfaceColor = "not-a-color";
         state.Height = 500d;
@@ -54,6 +57,7 @@ public static class TopBarTests
         state.Modules = JsonSerializer.Deserialize<TopBarState>("{}")!.Modules;
         TopBarRules.Normalize(state);
         Assert(state.VisibilityMode == TopBarVisibilityMode.ReserveTopEdge, "未知显示方式回退预留");
+        Assert(state.DisplayMode == TopBarDisplayMode.FullWidth, "未知布局回退整条");
         Assert(Math.Abs(state.SurfaceOpacity - 1d) < 0.001d, "不透明度钳制到 1");
         Assert(Math.Abs(state.Height - TopBarState.MaximumHeightDip) < 0.001d, "高度钳制到上限");
         Assert(state.Modules is not null, "模块开关缺失时补默认");
@@ -88,6 +92,7 @@ public static class TopBarTests
             state.TopBar.IsEnabled = true;
             state.TopBar.MonitorDeviceName = "\\\\.\\DISPLAY2";
             state.TopBar.VisibilityMode = TopBarVisibilityMode.SmartHide;
+            state.TopBar.DisplayMode = TopBarDisplayMode.Capsule;
             TopBarRules.SetModule(state.TopBar.Modules, TopBarModuleKind.Network, false);
             state.TodoWidgets.Add(new TodoWidgetState
             {
@@ -103,6 +108,7 @@ public static class TopBarTests
             Assert(reloaded.TopBar.IsEnabled, "顶栏开关持久化");
             Assert(reloaded.TopBar.MonitorDeviceName == "\\\\.\\DISPLAY2", "显示器持久化");
             Assert(reloaded.TopBar.VisibilityMode == TopBarVisibilityMode.SmartHide, "显示方式持久化");
+            Assert(reloaded.TopBar.DisplayMode == TopBarDisplayMode.Capsule, "胶囊布局持久化");
             Assert(!TopBarRules.IsModuleOn(reloaded.TopBar.Modules, TopBarModuleKind.Network), "模块开关持久化");
 
             var v32 = JsonSerializer.SerializeToNode(state)!;
@@ -351,6 +357,26 @@ public static class TopBarTests
         Assert(TopBarModuleRules.VolumePercentFromScalar(1.3f) == 100, "音量钳制上限");
         Assert(TopBarModuleRules.VolumePercentFromScalar(-0.5f) == 0, "音量钳制下限");
         Assert(TopBarModuleRules.VolumePercentFromScalar(float.NaN) == 0, "非数值按 0");
+    }
+
+    private static void TestCapsuleSummary()
+    {
+        var now = new DateTime(2026, 11, 20, 10, 0, 0);
+        var next = new TodoItemState { Text = "下一条", DeadlineDate = now.Date, DeadlineTime = new TimeOnly(11, 0) };
+        var items = new TodoItemState[]
+        {
+            new() { Text = "已过期", DeadlineDate = now.Date, DeadlineTime = new TimeOnly(9, 0) },
+            new() { Text = "明天", DeadlineDate = now.Date.AddDays(1), DeadlineTime = new TimeOnly(10, 30) },
+            new() { Text = "已完成", IsCompleted = true, DeadlineDate = now.Date, DeadlineTime = new TimeOnly(10, 30) },
+            new() { Text = "仅日期", DeadlineDate = now.Date },
+            new() { Text = "行程", Kind = TodoItemKind.Event, DeadlineDate = now.Date, DeadlineTime = new TimeOnly(10, 30) },
+            new() { Text = "稍后", DeadlineDate = now.Date, DeadlineTime = new TimeOnly(12, 0) },
+            next
+        };
+        Assert(ReferenceEquals(TopBarModuleRules.NextTimedTodoToday(items, now), next), "胶囊选今日最近未完成定时待办");
+        Assert(TopBarModuleRules.NextTimedTodoToday(items, now.AddHours(3)) is null, "无未来定时待办时不显示过期条目");
+        Assert(JsonSerializer.Deserialize<TopBarState>("{}")!.DisplayMode == TopBarDisplayMode.FullWidth,
+            "旧状态缺少布局字段时保持整条");
     }
 
     private static void TestRevealZoneAndTopEdge()
