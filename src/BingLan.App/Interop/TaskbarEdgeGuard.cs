@@ -76,9 +76,34 @@ internal static class TaskbarEdgeGuard
         {
             return workArea;
         }
-        var safeArea = TaskbarLayoutRules.AvoidTaskbar(workArea, monitor, layout.Bounds, layout.Edge,
+        return AvoidTaskbarLayout(workArea, monitor, layout);
+    }
+
+    internal static CoreRect AvoidTaskbarLayout(CoreRect workArea, CoreRect monitor, NativeTaskbarLayout layout)
+    {
+        if (!workArea.HasArea || !monitor.HasArea)
+        {
+            return workArea;
+        }
+        // An auto-hidden taskbar may be temporarily expanded when its rect is read and cached;
+        // reserve only the thin reveal strip instead of treating the full expanded bar as permanent.
+        var taskbarBounds = layout.AutoHidden
+            ? AutoHideRevealStrip(monitor, layout.Edge, RevealInsetPixels)
+            : layout.Bounds;
+        var safeArea = TaskbarLayoutRules.AvoidTaskbar(
+            workArea,
+            monitor,
+            taskbarBounds,
+            layout.Edge,
             layout.AutoHidden ? RevealInsetPixels : 0);
         return safeArea.HasArea ? safeArea : workArea;
+    }
+
+    private static CoreRect AutoHideRevealStrip(CoreRect monitor, DockEdge edge, int revealInset)
+    {
+        var maxThickness = edge is DockEdge.Left or DockEdge.Right ? monitor.Width : monitor.Height;
+        var thickness = Math.Clamp(revealInset, 1, Math.Max(1, maxThickness));
+        return DockGeometry.Calculate(monitor, edge, thickness);
     }
 
     [Flags]

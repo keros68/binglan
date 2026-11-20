@@ -207,6 +207,8 @@ internal static class Program
         Run("缺失本机标题字体安全回退", TestUnavailableTitleFontFallback, failures);
         Run("桌面模式同时设置 Dock 与任务栏", TestDesktopModeSelection, failures);
         Run("Dock 距底高度与最大化让出设置即时生效", TestDockPlacementSettings, failures);
+        Run("启动面板总开关独立于 Dock 且可搜索", TestLauncherEnabledSettings, failures);
+        Run("启动面板关闭后隐藏入口并阻止唤出", TestLauncherEnabledCoordinator, failures);
         Run("设置旧入口映射到新页面与分区", TestSettingsDeepLinks, failures);
         Run("桌面方案摘要、恢复默认与顶栏底栏示意图跳转", TestSchemeSummaryAndRestore, failures);
         Run("设置搜索索引、键盘选择与跳转展开", TestSettingsSearchJump, failures);
@@ -6676,6 +6678,117 @@ internal static class Program
             {
                 Assert(Near(swatch.ActualWidth, swatch.ActualHeight), $"配色色块应为正圆，实际 {swatch.ActualWidth}×{swatch.ActualHeight}");
             }
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    private static void TestLauncherEnabledCoordinator()
+    {
+        var temp = Directory.CreateTempSubdirectory("BingLan-launcher-gate-");
+        var store = new LocalStateStore(temp.FullName);
+        store.Save(new AppState { LauncherEnabled = false });
+        var coordinator = new WidgetCoordinator(interactiveQa: true, dataDirectory: temp.FullName);
+        const System.Reflection.BindingFlags Private =
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+        try
+        {
+            var ownerType = typeof(WidgetCoordinator);
+            var appState = (AppState)ownerType.GetField("_state", Private)!.GetValue(coordinator)!;
+            var tray = (TrayIconHost)ownerType.GetField("_trayIcon", Private)!.GetValue(coordinator)!;
+            var trayEntry = tray.Items.Single(item => item.Text == "打开冰蓝总览卡");
+            Assert(!trayEntry.Visible, "禁用状态启动时托盘入口应隐藏");
+            coordinator.ToggleLauncherPanel();
+            ownerType.GetMethod("QueueLauncherCatalogWarmup", Private)!.Invoke(coordinator, null);
+            Pump();
+            Assert(ownerType.GetField("_launcherPanel", Private)!.GetValue(coordinator) is null
+                && ownerType.GetField("_launcherApps", Private)!.GetValue(coordinator) is null,
+                "禁用状态应阻止打开面板及预读目录");
+
+            var cached = Task.FromResult(Array.Empty<(DockPinnedApp Pin, string? Folder)>());
+            ownerType.GetField("_launcherApps", Private)!.SetValue(coordinator, cached);
+            ownerType.GetField("_launcherAppsAt", Private)!.SetValue(coordinator, DateTimeOffset.Now);
+            var setEnabled = ownerType.GetMethod("SetLauncherEnabled", Private)!;
+            setEnabled.Invoke(coordinator, [true]);
+            Pump();
+            Assert(appState.LauncherEnabled && trayEntry.Visible && appState.Dock.ShowLauncherButton
+                && ReferenceEquals(ownerType.GetField("_launcherApps", Private)!.GetValue(coordinator), cached),
+                "重新启用应恢复托盘与原 Dock 偏好，并复用目录任务");
+
+            var monitor = MonitorCatalog.GetAll().First();
+            var panel = new LauncherPanelWindow(
+                () => Task.FromResult(new LauncherPanelSnapshot([], [], false)), (_, _) => { },
+                () => [], (_, _) => Task.FromResult(string.Empty), nint.Zero, monitor);
+            var closed = false;
+            panel.Closed += (_, _) => closed = true;
+            ownerType.GetField("_launcherPanel", Private)!.SetValue(coordinator, panel);
+            setEnabled.Invoke(coordinator, [false]);
+            Pump();
+            Assert(closed && !trayEntry.Visible && appState.Dock.ShowLauncherButton,
+                "禁用应关闭已有面板、隐藏托盘且保留 Dock 偏好");
+
+            var dock = new IceBlueDockWindow(appState.Dock) { LauncherEnabled = false };
+            dock.LauncherRequested += () => { };
+            try
+            {
+                var commands = typeof(IceBlueDockWindow).GetProperty("VisibleCommands", Private)!;
+                Assert(!((ValueTuple<bool, bool, bool>)commands.GetValue(dock)!).Item2,
+                    "总开关关闭时 Dock 入口应隐藏");
+                dock.LauncherEnabled = true;
+                Assert(((ValueTuple<bool, bool, bool>)commands.GetValue(dock)!).Item2,
+                    "重新启用时 Dock 入口应恢复");
+                appState.Dock.ShowLauncherButton = false;
+                Assert(!((ValueTuple<bool, bool, bool>)commands.GetValue(dock)!).Item2,
+                    "重新启用后仍应尊重独立的 Dock 入口偏好");
+            }
+            finally
+            {
+                dock.Close();
+            }
+        }
+        finally
+        {
+            coordinator.Dispose();
+            Pump();
+            temp.Delete(recursive: true);
+        }
+    }
+
+    private static void TestLauncherEnabledSettings()
+    {
+        var dock = new DockState { IsEnabled = false, ShowLauncherButton = false };
+        var enabled = false;
+        var changes = 0;
+        var window = new SettingsWindow(
+            new CityLookupService(), new InformationWidgetState(), DesktopExperienceRules.CreateDefault(),
+            (_, _) => { }, _ => { }, _ => { }, dockState: dock,
+            maintenance: new SettingsMaintenance
+            {
+                IsLauncherEnabled = () => enabled,
+                SetLauncherEnabled = value => { enabled = value; changes++; }
+            });
+        ShowAndPump(window);
+        try
+        {
+            Assert(changes == 0 && !enabled, "设置装载不应写入总开关");
+            var result = window.SearchSettings("启用冰蓝总览卡").Single(entry => entry.Name == "冰蓝总览卡");
+            window.OpenSearchResult(result);
+            Pump();
+            var toggle = Require<CheckBox>(window, "LauncherEnabledCheckBox");
+            Assert(toggle.IsVisible && toggle.IsEnabled && toggle.IsChecked == false
+                && Require<FrameworkElement>(window, "BarsPage").IsVisible,
+                "Dock 关闭时仍应可在顶栏底栏页找到独立总开关");
+            toggle.IsChecked = true;
+            Pump();
+            Assert(enabled && changes == 1 && !dock.IsEnabled && !dock.ShowLauncherButton,
+                "开启启动面板不应改写 Dock 开关或入口偏好");
+            toggle.IsChecked = false;
+            Pump();
+            Assert(!enabled && changes == 2 && !dock.ShowLauncherButton
+                && !Require<CheckBox>(window, "DockLauncherButtonCheckBox").IsEnabled,
+                "关闭启动面板应立即写入并禁用独立入口设置");
         }
         finally
         {

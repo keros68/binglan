@@ -2933,7 +2933,7 @@ public partial class SettingsWindow : Window
         }
         if (!_maintenance.LauncherAppearance.FollowCardLook)
         {
-            AddOverride("启动面板", "已独立设置底色、玻璃浓度与圆角", () => ShowBarsLook("Launcher"), () =>
+            AddOverride("冰蓝总览卡", "已独立设置底色、玻璃浓度与圆角", () => ShowBarsLook("Launcher"), () =>
             {
                 _maintenance.LauncherAppearance.FollowCardLook = true;
                 _maintenance.ApplyLauncherAppearance();

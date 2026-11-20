@@ -166,6 +166,8 @@ public partial class LauncherPanelWindow
         remove.Click += (_, _) =>
         {
             if (!LauncherGroupRules.Remove(current, member.Key)) return;
+            if (!_readGroups().Any(group => group.Members.Any(existing => existing.Key == member.Key)))
+                _groupEntries.Remove(member.Key);
             _saveOrganizer();
             Render(_unfilteredRows, preserveSelection: true);
             StatusText.Text = $"已移出「{current.Name}」";

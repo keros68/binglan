@@ -55,6 +55,8 @@ public sealed class SettingsMaintenance
     public Action ApplyStyle { get; init; } = () => { };
     public BingLan.Core.Models.LauncherAppearanceState LauncherAppearance { get; init; } = new();
     public Action ApplyLauncherAppearance { get; init; } = () => { };
+    public Func<bool> IsLauncherEnabled { get; init; } = () => true;
+    public Action<bool> SetLauncherEnabled { get; init; } = _ => { };
     /// <summary>Creates a card of the given kind and returns its window, or null.</summary>
     public Func<NewWidgetKind, WidgetWindowBase?> AddWidget { get; init; } = _ => null;
     public Action ExitApp { get; init; } = () => { };

@@ -14,6 +14,7 @@ internal static class LauncherPanelWindowTests
 {
     internal static void Run(Action<Window> show, Action pump, Action<Func<bool>, string> until)
     {
+        _ = VerifyVirtualizedLayout();
         // A user's click grants the launcher foreground ownership. A normal test
         // window supplies the same precondition before the tool window opens.
         var host = new Window { Title = "冰蓝启动面板验收", Width = 280, Height = 120 };
@@ -50,6 +51,100 @@ internal static class LauncherPanelWindowTests
         {
             host.Close();
         }
+    }
+
+    // Never shows a Window or sends input; safe to run on a user's active desktop.
+    internal static string VerifyVirtualizedLayout()
+    {
+        const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
+        var entries = Enumerable.Range(0, 250).Select(index =>
+        {
+            var name = (index % 2 == 0 ? "Word " : "QGIS ") + index.ToString("D3");
+            var executable = index % 2 == 0 ? "winword.exe" : "qgis-bin.exe";
+            var path = Path.Combine(Path.GetTempPath(), "BingLan-grid-" + index, executable);
+            return new LauncherPanelEntry(new TopBarSearchCandidate(TopBarSearchItemKind.App, name, executable, path),
+                "开始菜单", new DockPinnedApp { DisplayName = name, ExecutablePath = path });
+        }).ToArray();
+        var snapshot = new LauncherPanelSnapshot(entries, entries.Take(2).ToArray(), false);
+        var panel = Create(() => Task.FromResult(snapshot), (_, _) => throw new InvalidOperationException("布局检查不得启动项目"));
+        try
+        {
+            typeof(LauncherPanelWindow).GetField("_snapshot", flags)!.SetValue(panel, snapshot);
+            var filter = Enum.Parse(typeof(LauncherPanelWindow).GetNestedType("PanelFilter", BindingFlags.NonPublic)!, "All");
+            var rows = typeof(LauncherPanelWindow).GetMethod("BuildRows", BindingFlags.Static | BindingFlags.NonPublic)!
+                .Invoke(null, [snapshot, Array.Empty<LauncherPanelEntry>(), "", filter]);
+            typeof(LauncherPanelWindow).GetMethod("Render", flags | BindingFlags.DeclaredOnly)!.Invoke(panel, [rows, false]);
+            var surface = (FrameworkElement)panel.Content;
+            void Layout(double width = 984)
+            {
+                surface.Measure(new Size(width, 610));
+                surface.Arrange(new Rect(0, 0, width, 610));
+                surface.UpdateLayout();
+            }
+            Layout();
+            var list = Require<ListBox>(panel, "ResultsList");
+            var grid = FindVisual<LauncherGridPanel>(list) ?? throw new InvalidOperationException("未生成虚拟网格");
+            var scroll = FindVisual<ScrollViewer>(list)!;
+            var initialCount = grid.Children.Count;
+            var maximumCount = initialCount;
+            void AssertBounded()
+            {
+                var columns = Math.Max(1, (int)(grid.ActualWidth / LauncherGridPanel.TileWidth));
+                var bound = (int)Math.Ceiling(scroll.ViewportHeight / LauncherGridPanel.TileHeight + 3) * columns + 6;
+                maximumCount = Math.Max(maximumCount, grid.Children.Count);
+                Assert(grid.Children.Count <= bound && grid.Children.Count < 100,
+                    $"250 项只应生成视口附近控件，实际 {grid.Children.Count}，上限 {bound}");
+                Assert(grid.Children.OfType<ListBoxItem>().Select(item => item.Content).Distinct().Count() == grid.Children.Count,
+                    "回收后每个可视控件应关联不同项目");
+            }
+            Assert(panel.VisibleEntries.Count == 250 && list.Items.Count > 250, "概览应保留全部数据与分类标题");
+            AssertBounded();
+            var positions = grid.ItemPositions().ToArray();
+            foreach (var heading in positions.Where(item => item.Item is LauncherPanelSection))
+                Assert(heading.Bounds.X == 0 && Math.Abs(heading.Bounds.Width - grid.ActualWidth) < 0.1,
+                    "分类标题应占满网格宽度");
+            Assert(list.ItemContainerGenerator.ContainerFromIndex(list.Items.Count - 1) is null,
+                "首屏不应生成末尾控件");
+
+            grid.SetVerticalOffset(123.5);
+            Layout();
+            Assert(Math.Abs(grid.VerticalOffset - 123.5) < 0.1, "滚动距离应保留像素小数");
+            for (var offset = 0d; offset < grid.ExtentHeight; offset += 420)
+            {
+                grid.SetVerticalOffset(offset);
+                Layout();
+                AssertBounded();
+            }
+            Assert(list.ItemContainerGenerator.ContainerFromIndex(list.Items.Count - 1) is ListBoxItem,
+                "末尾应在滚入视口后生成");
+            var target = list.Items.Cast<object>().Where(item => EntryOf(item) is not null).ElementAt(175);
+            list.SelectedItem = target;
+            list.ScrollIntoView(target);
+            Layout();
+            Assert(list.ItemContainerGenerator.ContainerFromItem(target) is ListBoxItem,
+                "ScrollIntoView 应生成屏外目标，供菜单、键盘和无障碍操作定位");
+            var before = positions.Single(position => ReferenceEquals(position.Item, target)).Bounds;
+            typeof(LauncherPanelWindow).GetMethod("SelectNeighbor", flags)!.Invoke(panel, [Key.Down]);
+            Layout();
+            var after = positions.Single(position => ReferenceEquals(position.Item, list.SelectedItem)).Bounds;
+            Assert(after.Y > before.Y && Math.Abs(after.X - before.X) < 0.1,
+                "向下应按逻辑布局跨行导航");
+            typeof(LauncherPanelWindow).GetMethod("ScrollResultPage", flags)!.Invoke(panel, [true]);
+            Layout();
+            AssertBounded();
+            Layout(760);
+            AssertBounded();
+            Assert(grid.ItemPositions().All(item => item.Bounds.Right <= grid.ActualWidth + 0.1),
+                "改变宽度后所有逻辑项目应按新列数重排");
+
+            // Replacing a filter's data source must clear stale generated controls.
+            list.ItemsSource = new object[] { new LauncherPanelSection("筛选"), "one", "two" };
+            Layout();
+            Assert(grid.Children.Count == 3 && grid.VerticalOffset == 0,
+                "筛选后应清理旧控件并钳制滚动位置");
+            return $"250 items: initial={initialCount}, maximum={maximumCount}; pixel scroll, recycling, headings, reveal, arrows, page, resize, filter passed";
+        }
+        finally { panel.Close(); }
     }
 
     private static void EnterUsesCurrentQuery(Action<Window> show, Action pump, Action<Func<bool>, string> until)
@@ -498,43 +593,113 @@ internal static class LauncherPanelWindowTests
         LauncherPanelWindow? panel = null;
         try
         {
-            var entries = Enumerable.Range(0, 30).Select(index =>
+            const int entryCount = 250;
+            var entries = Enumerable.Range(0, entryCount).Select(index =>
             {
-                var path = Path.Combine(directory, $"项目{index:D2}.txt");
+                var path = Path.Combine(directory, $"项目{index:D3}.txt");
                 File.WriteAllText(path, "grid icon regression");
-                return new LauncherPanelEntry(new TopBarSearchCandidate(TopBarSearchItemKind.File, $"项目{index:D2}", Path.GetFileName(path), path), "测试分组盒");
+                return new LauncherPanelEntry(new TopBarSearchCandidate(TopBarSearchItemKind.File, $"项目{index:D3}", Path.GetFileName(path), path), "测试分组盒");
             }).ToArray();
             panel = Create(() => Task.FromResult(new LauncherPanelSnapshot(entries, [], false)), (_, _) => throw new InvalidOperationException("滚动不得启动文件"));
             show(panel);
             Click(panel, "FilesFilter");
-            until(() => panel.VisibleEntries.Count == 30, "连续网格应保留所有筛选结果");
+            until(() => panel.VisibleEntries.Count == entryCount, "连续网格应保留所有筛选结果");
             var list = Require<ListBox>(panel, "ResultsList");
             var grid = FindVisual<LauncherGridPanel>(list) ?? throw new InvalidOperationException("启动面板应使用连续图标网格");
             until(() => FindVisual<Image>(list)?.Source is not null, "网格应载入真实 Shell 图标");
             var columns = Math.Max(1, (int)(grid.ActualWidth / LauncherGridPanel.TileWidth));
+            var scroll = FindVisual<ScrollViewer>(list)!;
+            void AssertBounded()
+            {
+                var bound = (int)Math.Ceiling(scroll.ViewportHeight / LauncherGridPanel.TileHeight + 3) * columns + 2;
+                Assert(grid.Children.Count <= bound && grid.Children.Count < entryCount / 2,
+                    $"250 项应只生成视口附近的控件：实际 {grid.Children.Count}，上限 {bound}");
+            }
+            AssertBounded();
+            Assert(list.ItemContainerGenerator.ContainerFromIndex(entryCount - 1) is null,
+                "未滚动到的末项不应生成 WPF 控件");
+            VerifyTileHover(panel, list, until);
             Press(panel, Key.Down);
             Assert(list.SelectedIndex == columns, "向下选择应按实际网格列数移动");
-            var scroll = FindVisual<ScrollViewer>(list)!;
+            // Navigation uses data geometry even when the selected item has no control yet.
+            var offscreen = columns * 8;
+            list.SelectedIndex = offscreen;
+            Press(panel, Key.Down);
+            pump();
+            Assert(list.SelectedIndex == offscreen + columns,
+                "未生成控件的项目仍应按实际列数向下选择");
+            Assert(list.ItemContainerGenerator.ContainerFromIndex(list.SelectedIndex) is ListBoxItem,
+                "方向键应滚动并生成目标控件");
+            var beforePage = scroll.VerticalOffset;
+            Press(panel, Key.PageDown);
+            pump();
+            Assert(scroll.VerticalOffset > beforePage && list.SelectedIndex > offscreen,
+                "PageDown 应按像素滚动并选择新视口的项目");
+            AssertBounded();
             scroll.ScrollToEnd();
             pump();
             Assert(scroll.VerticalOffset > 0, "连续网格应能滚动至末尾");
-            Assert(panel.VisibleEntries[^1].Candidate.DisplayName == "项目29", "连续浏览应保留稳定的名称顺序");
+            AssertBounded();
+            Assert(list.ItemContainerGenerator.ContainerFromIndex(entryCount - 1) is ListBoxItem,
+                "滚动至末尾应生成末项控件");
+            Assert(panel.VisibleEntries[^1].Candidate.DisplayName == "项目249", "连续浏览应保留稳定的名称顺序");
             var offset = scroll.VerticalOffset;
-            Require<TextBox>(panel, "SearchBox").Text = "项目00";
+            Require<TextBox>(panel, "SearchBox").Text = "项目000";
             until(() => panel.VisibleEntries.Count == 1, "搜索应缩小连续浏览结果");
             Require<TextBox>(panel, "SearchBox").Text = "";
-            until(() => panel.VisibleEntries.Count == 30, "清空搜索应恢复文件浏览");
+            until(() => panel.VisibleEntries.Count == entryCount, "清空搜索应恢复文件浏览");
             pump();
             Assert(Math.Abs(scroll.VerticalOffset - offset) < 2, "清空搜索应恢复原来的滚动位置");
             var sources = Require<ComboBox>(panel, "SourceFilter");
             sources.SelectedItem = sources.Items.Cast<object>().Single(item => OptionName(item) == "测试分组盒");
             pump();
-            Assert(panel.VisibleEntries.Count == 30, "来源筛选应保留全部连续结果");
+            Assert(panel.VisibleEntries.Count == entryCount, "来源筛选应保留全部连续结果");
+            AssertBounded();
         }
         finally
         {
             panel?.Close();
             Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    private static void VerifyTileHover(LauncherPanelWindow panel, ListBox list, Action<Func<bool>, string> until)
+    {
+        var selected = (ListBoxItem)list.ItemContainerGenerator.ContainerFromIndex(0);
+        var adjacent = (ListBoxItem)list.ItemContainerGenerator.ContainerFromIndex(1);
+        var selectedTile = (Border)selected.Template.FindName("Tile", selected);
+        var adjacentTile = (Border)adjacent.Template.FindName("Tile", adjacent);
+        var search = Require<TextBox>(panel, "SearchBox");
+        var originalCursor = System.Windows.Forms.Cursor.Position;
+        try
+        {
+            MoveTo(search);
+            until(() => !selected.IsMouseOver && !adjacent.IsMouseOver, "鼠标应移出图标区");
+            Assert(selected.IsSelected && IsClear(selectedTile) && IsClear(adjacentTile), "默认选中项和普通项都不应有底纹");
+
+            MoveTo(adjacent);
+            until(() => adjacent.IsMouseOver, "鼠标应移到相邻项目");
+            Assert(IsClear(selectedTile) && adjacentTile.Background is SolidColorBrush { Color.A: > 0 },
+                "底纹只应出现在鼠标悬停的项目上");
+
+            MoveTo(search);
+            until(() => !adjacent.IsMouseOver, "鼠标应离开相邻项目");
+            list.Tag = true;
+            Assert(IsClear(selectedTile) && IsClear(adjacentTile) && selectedTile.BorderBrush is SolidColorBrush { Color.A: > 0 },
+                "移出项目后应移除底纹，键盘选中项仅保留描边");
+        }
+        finally
+        {
+            list.Tag = false;
+            TopBarWindowTests.MoveMouseTo(originalCursor.X, originalCursor.Y);
+        }
+
+        static bool IsClear(Border tile) => tile.Background is SolidColorBrush { Color.A: 0 };
+
+        static void MoveTo(FrameworkElement element)
+        {
+            var point = element.PointToScreen(new Point(element.ActualWidth / 2, element.ActualHeight / 2));
+            TopBarWindowTests.MoveMouseTo((int)point.X, (int)point.Y);
         }
     }
 

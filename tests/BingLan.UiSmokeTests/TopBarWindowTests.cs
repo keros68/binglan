@@ -115,7 +115,7 @@ internal static class TopBarWindowTests
         }
     }
 
-    private static void MoveMouseTo(int x, int y)
+    internal static void MoveMouseTo(int x, int y)
     {
         var left = GetSystemMetrics(VirtualScreenLeft);
         var top = GetSystemMetrics(VirtualScreenTop);

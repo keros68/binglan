@@ -25,13 +25,16 @@ internal sealed class TopBarAppBarController : IDisposable
     private readonly uint _callbackMessage;
     private readonly uint _taskbarCreatedMessage;
     private readonly AppBarReservationState _reservation = new();
+    private readonly AppBarPositionGuard _positionGuard = new();
     private readonly AppBarWorkAreaCheck _workAreaCheck = new();
+    private readonly DispatcherTimer _deferredPosition;
     private MonitorSnapshot? _monitor;
     private double _heightDip;
     private double? _compactWidthDip;
     private bool _reserveWorkArea;
     private bool _fullScreenDetected;
     private bool _positioning;
+    private bool _refreshNativeTaskbarLayout;
     private bool _disposed;
     private bool _setPositionApplied;
     private int _recoveryGeneration;
@@ -46,6 +49,24 @@ internal sealed class TopBarAppBarController : IDisposable
         _callbackMessage = DockNativeMethods.RegisterWindowMessageW(
             $"BingLan.TopBar.AppBar.{Environment.ProcessId}");
         _taskbarCreatedMessage = DockNativeMethods.RegisterWindowMessageW("TaskbarCreated");
+        _deferredPosition = new DispatcherTimer(
+            AppBarPositionGuard.DeferredDelay,
+            DispatcherPriority.Background,
+            (_, _) =>
+            {
+                _deferredPosition!.Stop();
+                if (!_disposed)
+                {
+                    if (_refreshNativeTaskbarLayout)
+                    {
+                        _refreshNativeTaskbarLayout = false;
+                        InvalidateNativeTaskbarLayout();
+                    }
+                    Position();
+                }
+            },
+            window.Dispatcher);
+        _deferredPosition.Stop();
         _source.AddHook(WindowProc);
     }
 
@@ -86,7 +107,8 @@ internal sealed class TopBarAppBarController : IDisposable
         _heightDip = Math.Max(1d, heightDip);
         _compactWidthDip = compactWidthDip;
 
-        Dispatch(_reservation.Apply(reserveWorkArea));
+        var nativeTopTaskbar = TaskbarEdgeGuard.GetNativeTaskbarLayout(monitor.Bounds)?.Edge == DockEdge.Top;
+        Dispatch(_reservation.Apply(reserveWorkArea && !nativeTopTaskbar));
         Position();
     }
 
@@ -97,6 +119,7 @@ internal sealed class TopBarAppBarController : IDisposable
             return;
         }
         _recoveryGeneration++;
+        _deferredPosition.Stop();
         Dispatch(_reservation.Release());
         _source.RemoveHook(WindowProc);
         _disposed = true;
@@ -106,6 +129,8 @@ internal sealed class TopBarAppBarController : IDisposable
     {
         foreach (var message in messages)
         {
+            _positionGuard.Reset();
+            _workAreaCheck.Reset();
             var data = CreateData();
             if (message == AppBarMessage.Register)
             {
@@ -140,13 +165,20 @@ internal sealed class TopBarAppBarController : IDisposable
         _positioning = true;
         try
         {
-            // The native taskbar may move after this bar has already reserved the top.
-            // Its confirmed edge takes precedence over our retained reservation.
-            if (TaskbarEdgeGuard.GetNativeTaskbarLayout(_monitor.Bounds)?.Edge == DockEdge.Top
-                && _reservation.IsRegistered)
+            // The native taskbar may move to or away from the top edge after Apply.
+            // Yield the reservation while a native top taskbar is present, while keeping
+            // _reserveWorkArea intact so the reservation restores once it leaves.
+            var nativeTopTaskbar = TaskbarEdgeGuard.GetNativeTaskbarLayout(_monitor.Bounds)?.Edge == DockEdge.Top;
+            if (nativeTopTaskbar)
             {
-                _reserveWorkArea = false;
-                Dispatch(_reservation.Release());
+                if (_reservation.IsRegistered)
+                {
+                    Dispatch(_reservation.Release());
+                }
+            }
+            else if (_reserveWorkArea && !_reservation.IsRegistered)
+            {
+                Dispatch(_reservation.Apply(true));
             }
             var scale = _monitor.Dpi / 96d;
             var thicknessPixels = Math.Max(1, (int)Math.Round(_heightDip * scale));
@@ -176,13 +208,29 @@ internal sealed class TopBarAppBarController : IDisposable
                 // fires it constantly), and every ABM_SETPOS rebroadcasts a work-area
                 // change system-wide — screen-capture overlays react to that by
                 // re-laying out. An unchanged strip needs no new broadcast, but a
-                // registration that has not sent its first SETPOS yet must not skip.
+                // registration that has not sent its first SETPOS yet must not skip,
+                // and a drifted window rect must still be corrected via MoveWindow.
                 if (adjusted == Bounds
                     && _setPositionApplied
                     && !_workAreaCheck.NeedsResubmit(
                         DockAppBarController.GetLiveWorkingArea(_monitor).Top,
                         adjusted.Bottom))
                 {
+                    var expectedWindowRect = adjusted with
+                    {
+                        Bottom = Math.Min(adjusted.Top + thicknessPixels, _monitor.Bounds.Bottom)
+                    };
+                    if (!DockNativeMethods.GetWindowRect(_handle, out var actualRect)
+                        || ToPixel(actualRect) != expectedWindowRect)
+                    {
+                        DockNativeMethods.MoveWindow(
+                            _handle,
+                            expectedWindowRect.Left,
+                            expectedWindowRect.Top,
+                            expectedWindowRect.Width,
+                            expectedWindowRect.Height,
+                            true);
+                    }
                     UpdateWindowLayer();
                     return;
                 }
@@ -240,6 +288,8 @@ internal sealed class TopBarAppBarController : IDisposable
         {
             InvalidateNativeTaskbarLayout();
             _reservation.ResetRegistration();
+            _positionGuard.Reset();
+            _workAreaCheck.Reset();
             var recoveryGeneration = ++_recoveryGeneration;
             _window.Dispatcher.BeginInvoke(
                 DispatcherPriority.Background,
@@ -252,7 +302,14 @@ internal sealed class TopBarAppBarController : IDisposable
             switch ((int)wParam)
             {
                 case DockNativeMethods.AbnPosChanged:
-                    Position();
+                    if (_positionGuard.TryHandleNow(Environment.TickCount64))
+                    {
+                        Position();
+                    }
+                    else if (!_deferredPosition.IsEnabled)
+                    {
+                        _deferredPosition.Start();
+                    }
                     break;
             }
             return 0;
@@ -272,9 +329,17 @@ internal sealed class TopBarAppBarController : IDisposable
             // A work-area change can leave Explorer holding a stale strip for the bar,
             // for example after moving to a monitor with another scale.
             case NativeMethods.WmSettingChange
-                when wParam == NativeMethods.SpiSetWorkArea:
+                when wParam == NativeMethods.SpiSetWorkArea && !_reservation.IsRegistered:
                 _window.Dispatcher.BeginInvoke(DispatcherPriority.Background,
                     NotifyEnvironmentChanged);
+                break;
+            case NativeMethods.WmSettingChange
+                when wParam == NativeMethods.SpiSetWorkArea && _reservation.IsRegistered:
+                _refreshNativeTaskbarLayout = true;
+                if (!_deferredPosition.IsEnabled)
+                {
+                    _deferredPosition.Start();
+                }
                 break;
             case DockNativeMethods.WmDisplayChange:
             case DockNativeMethods.WmDpiChanged:
@@ -296,7 +361,9 @@ internal sealed class TopBarAppBarController : IDisposable
                 return;
             }
 
-            if (!_reserveWorkArea)
+            if (!_reserveWorkArea
+                || (_monitor is not null
+                    && TaskbarEdgeGuard.GetNativeTaskbarLayout(_monitor.Bounds)?.Edge == DockEdge.Top))
             {
                 break;
             }

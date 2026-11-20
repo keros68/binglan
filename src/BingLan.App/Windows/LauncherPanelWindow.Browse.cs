@@ -1,6 +1,5 @@
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
@@ -137,13 +136,22 @@ public partial class LauncherPanelWindow
 
     private IEnumerable<(PanelRow Row, Rect Bounds)> TilePositions()
     {
-        if (ResultsList.ItemContainerGenerator.ContainerFromIndex(0) is not ListBoxItem first
-            || VisualTreeHelper.GetParent(first) is not LauncherGridPanel grid) yield break;
-        foreach (var element in grid.Children)
+        if (FindGrid(ResultsList) is not { } grid) yield break;
+        foreach (var (item, bounds) in grid.ItemPositions())
         {
-            if (element is ListBoxItem { Content: PanelRow row } item)
-                yield return (row, LayoutInformation.GetLayoutSlot(item));
+            if (item is PanelRow row) yield return (row, bounds);
         }
+    }
+
+    private static LauncherGridPanel? FindGrid(DependencyObject element)
+    {
+        for (var index = 0; index < VisualTreeHelper.GetChildrenCount(element); index++)
+        {
+            var child = VisualTreeHelper.GetChild(element, index);
+            if (child is LauncherGridPanel grid) return grid;
+            if (FindGrid(child) is { } descendant) return descendant;
+        }
+        return null;
     }
 
     private void QueueVisibleIcons()
@@ -164,6 +172,7 @@ public partial class LauncherPanelWindow
 
     private void SelectNeighbor(Key direction)
     {
+        ResultsList.Tag = true;
         var current = ResultsList.SelectedItem as PanelRow;
         if (current is null)
         {
@@ -195,8 +204,11 @@ public partial class LauncherPanelWindow
     private void ScrollResultPage(bool down)
     {
         if (ResultViewport is not { } viewport) return;
+        ResultsList.Tag = true;
         var offset = Math.Clamp(viewport.VerticalOffset + (down ? 1 : -1) * viewport.ViewportHeight, 0, viewport.ScrollableHeight);
         viewport.ScrollToVerticalOffset(offset);
-        if (TilePositions().FirstOrDefault(tile => tile.Bounds.Bottom > offset).Row is { } row) ResultsList.SelectedItem = row;
+        var target = TilePositions().FirstOrDefault(tile => tile.Bounds.Top >= offset).Row
+            ?? TilePositions().FirstOrDefault(tile => tile.Bounds.Bottom > offset).Row;
+        if (target is not null) SelectAndReveal(target);
     }
 }

@@ -21,7 +21,7 @@ internal static class FloatingGlassPalette
         {
             Add("FloatingGlassPanelBrush", BrushOf(tint), SystemColors.WindowBrush);
             Add("FloatingGlassLabelBrush", Paint(light ? "#B8F3FAFF" : "#C8182534"), SystemColors.WindowBrush);
-            Add("FloatingGlassTileLabelBrush", Paint(light ? "#98F3FAFF" : "#AA182534"), SystemColors.WindowBrush);
+            Add("LauncherTileHoverBrush", Paint(light ? "#38FFFFFF" : "#348FB8EB"), SystemColors.ControlBrush);
             Add("FloatingGlassNavigationBrush", Paint(light ? "#29F3FAFF" : "#35182534"), SystemColors.WindowBrush);
             Add("FloatingGlassHeadingBrush", Brushes.Transparent, SystemColors.WindowBrush);
         }

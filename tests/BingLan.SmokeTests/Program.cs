@@ -1,3 +1,4 @@
+using BingLan.Core.Desktop;
 using BingLan.Core.Models;
 using BingLan.Core.Services;
 using BingLan.Core.Taskbar;
@@ -34,6 +35,7 @@ Run("桌面软件、文件夹和文件安全分类", TestDesktopClassification);
 Run("文件盒系统入口、失效判定与重新定位", FileBoxRuleTests.Run);
 Run("位置、尺寸和内容重启保留", TestPersistence);
 Run("启动面板外观 v48 迁移与独立设置保存", TestLauncherAppearancePersistence);
+Run("启动面板总开关迁移、保存与独立 Dock 偏好", TestLauncherEnabledPersistence);
 Run("启动面板分组迁移、多组关联与保存", TestLauncherGroupsPersistence);
 Run("启动面板用途分类、维护入口与人工归类保存", TestLauncherAppCategories);
 Run("卡片按显示器排列记住位置", DisplayLayoutTests.TestPositionPerArrangement);
@@ -115,6 +117,8 @@ Run("像素尺寸过大的 PNG 被拒绝", StateRecoveryTests.TestHugePngIsRejec
 Run("读取 Rainmeter 皮肤的字体、颜色和底板", RainmeterLookTests.TestPerformanceSkinLook);
 Run("快捷入口列表规则", StateRecoveryTests.TestQuickPlaceRules);
 Run("Rainmeter 皮肤变量与空皮肤", RainmeterLookTests.TestVariablesAndEmptySkins);
+Run("显示桌面受控窗口遮挡判定与回落边界", TestDesktopSurfaceRegression);
+Run("清空待办与隐藏快捷入口在重启和迁移后不复活", TestEmptyTodoAndHiddenQuickLaunchDoNotResurrect);
 
 if (failures.Count > 0)
 {
@@ -1461,6 +1465,41 @@ static void TestPersistence()
     }
 }
 
+static void TestLauncherEnabledPersistence()
+{
+    var temp = Directory.CreateTempSubdirectory("BingLan-launcher-enabled-");
+    try
+    {
+        var store = new LocalStateStore(temp.FullName);
+        Assert(store.Load().LauncherEnabled, "全新配置应启用启动面板");
+        File.WriteAllText(store.StatePath, """{ "SchemaVersion": 52, "Dock": { "ShowLauncherButton": false } }""");
+        var state = store.Load();
+        Assert(state.SchemaVersion == AppState.CurrentSchemaVersion && state.LauncherEnabled
+            && !state.Dock.ShowLauncherButton, "旧配置总开关应默认开启并保留关闭的 Dock 入口");
+        state.LauncherEnabled = false;
+        state.LauncherGroups.Add(new LauncherGroupState { Name = "保留分组" });
+        state.LauncherAppearance.FollowCardLook = false;
+        store.Save(state);
+        var loaded = store.Load();
+        Assert(!loaded.LauncherEnabled && !loaded.Dock.ShowLauncherButton
+            && loaded.LauncherGroups.Single().Name == "保留分组" && !loaded.LauncherAppearance.FollowCardLook,
+            "关闭总开关应保存，分组、外观与 Dock 偏好应保留");
+        loaded.LauncherEnabled = true;
+        store.Save(loaded);
+        Assert(store.Load().LauncherEnabled && !store.Load().Dock.ShowLauncherButton,
+            "重新启用应保留独立的 Dock 入口偏好");
+        loaded.Dock.ShowLauncherButton = true;
+        loaded.LauncherEnabled = false;
+        store.Save(loaded);
+        Assert(!store.Load().LauncherEnabled && store.Load().Dock.ShowLauncherButton,
+            "总开关关闭不应改写已开启的 Dock 入口偏好");
+    }
+    finally
+    {
+        temp.Delete(recursive: true);
+    }
+}
+
 static void TestLauncherAppearancePersistence()
 {
     var temp = Directory.CreateTempSubdirectory("BingLan-launcher-");
@@ -2584,6 +2623,104 @@ static void TestThemeSlotBindingResolution()
 
     Assert(AppSlotCatalog.SlotFor("CHROME.EXE") == "browser", "浏览器可执行文件槽位识别错误");
     Assert(AppSlotCatalog.SlotFor("unknown.exe") == "other", "未知可执行文件应归为其他槽位");
+}
+
+static void TestDesktopSurfaceRegression()
+{
+    // 当受控集合仅统计可见且未最小化窗口时，已提升且全部在桌面表面之上不应重复触发 Raise。
+    Assert(
+        DesktopSurfaceRules.ActionFor(cardsRaised: true, desktopShown: true, anySurfaceCovered: false)
+            == DesktopSurfaceAction.None,
+        "所有可见卡片均在桌面表面之上时不应重复触发提升");
+    Assert(
+        DesktopSurfaceRules.ActionFor(cardsRaised: true, desktopShown: true, anySurfaceCovered: true)
+            == DesktopSurfaceAction.Raise,
+        "任一可见卡片被桌面表面遮挡时应再次触发提升");
+    Assert(
+        DesktopSurfaceRules.ActionFor(cardsRaised: false, desktopShown: true, anySurfaceCovered: false)
+            == DesktopSurfaceAction.Raise,
+        "首次进入显示桌面时，即使当前无可见受控卡片也应完成状态切换");
+    Assert(
+        DesktopSurfaceRules.ActionFor(cardsRaised: true, desktopShown: false, anySurfaceCovered: false)
+            == DesktopSurfaceAction.Lower,
+        "退出显示桌面时已提升卡片必须回落");
+
+    // 显示桌面期间任务栏/置顶外壳与免激活工具窗不阻断提升，普通窗口立即阻断。
+    Assert(
+        !DesktopSurfaceRules.IsDesktopShown(desktopSurfaceFound: true, ordinaryWindowsAboveSurface: 0, hasActiveApplication: true),
+        "有活动普通应用前台时不应判定为显示桌面");
+    Assert(
+        DesktopSurfaceRules.IsDesktopShown(desktopSurfaceFound: true, ordinaryWindowsAboveSurface: 0, hasActiveApplication: false),
+        "桌面表面存在且无普通窗口和活动应用时应判定为显示桌面");
+    Assert(
+        !DesktopSurfaceRules.CountsAsOrdinaryWindow(shellProcess: true, "Shell_TrayWnd"),
+        "任务栏窗口不应被归类为阻断显示桌面的普通窗口");
+    Assert(
+        DesktopSurfaceRules.CountsAsOrdinaryWindow(shellProcess: true, "CabinetWClass"),
+        "文件资源管理器窗口应被归类为普通窗口");
+}
+
+static void TestEmptyTodoAndHiddenQuickLaunchDoNotResurrect()
+{
+    var temp = Directory.CreateTempSubdirectory("BingLanIssue21Regression-");
+    try
+    {
+        var store = new LocalStateStore(temp.FullName);
+
+        // 场景 1：用户清空所有待办并隐藏快捷入口（即使开启了清爽桌面），保存后重新加载不应复活。
+        var state = LocalStateStore.CreateDefault();
+        state.CleanDesktopEnabled = true;
+        state.TodoWidgets.Clear();
+        state.DesktopExperience.GetComponent(DesktopComponentKind.Todo).IsVisible = false;
+        state.DesktopExperience.GetComponent(DesktopComponentKind.QuickLaunch).IsVisible = false;
+        store.Save(state);
+
+        var reloaded = store.Load();
+        Assert(reloaded.TodoWidgets.Count == 0, "清空待办重启加载后不应凭空新增待办");
+        Assert(!reloaded.DesktopExperience.GetComponent(DesktopComponentKind.Todo).IsVisible,
+            "隐藏待办重启加载后可见性应保持关闭");
+        Assert(!reloaded.DesktopExperience.GetComponent(DesktopComponentKind.QuickLaunch).IsVisible,
+            "开启清爽桌面且隐藏快捷入口后，重启加载不应复活快捷入口");
+        Assert(reloaded.CleanDesktopEnabled, "清爽桌面开关状态应原样保留");
+
+        // 场景 2：从旧版 Schema（如 v48）迁移时，空待办与隐藏快捷入口也不得被迁移逻辑重置为显示。
+        var legacyJson = $$"""
+            {
+              "SchemaVersion": 48,
+              "CleanDesktopEnabled": true,
+              "TodoWidgets": [],
+              "DesktopExperience": {
+                "Components": [
+                  { "Kind": {{(int)DesktopComponentKind.Todo}}, "IsVisible": false },
+                  { "Kind": {{(int)DesktopComponentKind.QuickLaunch}}, "IsVisible": false }
+                ]
+              }
+            }
+            """;
+        File.WriteAllText(store.StatePath, legacyJson);
+        if (File.Exists(store.StatePath + ".bak"))
+        {
+            File.Delete(store.StatePath + ".bak");
+        }
+
+        var migrated = store.Load();
+        Assert(migrated.SchemaVersion == AppState.CurrentSchemaVersion, "旧版状态应迁移到当前 SchemaVersion");
+        Assert(migrated.TodoWidgets.Count == 0, "旧版空待办迁移后不应注入默认待办");
+        Assert(!migrated.DesktopExperience.GetComponent(DesktopComponentKind.Todo).IsVisible,
+            "旧版隐藏待办迁移后不应被改回显示");
+        Assert(!migrated.DesktopExperience.GetComponent(DesktopComponentKind.QuickLaunch).IsVisible,
+            "旧版清爽桌面下隐藏的快捷入口迁移后不应被改回显示");
+
+        // 场景 3：DesktopExperienceRules.Normalize 不得改写用户关闭的 Todo 与 QuickLaunch 可见性。
+        DesktopExperienceRules.Normalize(migrated.DesktopExperience);
+        Assert(!migrated.DesktopExperience.GetComponent(DesktopComponentKind.Todo).IsVisible
+            && !migrated.DesktopExperience.GetComponent(DesktopComponentKind.QuickLaunch).IsVisible,
+            "规范化桌面组件状态时不应复活已关闭的待办或快捷入口");
+    }
+    finally
+    {
+        temp.Delete(recursive: true);
+    }
 }
 
 static void Assert(bool condition, string message)

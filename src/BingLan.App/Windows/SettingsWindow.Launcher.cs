@@ -12,11 +12,35 @@ namespace BingLan.App.Windows;
 public partial class SettingsWindow
 {
     private bool _loadingLauncherLook;
+    private bool _loadingLauncherEnabled = true;
 
     private void InitializeLauncherLook()
     {
+        LoadLauncherEnabled();
         PaletteSwatches.Fill(LauncherPaletteSwatches, palette => ApplyLauncherColor(palette.Body));
         LoadLauncherLook();
+    }
+
+    private void LoadLauncherEnabled()
+    {
+        _loadingLauncherEnabled = true;
+        try
+        {
+            LauncherEnabledCheckBox.IsChecked = _maintenance.IsLauncherEnabled();
+            DockLauncherButtonCheckBox.IsEnabled = _maintenance.IsLauncherEnabled();
+        }
+        finally
+        {
+            _loadingLauncherEnabled = false;
+        }
+    }
+
+    private void LauncherEnabled_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_loadingLauncherEnabled) return;
+
+        _maintenance.SetLauncherEnabled(LauncherEnabledCheckBox.IsChecked == true);
+        LoadLauncherEnabled();
     }
 
     private void LoadLauncherLook()

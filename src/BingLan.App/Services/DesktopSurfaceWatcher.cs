@@ -270,8 +270,18 @@ internal sealed class DesktopSurfaceWatcher : IDisposable
 
     private void RefreshShellShowHook(uint shellProcessId)
     {
-        if (!_started || _disposed || shellProcessId == 0)
+        if (!_started || _disposed)
         {
+            return;
+        }
+        if (shellProcessId == 0)
+        {
+            if (_shellShowHook != 0)
+            {
+                NativeMethods.UnhookWinEvent(_shellShowHook);
+                _shellShowHook = 0;
+            }
+            _shellProcessId = 0;
             return;
         }
         if (shellProcessId == _shellProcessId && _shellShowHook != 0)
@@ -396,6 +406,17 @@ internal sealed class DesktopSurfaceWatcher : IDisposable
             if (eventType == DockNativeMethods.EventObjectShow)
             {
                 var className = ClassNameOf(window);
+                if (className == "Shell_TrayWnd")
+                {
+                    NativeMethods.GetWindowThreadProcessId(window, out var trayProcess);
+                    if (trayProcess != 0 && trayProcess != _shellProcessId)
+                    {
+                        RefreshShellShowHook(trayProcess);
+                        EvaluateImmediate();
+                        ScheduleCheck();
+                        return;
+                    }
+                }
                 if (className is "WorkerW" or "Progman")
                 {
                     EvaluateImmediate();
@@ -527,7 +548,10 @@ internal sealed class DesktopSurfaceWatcher : IDisposable
             || IsApplicationWindowBlocking(_restoringWindow, shellProcess, isRestoring: true);
         var blockers = 0;
         var surfaces = _cardHandles()
-            .Where(handle => handle != 0 && DockNativeMethods.IsWindow(handle))
+            .Where(handle => handle != 0
+                && DockNativeMethods.IsWindow(handle)
+                && NativeMethods.IsWindowVisible(handle)
+                && !NativeMethods.IsIconic(handle))
             .ToHashSet();
         var surfacesAbove = 0;
         if (found && !hasActiveApplication)

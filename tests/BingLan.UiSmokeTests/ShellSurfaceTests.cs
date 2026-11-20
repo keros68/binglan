@@ -140,7 +140,7 @@ internal static class ShellSurfaceTests
             state.ShowDesktopButton = true;
             apply.Invoke(dock, [apps]);
             Assert(panel.Children.OfType<Button>().Take(3).Select(AutomationProperties.GetName)
-                .SequenceEqual(["打开 Windows 开始菜单", "打开启动面板", "显示桌面"]),
+                .SequenceEqual(["打开 Windows 开始菜单", "打开冰蓝总览卡", "显示桌面"]),
                 "三个入口应依次显示在应用左侧");
             Assert(panel.Children.OfType<Border>().Count() == 1
                 && (double)length.Invoke(dock, null)! == DockLayoutMetrics.ContentLengthForItems(4, state.IconSize) + DockLayoutMetrics.DividerDip,

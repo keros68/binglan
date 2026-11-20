@@ -17,7 +17,9 @@ internal sealed class DockAppBarController : IDisposable
 {
     private const DockEdge Edge = DockEdge.Bottom;
     private const int ExplorerRecoveryAttemptCount = 5;
+    private const int MaxTransientReserveFailures = 3;
     private static readonly TimeSpan ExplorerRecoveryDelay = TimeSpan.FromMilliseconds(400);
+    private static readonly TimeSpan TransientReserveRetryDelay = TimeSpan.FromMilliseconds(400);
     private readonly Window _window;
     private readonly nint _handle;
     private readonly HwndSource _source;
@@ -27,6 +29,7 @@ internal sealed class DockAppBarController : IDisposable
     private readonly AppBarPositionGuard _positionGuard = new();
     private readonly AppBarWorkAreaCheck _workAreaCheck = new();
     private readonly DispatcherTimer _deferredPosition;
+    private readonly DispatcherTimer _reserveRetryTimer;
     private PixelRect _reservedStrip;
     private MonitorSnapshot? _monitor;
     private bool _reserveWorkArea;
@@ -38,6 +41,9 @@ internal sealed class DockAppBarController : IDisposable
     private bool _positioning;
     private bool _applying;
     private bool _refreshNativeTaskbarLayout;
+    private bool _explorerRecovering;
+    private bool _transientRecovering;
+    private int _consecutiveReserveFailures;
     private bool _disposed;
     private int _recoveryGeneration;
 
@@ -68,6 +74,23 @@ internal sealed class DockAppBarController : IDisposable
             },
             window.Dispatcher);
         _deferredPosition.Stop();
+        _reserveRetryTimer = new DispatcherTimer(
+            TransientReserveRetryDelay,
+            DispatcherPriority.Background,
+            (_, _) =>
+            {
+                _reserveRetryTimer!.Stop();
+                if (!_disposed && _reserveWorkArea)
+                {
+                    if (!_reservation.IsRegistered)
+                    {
+                        Dispatch(_reservation.Apply(true));
+                    }
+                    Position();
+                }
+            },
+            window.Dispatcher);
+        _reserveRetryTimer.Stop();
         _source.AddHook(WindowProc);
     }
 
@@ -79,7 +102,7 @@ internal sealed class DockAppBarController : IDisposable
 
     internal bool IsReserved => _reservation.IsRegistered;
 
-    internal bool IsRecovering { get; private set; }
+    internal bool IsRecovering => _explorerRecovering || _transientRecovering;
 
     internal MonitorSnapshot? Monitor => _monitor;
 
@@ -135,9 +158,16 @@ internal sealed class DockAppBarController : IDisposable
         _contentLengthDip = Math.Max(DockLayoutMetrics.EmptyLengthDip, contentLengthDip);
         _thicknessDip = thicknessDip;
         _edgeGapDip = edgeGapDip;
+        if (!reserveWorkArea || monitorChanged)
+        {
+            _consecutiveReserveFailures = 0;
+            _transientRecovering = false;
+            _reserveRetryTimer.Stop();
+            _reservedStrip = default;
+        }
         if (!reserveWorkArea)
         {
-            IsRecovering = false;
+            _explorerRecovering = false;
         }
 
         _applying = true;
@@ -159,8 +189,11 @@ internal sealed class DockAppBarController : IDisposable
             return;
         }
         _recoveryGeneration++;
-        IsRecovering = false;
+        _explorerRecovering = false;
+        _transientRecovering = false;
+        _consecutiveReserveFailures = 0;
         _deferredPosition.Stop();
+        _reserveRetryTimer.Stop();
         Dispatch(_reservation.Release());
         _source.RemoveHook(WindowProc);
         _disposed = true;
@@ -182,7 +215,7 @@ internal sealed class DockAppBarController : IDisposable
                 }
                 else
                 {
-                    IsRecovering = false;
+                    _explorerRecovering = false;
                 }
             }
             else
@@ -210,19 +243,42 @@ internal sealed class DockAppBarController : IDisposable
             PixelRect strip;
             if (_reservation.IsRegistered && TryReserveStrip(_monitor, thicknessPixels, stripThickness) is { } reserved)
             {
+                _consecutiveReserveFailures = 0;
+                _transientRecovering = false;
+                _reserveRetryTimer.Stop();
                 strip = reserved;
+            }
+            else if (_reserveWorkArea
+                && AppBarReservationState.IsValidStrip(_reservedStrip, _monitor.Bounds, thicknessPixels)
+                && _consecutiveReserveFailures < MaxTransientReserveFailures)
+            {
+                // Transient Explorer hiccups can make ABM_QUERYPOS/ABM_SETPOS fail briefly;
+                // retain the active reservation and previous strip while retrying so windows
+                // do not expand and the dock does not fall back to smart-hide.
+                _consecutiveReserveFailures++;
+                _transientRecovering = true;
+                strip = _reservedStrip;
+                if (!_reserveRetryTimer.IsEnabled)
+                {
+                    _reserveRetryTimer.Start();
+                }
             }
             else
             {
+                var wasRetaining = _reservation.IsRegistered || _transientRecovering;
+                _consecutiveReserveFailures = 0;
+                _transientRecovering = false;
+                _reserveRetryTimer.Stop();
+                _reservedStrip = default;
                 if (_reservation.IsRegistered)
                 {
                     Dispatch(_reservation.Release());
-                    if (!_applying)
-                    {
-                        _window.Dispatcher.BeginInvoke(
-                            DispatcherPriority.Background,
-                            () => EnvironmentChanged?.Invoke());
-                    }
+                }
+                if (wasRetaining && !_applying)
+                {
+                    _window.Dispatcher.BeginInvoke(
+                        DispatcherPriority.Background,
+                        () => EnvironmentChanged?.Invoke());
                 }
 
                 var workArea = GetLiveWorkingArea(_monitor);
@@ -346,7 +402,10 @@ internal sealed class DockAppBarController : IDisposable
         if ((uint)message == _taskbarCreatedMessage)
         {
             InvalidateNativeTaskbarLayout();
-            IsRecovering = _reserveWorkArea;
+            _explorerRecovering = _reserveWorkArea;
+            _transientRecovering = false;
+            _consecutiveReserveFailures = 0;
+            _reserveRetryTimer.Stop();
             _reservation.ResetRegistration();
             _positionGuard.Reset();
             _workAreaCheck.Reset();
@@ -446,7 +505,7 @@ internal sealed class DockAppBarController : IDisposable
         {
             if (recoveryGeneration == _recoveryGeneration)
             {
-                IsRecovering = false;
+                _explorerRecovering = false;
             }
         }
 

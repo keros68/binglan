@@ -79,11 +79,11 @@ internal static class LauncherPreviewCapture
             var row = (Panel)dock.FindName("ItemPanel");
             var commands = row.Children.OfType<Button>().Take(3).ToArray();
             if (!commands.Select(AutomationProperties.GetName)
-                .SequenceEqual(["打开 Windows 开始菜单", "打开启动面板", "显示桌面"]) || row.Children[3] is not Border)
+                .SequenceEqual(["打开 Windows 开始菜单", "打开冰蓝总览卡", "显示桌面"]) || row.Children[3] is not Border)
             {
                 throw new InvalidOperationException("三个功能入口应集中在左侧，与应用由一条分隔线隔开");
             }
-            if (!Equals(commands[1].ToolTip, "打开启动面板") || panel.Title != "冰蓝启动面板")
+            if (!Equals(commands[1].ToolTip, "打开冰蓝总览卡") || panel.Title != "冰蓝总览卡")
             {
                 throw new InvalidOperationException("Dock 提示与启动面板窗口应使用同一个产品名称");
             }
@@ -254,7 +254,7 @@ internal static class LauncherPreviewCapture
         var entries = new[]
         {
             (Name: "打开 Windows 开始菜单", Switch: "DockStartMenuButtonCheckBox"),
-            (Name: "打开启动面板", Switch: "DockLauncherButtonCheckBox"),
+            (Name: "打开冰蓝总览卡", Switch: "DockLauncherButtonCheckBox"),
             (Name: "显示桌面", Switch: "DockShowDesktopButtonCheckBox")
         };
         foreach (var (name, control) in entries)

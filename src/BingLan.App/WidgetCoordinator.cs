@@ -45,6 +45,7 @@ public sealed partial class WidgetCoordinator : IDisposable
     private readonly DockIconStore _iconStore;
     private readonly AppUpdater _updater;
     private TrayMenuItem? _updateMenuItem;
+    private TrayMenuItem? _launcherMenuItem;
     private Action? _balloonClicked;
     private IReadOnlyDictionary<string, byte[]> _pendingThemeIcons = new Dictionary<string, byte[]>();
     private readonly SemaphoreSlim _cleanDesktopGate = new(1, 1);
@@ -98,7 +99,7 @@ public sealed partial class WidgetCoordinator : IDisposable
             _saveTimer.Stop();
             SaveNow();
         };
-        _trayIcon = BuildTrayIcon();
+        _trayIcon = BuildTrayIcon(interactiveQa);
         _desktopSurfaceWatcher = new DesktopSurfaceWatcher(GetDesktopProtectedHandles);
         // Only the installed app checks on its own; test and interactive runs keep quiet.
         _updater = new AppUpdater(_state.Updates, AppVersion, ScheduleSave, Exit, canAutoCheck: dataDirectory is null);
@@ -120,6 +121,7 @@ public sealed partial class WidgetCoordinator : IDisposable
                 message,
                 TrayTipKind.Info));
         _dock.LauncherRequested += ToggleLauncherPanel;
+        _dock.IsLauncherEnabled = () => _state.LauncherEnabled;
         _dock.ReadFileBoxes = ReadLauncherFileBoxes;
         _dock.SendToFileBox = SendLauncherPathToFileBoxAsync;
         _dock.ResolvePanelForeground = ResolveLauncherForeground;
@@ -182,10 +184,14 @@ public sealed partial class WidgetCoordinator : IDisposable
                 }
             }
             ApplyQuickPlaces();
-            var todoVisible = _state.DesktopExperience
-                .GetComponent(DesktopComponentKind.Todo)
-                .IsVisible;
             var todoComponent = _state.DesktopExperience.GetComponent(DesktopComponentKind.Todo);
+            // Reconcile legacy/inconsistent state where Todo remained marked visible with no cards,
+            // so later unrelated settings changes cannot resurrect a default to-do card.
+            if (todoComponent.IsVisible && _state.TodoWidgets.Count == 0)
+            {
+                todoComponent.IsVisible = false;
+            }
+            var todoVisible = todoComponent.IsVisible;
             foreach (var todo in _state.TodoWidgets.ToList())
             {
                 if (todoVisible)
@@ -320,6 +326,7 @@ public sealed partial class WidgetCoordinator : IDisposable
         }
         ScheduleSave();
         _updater.Start();
+        QueueLauncherCatalogWarmup();
     }
 
     private void OnReleaseFound(UpdateRelease release)
@@ -1421,6 +1428,8 @@ public sealed partial class WidgetCoordinator : IDisposable
                 Style = _state.Style,
                 ApplyStyle = ApplyStyle,
                 LauncherAppearance = _state.LauncherAppearance,
+                IsLauncherEnabled = () => _state.LauncherEnabled,
+                SetLauncherEnabled = SetLauncherEnabled,
                 ApplyLauncherAppearance = () =>
                 {
                     _launcherPanel?.ApplyAppearance();
@@ -2045,11 +2054,13 @@ public sealed partial class WidgetCoordinator : IDisposable
                 break;
             case QuickPlacesWindow:
                 _state.DesktopExperience.GetComponent(DesktopComponentKind.QuickLaunch).IsVisible = false;
+                _settingsWindow?.RefreshDesktopExperience();
                 break;
             case InformationWidgetWindow information:
                 if (information.ComponentKind is { } kind)
                 {
                     _state.DesktopExperience.GetComponent(kind).IsVisible = false;
+                    _settingsWindow?.RefreshDesktopExperience();
                 }
                 else
                 {
@@ -2680,10 +2691,11 @@ public sealed partial class WidgetCoordinator : IDisposable
         System.Windows.Application.Current.Shutdown();
     }
 
-    private TrayIconHost BuildTrayIcon()
+    private TrayIconHost BuildTrayIcon(bool interactiveQa)
     {
-        var trayIcon = new TrayIconHost("冰蓝桌面");
-        trayIcon.AddItem("打开启动面板", ToggleLauncherPanel);
+        var trayIcon = new TrayIconHost(interactiveQa ? "冰蓝桌面（测试预览）" : "冰蓝桌面");
+        _launcherMenuItem = trayIcon.AddItem("打开冰蓝总览卡", ToggleLauncherPanel);
+        _launcherMenuItem.Visible = _state.LauncherEnabled;
         trayIcon.AddItem("一键整理桌面", async () => await OrganizeDesktopAsync());
         trayIcon.AddSeparator();
         _toggleDesktopMenuItem = trayIcon.AddItem("隐藏桌面组件", ToggleDesktop);

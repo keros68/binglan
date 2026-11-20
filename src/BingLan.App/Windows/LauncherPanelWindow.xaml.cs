@@ -109,7 +109,6 @@ public partial class LauncherPanelWindow : Window
         InitializeComponent();
         _glass = new DockGlassSurface(this, PanelSurface, "FloatingGlassSurfaceBrush",
             "FloatingGlassBorderBrush", "FloatingGlassPanelBrush");
-        InitializePanelAppearance();
         NewGroupButton.Visibility = saveOrganizer is null ? Visibility.Collapsed : Visibility.Visible;
         ApplyAppearance();
         AccessibilityThemeManager.HighContrastChanged += OnHighContrastChanged;
@@ -167,11 +166,10 @@ public partial class LauncherPanelWindow : Window
             AccessibilityThemeManager.IsHighContrastEnabled || SystemParameters.HighContrast, launcher: true);
         if (_appearance.UseClearGlass || ((Color)ColorConverter.ConvertFromString(glass.Surface)).A < 90)
         {
-            Resources["FloatingGlassTileLabelBrush"] = Resources["FloatingGlassLabelBrush"];
             Resources["FloatingGlassNavigationBrush"] = Resources["FloatingGlassLabelBrush"];
             Resources["FloatingGlassHeadingBrush"] = Resources["FloatingGlassLabelBrush"];
         }
-        ApplyPanelMaterial();
+        _glass.SetClearMode(_appearance.UseClearGlass);
         MaterialButton.Content = _appearance.UseClearGlass ? "清透" : "磨砂";
         MaterialButton.ToolTip = _appearance.UseClearGlass ? "切换为磨砂玻璃" : "切换为清透玻璃";
     }
@@ -187,36 +185,24 @@ public partial class LauncherPanelWindow : Window
     internal bool DismissedOnDeactivation { get; private set; }
     internal IReadOnlyList<LauncherPanelEntry> VisibleEntries => ResultsList.Items.OfType<PanelRow>().Select(row => row.Entry).ToArray();
 
-    internal void ShowPanel()
-    {
-        PreparePanelAppearance();
-        Show();
-    }
-
     internal void Dismiss(bool restoreForeground = false)
     {
         // Focus and visibility changes leave the input message before ending an IME text store.
         Dispatcher.BeginInvoke(() => ClosePanel(restoreForeground), DispatcherPriority.Input);
     }
 
-    private void ClosePanel(bool restoreForeground, bool animate = true)
+    private void ClosePanel(bool restoreForeground)
     {
         if (_closed || _dismissing) return;
         _dismissing = true;
         _debounce.Stop();
         CancelSearch();
         IsHitTestVisible = false;
-        void Finish()
-        {
-            if (_closed) return;
-            var ownsForeground = DockNativeMethods.GetForegroundWindow() == _handle;
-            Close();
-            if (restoreForeground && ownsForeground && PreviousForeground != 0 && PreviousForeground != _handle
-                && DockNativeMethods.IsWindow(PreviousForeground))
-                _ = DockNativeMethods.SetForegroundWindow(PreviousForeground);
-        }
-        if (animate) AnimatePanelDismiss(Finish);
-        else Finish();
+        var ownsForeground = DockNativeMethods.GetForegroundWindow() == _handle;
+        Close();
+        if (restoreForeground && ownsForeground && PreviousForeground != 0 && PreviousForeground != _handle
+            && DockNativeMethods.IsWindow(PreviousForeground))
+            _ = DockNativeMethods.SetForegroundWindow(PreviousForeground);
     }
 
     private async void OnPanelLoaded(object sender, RoutedEventArgs args)
@@ -232,16 +218,18 @@ public partial class LauncherPanelWindow : Window
                 _ = DockNativeMethods.SetForegroundWindow(_handle);
                 Activate();
                 SearchBox.Focus();
-                if (DockNativeMethods.GetForegroundWindow() != _handle) ClosePanel(restoreForeground: false, animate: false);
+                if (DockNativeMethods.GetForegroundWindow() != _handle) ClosePanel(restoreForeground: false);
             }, DispatcherPriority.Input);
         }
         if (_closed) return;
+        StatusText.Text = "正在载入项目…";
         try
         {
             var snapshot = await _loadSnapshot();
             if (_closed) return;
             _snapshot = snapshot;
-            await SearchAsync();
+            if (_composing) StatusText.Text = "";
+            else await SearchAsync();
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException)
         {
@@ -299,9 +287,10 @@ public partial class LauncherPanelWindow : Window
         _composing = false;
         Dispatcher.BeginInvoke(() =>
         {
-            if (_closed || _composing) return;
+            if (_closed || _composing || _searchCancellation is not null || _renderedSearchVersion == _searchVersion) return;
             _debounce.Stop();
-            _debounce.Start();
+            if (_snapshot is not null && _renderedSearchVersion < 0) _ = SearchAsync();
+            else _debounce.Start();
         }, DispatcherPriority.Input);
     }
 
@@ -400,6 +389,7 @@ public partial class LauncherPanelWindow : Window
     private void Render(List<PanelRow> rows, bool preserveSelection)
     {
         var previous = preserveSelection ? (ResultsList.SelectedItem as PanelRow)?.Entry : null;
+        if (!preserveSelection) ResultsList.Tag = !_queryWasEmpty;
         _unfilteredRows = rows;
         var scope = ApplyOrganizerFilters(rows);
         var offset = preserveSelection ? ResultViewport?.VerticalOffset ?? 0 : 0;
@@ -579,16 +569,35 @@ public partial class LauncherPanelWindow : Window
         return null;
     }
 
+    private static bool IsInsideScrollBar(DependencyObject? source)
+    {
+        while (source is not null)
+        {
+            if (source is ScrollBar) return true;
+            source = source is Visual or System.Windows.Media.Media3D.Visual3D ? VisualTreeHelper.GetParent(source) : LogicalTreeHelper.GetParent(source);
+        }
+        return false;
+    }
+
     private void OnResultMouseUp(object sender, MouseButtonEventArgs args)
     {
-        if (FindItem(args.OriginalSource as DependencyObject)?.DataContext is not PanelRow row) return;
+        if (FindItem(args.OriginalSource as DependencyObject)?.DataContext is not PanelRow row)
+        {
+            if (_queryWasEmpty && !IsInsideScrollBar(args.OriginalSource as DependencyObject)) ResultsList.Tag = false;
+            return;
+        }
         QueueOpen(row.Entry, locate: false);
         args.Handled = true;
     }
 
     private void OnResultRightClick(object sender, MouseButtonEventArgs args)
     {
-        if (FindItem(args.OriginalSource as DependencyObject)?.DataContext is not PanelRow row) return;
+        if (FindItem(args.OriginalSource as DependencyObject)?.DataContext is not PanelRow row)
+        {
+            if (_queryWasEmpty) ResultsList.Tag = false;
+            return;
+        }
+        ResultsList.Tag = true;
         ResultsList.SelectedItem = row;
         OpenMenu(row);
         args.Handled = true;
@@ -690,10 +699,15 @@ public partial class LauncherPanelWindow : Window
 
     private async Task OpenSelectionAsync(bool locate)
     {
-        if (_closed || _dismissing || _composing) return;
+        if (_closed || _dismissing || _composing || _snapshot is null) return;
         _debounce.Stop();
-        if (_renderedSearchVersion != _searchVersion && _searchCancellation is null) _ = SearchAsync();
         var version = _searchVersion;
+        if (_renderedSearchVersion != version && _searchCancellation is null)
+        {
+            _ = SearchAsync();
+            version = _searchVersion;
+            if (_renderedSearchVersion != version && _searchCancellation is null) return;
+        }
         await _searchRowsReady;
         if (!IsActivationCurrent(version) || _renderedSearchVersion != version) return;
         if (ResultsList.SelectedItem is PanelRow selected) QueueOpen(selected.Entry, locate, version);
@@ -718,7 +732,7 @@ public partial class LauncherPanelWindow : Window
             if (path is not null && (locate || string.IsNullOrWhiteSpace(entry.Pinned?.AppUserModelId))
                 && !await CheckLocalTargetAsync(path)) return;
             if (!IsActivationCurrent(searchVersion)) return;
-            ClosePanel(restoreForeground: false, animate: false);
+            ClosePanel(restoreForeground: false);
             _openTarget(entry, locate);
         }
         catch (OperationCanceledException) { }

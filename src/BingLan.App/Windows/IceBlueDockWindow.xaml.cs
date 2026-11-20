@@ -37,6 +37,7 @@ public partial class IceBlueDockWindow : Window
     private const double CommandGlyphCanvasSize = 24;
     private const int WmMouseActivate = 0x0021;
     private const int MaNoActivate = 3;
+    private const long WsCaption = 0x00C00000L;
     private static readonly TimeSpan SmartHideCheckInterval = TimeSpan.FromMilliseconds(150);
     private static readonly TimeSpan FullScreenCheckInterval = TimeSpan.FromMilliseconds(500);
     /// <summary>How much the dock animates; part of the desktop style.</summary>
@@ -183,6 +184,7 @@ public partial class IceBlueDockWindow : Window
 
     internal event Action? SettingsRequested;
     internal event Action? LauncherRequested;
+    internal bool LauncherEnabled { get; set; } = true;
 
     internal Func<IReadOnlyList<(Guid Id, string Title)>>? ReadFileBoxes { get; init; }
     internal Func<Guid, string, Task<string>>? SendToFileBox { get; init; }
@@ -787,7 +789,7 @@ public partial class IceBlueDockWindow : Window
     private Button BuildLauncherButton()
     {
         var glyph = CreateDockCommandOutline("M4,4 H20 A2,2 0 0 1 22,6 V18 A2,2 0 0 1 20,20 H4 A2,2 0 0 1 2,18 V6 A2,2 0 0 1 4,4 Z M2,9 H22 M6,13 H13 M6,16 H17");
-        var button = BuildDockCommandButton(glyph, "打开启动面板", "打开启动面板");
+        var button = BuildDockCommandButton(glyph, "打开冰蓝总览卡", "打开冰蓝总览卡");
         button.Click += (_, _) => LauncherRequested?.Invoke();
         return button;
     }
@@ -1771,7 +1773,7 @@ public partial class IceBlueDockWindow : Window
     }
 
     private (bool Start, bool Launcher, bool Desktop) VisibleCommands =>
-        (_state.ShowStartMenuButton, _state.ShowLauncherButton && LauncherRequested is not null, _state.ShowDesktopButton);
+        (_state.ShowStartMenuButton, LauncherEnabled && _state.ShowLauncherButton && LauncherRequested is not null, _state.ShowDesktopButton);
 
     private int LeadingButtonCount
     {
@@ -1850,9 +1852,40 @@ public partial class IceBlueDockWindow : Window
             && DockNativeMethods.MonitorFromWindow(
                 foregroundWindow,
                 DockNativeMethods.MonitorDefaultToNearest) == monitor.MonitorHandle;
-        // A maximized window filling the monitor (for example while the taskbar auto-hides)
-        // is still working space the handle may reveal the dock over.
-        var trueFullScreen = DockVacateRules.IsTrueFullScreen(fullScreen, foregroundZoomed);
+        // A maximized window filling the monitor (for example while the taskbar auto-hides),
+        // an ordinary resizable desktop window with standard chrome, or a tool/overlay window
+        // is still working space rather than a true full-screen app.
+        var foregroundOwnProcess = false;
+        var hasStandardChrome = false;
+        var isToolOrOverlay = false;
+        var isTopmost = false;
+        if (foreground && foregroundWindow != 0)
+        {
+            DockNativeMethods.GetWindowThreadProcessId(foregroundWindow, out var foregroundPid);
+            foregroundOwnProcess = foregroundPid == (uint)Environment.ProcessId;
+            if (fullScreen && !foregroundZoomed && !foregroundOwnProcess)
+            {
+                var style = (long)NativeMethods.GetWindowLongPtr(foregroundWindow, NativeMethods.GwlStyle);
+                var exStyle = NativeMethods.GetExStyleOf(foregroundWindow);
+                var className = new StringBuilder(64);
+                DockNativeMethods.GetClassNameW(foregroundWindow, className, className.Capacity);
+                var isApplicationFrame = string.Equals(
+                    className.ToString(),
+                    "ApplicationFrameWindow",
+                    StringComparison.Ordinal);
+                hasStandardChrome = !isApplicationFrame
+                    && (style & WsCaption) == WsCaption
+                    && (style & NativeMethods.WsThickFrame) != 0;
+                isToolOrOverlay = (exStyle & (NativeMethods.WsExToolWindow | NativeMethods.WsExTransparent)) != 0;
+                isTopmost = (exStyle & NativeMethods.WsExTopmost) != 0;
+            }
+        }
+        var trueFullScreen = DockVacateRules.IsTrueFullScreen(
+            fullScreen && !foregroundOwnProcess,
+            foregroundZoomed,
+            hasStandardChrome,
+            isToolOrOverlay,
+            isTopmost);
         _trueFullScreenForeground = trueFullScreen;
         var shouldVacate = DockVacateRules.ShouldReleaseForMaximized(
             _state.VisibilityMode,

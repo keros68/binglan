@@ -146,6 +146,22 @@ static void TestNativeTaskbarGeometry()
         "原生顶部唤出边缘不应同时唤出顶栏");
     Assert(TopBarRevealRules.IsInRevealZone(-1000, -92, inset, 2),
         "移到让出后的顶栏位置应可唤出");
+
+    // 自动隐藏任务栏展开瞬间不应把 48px 整条当成常驻禁区：四边均应按 8px 唤出条避让。
+    foreach (var edge in Enum.GetValues<DockEdge>())
+    {
+        var revealStrip = DockGeometry.Calculate(monitor, edge, 8);
+        var autoHideSafe = TaskbarLayoutRules.AvoidTaskbar(monitor, monitor, revealStrip, edge, 8);
+        var expected = edge switch
+        {
+            DockEdge.Left => monitor with { Left = monitor.Left + 8 },
+            DockEdge.Top => monitor with { Top = monitor.Top + 8 },
+            DockEdge.Right => monitor with { Right = monitor.Right - 8 },
+            DockEdge.Bottom => monitor with { Bottom = monitor.Bottom - 8 },
+            _ => monitor
+        };
+        AssertEqual(expected, autoHideSafe, $"自动隐藏任务栏在 {edge} 边应仅按 8px 唤出条避让");
+    }
 }
 
 static void TestInvalidThickness()
@@ -241,6 +257,9 @@ static void TestDockVacateRules()
         !DockVacateRules.ShouldReleaseForMaximized(DockVisibilityMode.SmartHide, true, true),
         "智能隐藏模式无需让出规则");
     Assert(
+        !new DockState().ReleaseWhenMaximized,
+        "DockState.ReleaseWhenMaximized 默认应关闭，避免始终显示模式下最大化窗口时误隐藏");
+    Assert(
         DockVacateRules.IsTrueFullScreen(true, false),
         "几何铺满且未最大化应视为真全屏");
     Assert(
@@ -249,6 +268,15 @@ static void TestDockVacateRules()
     Assert(
         !DockVacateRules.IsTrueFullScreen(false, true),
         "未铺满显示器不是全屏");
+    Assert(
+        !DockVacateRules.IsTrueFullScreen(true, false, hasStandardWindowChrome: true, isToolOrOverlayWindow: false, isTopmost: false),
+        "带标准标题栏与可调边框的非置顶满屏窗口不应误判为真全屏");
+    Assert(
+        DockVacateRules.IsTrueFullScreen(true, false, hasStandardWindowChrome: true, isToolOrOverlayWindow: false, isTopmost: true),
+        "置顶全屏窗口（如部分全屏播放器/远程桌面）仍应视为真全屏");
+    Assert(
+        !DockVacateRules.IsTrueFullScreen(true, false, hasStandardWindowChrome: false, isToolOrOverlayWindow: true, isTopmost: true),
+        "工具窗口或穿透遮罩即使铺满置顶也不应视为真全屏");
 }
 
 static void TestDockHandleGeometry()

@@ -47,15 +47,17 @@
 
 ## 运行
 
-启动面板按需建立 WPF 窗口和搜索会话，复用开始菜单快捷方式解析、顶栏搜索排序、Windows 索引与 Everything 客户端。入口按目标、启动参数和自定义工作目录合并并保留来源。直接固定复用 Dock 固定规则，发送到桌面分组盒复用文件映射。玻璃快切复用 Dock 的玻璃表面，面板与原生玻璃同步淡入淡出。任务栏按显示器确认边位并使用工作区避让。各入口与验收场景见 [启动面板与任务栏边位](LAUNCHER-AND-TOPBAR-DESIGN.md)。
+冰蓝总览卡按需建立 WPF 窗口和搜索会话，复用开始菜单快捷方式解析、顶栏搜索排序、Windows 索引与 Everything 客户端。启用时在启动空闲阶段预读开始菜单。结果网格按视口创建和回收控件，图标在后台按可见范围加载。入口按目标、启动参数和自定义工作目录合并并保留来源。直接固定复用 Dock 固定规则，发送到桌面分组盒复用文件映射。玻璃快切复用 Dock 的玻璃表面。任务栏按显示器确认边位并使用工作区避让。各入口与验收场景见 [冰蓝总览卡与任务栏边位](LAUNCHER-AND-TOPBAR-DESIGN.md)。
 
 应用概览按用途分段，左侧提供应用类别、文件和「我的分组」导航。内容连续滚动，来源选择收在「筛选」内。搜索时使用紧凑的结果类型切换和范围选项，清空后恢复浏览范围与滚动位置。用途通过本机规则保守识别，未知入口留在「未分类」，维护类入口收在「辅助入口」。手动修改类别优先于自动判断，并可恢复自动分类。自建分组继续保存应用、文件和文件夹的多组关联。
 
-Dock 左侧的功能组有 Windows 开始菜单、启动面板和显示桌面。三项可见性保存在本地 `DockState`，状态 Schema v50 增加启动面板开关，旧配置默认显示该入口。启动面板外观和 Dock 功能入口开关均为本机设置。
+Dock 左侧的功能组有 Windows 开始菜单、冰蓝总览卡和显示桌面。三项可见性保存在本地 `DockState`，状态 Schema v50 增加冰蓝总览卡开关，旧配置默认显示该入口。冰蓝总览卡外观和 Dock 功能入口开关均为本机设置。
 
-状态 Schema v51 保存启动面板的 `LauncherGroups` 和 `LauncherAppearance` 材质选择。旧配置从空的自建分组和磨砂材质开始。分组引用及文件路径保存在本机。
+状态 Schema v51 保存冰蓝总览卡的 `LauncherGroups` 和 `LauncherAppearance` 材质选择。旧配置从空的自建分组和磨砂材质开始。分组引用及文件路径保存在本机。
 
 状态 Schema v52 增加本机的 `LauncherAppCategoryOverrides`，保存用户指定的应用类别。旧配置迁移为空的类别覆盖表，现有分组和外观保留。
+
+状态 Schema v53 保存本机的 `LauncherEnabled`。旧配置默认开启。关闭时收起现有面板，并隐藏 Dock 和托盘的入口。Dock 入口的显示偏好独立保存。
 
 构建需要 .NET 10 SDK、PowerShell 7、Visual Studio 2022 C++ x64 构建工具和 Windows SDK。原生任务栏组件随构建生成，安装用户无需安装这些工具。
 
@@ -84,10 +86,10 @@ dotnet run --project .\src\BingLan.App\BingLan.App.csproj
 ## 安装包
 
 ```powershell
-pwsh -NoProfile -File .\installer\build.ps1 -Version 0.2.77
+pwsh -NoProfile -File .\installer\build.ps1 -Version 0.2.78
 ```
 
-生成按用户安装的 `installer\bin\BingLan-Setup-0.2.77.exe`（Inno Setup，自包含 .NET 运行时，不需要管理员权限）。安装位置、卸载行为、依赖许可证和验证状态见 [安装包](INSTALLER.md)。v0.2.77 为当前正式版，独立托盘验收包由 `installer/build-tray-preview.ps1` 生成；操作步骤与限制见[托盘验收说明](TRAY-PREVIEW.md)。
+生成按用户安装的 `installer\bin\BingLan-Setup-0.2.78.exe`（Inno Setup，自包含 .NET 运行时，不需要管理员权限）。安装位置、卸载行为、依赖许可证和验证状态见 [安装包](INSTALLER.md)。v0.2.78 为当前正式版，独立托盘验收包由 `installer/build-tray-preview.ps1` 生成；操作步骤与限制见[托盘验收说明](TRAY-PREVIEW.md)。
 
 ## 验证
 

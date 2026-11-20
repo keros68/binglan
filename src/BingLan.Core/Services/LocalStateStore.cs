@@ -803,6 +803,11 @@ public sealed class LocalStateStore
         {
             state.SchemaVersion = 52;
         }
+        if (state.SchemaVersion < 53)
+        {
+            // Missing master visibility uses the AppState default, independently of the Dock shortcut.
+            state.SchemaVersion = 53;
+        }
         state.Updates ??= new UpdateState();
         state.QuickPlaces = QuickPlaceRules.Normalize(state.QuickPlaces);
         state.DismissedDesktopCategories = (state.DismissedDesktopCategories ?? [])

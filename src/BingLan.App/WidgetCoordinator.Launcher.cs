@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.IO;
 using System.Windows.Interop;
+using System.Windows.Threading;
 using BingLan.App.Dock;
 using BingLan.App.Interop;
 using BingLan.App.Services;
@@ -20,10 +21,11 @@ public sealed partial class WidgetCoordinator
     private long? _launcherLostFocusAt;
     private Task<(DockPinnedApp Pin, string? Folder)[]>? _launcherApps;
     private DateTimeOffset _launcherAppsAt;
+    private bool _launcherWarmupQueued;
 
     internal void ToggleLauncherPanel()
     {
-        if (_isExiting || _exitRequested)
+        if (_isExiting || _exitRequested || !_state.LauncherEnabled)
         {
             return;
         }
@@ -70,7 +72,64 @@ public sealed partial class WidgetCoordinator
             _launcherPanel = null;
             _launcherLostFocusAt = panel.DismissedOnDeactivation ? Environment.TickCount64 : null;
         };
-        panel.ShowPanel();
+        panel.Show();
+    }
+
+    private void SetLauncherEnabled(bool enabled)
+    {
+        _state.LauncherEnabled = enabled;
+        if (!enabled)
+        {
+            _launcherPanel?.Dismiss(restoreForeground: false);
+        }
+        _launcherLostFocusAt = null;
+        if (_launcherMenuItem is not null)
+        {
+            _launcherMenuItem.Visible = enabled;
+        }
+        _dock.Apply();
+        ScheduleSave();
+        if (enabled) QueueLauncherCatalogWarmup();
+    }
+
+    private void QueueLauncherCatalogWarmup()
+    {
+        if (_launcherWarmupQueued || !_state.LauncherEnabled || _isExiting || _exitRequested
+            || System.Windows.Application.Current?.Dispatcher is not { } dispatcher)
+        {
+            return;
+        }
+        _launcherWarmupQueued = true;
+        dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, new Action(async () =>
+        {
+            _launcherWarmupQueued = false;
+            if (!_state.LauncherEnabled || _isExiting || _exitRequested) return;
+            try
+            {
+                await ReadLauncherAppsAsync();
+            }
+            catch (Exception exception) when (exception is not OutOfMemoryException)
+            {
+                Debug.WriteLine($"冰蓝总览卡应用目录预读失败：{exception}");
+            }
+        }));
+    }
+
+    private Task<(DockPinnedApp Pin, string? Folder)[]> ReadLauncherAppsAsync()
+    {
+        var now = DateTimeOffset.Now;
+        if (_launcherApps is null || _launcherApps.IsFaulted
+            || (_launcherApps.IsCompleted && now - _launcherAppsAt >= LauncherAppCacheLifetime))
+        {
+            _launcherAppsAt = now;
+            _launcherApps = Task.Run(() =>
+            {
+                var folders = new Dictionary<DockPinnedApp, string>();
+                return DockShortcuts.ReadStartMenuApps(preserveLaunchVariants: true, folders)
+                    .Select(pin => (Pin: pin, Folder: folders.GetValueOrDefault(pin))).ToArray();
+            });
+        }
+        return _launcherApps;
     }
 
     private nint ResolveLauncherForeground(nint current)
@@ -128,7 +187,7 @@ public sealed partial class WidgetCoordinator
                     $"无法打开 {candidate.DisplayName}。");
         if (!failure.Succeeded && !_isExiting)
         {
-            _trayIcon.ShowBalloonTip(3000, "启动面板", failure.Message, TrayTipKind.Info);
+            _trayIcon.ShowBalloonTip(3000, "冰蓝总览卡", failure.Message, TrayTipKind.Info);
         }
     }
 
@@ -164,18 +223,7 @@ public sealed partial class WidgetCoordinator
             .Where(member => member.FallbackPath is not null || member.FallbackPin is not null)
             .DistinctBy(member => member.Key).ToArray();
         var useEverything = _state.TopBar.UseEverything;
-        var now = DateTimeOffset.Now;
-        if (_launcherApps is null || _launcherApps.IsFaulted || now - _launcherAppsAt >= LauncherAppCacheLifetime)
-        {
-            _launcherAppsAt = now;
-            _launcherApps = Task.Run(() =>
-            {
-                var folders = new Dictionary<DockPinnedApp, string>();
-                return DockShortcuts.ReadStartMenuApps(preserveLaunchVariants: true, folders)
-                    .Select(pin => (Pin: pin, Folder: folders.GetValueOrDefault(pin))).ToArray();
-            });
-        }
-        var apps = await _launcherApps;
+        var apps = await ReadLauncherAppsAsync();
         return await Task.Run(() =>
         {
             var entries = new List<LauncherPanelEntry>();

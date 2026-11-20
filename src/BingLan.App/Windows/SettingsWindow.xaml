@@ -675,10 +675,10 @@
                     <Expander x:Name="AppearanceBarsLookFold"
                               Margin="0,24,0,4"
                               Style="{StaticResource SettingsFoldStyle}"
-                              AutomationProperties.Name="Dock、启动面板与顶端信息条外观">
+                              AutomationProperties.Name="Dock、冰蓝总览卡与顶端信息条外观">
                         <Expander.Header>
                             <StackPanel>
-                                <TextBlock Style="{StaticResource FoldTitleStyle}" Text="Dock、启动面板与顶端信息条外观"/>
+                                <TextBlock Style="{StaticResource FoldTitleStyle}" Text="Dock、冰蓝总览卡与顶端信息条外观"/>
                                 <TextBlock Style="{StaticResource CaptionStyle}" Text="默认跟随上面的全局外观，也可以单独设置颜色和浓度"/>
                             </StackPanel>
                         </Expander.Header>
@@ -735,8 +735,8 @@
                                     </StackPanel>
                                 </local:SettingsRow>
                             </StackPanel>
-                            <local:SettingsRow x:Name="LauncherLookSettingsRow" Header="启动面板外观"
-                                               local:SettingsSearch.Keywords="启动面板 透明玻璃 颜色 圆角">
+                            <local:SettingsRow x:Name="LauncherLookSettingsRow" Header="冰蓝总览卡外观"
+                                               local:SettingsSearch.Keywords="冰蓝总览卡 透明玻璃 颜色 圆角">
                                 <Border Style="{StaticResource SegmentHostStyle}">
                                     <StackPanel Orientation="Horizontal">
                                         <RadioButton x:Name="LauncherFollowLookRadio"
@@ -753,35 +753,35 @@
                                 </Border>
                             </local:SettingsRow>
                             <StackPanel x:Name="LauncherCustomLookPanel">
-                                <local:SettingsRow Style="{StaticResource NestedSettingsRowStyle}" Header="启动面板配色">
+                                <local:SettingsRow Style="{StaticResource NestedSettingsRowStyle}" Header="冰蓝总览卡配色">
                                     <WrapPanel x:Name="LauncherPaletteSwatches"/>
                                 </local:SettingsRow>
-                                <local:SettingsRow Style="{StaticResource NestedSettingsRowStyle}" Header="启动面板底色">
+                                <local:SettingsRow Style="{StaticResource NestedSettingsRowStyle}" Header="冰蓝总览卡底色">
                                     <StackPanel Orientation="Horizontal">
                                         <Border x:Name="LauncherColorPreview" Width="30" Height="30" CornerRadius="6"
                                                 VerticalAlignment="Center" BorderThickness="1"
                                                 BorderBrush="{DynamicResource SettingsControlBorderBrush}"/>
                                         <TextBox x:Name="LauncherColorEditor" Width="110" Margin="8,0,0,0"
-                                                 AutomationProperties.Name="启动面板底色"
+                                                 AutomationProperties.Name="冰蓝总览卡底色"
                                                  LostFocus="LauncherColorEditor_Commit"
                                                  KeyDown="LauncherColorEditor_KeyDown"/>
-                                        <Button Margin="8,0,0,0" Content="选择颜色…" AutomationProperties.Name="选择启动面板底色"
+                                        <Button Margin="8,0,0,0" Content="选择颜色…" AutomationProperties.Name="选择冰蓝总览卡底色"
                                                 Click="LauncherChooseColor_Click"/>
                                     </StackPanel>
                                 </local:SettingsRow>
-                                <local:SettingsRow Style="{StaticResource NestedSettingsRowStyle}" Header="启动面板玻璃浓度">
+                                <local:SettingsRow Style="{StaticResource NestedSettingsRowStyle}" Header="冰蓝总览卡玻璃浓度">
                                     <StackPanel Orientation="Horizontal">
                                         <Slider x:Name="LauncherOpacitySlider" Width="200" Minimum="0.12" Maximum="1"
-                                                SmallChange="0.02" LargeChange="0.1" AutomationProperties.Name="启动面板玻璃浓度"
+                                                SmallChange="0.02" LargeChange="0.1" AutomationProperties.Name="冰蓝总览卡玻璃浓度"
                                                 ValueChanged="LauncherOpacity_Changed"/>
                                         <TextBlock x:Name="LauncherOpacityText" Style="{StaticResource ValueTextStyle}"/>
                                     </StackPanel>
                                 </local:SettingsRow>
-                                <local:SettingsRow Style="{StaticResource NestedSettingsRowStyle}" Header="启动面板圆角">
+                                <local:SettingsRow Style="{StaticResource NestedSettingsRowStyle}" Header="冰蓝总览卡圆角">
                                     <StackPanel Orientation="Horizontal">
                                         <Slider x:Name="LauncherCornerRadiusSlider" Width="200" Minimum="0" Maximum="32"
                                                 IsSnapToTickEnabled="True" TickFrequency="1" SmallChange="1" LargeChange="4"
-                                                AutomationProperties.Name="启动面板圆角" ValueChanged="LauncherCornerRadius_Changed"/>
+                                                AutomationProperties.Name="冰蓝总览卡圆角" ValueChanged="LauncherCornerRadius_Changed"/>
                                         <TextBlock x:Name="LauncherCornerRadiusText" Style="{StaticResource ValueTextStyle}"/>
                                     </StackPanel>
                                 </local:SettingsRow>
@@ -1850,6 +1850,16 @@
                                 Click="RestoreDesktopMode_Click"/>
                     </Grid>
 
+                    <local:SettingsRow x:Name="LauncherEnabledRow" Header="冰蓝总览卡"
+                                       Description="关闭后从冰蓝托盘和 Dock 隐藏冰蓝总览卡入口"
+                                       local:SettingsSearch.Keywords="启用冰蓝总览卡 关闭冰蓝总览卡 启动面板 应用启动">
+                        <CheckBox x:Name="LauncherEnabledCheckBox"
+                                  AutomationProperties.Name="启用冰蓝总览卡"
+                                  Style="{StaticResource ToggleSwitchStyle}"
+                                  Checked="LauncherEnabled_Changed"
+                                  Unchecked="LauncherEnabled_Changed"/>
+                    </local:SettingsRow>
+
                     <Expander x:Name="DockSection"
                               Margin="0,4,0,4"
                               IsExpanded="True"
@@ -1904,10 +1914,11 @@
                                 </local:SettingsRow>
                                 <local:SettingsRow x:Name="DockMaximizeReleaseRow"
                                                    Style="{StaticResource NestedSettingsRowStyle}"
-                                                   Header="最大化窗口时让出底部空间"
-                                                   Description="开启后最大化的窗口会占满高度并暂时隐藏 Dock，鼠标移到屏幕底边或把手可临时唤出；希望最大化时也常驻显示 Dock 请关闭此项">
+                                                   Header="最大化窗口时临时隐藏并释放底部空间"
+                                                   Description="开启后，最大化窗口时 Dock 会临时隐藏并释放底部空间，鼠标移到屏幕底边或把手可临时唤出；希望最大化时也始终显示 Dock 请关闭此项"
+                                                   local:SettingsSearch.Keywords="让出底部空间 释放底部空间 临时隐藏">
                                     <CheckBox x:Name="DockMaximizeReleaseCheckBox"
-                                              AutomationProperties.Name="最大化窗口时让出底部空间"
+                                              AutomationProperties.Name="最大化窗口时临时隐藏并释放底部空间"
                                               Style="{StaticResource ToggleSwitchStyle}"
                                               Checked="DockSetting_Changed"
                                               Unchecked="DockSetting_Changed"/>
@@ -1933,11 +1944,11 @@
                                               Checked="DockSetting_Changed"
                                               Unchecked="DockSetting_Changed"/>
                                 </local:SettingsRow>
-                                <local:SettingsRow Header="显示启动面板入口"
-                                                   Description="关闭后仍可从冰蓝托盘打开启动面板"
-                                                   local:SettingsSearch.Keywords="启动面板 应用启动">
+                                <local:SettingsRow Header="显示冰蓝总览卡入口"
+                                                   Description="冰蓝总览卡启用时，关闭此项仍可从冰蓝托盘打开"
+                                                   local:SettingsSearch.Keywords="冰蓝总览卡 应用启动">
                                     <CheckBox x:Name="DockLauncherButtonCheckBox"
-                                              AutomationProperties.Name="显示启动面板入口"
+                                              AutomationProperties.Name="显示冰蓝总览卡入口"
                                               Style="{StaticResource ToggleSwitchStyle}"
                                               Checked="DockSetting_Changed"
                                               Unchecked="DockSetting_Changed"/>
