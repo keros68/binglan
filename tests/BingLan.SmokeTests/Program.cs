@@ -38,6 +38,7 @@ Run("启动面板外观 v48 迁移与独立设置保存", TestLauncherAppearance
 Run("启动面板总开关迁移、保存与独立 Dock 偏好", TestLauncherEnabledPersistence);
 Run("启动面板分组迁移、多组关联与保存", TestLauncherGroupsPersistence);
 Run("启动面板用途分类、维护入口与人工归类保存", TestLauncherAppCategories);
+Run("启动面板多屏幕尺寸、缩放与竖屏自适应布局", TestLauncherLayoutBounds);
 Run("卡片按显示器排列记住位置", DisplayLayoutTests.TestPositionPerArrangement);
 Run("按排列记住的位置保存与 v21 迁移", DisplayLayoutTests.TestPersistenceAndMigration);
 Run("隐藏卡片重新显示时按工作区收拢越界位置", DisplayLayoutTests.TestResolveShownBounds);
@@ -270,6 +271,46 @@ static void TestLauncherAppCategories()
     {
         temp.Delete(recursive: true);
     }
+}
+
+static void TestLauncherLayoutBounds()
+{
+    var cases = new (string Name, int Left, int Top, int Width, int Height, double Dpi)[]
+    {
+        ("1366x768 @ 100%", 0, 32, 1366, 660, 96),
+        ("1920x1080 @ 150%", 0, 48, 1920, 918, 144),
+        ("1920x1080 @ 125%", 0, 40, 1920, 945, 120),
+        ("1920x1080 @ 100%", 0, 32, 1920, 972, 96),
+        ("2560x1600 @ 150%", 0, 48, 2560, 1440, 144),
+        ("3840x2160 @ 150%", 0, 48, 3840, 1998, 144),
+        ("1080x1920 竖屏 @ 100%", -1080, 32, 1080, 1812, 96),
+        ("1080x1920 竖屏 @ 150%", 2560, 48, 1080, 1758, 144),
+        ("极小工作区", 0, 0, 480, 360, 96)
+    };
+
+    foreach (var (name, left, top, width, height, dpi) in cases)
+    {
+        var bounds = LauncherLayoutRules.ComputeBounds(left, top, width, height, dpi);
+        Assert(bounds.PixelLeft >= left && bounds.PixelTop >= top
+            && bounds.PixelLeft + bounds.PixelWidth <= left + width
+            && bounds.PixelTop + bounds.PixelHeight <= top + height,
+            $"{name} 面板必须完整位于工作区内");
+        var topGap = bounds.PixelTop - top;
+        var bottomGap = (top + height) - (bounds.PixelTop + bounds.PixelHeight);
+        Assert(Math.Abs(topGap - bottomGap) <= 1, $"{name} 面板应相对工作区垂直居中");
+        var leftGap = bounds.PixelLeft - left;
+        var rightGap = (left + width) - (bounds.PixelLeft + bounds.PixelWidth);
+        Assert(Math.Abs(leftGap - rightGap) <= 1, $"{name} 面板应相对工作区水平居中");
+        Assert(bounds.NavigationDipWidth is >= 112 and <= 164, $"{name} 侧栏宽度应在安全范围内");
+    }
+
+    var smallLaptop = LauncherLayoutRules.ComputeBounds(0, 48, 1920, 918, 144); // 1280x612 DIP
+    var fourK = LauncherLayoutRules.ComputeBounds(0, 48, 3840, 1998, 144);     // 2560x1332 DIP
+    var portrait = LauncherLayoutRules.ComputeBounds(0, 32, 1080, 1812, 96);   // 1080x1812 DIP
+    Assert(smallLaptop.DipHeight <= 552 && smallLaptop.DipWidth < fourK.DipWidth && smallLaptop.DipHeight < fourK.DipHeight,
+        "小屏应留出合理上下呼吸空间，大屏应按比例放大至舒适上限");
+    Assert(portrait.DipHeight > smallLaptop.DipHeight && portrait.DipWidth <= 900,
+        "竖屏应采用纵向比例而不是扁平横条");
 }
 
 static void TestTodo()

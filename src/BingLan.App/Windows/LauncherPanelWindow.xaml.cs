@@ -287,15 +287,15 @@ public partial class LauncherPanelWindow : Window
             ?? monitors.FirstOrDefault() ?? _monitor;
         var monitorWork = MonitorCatalog.TryGetWorkingArea(current.MonitorHandle) ?? current.WorkingArea;
         var work = TaskbarEdgeGuard.AvoidNativeTaskbar(monitorWork, current.Bounds);
-        var scale = Math.Max(1d, current.Dpi / 96d);
-        Width = Math.Min(984, Math.Max(120, work.Width / scale - 24));
-        Height = Math.Min(620, Math.Max(120, work.Height / scale - 24));
-        BrowseNavigation.Width = Math.Clamp(Width * 0.16, 110, 162);
-        var width = (int)Math.Round(Width * scale);
-        var height = (int)Math.Round(Height * scale);
-        var left = work.Left + Math.Max(0, (work.Width - width) / 2);
-        var top = work.Top + Math.Clamp((work.Height - height) / 3, 0, Math.Max(0, work.Height - height));
-        NativeMethods.SetWindowPos(_handle, 0, left, top, width, height, NativeMethods.SwpNoZOrder | NativeMethods.SwpNoActivate);
+        var bounds = LauncherLayoutRules.ComputeBounds(work.Left, work.Top, work.Width, work.Height, current.Dpi);
+        Width = bounds.DipWidth;
+        Height = bounds.DipHeight;
+        BrowseNavigation.Width = bounds.NavigationDipWidth;
+        PanelSurface.Padding = bounds.DipWidth < 680
+            ? new Thickness(16, 14, 16, 14)
+            : new Thickness(26, 20, 26, 18);
+        NativeMethods.SetWindowPos(_handle, 0, bounds.PixelLeft, bounds.PixelTop, bounds.PixelWidth, bounds.PixelHeight,
+            NativeMethods.SwpNoZOrder | NativeMethods.SwpNoActivate);
     }
 
     private void OnSearchTextChanged(object sender, TextChangedEventArgs args)
