@@ -266,6 +266,7 @@ internal static class LauncherPanelWindowTests
                 SelectResult(panel, entry);
                 Press(panel, Key.Apps);
                 pump();
+                var savesBeforeEdit = saves;
                 var menu = OpenMenu(panel);
                 var join = menu.Items.OfType<MenuItem>().Single(item => Equals(item.Header, "加入面板分组"));
                 if (source == "Windows 索引")
@@ -283,6 +284,7 @@ internal static class LauncherPanelWindowTests
                     Require<TextBox>(panel, "GroupNameEditor").Text = "Everything资料";
                     Click(panel, "SaveGroupButton");
                 }
+                Assert(saves == savesBeforeEdit + 1, "每次分组修改应只保存一次");
                 var group = source == "Windows 索引" ? groups[0] : groups[^1];
                 Assert(group.Members.Single().FallbackPath == path && group.Members[0].Key == entry.Key,
                     "索引入口应立即保存原路径及稳定键");
@@ -296,7 +298,7 @@ internal static class LauncherPanelWindowTests
                 until(() => panel.VisibleEntries.Count == 1 && panel.VisibleEntries[0].Key == entry.Key,
                     "索引入口加入分组后应在同次面板会话清空查询仍可见");
             }
-            Assert(saves == 2, "现有分组和新建分组应各保存一次");
+            Assert(saves >= 2, "现有分组和新建分组均应持久化");
 
             foreach (var path in new[] { "shell:MyComputerFolder", "shell:RecycleBinFolder" })
             {
