@@ -139,7 +139,7 @@ public partial class SettingsWindow : Window
         SourceInitialized += (_, _) =>
         {
             ApplyTheme();
-            ApplyWorkAreaConstraint(ResolveHostWorkAreaDip(), recenter: true);
+            ApplyHostWorkAreaConstraint(recenter: true);
             HwndSource.FromHwnd(new WindowInteropHelper(this).Handle)?.AddHook(ThemeMessageHook);
         };
         AccessibilityThemeManager.HighContrastChanged += ReapplyTheme;
@@ -286,7 +286,7 @@ public partial class SettingsWindow : Window
             {
                 if (!_isClosed)
                 {
-                    ApplyWorkAreaConstraint(ResolveHostWorkAreaDip(), recenter: false);
+                    ApplyHostWorkAreaConstraint(recenter: false);
                 }
                 UpdatePresetPreview(GetSelectedPreset());
             });
@@ -298,7 +298,7 @@ public partial class SettingsWindow : Window
         {
             if (!_isClosed)
             {
-                ApplyWorkAreaConstraint(ResolveHostWorkAreaDip(), recenter: false);
+                ApplyHostWorkAreaConstraint(recenter: false);
             }
         });
 
@@ -307,7 +307,7 @@ public partial class SettingsWindow : Window
         {
             if (!_isClosed)
             {
-                ApplyWorkAreaConstraint(ResolveHostWorkAreaDip(), recenter: false);
+                ApplyHostWorkAreaConstraint(recenter: false);
             }
         });
 
@@ -362,16 +362,91 @@ public partial class SettingsWindow : Window
         Top = double.IsFinite(Top) ? Math.Clamp(Top, safeTop, maxTop) : bounds.Top;
     }
 
-    private Rect ResolveHostWorkAreaDip()
+    private void ApplyHostWorkAreaConstraint(bool recenter)
+    {
+        var handle = new WindowInteropHelper(this).Handle;
+        var monitor = ResolveHostMonitor(handle);
+        if (handle == 0 || monitor is null || !monitor.WorkingArea.HasArea)
+        {
+            ApplyWorkAreaConstraint(ResolveHostWorkAreaDip(), recenter);
+            return;
+        }
+
+        var scale = monitor.Dpi > 0 ? monitor.Dpi / 96d : 1d;
+        var areaWidthDip = monitor.WorkingArea.Width / scale;
+        var areaHeightDip = monitor.WorkingArea.Height / scale;
+        var bounds = SettingsWindowSizingRules.Resolve(0d, 0d, areaWidthDip, areaHeightDip);
+
+        MinWidth = bounds.MinWidth;
+        MinHeight = bounds.MinHeight;
+
+        if (!recenter && WindowState != WindowState.Normal)
+        {
+            return;
+        }
+
+        var workArea = monitor.WorkingArea;
+        var targetWidthPx = Math.Clamp((int)Math.Round(bounds.Width * scale), 1, workArea.Width);
+        var targetHeightPx = Math.Clamp((int)Math.Round(bounds.Height * scale), 1, workArea.Height);
+        int targetLeftPx;
+        int targetTopPx;
+
+        if (recenter || !DockNativeMethods.GetWindowRect(handle, out var current))
+        {
+            targetLeftPx = workArea.Left + Math.Max(0, (workArea.Width - targetWidthPx) / 2);
+            targetTopPx = workArea.Top + Math.Max(0, (workArea.Height - targetHeightPx) / 2);
+        }
+        else
+        {
+            var currentWidthPx = Math.Max(1, current.Right - current.Left);
+            var currentHeightPx = Math.Max(1, current.Bottom - current.Top);
+            var minWidthPx = Math.Max(1, (int)Math.Ceiling(bounds.MinWidth * scale));
+            var minHeightPx = Math.Max(1, (int)Math.Ceiling(bounds.MinHeight * scale));
+            targetWidthPx = currentWidthPx > workArea.Width
+                ? Math.Clamp(Math.Max(minWidthPx, targetWidthPx), 1, workArea.Width)
+                : currentWidthPx;
+            targetHeightPx = currentHeightPx > workArea.Height
+                ? Math.Clamp(Math.Max(minHeightPx, targetHeightPx), 1, workArea.Height)
+                : currentHeightPx;
+            var maxLeftPx = workArea.Left + Math.Max(0, workArea.Width - targetWidthPx);
+            var maxTopPx = workArea.Top + Math.Max(0, workArea.Height - targetHeightPx);
+            targetLeftPx = Math.Clamp(current.Left, workArea.Left, maxLeftPx);
+            targetTopPx = Math.Clamp(current.Top, workArea.Top, maxTopPx);
+        }
+
+        var targetRect = new BingLan.Core.Dock.PixelRect(
+            targetLeftPx,
+            targetTopPx,
+            targetLeftPx + targetWidthPx,
+            targetTopPx + targetHeightPx);
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            if (DockNativeMethods.GetWindowRect(handle, out var actual)
+                && new BingLan.Core.Dock.PixelRect(actual.Left, actual.Top, actual.Right, actual.Bottom) == targetRect)
+            {
+                break;
+            }
+
+            NativeMethods.SetWindowPos(
+                handle,
+                0,
+                targetRect.Left,
+                targetRect.Top,
+                targetRect.Width,
+                targetRect.Height,
+                NativeMethods.SwpNoZOrder | NativeMethods.SwpNoActivate);
+        }
+    }
+
+    private MonitorSnapshot? ResolveHostMonitor(nint handle)
     {
         var monitors = MonitorCatalog.GetAll();
         if (monitors.Count == 0)
         {
-            return SystemParameters.WorkArea;
+            return null;
         }
 
         MonitorSnapshot? monitor = null;
-        var handle = new WindowInteropHelper(this).Handle;
         if (handle != 0)
         {
             var monitorHandle = DockNativeMethods.MonitorFromWindow(
@@ -388,7 +463,17 @@ public partial class SettingsWindow : Window
                 && cursor.Y < candidate.Bounds.Bottom);
         }
 
-        monitor ??= monitors.FirstOrDefault(candidate => candidate.IsPrimary) ?? monitors[0];
+        return monitor ?? monitors.FirstOrDefault(candidate => candidate.IsPrimary) ?? monitors[0];
+    }
+
+    private Rect ResolveHostWorkAreaDip()
+    {
+        var monitor = ResolveHostMonitor(new WindowInteropHelper(this).Handle);
+        if (monitor is null)
+        {
+            return SystemParameters.WorkArea;
+        }
+
         var scale = monitor.Dpi > 0 ? monitor.Dpi / 96d : 1d;
         return new Rect(
             monitor.WorkingArea.Left / scale,

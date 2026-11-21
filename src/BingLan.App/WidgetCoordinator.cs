@@ -672,7 +672,7 @@ public sealed partial class WidgetCoordinator : IDisposable
     // seen for the first time gathers its cards fully into view.
     private void OnDisplayLayoutChanged() =>
         System.Windows.Application.Current?.Dispatcher.BeginInvoke(
-            DispatcherPriority.Background,
+            DispatcherPriority.ContextIdle,
             () =>
             {
                 ApplyDisplayRecovery();

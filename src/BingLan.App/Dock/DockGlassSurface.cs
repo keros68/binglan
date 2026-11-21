@@ -141,9 +141,22 @@ internal sealed class DockGlassSurface : IDisposable
             _lastVisual = null;
             Sync(true);
         }
-        else if (message is NativeMethods.WmWindowPosChanged or DockNativeMethods.WmDpiChanged or DockNativeMethods.WmDisplayChange)
+        else if (message == NativeMethods.WmWindowPosChanged)
         {
             Sync(true);
+        }
+        else if (message is DockNativeMethods.WmDpiChanged or DockNativeMethods.WmDisplayChange)
+        {
+            Sync(true);
+            _window.Dispatcher.BeginInvoke(
+                System.Windows.Threading.DispatcherPriority.Loaded,
+                () =>
+                {
+                    if (!_disposed)
+                    {
+                        Sync(true);
+                    }
+                });
         }
         return 0;
     }

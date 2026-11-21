@@ -89,8 +89,9 @@ public partial class AppearancePreviewWindow : Window
 
     private void FitWorkArea()
     {
+        var handle = new System.Windows.Interop.WindowInteropHelper(this).Handle;
         var ownerHandle = Owner is null
-            ? new System.Windows.Interop.WindowInteropHelper(this).Handle
+            ? handle
             : new System.Windows.Interop.WindowInteropHelper(Owner).Handle;
         var monitorHandle = BingLan.App.Interop.DockNativeMethods.MonitorFromWindow(
             ownerHandle,
@@ -111,6 +112,33 @@ public partial class AppearancePreviewWindow : Window
         Width = Math.Min(Width, MaxWidth);
         Height = Math.Min(Height, MaxHeight);
         WindowStartupLocation = WindowStartupLocation.Manual;
+        if (handle != 0 && monitor is not null && monitor.WorkingArea.HasArea)
+        {
+            var workArea = monitor.WorkingArea;
+            var widthPx = Math.Clamp((int)Math.Round(Width * scale), 1, workArea.Width);
+            var heightPx = Math.Clamp((int)Math.Round(Height * scale), 1, workArea.Height);
+            var leftPx = workArea.Left + Math.Max(0, (workArea.Width - widthPx) / 2);
+            var topPx = workArea.Top + Math.Max(0, (workArea.Height - heightPx) / 2);
+            var targetRect = new BingLan.Core.Dock.PixelRect(leftPx, topPx, leftPx + widthPx, topPx + heightPx);
+            for (var attempt = 0; attempt < 2; attempt++)
+            {
+                if (BingLan.App.Interop.DockNativeMethods.GetWindowRect(handle, out var actual)
+                    && new BingLan.Core.Dock.PixelRect(actual.Left, actual.Top, actual.Right, actual.Bottom) == targetRect)
+                {
+                    break;
+                }
+
+                BingLan.App.Interop.NativeMethods.SetWindowPos(
+                    handle,
+                    0,
+                    targetRect.Left,
+                    targetRect.Top,
+                    targetRect.Width,
+                    targetRect.Height,
+                    BingLan.App.Interop.NativeMethods.SwpNoZOrder | BingLan.App.Interop.NativeMethods.SwpNoActivate);
+            }
+            return;
+        }
         Left = area.Left + (area.Width - Width) / 2d;
         Top = area.Top + (area.Height - Height) / 2d;
     }

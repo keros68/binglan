@@ -46,6 +46,18 @@ public sealed class AppBarReservationState
         && strip.Top >= monitorBounds.Top
         && strip.Bottom <= monitorBounds.Bottom;
 
+    public static bool HasMonitorTargetChanged(
+        string? previousDeviceName,
+        PixelRect previousBounds,
+        uint previousDpi,
+        string currentDeviceName,
+        PixelRect currentBounds,
+        uint currentDpi) =>
+        previousDeviceName is not null
+        && (!string.Equals(previousDeviceName, currentDeviceName, StringComparison.OrdinalIgnoreCase)
+            || previousBounds != currentBounds
+            || previousDpi != currentDpi);
+
     public IReadOnlyList<AppBarMessage> Release()
     {
         if (!IsRegistered)

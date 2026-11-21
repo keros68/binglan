@@ -148,7 +148,13 @@ internal sealed class DockAppBarController : IDisposable
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         var monitorChanged = _monitor is not null
-            && !string.Equals(_monitor.DeviceName, monitor.DeviceName, StringComparison.OrdinalIgnoreCase);
+            && AppBarReservationState.HasMonitorTargetChanged(
+                _monitor.DeviceName,
+                _monitor.Bounds,
+                _monitor.Dpi,
+                monitor.DeviceName,
+                monitor.Bounds,
+                monitor.Dpi);
         if (_monitor?.Bounds != monitor.Bounds || _monitor?.WorkingArea != monitor.WorkingArea)
         {
             TaskbarEdgeGuard.InvalidateNativeTaskbarLayout(monitor.Bounds);
@@ -422,7 +428,13 @@ internal sealed class DockAppBarController : IDisposable
             {
                 case DockNativeMethods.AbnPosChanged:
                     UiDiagnostics.Hit(UiActivity.AppBarNotice);
-                    if (_positionGuard.TryHandleNow(Environment.TickCount64))
+                    if (IsMonitorSnapshotStale())
+                    {
+                        _window.Dispatcher.BeginInvoke(
+                            DispatcherPriority.Background,
+                            NotifyEnvironmentChanged);
+                    }
+                    else if (_positionGuard.TryHandleNow(Environment.TickCount64))
                     {
                         Position();
                     }
@@ -471,6 +483,24 @@ internal sealed class DockAppBarController : IDisposable
         }
 
         return 0;
+    }
+
+    private bool IsMonitorSnapshotStale()
+    {
+        if (_monitor is null)
+        {
+            return false;
+        }
+
+        foreach (var candidate in MonitorCatalog.GetAll())
+        {
+            if (string.Equals(candidate.DeviceName, _monitor.DeviceName, StringComparison.OrdinalIgnoreCase))
+            {
+                return candidate.Bounds != _monitor.Bounds || candidate.Dpi != _monitor.Dpi;
+            }
+        }
+
+        return true;
     }
 
     private async Task RecoverAfterExplorerRestartAsync(int recoveryGeneration)

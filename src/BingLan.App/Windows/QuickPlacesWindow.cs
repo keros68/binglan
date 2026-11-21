@@ -44,6 +44,11 @@ public sealed class QuickPlacesWindow : WidgetWindowBase
             Child = _row
         };
         body.Children.Add(_icons);
+        var surface = new Border { IsHitTestVisible = false };
+        surface.SetBinding(Border.BorderBrushProperty, new Binding(nameof(WidgetBorderBrush)) { Source = this });
+        surface.SetBinding(Border.BorderThicknessProperty, new Binding(nameof(WidgetBorderThickness)) { Source = this });
+        surface.SetBinding(Border.CornerRadiusProperty, new Binding(nameof(SurfaceCornerRadius)) { Source = this });
+        body.Children.Add(surface);
         Content = body;
         SetItems(QuickPlaceRules.CreateDefaults());
         ApplyStyle(CurrentStyle);

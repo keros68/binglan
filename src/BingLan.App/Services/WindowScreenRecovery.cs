@@ -108,9 +108,9 @@ internal static class WindowScreenRecovery
             return false;
         }
 
-        var scale = System.Windows.Media.VisualTreeHelper.GetDpi(window);
-        var minWidth = window.MinWidth > 0d ? (int)Math.Ceiling(window.MinWidth * scale.DpiScaleX) : 1;
-        var minHeight = window.MinHeight > 0d ? (int)Math.Ceiling(window.MinHeight * scale.DpiScaleY) : 1;
+        var scale = ResolveTargetScale(target, MonitorCatalog.GetAll(), window);
+        var minWidth = window.MinWidth > 0d ? (int)Math.Ceiling(window.MinWidth * scale) : 1;
+        var minHeight = window.MinHeight > 0d ? (int)Math.Ceiling(window.MinHeight * scale) : 1;
         var clampedTarget = new PixelRect(
             target.Left,
             target.Top,
@@ -192,16 +192,21 @@ internal static class WindowScreenRecovery
             return;
         }
 
-        // The card's own WPF minimum, in pixels of the primary monitor, is how far an
+        // The card's own WPF minimum, in pixels of its destination monitor, is how far an
         // overcrowded gather may shrink it; smaller would be pushed back by the window.
         var primaryMonitor = monitors.FirstOrDefault(monitor => monitor.IsPrimary) ?? monitors[0];
-        var scale = primaryMonitor.Dpi / 96d;
-        (int Width, int Height)? MinimumOf(Window window) =>
-            window.MinWidth > 0 && window.MinHeight > 0
-                ? ((int)Math.Ceiling(window.MinWidth * scale), (int)Math.Ceiling(window.MinHeight * scale))
-                : null;
+        (int Width, int Height)? MinimumOf(Window window, PixelRect current)
+        {
+            if (window.MinWidth <= 0 || window.MinHeight <= 0)
+            {
+                return null;
+            }
+
+            var targetScale = ResolveTargetScale(current, monitors, window, primaryMonitor.Dpi / 96d);
+            return ((int)Math.Ceiling(window.MinWidth * targetScale), (int)Math.Ceiling(window.MinHeight * targetScale));
+        }
         var minimumSizes = entries
-            .Select(entry => MinimumOf(entry.Window))
+            .Select(entry => MinimumOf(entry.Window, entry.Current))
             .ToList();
 
         var targets = DisplayArrivalRules.Gather(
@@ -217,14 +222,23 @@ internal static class WindowScreenRecovery
             {
                 continue;
             }
-            NativeMethods.SetWindowPos(
-                entries[index].Handle,
-                0,
-                target.Left,
-                target.Top,
-                target.Width,
-                target.Height,
-                NativeMethods.SwpNoZOrder | NativeMethods.SwpNoActivate);
+            for (var attempt = 0; attempt < 2; attempt++)
+            {
+                if (DockNativeMethods.GetWindowRect(entries[index].Handle, out var updated)
+                    && new PixelRect(updated.Left, updated.Top, updated.Right, updated.Bottom) == target)
+                {
+                    break;
+                }
+
+                NativeMethods.SetWindowPos(
+                    entries[index].Handle,
+                    0,
+                    target.Left,
+                    target.Top,
+                    target.Width,
+                    target.Height,
+                    NativeMethods.SwpNoZOrder | NativeMethods.SwpNoActivate);
+            }
         }
     }
 
@@ -301,13 +315,17 @@ internal static class WindowScreenRecovery
         }
 
         var primary = monitors.FirstOrDefault(monitor => monitor.IsPrimary) ?? monitors[0];
-        var scale = System.Windows.Media.VisualTreeHelper.GetDpi(window);
-        var minWidth = window.MinWidth > 0d ? (int)Math.Ceiling(window.MinWidth * scale.DpiScaleX) : 1;
-        var minHeight = window.MinHeight > 0d ? (int)Math.Ceiling(window.MinHeight * scale.DpiScaleY) : 1;
+        var layout = CurrentLayout();
+        var scaleReference = placement is not null && DisplayLayoutRules.TryRecall(placement, layout, out var recalled)
+            ? recalled
+            : current;
+        var scale = ResolveTargetScale(scaleReference, monitors, window, primary.Dpi / 96d);
+        var minWidth = window.MinWidth > 0d ? (int)Math.Ceiling(window.MinWidth * scale) : 1;
+        var minHeight = window.MinHeight > 0d ? (int)Math.Ceiling(window.MinHeight * scale) : 1;
         var target = PlacementResolver.ResolveShownBounds(
             current,
             placement,
-            CurrentLayout(),
+            layout,
             monitors.Select(monitor => monitor.WorkingArea).ToArray(),
             primary.WorkingArea,
             minWidth,
@@ -338,6 +356,53 @@ internal static class WindowScreenRecovery
         }
 
         return moved;
+    }
+
+    private static double ResolveTargetScale(
+        PixelRect reference,
+        IReadOnlyList<MonitorSnapshot> monitors,
+        Window fallbackWindow,
+        double? fallbackScale = null)
+    {
+        if (monitors.Count > 0)
+        {
+            var centerX = reference.Left + reference.Width / 2;
+            var centerY = reference.Top + reference.Height / 2;
+            MonitorSnapshot? best = null;
+            long bestOverlap = -1;
+            foreach (var monitor in monitors)
+            {
+                if (centerX >= monitor.Bounds.Left
+                    && centerX < monitor.Bounds.Right
+                    && centerY >= monitor.Bounds.Top
+                    && centerY < monitor.Bounds.Bottom)
+                {
+                    return monitor.Dpi > 0 ? monitor.Dpi / 96d : 1d;
+                }
+
+                var overlapWidth = Math.Max(0, Math.Min(reference.Right, monitor.Bounds.Right) - Math.Max(reference.Left, monitor.Bounds.Left));
+                var overlapHeight = Math.Max(0, Math.Min(reference.Bottom, monitor.Bounds.Bottom) - Math.Max(reference.Top, monitor.Bounds.Top));
+                var overlap = (long)overlapWidth * overlapHeight;
+                if (overlap > bestOverlap)
+                {
+                    bestOverlap = overlap;
+                    best = monitor;
+                }
+            }
+
+            if (best is not null && bestOverlap > 0)
+            {
+                return best.Dpi > 0 ? best.Dpi / 96d : 1d;
+            }
+        }
+
+        if (fallbackScale is > 0d)
+        {
+            return fallbackScale.Value;
+        }
+
+        var dpi = System.Windows.Media.VisualTreeHelper.GetDpi(fallbackWindow);
+        return dpi.DpiScaleX > 0d ? dpi.DpiScaleX : 1d;
     }
 
     /// <summary>

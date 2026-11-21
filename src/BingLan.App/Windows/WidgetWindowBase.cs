@@ -1880,11 +1880,23 @@ public class WidgetWindowBase : Window
             return;
         }
 
+        var proposedLeft = drag.Start.Left + dx;
+        var proposedTop = drag.Start.Top + dy;
+        var width = drag.Start.Width;
+        var height = drag.Start.Height;
+        if (DockNativeMethods.GetWindowRect(_source.Handle, out var liveBounds)
+            && liveBounds.Right > liveBounds.Left
+            && liveBounds.Bottom > liveBounds.Top)
+        {
+            width = liveBounds.Right - liveBounds.Left;
+            height = liveBounds.Bottom - liveBounds.Top;
+        }
+
         var proposed = new BingLan.Core.Dock.PixelRect(
-            drag.Start.Left + dx,
-            drag.Start.Top + dy,
-            drag.Start.Right + dx,
-            drag.Start.Bottom + dy);
+            proposedLeft,
+            proposedTop,
+            proposedLeft + width,
+            proposedTop + height);
         var snapped = Snap(proposed);
         var target = new TaskbarEdgeGuard.PixelRect
         {

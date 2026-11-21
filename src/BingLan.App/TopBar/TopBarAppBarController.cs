@@ -98,6 +98,14 @@ internal sealed class TopBarAppBarController : IDisposable
     internal void Apply(MonitorSnapshot monitor, bool reserveWorkArea, double heightDip, double? compactWidthDip = null)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+        var monitorChanged = _monitor is not null
+            && AppBarReservationState.HasMonitorTargetChanged(
+                _monitor.DeviceName,
+                _monitor.Bounds,
+                _monitor.Dpi,
+                monitor.DeviceName,
+                monitor.Bounds,
+                monitor.Dpi);
         if (_monitor?.Bounds != monitor.Bounds || _monitor?.WorkingArea != monitor.WorkingArea)
         {
             TaskbarEdgeGuard.InvalidateNativeTaskbarLayout(monitor.Bounds);
@@ -108,7 +116,7 @@ internal sealed class TopBarAppBarController : IDisposable
         _compactWidthDip = compactWidthDip;
 
         var nativeTopTaskbar = TaskbarEdgeGuard.GetNativeTaskbarLayout(monitor.Bounds)?.Edge == DockEdge.Top;
-        Dispatch(_reservation.Apply(reserveWorkArea && !nativeTopTaskbar));
+        Dispatch(_reservation.Apply(reserveWorkArea && !nativeTopTaskbar, monitorChanged));
         Position();
     }
 
@@ -197,47 +205,67 @@ internal sealed class TopBarAppBarController : IDisposable
                 var data = CreateData();
                 data.Edge = (uint)Edge;
                 data.Rectangle = ToNative(requested);
-                DockNativeMethods.SHAppBarMessage(DockNativeMethods.AbmQueryPos, ref data);
-                // Keep the strip at the top of whatever the system allows: other bars at
-                // the same edge push it down rather than off the monitor.
-                var adjusted = ToPixel(data.Rectangle) with
+                var queriedOk = DockNativeMethods.SHAppBarMessage(DockNativeMethods.AbmQueryPos, ref data) != 0;
+                if (!queriedOk)
                 {
-                    Bottom = data.Rectangle.Top + Math.Min(reservePixels, _monitor.Bounds.Height)
-                };
-                // ABN_POSCHANGED arrives for every bar's move (the auto-hiding taskbar
-                // fires it constantly), and every ABM_SETPOS rebroadcasts a work-area
-                // change system-wide — screen-capture overlays react to that by
-                // re-laying out. An unchanged strip needs no new broadcast, but a
-                // registration that has not sent its first SETPOS yet must not skip,
-                // and a drifted window rect must still be corrected via MoveWindow.
-                if (adjusted == Bounds
-                    && _setPositionApplied
-                    && !_workAreaCheck.NeedsResubmit(
-                        DockAppBarController.GetLiveWorkingArea(_monitor).Top,
-                        adjusted.Bottom))
-                {
-                    var expectedWindowRect = adjusted with
+                    _reservation.ResetRegistration();
+                    Dispatch(_reservation.Apply(true));
+                    if (_reservation.IsRegistered)
                     {
-                        Bottom = Math.Min(adjusted.Top + thicknessPixels, _monitor.Bounds.Bottom)
-                    };
-                    if (!DockNativeMethods.GetWindowRect(_handle, out var actualRect)
-                        || ToPixel(actualRect) != expectedWindowRect)
-                    {
-                        DockNativeMethods.MoveWindow(
-                            _handle,
-                            expectedWindowRect.Left,
-                            expectedWindowRect.Top,
-                            expectedWindowRect.Width,
-                            expectedWindowRect.Height,
-                            true);
+                        data = CreateData();
+                        data.Edge = (uint)Edge;
+                        data.Rectangle = ToNative(requested);
+                        queriedOk = DockNativeMethods.SHAppBarMessage(DockNativeMethods.AbmQueryPos, ref data) != 0;
                     }
-                    UpdateWindowLayer();
-                    return;
                 }
-                data.Rectangle = ToNative(adjusted);
-                _setPositionApplied = DockNativeMethods.SHAppBarMessage(
-                    DockNativeMethods.AbmSetPos, ref data) != 0;
-                strip = ToPixel(data.Rectangle);
+                if (!queriedOk)
+                {
+                    _setPositionApplied = false;
+                    strip = requested;
+                }
+                else
+                {
+                    // Keep the strip at the top of whatever the system allows: other bars at
+                    // the same edge push it down rather than off the monitor.
+                    var adjusted = ToPixel(data.Rectangle) with
+                    {
+                        Bottom = data.Rectangle.Top + Math.Min(reservePixels, _monitor.Bounds.Height)
+                    };
+                    // ABN_POSCHANGED arrives for every bar's move (the auto-hiding taskbar
+                    // fires it constantly), and every ABM_SETPOS rebroadcasts a work-area
+                    // change system-wide — screen-capture overlays react to that by
+                    // re-laying out. An unchanged strip needs no new broadcast, but a
+                    // registration that has not sent its first SETPOS yet must not skip,
+                    // and a drifted window rect must still be corrected via MoveWindow.
+                    if (adjusted == Bounds
+                        && _setPositionApplied
+                        && !_workAreaCheck.NeedsResubmit(
+                            DockAppBarController.GetLiveWorkingArea(_monitor).Top,
+                            adjusted.Bottom))
+                    {
+                        var expectedWindowRect = adjusted with
+                        {
+                            Bottom = Math.Min(adjusted.Top + thicknessPixels, _monitor.Bounds.Bottom)
+                        };
+                        if (!DockNativeMethods.GetWindowRect(_handle, out var actualRect)
+                            || ToPixel(actualRect) != expectedWindowRect)
+                        {
+                            DockNativeMethods.MoveWindow(
+                                _handle,
+                                expectedWindowRect.Left,
+                                expectedWindowRect.Top,
+                                expectedWindowRect.Width,
+                                expectedWindowRect.Height,
+                                true);
+                        }
+                        UpdateWindowLayer();
+                        return;
+                    }
+                    data.Rectangle = ToNative(adjusted);
+                    _setPositionApplied = DockNativeMethods.SHAppBarMessage(
+                        DockNativeMethods.AbmSetPos, ref data) != 0;
+                    strip = ToPixel(data.Rectangle);
+                }
             }
             else
             {
@@ -302,7 +330,13 @@ internal sealed class TopBarAppBarController : IDisposable
             switch ((int)wParam)
             {
                 case DockNativeMethods.AbnPosChanged:
-                    if (_positionGuard.TryHandleNow(Environment.TickCount64))
+                    if (IsMonitorSnapshotStale())
+                    {
+                        _window.Dispatcher.BeginInvoke(
+                            DispatcherPriority.Background,
+                            NotifyEnvironmentChanged);
+                    }
+                    else if (_positionGuard.TryHandleNow(Environment.TickCount64))
                     {
                         Position();
                     }
@@ -350,6 +384,24 @@ internal sealed class TopBarAppBarController : IDisposable
         }
 
         return 0;
+    }
+
+    private bool IsMonitorSnapshotStale()
+    {
+        if (_monitor is null)
+        {
+            return false;
+        }
+
+        foreach (var candidate in MonitorCatalog.GetAll())
+        {
+            if (string.Equals(candidate.DeviceName, _monitor.DeviceName, StringComparison.OrdinalIgnoreCase))
+            {
+                return candidate.Bounds != _monitor.Bounds || candidate.Dpi != _monitor.Dpi;
+            }
+        }
+
+        return true;
     }
 
     private async Task RecoverAfterExplorerRestartAsync(int recoveryGeneration)

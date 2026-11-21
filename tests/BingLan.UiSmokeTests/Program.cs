@@ -1789,9 +1789,16 @@ internal static class Program
                 $"快捷入口应依次是六个系统位置，实际：{string.Join("、", names)}");
             var component = DesktopExperienceRules.CreateDefaultComponent(DesktopComponentKind.QuickLaunch);
             component.FontScale = 1.5;
+            component.CornerRadius = 20;
             component.Appearance.TextColor = "#FF8800";
             window.ApplyComponent(component);
             Pump();
+            var surface = ((Grid)window.Content).Children.OfType<Border>().Single();
+            Assert(ReferenceEquals(surface.BorderBrush, window.WidgetBorderBrush)
+                && surface.BorderThickness == new Thickness(1)
+                && surface.CornerRadius == new CornerRadius(component.CornerRadius)
+                && !surface.IsHitTestVisible,
+                "快捷入口描边应跟随共享材质与卡片圆角，且不拦截图标操作");
             var first = FindVisualChildren<Button>(window).First();
             Assert(Math.Abs(first.FontSize - 33) < 0.01
                 && first.Foreground is SolidColorBrush { Color: { R: 0xFF, G: 0x88, B: 0x00 } },
@@ -1904,6 +1911,8 @@ internal static class Program
                 window.ApplyStyle(new DesktopStyleState { Glass = GlassMode.Light, CardShadow = CardShadow.None });
                 window.ApplyComponent(isolatedClearComponent);
                 Pump();
+                Assert(AccessibilityThemeManager.IsHighContrastEnabled || surface.BorderThickness == new Thickness(0),
+                    "快捷入口单卡无底板时应移除描边");
                 Assert(
                     FindVisualChildren<Button>(window).All(button =>
                         CountDropShadowLayers(button, window, out var isolatedIconShadow) == 1

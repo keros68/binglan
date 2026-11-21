@@ -964,6 +964,24 @@ static void TestAppBarReservation()
     Assert(
         !AppBarReservationState.IsValidStrip(new PixelRect(0, 0, 1920, 104), negativeTopMonitor, 76),
         "被推到相邻显示器上的越界条带不应视为有效预留");
+
+    var builtInBounds = new PixelRect(0, 0, 2560, 1600);
+    var externalBounds = new PixelRect(0, 0, 3840, 2160);
+    Assert(
+        !AppBarReservationState.HasMonitorTargetChanged(null, builtInBounds, 144, @"\\.\DISPLAY1", builtInBounds, 144),
+        "首次应用显示器快照不应视为切换显示器");
+    Assert(
+        !AppBarReservationState.HasMonitorTargetChanged(@"\\.\DISPLAY1", builtInBounds, 144, @"\\.\display1", builtInBounds, 144),
+        "同一显示器设备名、边界和 DPI 均未变化时不应触发重注册");
+    Assert(
+        AppBarReservationState.HasMonitorTargetChanged(@"\\.\DISPLAY1", builtInBounds, 144, @"\\.\DISPLAY2", builtInBounds, 144),
+        "设备名变化时应判定为目标显示器变化");
+    Assert(
+        AppBarReservationState.HasMonitorTargetChanged(@"\\.\DISPLAY1", builtInBounds, 144, @"\\.\DISPLAY1", externalBounds, 144),
+        "单屏切换复用同一设备名但分辨率边界变化时应触发重注册");
+    Assert(
+        AppBarReservationState.HasMonitorTargetChanged(@"\\.\DISPLAY1", externalBounds, 144, @"\\.\DISPLAY1", externalBounds, 168),
+        "单屏切换复用同一设备名但有效 DPI 变化时应触发重注册");
 }
 
 static void TestDockPinIdentityKey()
