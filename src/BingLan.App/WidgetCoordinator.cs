@@ -1430,6 +1430,13 @@ public sealed partial class WidgetCoordinator : IDisposable
                 LauncherAppearance = _state.LauncherAppearance,
                 IsLauncherEnabled = () => _state.LauncherEnabled,
                 SetLauncherEnabled = SetLauncherEnabled,
+                IsLauncherShowRecentFiles = () => _state.LauncherPreferences.ShowRecentFiles,
+                SetLauncherShowRecentFiles = enabled =>
+                {
+                    _state.LauncherPreferences.ShowRecentFiles = enabled;
+                    ScheduleSave();
+                    _launcherPanel?.RefreshRecentPreference();
+                },
                 ApplyLauncherAppearance = () =>
                 {
                     _launcherPanel?.ApplyAppearance();

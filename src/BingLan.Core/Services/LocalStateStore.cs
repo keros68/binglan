@@ -793,21 +793,30 @@ public sealed class LocalStateStore
             state.SchemaVersion = 51;
         }
         state.LauncherAppCategoryOverrides ??= new Dictionary<string, LauncherAppCategory>(StringComparer.Ordinal);
+        if (state.SchemaVersion < 54)
+        {
+            foreach (var key in state.LauncherAppCategoryOverrides.Keys.ToArray())
+            {
+                var raw = (int)state.LauncherAppCategoryOverrides[key];
+                if (raw == 3)
+                {
+                    state.LauncherAppCategoryOverrides[key] = LauncherAppCategory.SystemTools;
+                }
+                else if (raw == 5)
+                {
+                    state.LauncherAppCategoryOverrides[key] = LauncherAppCategory.Unclassified;
+                }
+            }
+            state.SchemaVersion = 54;
+        }
         foreach (var key in state.LauncherAppCategoryOverrides
                      .Where(pair => string.IsNullOrWhiteSpace(pair.Key) || !Enum.IsDefined(pair.Value))
                      .Select(pair => pair.Key).ToArray())
         {
             state.LauncherAppCategoryOverrides.Remove(key);
         }
-        if (state.SchemaVersion < 52)
-        {
-            state.SchemaVersion = 52;
-        }
-        if (state.SchemaVersion < 53)
-        {
-            // Missing master visibility uses the AppState default, independently of the Dock shortcut.
-            state.SchemaVersion = 53;
-        }
+        state.LauncherPreferences ??= new LauncherPreferencesState();
+        state.LauncherPreferences.Normalize();
         state.Updates ??= new UpdateState();
         state.QuickPlaces = QuickPlaceRules.Normalize(state.QuickPlaces);
         state.DismissedDesktopCategories = (state.DismissedDesktopCategories ?? [])

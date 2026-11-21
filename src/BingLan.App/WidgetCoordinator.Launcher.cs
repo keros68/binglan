@@ -61,7 +61,8 @@ public sealed partial class WidgetCoordinator
         var panel = new LauncherPanelWindow(
             ReadLauncherSnapshotAsync, OpenLauncherTarget, ReadLauncherFileBoxes,
             SendLauncherPathToFileBoxAsync, foreground, monitor, _state.LauncherAppearance, _state.Style,
-            PinLauncherEntry, () => _state.LauncherGroups, ScheduleSave, () => _state.LauncherAppCategoryOverrides);
+            PinLauncherEntry, () => _state.LauncherGroups, ScheduleSave, () => _state.LauncherAppCategoryOverrides,
+            _state.LauncherPreferences);
         _launcherPanel = panel;
         panel.Closed += (_, _) =>
         {
@@ -218,11 +219,16 @@ public sealed partial class WidgetCoordinator
         }).ToArray();
         var mapped = _state.FileBoxes.SelectMany(box => box.Items.Select(item =>
             (item.Path, item.Title, Source: box.Title))).ToArray();
+        var fileBoxSummaries = _state.FileBoxes.Select(box => (
+            box.Id,
+            box.Title,
+            Items: (IReadOnlyList<(string Path, string? Title)>)box.Items.Select(item => (item.Path, (string?)item.Title)).ToArray())).ToArray();
         var quickPlaces = _state.QuickPlaces.Select(place => (place.Target, place.Name)).ToArray();
         var savedEntries = _state.LauncherGroups.SelectMany(group => group.Members)
             .Where(member => member.FallbackPath is not null || member.FallbackPin is not null)
             .DistinctBy(member => member.Key).ToArray();
         var useEverything = _state.TopBar.UseEverything;
+        var showRecentFiles = _state.LauncherPreferences.ShowRecentFiles;
         var apps = await ReadLauncherAppsAsync();
         return await Task.Run(() =>
         {
@@ -260,7 +266,9 @@ public sealed partial class WidgetCoordinator
                 else if (saved.FallbackPath is { } path && (Path.IsPathFullyQualified(path) || FileMappingService.IsShellEntry(path)))
                     Add(path, saved.FallbackName, "已保存入口", ClassifyLauncherPath(path), isSavedFallback: true);
             }
-            return new LauncherPanelSnapshot(entries, favorites, useEverything);
+            var places = LauncherFileCatalog.BuildPlaces(fileBoxSummaries);
+            var recent = showRecentFiles ? LauncherFileCatalog.ReadRecentFiles() : [];
+            return new LauncherPanelSnapshot(entries, favorites, useEverything, places, recent);
 
             void AddPath(string path, string? name, string source)
             {

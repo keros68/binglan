@@ -24,7 +24,7 @@ BingLan Desktop (冰蓝桌面) is a Windows 11 desktop companion built with .NET
 - **To-dos and notes**: the to-do card switches between today's list and a 1–5-week calendar with lunar dates; both share the same tasks, and the card folds to a title bar showing the open count (or all-done status once finished). Supports deadlines with optional times, events, countdowns, and linked files, and highlights tasks close to their deadline. Notes support multiline text.
 - **File groups**: map desktop files, folders, and apps into boxes, sorted by type automatically, foldable to a title bar showing the item count, with optional 5-second mouse-leave auto-collapse per box, multi-select, bulk remove, and move between boxes. Boxes record paths only and never move original files. Deleting originals is an optional setting, off by default; each deletion asks first and goes to the Recycle Bin.
 - **Quick launch**: a row of icons for This PC, Desktop, Documents, Downloads, Pictures, and the Recycle Bin by default. Icons, names, and targets are customizable. Turning the row off in Desktop components keeps it hidden after restart.
-- **BingLan Overview Card** lists apps, files, and folders. Open it from the Dock or tray menu. Browse apps by category, search across sources, and save entries to custom groups. Right-click an entry to pin it to the Dock or send it to a file group. The panel supports clear and frosted glass. Turn it on or off in Settings → Top & bottom bars → BingLan Overview Card.
+- **BingLan Overview Card** places Apps, Files, and My Groups side by side at the top and remembers the last active tab. Apps uses 7 general categories (auto-folding sparse categories under 3 items into Other) plus an A–Z toggle and manual recategorization; Files brings together common places, desktop file groups, toggleable Windows Recent items, file-type filters, inline read-only folder browsing, and grid/list views; My Groups mixes apps, files, and folders. Supports cross-type search, pinning to the Dock, sending to file groups, and clear/frosted glass. Turn it on or off in Settings → Top & bottom bars → BingLan Overview Card.
 - **Dock**: pinned and running apps in separate sections, with unread badges and window switching. The Start menu, BingLan Overview Card, and Show desktop buttons can each be hidden. Drag a program, file, or folder onto empty dock space to pin it, or drop files onto an app icon to open them with that app (hovering for ~0.5 s over a running app raises its window). When apps do not fit, icons shrink and the dock scrolls horizontally. With smart hide, it collapses into a draggable handle and expands on hover or file drag.
 - **Taskbar**: default, transparent, blurred, or auto-hide. The original state comes back on exit or after a crash.
 - **Taskbar position**: change the side in Windows Settings. BingLan adjusts its bars to the usable space on each screen.
@@ -47,7 +47,7 @@ The interface is in Simplified Chinese.
 
 ## Get started
 
-Stable version: [v0.2.79](https://github.com/keros68/binglan/releases/tag/v0.2.79) · [Installer](https://github.com/keros68/binglan/releases/download/v0.2.79/BingLan-Setup-0.2.79.exe) · [Portable](https://github.com/keros68/binglan/releases/download/v0.2.79/BingLan-0.2.79-portable.zip). A standalone [compatibility tool](https://github.com/keros68/binglan/releases/download/v0.2.52/BingLan-0.2.52-tray-preview.zip) is also available; see the [guide (Chinese)](docs/TRAY-PREVIEW.md).
+Stable version: [v0.2.80](https://github.com/keros68/binglan/releases/tag/v0.2.80) · [Installer](https://github.com/keros68/binglan/releases/download/v0.2.80/BingLan-Setup-0.2.80.exe) · [Portable](https://github.com/keros68/binglan/releases/download/v0.2.80/BingLan-0.2.80-portable.zip). A standalone [compatibility tool](https://github.com/keros68/binglan/releases/download/v0.2.52/BingLan-0.2.52-tray-preview.zip) is also available; see the [guide (Chinese)](docs/TRAY-PREVIEW.md).
 
 1. Open [Releases](https://github.com/keros68/binglan/releases/latest) and download `BingLan-Setup-*.exe` (installer) or `BingLan-*-portable.zip` (portable).
 2. Installer: run it — it installs for the current user and needs no administrator rights. Portable: unzip anywhere and run `BingLan.exe` inside. Both include the .NET runtime and are not code-signed yet, so Windows asks for confirmation on first run.
@@ -71,7 +71,7 @@ Requires the .NET 10 SDK and PowerShell 7. Building the installer also needs Inn
 ```powershell
 dotnet build .\BingLan.slnx -c Release
 dotnet run --project .\tests\BingLan.SmokeTests\BingLan.SmokeTests.csproj -c Release
-pwsh -NoProfile -File .\installer\build.ps1 -Version 0.2.79
+pwsh -NoProfile -File .\installer\build.ps1 -Version 0.2.80
 ```
 
 Full test commands, the technical design, and the current implementation are in the [development notes (Chinese)](docs/DEVELOPMENT.md); installer details are in [docs/INSTALLER.md](docs/INSTALLER.md).

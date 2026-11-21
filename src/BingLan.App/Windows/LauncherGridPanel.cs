@@ -13,15 +13,27 @@ internal sealed record LauncherPanelSection(string Name)
 
 public sealed class LauncherGridPanel : VirtualizingPanel, IScrollInfo
 {
+    public static readonly DependencyProperty IsListModeProperty = DependencyProperty.Register(
+        nameof(IsListMode), typeof(bool), typeof(LauncherGridPanel),
+        new FrameworkPropertyMetadata(false, FrameworkPropertyMetadataOptions.AffectsMeasure));
+
     internal const double TileWidth = 110;
     internal const double TileHeight = 95;
+    internal const double ListRowHeight = 46;
     private const double SectionHeight = 30;
     private const double ScrollLineHeight = 16;
     private readonly List<Rect> _bounds = [];
     private double _layoutWidth = -1;
+    private bool _layoutListMode;
     private Size _extent;
     private Size _viewport;
     private double _offset;
+
+    public bool IsListMode
+    {
+        get => (bool)GetValue(IsListModeProperty);
+        set => SetValue(IsListModeProperty, value);
+    }
 
     public bool CanHorizontallyScroll { get; set; }
     public bool CanVerticallyScroll { get; set; }
@@ -64,13 +76,14 @@ public sealed class LauncherGridPanel : VirtualizingPanel, IScrollInfo
     {
         if (ItemsControl.GetItemsOwner(this) is not { } owner) return default;
         var width = double.IsInfinity(availableSize.Width) ? TileWidth : Math.Max(0, availableSize.Width);
-        if (_layoutWidth != width || _bounds.Count != owner.Items.Count) BuildLayout(owner, width);
+        if (_layoutWidth != width || _layoutListMode != IsListMode || _bounds.Count != owner.Items.Count) BuildLayout(owner, width);
         _viewport = new Size(width, double.IsInfinity(availableSize.Height) ? _extent.Height : Math.Max(0, availableSize.Height));
         _offset = Math.Clamp(_offset, 0, Math.Max(0, ExtentHeight - ViewportHeight));
         ScrollOwner?.InvalidateScrollInfo();
 
-        var top = _offset - TileHeight;
-        var bottom = _offset + ViewportHeight + TileHeight;
+        var buffer = IsListMode ? ListRowHeight : TileHeight;
+        var top = _offset - buffer;
+        var bottom = _offset + ViewportHeight + buffer;
         var needed = new HashSet<int>();
         for (var index = 0; index < _bounds.Count; index++)
             if (_bounds[index].Bottom > top && _bounds[index].Top < bottom) needed.Add(index);
@@ -131,7 +144,20 @@ public sealed class LauncherGridPanel : VirtualizingPanel, IScrollInfo
     private void BuildLayout(ItemsControl owner, double width)
     {
         _layoutWidth = width;
+        _layoutListMode = IsListMode;
         _bounds.Clear();
+        if (IsListMode)
+        {
+            var y = 0d;
+            foreach (var item in owner.Items)
+            {
+                var height = item is LauncherPanelSection ? SectionHeight : ListRowHeight;
+                _bounds.Add(new Rect(0, y, width, height));
+                y += height;
+            }
+            _extent = new Size(width, y);
+            return;
+        }
         var tileWidth = Math.Min(width, TileWidth);
         var columns = Math.Max(1, (int)(width / TileWidth));
         var column = 0;

@@ -2,7 +2,7 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:BingLan.App.Windows"
-        Title="冰蓝总览卡" Width="984" Height="610" WindowStyle="None"
+        Title="冰蓝总览卡" Width="984" Height="620" WindowStyle="None"
         ResizeMode="NoResize" AllowsTransparency="True" Background="Transparent"
         ShowInTaskbar="False" WindowStartupLocation="Manual"
         PreviewKeyDown="OnPanelKeyDown" Deactivated="OnPanelDeactivated">
@@ -13,7 +13,7 @@
             <Setter Property="Background" Value="{DynamicResource FloatingGlassControlBrush}" />
             <Setter Property="BorderBrush" Value="{DynamicResource FloatingGlassControlBorderBrush}" />
             <Setter Property="BorderThickness" Value="1" />
-            <Setter Property="Padding" Value="14,7" />
+            <Setter Property="Padding" Value="12,6" />
             <Setter Property="HorizontalContentAlignment" Value="Center" />
             <Setter Property="Cursor" Value="Hand" />
             <Setter Property="Template">
@@ -33,33 +33,141 @@
                 </Setter.Value>
             </Setter>
         </Style>
-        <Style x:Key="CategoryStyle" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
-            <Setter Property="Padding" Value="10,5" />
-            <Setter Property="Margin" Value="0,0,0,2" />
+        <Style x:Key="MainTabButtonStyle" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="Padding" Value="12,6" />
             <Setter Property="FontSize" Value="13" />
-            <Setter Property="HorizontalContentAlignment" Value="Left" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderBrush" Value="Transparent" />
+            <Setter Property="Foreground" Value="{DynamicResource FloatingGlassMutedBrush}" />
+            <Style.Triggers>
+                <Trigger Property="Tag" Value="Selected">
+                    <Setter Property="Background" Value="{DynamicResource FloatingGlassSelectedBrush}" />
+                    <Setter Property="BorderBrush" Value="{DynamicResource FloatingGlassFocusBrush}" />
+                    <Setter Property="Foreground" Value="{DynamicResource FloatingGlassInkBrush}" />
+                    <Setter Property="FontWeight" Value="SemiBold" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="CompactToggleStyle" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="Padding" Value="9,4" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderBrush" Value="Transparent" />
+            <Setter Property="Foreground" Value="{DynamicResource FloatingGlassMutedBrush}" />
+            <Style.Triggers>
+                <Trigger Property="Tag" Value="Selected">
+                    <Setter Property="Background" Value="{DynamicResource FloatingGlassSelectedBrush}" />
+                    <Setter Property="BorderBrush" Value="{DynamicResource FloatingGlassFocusBrush}" />
+                    <Setter Property="Foreground" Value="{DynamicResource FloatingGlassInkBrush}" />
+                    <Setter Property="FontWeight" Value="SemiBold" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="CategoryStyle" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="Padding" Value="9,5" />
+            <Setter Property="Margin" Value="0,0,0,2" />
+            <Setter Property="FontSize" Value="12.5" />
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
             <Setter Property="Background" Value="Transparent" />
             <Setter Property="BorderBrush" Value="Transparent" />
             <Style.Triggers>
                 <DataTrigger Binding="{Binding IsSelected}" Value="True">
                     <Setter Property="Background" Value="{DynamicResource FloatingGlassSelectedBrush}" />
                     <Setter Property="BorderBrush" Value="{DynamicResource FloatingGlassFocusBrush}" />
+                    <Setter Property="FontWeight" Value="SemiBold" />
                 </DataTrigger>
             </Style.Triggers>
         </Style>
         <DataTemplate x:Key="NavigationItem">
             <Button Style="{StaticResource CategoryStyle}" Click="OnCategoryClick"
                     AutomationProperties.Name="{Binding Name}" AutomationProperties.ItemStatus="{Binding SelectionStatus}">
-                <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="20" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="{Binding Glyph}" FontFamily="Segoe Fluent Icons" FontSize="12.5"
+                               Foreground="{DynamicResource FloatingGlassMutedBrush}" VerticalAlignment="Center" />
+                    <TextBlock Grid.Column="1" Text="{Binding Name}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                    <TextBlock Grid.Column="2" Text="{Binding CountText}" FontSize="11" Margin="6,0,0,0"
+                               Foreground="{DynamicResource FloatingGlassMutedBrush}" VerticalAlignment="Center" />
+                </Grid>
+            </Button>
+        </DataTemplate>
+        <DataTemplate x:Key="PlaceCardTemplate">
+            <Button Margin="0,0,8,8" Padding="10,8" Width="216" HorizontalContentAlignment="Stretch"
+                    Click="OnPlaceCardClick" AutomationProperties.Name="{Binding Name}">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="32" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Border Width="26" Height="26" CornerRadius="7" HorizontalAlignment="Left"
+                            Background="{DynamicResource FloatingGlassSelectedBrush}">
+                        <TextBlock Text="{Binding Glyph}" FontFamily="Segoe Fluent Icons" FontSize="13.5"
+                                   Foreground="{DynamicResource FloatingGlassInkBrush}"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Border>
+                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                        <TextBlock Text="{Binding Name}" FontSize="12.5" FontWeight="SemiBold"
+                                   Foreground="{DynamicResource FloatingGlassInkBrush}" TextTrimming="CharacterEllipsis" />
+                        <TextBlock Text="{Binding Subtitle}" FontSize="11" Margin="0,1,0,0"
+                                   Foreground="{DynamicResource FloatingGlassMutedBrush}" TextTrimming="CharacterEllipsis" />
+                    </StackPanel>
+                </Grid>
             </Button>
         </DataTemplate>
         <ControlTemplate x:Key="SectionContainer" TargetType="ListBoxItem">
             <Border Background="{DynamicResource FloatingGlassHeadingBrush}" CornerRadius="4" Padding="4,1"
                     HorizontalAlignment="Left" VerticalAlignment="Center" Margin="5,3,0,0">
-                <TextBlock Text="{Binding Name}" FontSize="14" FontWeight="SemiBold"
+                <TextBlock Text="{Binding Name}" FontSize="13.5" FontWeight="SemiBold"
                            Foreground="{DynamicResource FloatingGlassInkBrush}" AutomationProperties.HeadingLevel="Level2" />
             </Border>
         </ControlTemplate>
+        <DataTemplate x:Key="TileItemTemplate">
+            <Grid>
+                <Grid.RowDefinitions><RowDefinition Height="44" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+                <Grid Width="42" Height="42" VerticalAlignment="Top">
+                    <TextBlock Text="{Binding Glyph}" FontFamily="Segoe Fluent Icons" FontSize="30" Foreground="{DynamicResource FloatingGlassInkBrush}" VerticalAlignment="Center" HorizontalAlignment="Center">
+                        <TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Visibility" Value="Collapsed" /><Style.Triggers><DataTrigger Binding="{Binding Icon}" Value="{x:Null}"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers></Style></TextBlock.Style>
+                    </TextBlock>
+                    <Image Source="{Binding Icon}" Stretch="Uniform" />
+                </Grid>
+                <TextBlock Grid.Row="1" Margin="3,2,3,0" Text="{Binding Name}" FontSize="12" TextAlignment="Center"
+                           HorizontalAlignment="Center" VerticalAlignment="Top"
+                           TextWrapping="Wrap" TextTrimming="CharacterEllipsis"
+                           LineStackingStrategy="BlockLineHeight" LineHeight="16" MaxHeight="32" />
+                <TextBlock Text="&#xE735;" FontFamily="Segoe Fluent Icons" FontSize="9" Foreground="{DynamicResource FloatingGlassMutedBrush}" HorizontalAlignment="Right" VerticalAlignment="Top">
+                    <TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Visibility" Value="Collapsed" /><Style.Triggers><DataTrigger Binding="{Binding IsFavorite}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers></Style></TextBlock.Style>
+                </TextBlock>
+            </Grid>
+        </DataTemplate>
+        <DataTemplate x:Key="ListItemTemplate">
+            <Grid VerticalAlignment="Center" Margin="4,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="34" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <Grid Width="26" Height="26" HorizontalAlignment="Left" VerticalAlignment="Center">
+                    <TextBlock Text="{Binding Glyph}" FontFamily="Segoe Fluent Icons" FontSize="18" Foreground="{DynamicResource FloatingGlassInkBrush}" VerticalAlignment="Center" HorizontalAlignment="Center">
+                        <TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Visibility" Value="Collapsed" /><Style.Triggers><DataTrigger Binding="{Binding Icon}" Value="{x:Null}"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers></Style></TextBlock.Style>
+                    </TextBlock>
+                    <Image Source="{Binding Icon}" Stretch="Uniform" />
+                </Grid>
+                <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="2,0,10,0">
+                    <TextBlock Text="{Binding Name}" FontSize="12.5" FontWeight="Medium"
+                               Foreground="{DynamicResource FloatingGlassInkBrush}" TextTrimming="CharacterEllipsis" />
+                    <TextBlock Text="{Binding SecondaryText}" FontSize="11"
+                               Foreground="{DynamicResource FloatingGlassMutedBrush}" TextTrimming="CharacterEllipsis" />
+                </StackPanel>
+                <Border Grid.Column="2" CornerRadius="6" Padding="7,2" VerticalAlignment="Center"
+                        Background="{DynamicResource FloatingGlassControlBrush}">
+                    <TextBlock Text="{Binding KindLabel}" FontSize="11" Foreground="{DynamicResource FloatingGlassMutedBrush}" />
+                </Border>
+            </Grid>
+        </DataTemplate>
         <Style x:Key="SourceFilterStyle" TargetType="ComboBox">
             <Setter Property="Foreground" Value="{DynamicResource FloatingGlassInkBrush}" />
             <Setter Property="FontSize" Value="12" />
@@ -116,14 +224,14 @@
             <Setter Property="HorizontalContentAlignment" Value="Stretch" />
             <Setter Property="VerticalContentAlignment" Value="Stretch" />
             <Setter Property="Padding" Value="0" />
-            <Setter Property="Margin" Value="3" />
+            <Setter Property="Margin" Value="2" />
             <Setter Property="Foreground" Value="{DynamicResource FloatingGlassInkBrush}" />
             <Setter Property="AutomationProperties.Name" Value="{Binding Name}" />
             <Setter Property="ToolTip" Value="{Binding Location}" />
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="ListBoxItem">
-                        <Border x:Name="Tile" CornerRadius="11" Background="Transparent" BorderBrush="Transparent" BorderThickness="1" Padding="5,4">
+                        <Border x:Name="Tile" CornerRadius="10" Background="Transparent" BorderBrush="Transparent" BorderThickness="1" Padding="5,4">
                             <ContentPresenter />
                         </Border>
                         <ControlTemplate.Triggers>
@@ -155,7 +263,7 @@
         </Style>
     </Window.Resources>
     <Border x:Name="PanelSurface" CornerRadius="24" Background="{DynamicResource FloatingGlassSurfaceBrush}"
-            BorderBrush="{DynamicResource FloatingGlassBorderBrush}" BorderThickness="1" Padding="30,24,30,20">
+            BorderBrush="{DynamicResource FloatingGlassBorderBrush}" BorderThickness="1" Padding="26,20,26,18">
         <Grid>
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
@@ -163,25 +271,63 @@
                 <RowDefinition Height="*" />
                 <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
+
+            <!-- 顶栏：搜索框 + 一级三主入口 + 材质快切 + 关闭 -->
             <Grid>
-                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                <Border CornerRadius="12" Background="{DynamicResource FloatingGlassHoverBrush}" BorderBrush="{DynamicResource FloatingGlassControlBorderBrush}" BorderThickness="1" Padding="15,11">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <Border CornerRadius="12" Background="{DynamicResource FloatingGlassHoverBrush}" BorderBrush="{DynamicResource FloatingGlassControlBorderBrush}" BorderThickness="1" Padding="14,9">
                     <Grid>
-                        <Grid.ColumnDefinitions><ColumnDefinition Width="26" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                        <TextBlock Text="&#xE721;" FontFamily="Segoe Fluent Icons" Foreground="{DynamicResource FloatingGlassMutedBrush}" FontSize="16" VerticalAlignment="Center" />
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="24" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                        <TextBlock Text="&#xE721;" FontFamily="Segoe Fluent Icons" Foreground="{DynamicResource FloatingGlassMutedBrush}" FontSize="15" VerticalAlignment="Center" />
                         <Grid Grid.Column="1">
                             <TextBlock x:Name="SearchPlaceholder" Text="搜索应用、文件和文件夹" Foreground="{DynamicResource FloatingGlassMutedBrush}" IsHitTestVisible="False" VerticalAlignment="Center" />
-                            <TextBox x:Name="SearchBox" FontSize="15" Foreground="{DynamicResource FloatingGlassInkBrush}"
+                            <TextBox x:Name="SearchBox" FontSize="14.5" Foreground="{DynamicResource FloatingGlassInkBrush}"
                                      CaretBrush="{DynamicResource FloatingGlassInkBrush}" Background="Transparent" BorderThickness="0" Padding="0"
                                      AutomationProperties.Name="搜索应用、文件和文件夹" TextChanged="OnSearchTextChanged" />
                         </Grid>
                     </Grid>
                 </Border>
-                <Button x:Name="MaterialButton" Grid.Column="1" Content="磨砂" Margin="8,0,0,0" Click="OnMaterialClick" AutomationProperties.Name="切换玻璃材质" />
-                <Button Grid.Column="2" Content="&#xE8BB;" FontFamily="Segoe Fluent Icons" FontSize="13" Margin="6,0,0,0" Padding="14,8" Background="Transparent" BorderThickness="0" Click="OnCloseClick" AutomationProperties.Name="关闭冰蓝总览卡" />
+
+                <Border Grid.Column="1" Margin="10,0,0,0" Padding="3" CornerRadius="10"
+                        Background="{DynamicResource FloatingGlassNavigationBrush}"
+                        BorderBrush="{DynamicResource FloatingGlassControlBorderBrush}" BorderThickness="1">
+                    <StackPanel Orientation="Horizontal">
+                        <Button x:Name="TabAppsButton" Style="{StaticResource MainTabButtonStyle}" Click="OnTabAppsClick"
+                                AutomationProperties.Name="应用" ToolTip="应用（Ctrl+1）">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="&#xE80A;" FontFamily="Segoe Fluent Icons" FontSize="12.5" VerticalAlignment="Center" Margin="0,0,5,0" />
+                                <TextBlock Text="应用" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
+                        <Button x:Name="TabFilesButton" Style="{StaticResource MainTabButtonStyle}" Click="OnTabFilesClick"
+                                Margin="2,0" AutomationProperties.Name="文件" ToolTip="文件（Ctrl+2）">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="&#xE8B7;" FontFamily="Segoe Fluent Icons" FontSize="12.5" VerticalAlignment="Center" Margin="0,0,5,0" />
+                                <TextBlock Text="文件" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
+                        <Button x:Name="TabGroupsButton" Style="{StaticResource MainTabButtonStyle}" Click="OnTabGroupsClick"
+                                AutomationProperties.Name="我的分组" ToolTip="我的分组（Ctrl+3）">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="&#xE734;" FontFamily="Segoe Fluent Icons" FontSize="12.5" VerticalAlignment="Center" Margin="0,0,5,0" />
+                                <TextBlock Text="我的分组" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
+                    </StackPanel>
+                </Border>
+
+                <Button x:Name="MaterialButton" Grid.Column="2" Content="磨砂" Margin="8,0,0,0" Click="OnMaterialClick" AutomationProperties.Name="切换玻璃材质" />
+                <Button Grid.Column="3" Content="&#xE8BB;" FontFamily="Segoe Fluent Icons" FontSize="13" Margin="6,0,0,0" Padding="12,8" Background="Transparent" BorderThickness="0" Click="OnCloseClick" AutomationProperties.Name="关闭冰蓝总览卡" />
             </Grid>
+
+            <!-- 搜索工具与分组编辑器 -->
             <StackPanel Grid.Row="1">
-                <WrapPanel x:Name="SearchTools" Margin="0,13,0,5" Visibility="Collapsed">
+                <WrapPanel x:Name="SearchTools" Margin="0,11,0,3" Visibility="Collapsed">
                     <Button x:Name="AllFilter" Content="全部" Click="OnAllClick" Margin="0,0,6,0" Padding="13,5" />
                     <Button x:Name="AppsFilter" Content="应用" Click="OnAppsClick" Margin="0,0,6,0" Padding="13,5" />
                     <Button x:Name="FilesFilter" Content="文件" Click="OnFilesClick" Padding="13,5" />
@@ -191,8 +337,8 @@
                                   Foreground="{DynamicResource FloatingGlassInkBrush}" VerticalAlignment="Center" />
                     </Border>
                 </WrapPanel>
-                <Border x:Name="GroupEditor" Visibility="Collapsed" Margin="3,5,0,0" Padding="6"
-                        CornerRadius="7" Background="{DynamicResource FloatingGlassLabelBrush}">
+                <Border x:Name="GroupEditor" Visibility="Collapsed" Margin="3,6,0,0" Padding="6"
+                        CornerRadius="8" Background="{DynamicResource FloatingGlassLabelBrush}">
                     <DockPanel LastChildFill="True">
                         <Button DockPanel.Dock="Right" Content="取消" Padding="9,5" Margin="6,0,0,0" Click="OnCancelGroupClick" />
                         <Button x:Name="SaveGroupButton" DockPanel.Dock="Right" Content="创建" Padding="9,5" Margin="6,0,0,0" Click="OnSaveGroupClick" />
@@ -201,35 +347,151 @@
                     </DockPanel>
                 </Border>
             </StackPanel>
-            <Grid Grid.Row="2" Margin="0,11,0,0">
+
+            <!-- 主体：左动态导航 + 右内容区 -->
+            <Grid Grid.Row="2" Margin="0,12,0,0">
                 <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                <Border x:Name="NavigationSurface" Background="{DynamicResource FloatingGlassNavigationBrush}" CornerRadius="10"
-                        Margin="0,0,9,0" Visibility="{Binding Visibility, ElementName=BrowseNavigation}">
-                <ScrollViewer x:Name="BrowseNavigation" Width="136"
-                              HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto"
-                              AutomationProperties.Name="浏览导航">
-                    <StackPanel Margin="5,5,5,5">
-                        <Button x:Name="OverviewButton" Content="应用概览" Style="{StaticResource CategoryStyle}" Click="OnOverviewClick" />
-                        <ItemsControl x:Name="PurposeList" ItemTemplate="{StaticResource NavigationItem}" AutomationProperties.Name="用途分类" />
-                        <Button x:Name="BrowseFilesButton" Content="文件与文件夹" Style="{StaticResource CategoryStyle}" Click="OnFilesClick"
-                                Margin="0,5,0,2" />
-                        <Border Margin="8,7,12,8" Height="1" Background="{DynamicResource FloatingGlassControlBorderBrush}" />
-                        <TextBlock Text="我的分组" FontSize="12" Margin="10,0,0,3" Foreground="{DynamicResource FloatingGlassMutedBrush}" />
-                        <ItemsControl x:Name="CategoriesList" ItemTemplate="{StaticResource NavigationItem}" AutomationProperties.Name="我的分组" />
-                        <Button x:Name="NewGroupButton" Content="＋ 新建分组" AutomationProperties.Name="新建分组"
-                                Style="{StaticResource CategoryStyle}" Click="OnNewGroupClick" />
-                    </StackPanel>
-                </ScrollViewer>
+                <Border x:Name="NavigationSurface" Background="{DynamicResource FloatingGlassNavigationBrush}" CornerRadius="11"
+                        Margin="0,0,12,0" Visibility="{Binding Visibility, ElementName=BrowseNavigation}">
+                    <ScrollViewer x:Name="BrowseNavigation" Width="158"
+                                  HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto"
+                                  AutomationProperties.Name="浏览导航">
+                        <StackPanel Margin="6,6,6,6">
+                            <!-- 应用导航 -->
+                            <StackPanel x:Name="AppsNavPanel">
+                                <Button x:Name="OverviewButton" Style="{StaticResource CategoryStyle}" Click="OnOverviewClick"
+                                        AutomationProperties.Name="全部应用">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="20" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                        <TextBlock Text="&#xE80A;" FontFamily="Segoe Fluent Icons" FontSize="12.5" Foreground="{DynamicResource FloatingGlassMutedBrush}" VerticalAlignment="Center" />
+                                        <TextBlock Grid.Column="1" Text="全部应用" VerticalAlignment="Center" />
+                                        <TextBlock Grid.Column="2" Text="{Binding CountText}" FontSize="11" Margin="6,0,0,0" Foreground="{DynamicResource FloatingGlassMutedBrush}" VerticalAlignment="Center" />
+                                    </Grid>
+                                </Button>
+                                <TextBlock Text="用途分类" FontSize="11" Margin="9,8,0,3" Foreground="{DynamicResource FloatingGlassMutedBrush}" />
+                                <ItemsControl x:Name="PurposeList" ItemTemplate="{StaticResource NavigationItem}" AutomationProperties.Name="用途分类" />
+                            </StackPanel>
+
+                            <!-- 文件导航 -->
+                            <StackPanel x:Name="FilesNavPanel" Visibility="Collapsed">
+                                <Button x:Name="FilesOverviewButton" Style="{StaticResource CategoryStyle}" Click="OnFilesOverviewClick"
+                                        AutomationProperties.Name="文件总览">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="20" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                        <TextBlock Text="&#xE80F;" FontFamily="Segoe Fluent Icons" FontSize="12.5" Foreground="{DynamicResource FloatingGlassMutedBrush}" VerticalAlignment="Center" />
+                                        <TextBlock Grid.Column="1" Text="文件总览" VerticalAlignment="Center" />
+                                    </Grid>
+                                </Button>
+                                <Button x:Name="FilesRecentButton" Style="{StaticResource CategoryStyle}" Click="OnFilesRecentClick"
+                                        AutomationProperties.Name="最近使用">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="20" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                        <TextBlock Text="&#xE823;" FontFamily="Segoe Fluent Icons" FontSize="12.5" Foreground="{DynamicResource FloatingGlassMutedBrush}" VerticalAlignment="Center" />
+                                        <TextBlock Grid.Column="1" Text="最近使用" VerticalAlignment="Center" />
+                                        <TextBlock Grid.Column="2" Text="{Binding CountText}" FontSize="11" Margin="6,0,0,0" Foreground="{DynamicResource FloatingGlassMutedBrush}" VerticalAlignment="Center" />
+                                    </Grid>
+                                </Button>
+                                <TextBlock Text="按文件形态" FontSize="11" Margin="9,8,0,3" Foreground="{DynamicResource FloatingGlassMutedBrush}" />
+                                <ItemsControl x:Name="FileTypeList" ItemTemplate="{StaticResource NavigationItem}" AutomationProperties.Name="按文件形态" />
+                                <TextBlock x:Name="FilePlacesNavHeading" Text="常用位置与分组盒" FontSize="11" Margin="9,8,0,3" Foreground="{DynamicResource FloatingGlassMutedBrush}" />
+                                <ItemsControl x:Name="FilePlacesNavList" ItemTemplate="{StaticResource NavigationItem}" AutomationProperties.Name="常用位置与分组盒" />
+                            </StackPanel>
+
+                            <!-- 我的分组导航 -->
+                            <StackPanel x:Name="GroupsNavPanel" Visibility="Collapsed">
+                                <TextBlock Text="我的分组" FontSize="11" Margin="9,2,0,4" Foreground="{DynamicResource FloatingGlassMutedBrush}" />
+                                <ItemsControl x:Name="CategoriesList" ItemTemplate="{StaticResource NavigationItem}" AutomationProperties.Name="我的分组" />
+                                <Border Margin="8,6,8,6" Height="1" Background="{DynamicResource FloatingGlassControlBorderBrush}" />
+                                <Button x:Name="NewGroupButton" AutomationProperties.Name="新建分组"
+                                        Style="{StaticResource CategoryStyle}" Click="OnNewGroupClick">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="20" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                        <TextBlock Text="&#xE710;" FontFamily="Segoe Fluent Icons" FontSize="12" Foreground="{DynamicResource FloatingGlassMutedBrush}" VerticalAlignment="Center" />
+                                        <TextBlock Grid.Column="1" Text="新建分组" VerticalAlignment="Center" />
+                                    </Grid>
+                                </Button>
+                            </StackPanel>
+                        </StackPanel>
+                    </ScrollViewer>
                 </Border>
+
+                <!-- 右侧内容面板 -->
                 <Grid Grid.Column="1">
-                    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
-                    <Border Background="{DynamicResource FloatingGlassHeadingBrush}" CornerRadius="4" Padding="4,1"
-                            HorizontalAlignment="Left" Margin="5,4,0,3" Visibility="{Binding Visibility, ElementName=SectionTitle}">
-                        <TextBlock x:Name="SectionTitle" Visibility="Collapsed" FontSize="16" FontWeight="SemiBold"
-                                   Foreground="{DynamicResource FloatingGlassInkBrush}" />
-                    </Border>
-                    <ListBox x:Name="ResultsList" Grid.Row="1" Background="Transparent" BorderThickness="0"
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <!-- 内容区顶部上下文栏 -->
+                    <DockPanel x:Name="ContentHeaderBar" Margin="4,0,4,8" LastChildFill="True">
+                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                            <Border x:Name="AppSortToggle" Visibility="Collapsed" Padding="2" CornerRadius="8"
+                                    Background="{DynamicResource FloatingGlassNavigationBrush}"
+                                    BorderBrush="{DynamicResource FloatingGlassControlBorderBrush}" BorderThickness="1"
+                                    Margin="0,0,6,0">
+                                <StackPanel Orientation="Horizontal">
+                                    <Button x:Name="SortByCategoryButton" Content="按分类" Style="{StaticResource CompactToggleStyle}" Click="OnSortByCategoryClick" AutomationProperties.Name="按分类浏览" />
+                                    <Button x:Name="SortByNameButton" Content="A–Z" Style="{StaticResource CompactToggleStyle}" Click="OnSortByNameClick" AutomationProperties.Name="按名称浏览" />
+                                </StackPanel>
+                            </Border>
+
+                            <Button x:Name="RecentPrivacyButton" Visibility="Collapsed" Content="隐藏最近"
+                                    Padding="10,4" FontSize="12" Margin="0,0,6,0" Click="OnToggleRecentPrivacyClick"
+                                    AutomationProperties.Name="切换显示最近使用文件" />
+
+                            <Border x:Name="LayoutToggle" Visibility="Collapsed" Padding="2" CornerRadius="8"
+                                    Background="{DynamicResource FloatingGlassNavigationBrush}"
+                                    BorderBrush="{DynamicResource FloatingGlassControlBorderBrush}" BorderThickness="1"
+                                    Margin="0,0,6,0">
+                                <StackPanel Orientation="Horizontal">
+                                    <Button x:Name="ViewGridButton" Style="{StaticResource CompactToggleStyle}" Click="OnViewGridClick"
+                                            ToolTip="图标网格" AutomationProperties.Name="图标视图">
+                                        <TextBlock Text="&#xE80A;" FontFamily="Segoe Fluent Icons" FontSize="12" />
+                                    </Button>
+                                    <Button x:Name="ViewListButton" Style="{StaticResource CompactToggleStyle}" Click="OnViewListClick"
+                                            ToolTip="详细列表" AutomationProperties.Name="列表视图">
+                                        <TextBlock Text="&#xE8FD;" FontFamily="Segoe Fluent Icons" FontSize="12" />
+                                    </Button>
+                                </StackPanel>
+                            </Border>
+
+                            <Button x:Name="OpenDirectoryButton" Visibility="Collapsed" Padding="10,4" FontSize="12"
+                                    Click="OnOpenCurrentDirectoryClick" AutomationProperties.Name="在资源管理器中打开当前目录">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="&#xE8A7;" FontFamily="Segoe Fluent Icons" FontSize="11.5" VerticalAlignment="Center" Margin="0,0,5,0" />
+                                    <TextBlock Text="打开目录" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </Button>
+                        </StackPanel>
+
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                            <Button x:Name="BackFolderButton" Visibility="Collapsed" Padding="8,4" Margin="0,0,8,0"
+                                    Click="OnBackFolderClick" ToolTip="返回上一级（Alt+Left）" AutomationProperties.Name="返回上一级文件夹">
+                                <TextBlock Text="&#xE72B;" FontFamily="Segoe Fluent Icons" FontSize="12" />
+                            </Button>
+                            <Border Background="{DynamicResource FloatingGlassHeadingBrush}" CornerRadius="4" Padding="4,1"
+                                    VerticalAlignment="Center" Visibility="{Binding Visibility, ElementName=SectionTitle}">
+                                <TextBlock x:Name="SectionTitle" FontSize="15.5" FontWeight="SemiBold"
+                                           Foreground="{DynamicResource FloatingGlassInkBrush}" />
+                            </Border>
+                            <TextBlock x:Name="SectionSubtitle" FontSize="12" Margin="8,1,0,0" VerticalAlignment="Center"
+                                       Foreground="{DynamicResource FloatingGlassMutedBrush}" TextTrimming="CharacterEllipsis" />
+                        </StackPanel>
+                    </DockPanel>
+
+                    <!-- 文件总览顶部的常用位置与分组盒卡片条 -->
+                    <ItemsControl x:Name="FilePlacesBar" Grid.Row="1" Visibility="Collapsed" Margin="2,0,2,4"
+                                  ItemTemplate="{StaticResource PlaceCardTemplate}" AutomationProperties.Name="常用位置与分组盒快捷入口">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                    </ItemsControl>
+
+                    <!-- 主结果列表（支持虚拟化网格与列表模式切换） -->
+                    <ListBox x:Name="ResultsList" Grid.Row="2" Background="Transparent" BorderThickness="0"
                              VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
+                             ItemTemplate="{StaticResource TileItemTemplate}"
                              AutomationProperties.Name="冰蓝总览卡项目" ScrollViewer.ScrollChanged="OnResultScrollChanged"
                              PreviewMouseLeftButtonUp="OnResultMouseUp" PreviewMouseRightButtonDown="OnResultRightClick">
                         <ListBox.Template>
@@ -241,33 +503,15 @@
                             </ControlTemplate>
                         </ListBox.Template>
                         <ListBox.ItemsPanel><ItemsPanelTemplate><local:LauncherGridPanel ClipToBounds="True" /></ItemsPanelTemplate></ListBox.ItemsPanel>
-                <ListBox.ItemTemplate>
-                    <DataTemplate>
-                        <Grid>
-                            <Grid.RowDefinitions><RowDefinition Height="44" /><RowDefinition Height="*" /></Grid.RowDefinitions>
-                            <Grid Width="42" Height="42" VerticalAlignment="Top">
-                                <TextBlock Text="{Binding Glyph}" FontFamily="Segoe Fluent Icons" FontSize="30" Foreground="{DynamicResource FloatingGlassInkBrush}" VerticalAlignment="Center" HorizontalAlignment="Center">
-                                    <TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Visibility" Value="Collapsed" /><Style.Triggers><DataTrigger Binding="{Binding Icon}" Value="{x:Null}"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers></Style></TextBlock.Style>
-                                </TextBlock>
-                                <Image Source="{Binding Icon}" Stretch="Uniform" />
-                            </Grid>
-                            <TextBlock Grid.Row="1" Margin="3,2,3,0" Text="{Binding Name}" FontSize="12" TextAlignment="Center"
-                                       HorizontalAlignment="Center" VerticalAlignment="Top"
-                                       TextWrapping="Wrap" TextTrimming="CharacterEllipsis"
-                                       LineStackingStrategy="BlockLineHeight" LineHeight="16" MaxHeight="32" />
-                            <TextBlock Text="&#xE735;" FontFamily="Segoe Fluent Icons" FontSize="9" Foreground="{DynamicResource FloatingGlassMutedBrush}" HorizontalAlignment="Right" VerticalAlignment="Top">
-                                <TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Visibility" Value="Collapsed" /><Style.Triggers><DataTrigger Binding="{Binding IsFavorite}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers></Style></TextBlock.Style>
-                            </TextBlock>
-                        </Grid>
-                    </DataTemplate>
-                </ListBox.ItemTemplate>
                     </ListBox>
-                    <TextBlock x:Name="EmptyHint" Grid.Row="1" Text="没有匹配项目" Visibility="Collapsed"
+                    <TextBlock x:Name="EmptyHint" Grid.Row="2" Text="没有匹配项目" Visibility="Collapsed"
                                Foreground="{DynamicResource FloatingGlassMutedBrush}" HorizontalAlignment="Center"
                                VerticalAlignment="Center" IsHitTestVisible="False" />
                 </Grid>
             </Grid>
-            <Grid Grid.Row="3" Margin="6,10,0,0">
+
+            <!-- 底部状态与来源筛选 -->
+            <Grid Grid.Row="3" Margin="4,10,0,0">
                 <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                 <Border HorizontalAlignment="Left" VerticalAlignment="Center" Margin="0,0,12,0" Padding="6,3"
                         CornerRadius="5" Background="{DynamicResource FloatingGlassLabelBrush}">

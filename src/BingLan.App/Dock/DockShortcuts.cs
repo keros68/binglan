@@ -232,6 +232,9 @@ internal static class DockShortcuts
             isShortcut ? Path.GetFileNameWithoutExtension(path) : null);
     }
 
+    internal static string? TryResolveShortcutTarget(string shortcut) =>
+        ResolveShortcut(shortcut)?.TargetPath;
+
     private sealed record ResolvedShortcut(string TargetPath, string Arguments, string WorkingDirectory);
 
     private static ResolvedShortcut? ResolveShortcut(string shortcut)

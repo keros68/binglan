@@ -57,6 +57,8 @@ public sealed class SettingsMaintenance
     public Action ApplyLauncherAppearance { get; init; } = () => { };
     public Func<bool> IsLauncherEnabled { get; init; } = () => true;
     public Action<bool> SetLauncherEnabled { get; init; } = _ => { };
+    public Func<bool> IsLauncherShowRecentFiles { get; init; } = () => true;
+    public Action<bool> SetLauncherShowRecentFiles { get; init; } = _ => { };
     /// <summary>Creates a card of the given kind and returns its window, or null.</summary>
     public Func<NewWidgetKind, WidgetWindowBase?> AddWidget { get; init; } = _ => null;
     public Action ExitApp { get; init; } = () => { };

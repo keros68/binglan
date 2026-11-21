@@ -1,4 +1,4 @@
-﻿using System.ComponentModel;
+using System.ComponentModel;
 using System.IO;
 using System.Runtime.CompilerServices;
 using System.Windows;
@@ -19,8 +19,13 @@ using BingLan.Core.TopBar;
 
 namespace BingLan.App.Windows;
 
-internal sealed record LauncherPanelEntry(TopBarSearchCandidate Candidate, string Source, DockPinnedApp? Pinned = null,
-    bool IsSavedFallback = false, string? StartMenuFolder = null)
+internal sealed record LauncherPanelEntry(
+    TopBarSearchCandidate Candidate,
+    string Source,
+    DockPinnedApp? Pinned = null,
+    bool IsSavedFallback = false,
+    string? StartMenuFolder = null,
+    DateTimeOffset? LastAccessedLocal = null)
 {
     internal string Key
     {
@@ -36,7 +41,9 @@ internal sealed record LauncherPanelEntry(TopBarSearchCandidate Candidate, strin
 internal sealed record LauncherPanelSnapshot(
     IReadOnlyList<LauncherPanelEntry> Entries,
     IReadOnlyList<LauncherPanelEntry> Favorites,
-    bool EverythingEnabled);
+    bool EverythingEnabled,
+    IReadOnlyList<LauncherPlace>? Places = null,
+    IReadOnlyList<LauncherPanelEntry>? RecentEntries = null);
 
 public partial class LauncherPanelWindow : Window
 {
@@ -46,17 +53,18 @@ public partial class LauncherPanelWindow : Window
     private static readonly SemaphoreSlim IconGate = new(2, 2);
     private readonly Func<Task<LauncherPanelSnapshot>> _loadSnapshot;
     private readonly Action<LauncherPanelEntry, bool> _openTarget;
+    private readonly Func<IReadOnlyList<(Guid Id, string Title)>> _readFileBoxes;
+    private readonly Func<Guid, string, Task<string>> _sendToFileBox;
     private readonly Func<LauncherPanelEntry, string>? _pinToDock;
     private readonly Func<IList<LauncherGroupState>> _readGroups;
     private readonly Func<IDictionary<string, LauncherAppCategory>>? _readCategoryOverrides;
     private readonly Action? _saveOrganizer;
-    private readonly Func<IReadOnlyList<(Guid Id, string Title)>> _readFileBoxes;
-    private readonly Func<Guid, string, Task<string>> _sendToFileBox;
     private readonly MonitorSnapshot _monitor;
     private readonly CancellationTokenSource _lifetime = new();
     private readonly DispatcherTimer _debounce;
     private readonly DockGlassSurface _glass;
     private readonly LauncherAppearanceState _appearance;
+    private readonly LauncherPreferencesState _preferences;
     private readonly DesktopStyleState _style;
     private readonly Dictionary<string, ImageSource?> _iconCache = new(StringComparer.OrdinalIgnoreCase);
     private CancellationTokenSource? _searchCancellation;
@@ -67,6 +75,7 @@ public partial class LauncherPanelWindow : Window
     private List<LauncherPanelEntry> _supplemental = [];
     private List<PanelRow> _unfilteredRows = [];
     private List<PanelRow> _rows = [];
+    private LauncherMainTab _activeTab;
     private string? _category;
     private nint _handle;
     private int _searchVersion;
@@ -92,7 +101,8 @@ public partial class LauncherPanelWindow : Window
         Func<LauncherPanelEntry, string>? pinToDock = null,
         Func<IList<LauncherGroupState>>? readGroups = null,
         Action? saveOrganizer = null,
-        Func<IDictionary<string, LauncherAppCategory>>? readCategoryOverrides = null)
+        Func<IDictionary<string, LauncherAppCategory>>? readCategoryOverrides = null,
+        LauncherPreferencesState? preferences = null)
     {
         _loadSnapshot = loadSnapshot;
         _openTarget = openTarget;
@@ -105,12 +115,17 @@ public partial class LauncherPanelWindow : Window
         PreviousForeground = previousForeground;
         _monitor = monitor;
         _appearance = appearance ?? new LauncherAppearanceState();
+        _preferences = preferences ?? new LauncherPreferencesState();
+        _preferences.Normalize();
+        _activeTab = _preferences.LastTab;
+        _filter = _browseFilter = FilterForTab(_activeTab);
         _style = style ?? new DesktopStyleState();
         InitializeComponent();
         _glass = new DockGlassSurface(this, PanelSurface, "FloatingGlassSurfaceBrush",
             "FloatingGlassBorderBrush", "FloatingGlassPanelBrush");
         NewGroupButton.Visibility = saveOrganizer is null ? Visibility.Collapsed : Visibility.Visible;
         ApplyAppearance();
+        UpdateMainTabButtons();
         AccessibilityThemeManager.HighContrastChanged += OnHighContrastChanged;
         _debounce = new DispatcherTimer(DispatcherPriority.Background, Dispatcher)
         {
@@ -148,6 +163,7 @@ public partial class LauncherPanelWindow : Window
             _searchCancellation?.Cancel();
             _searchCancellation?.Dispose();
             _searchCancellation = null;
+            CancelDirectoryLoad();
             _menu?.SetCurrentValue(ContextMenu.IsOpenProperty, false);
             _everything?.Dispose();
             _glass.Dispose();
@@ -174,6 +190,31 @@ public partial class LauncherPanelWindow : Window
         MaterialButton.ToolTip = _appearance.UseClearGlass ? "切换为磨砂玻璃" : "切换为清透玻璃";
     }
 
+    internal void RefreshRecentPreference()
+    {
+        if (_closed || _dismissing) return;
+        _ = ReloadSnapshotAfterPreferenceChangeAsync();
+    }
+
+    private async Task ReloadSnapshotAfterPreferenceChangeAsync()
+    {
+        try
+        {
+            if (_preferences.ShowRecentFiles && (_snapshot?.RecentEntries is null or { Count: 0 }))
+            {
+                var snapshot = await _loadSnapshot();
+                if (_closed || _dismissing) return;
+                _snapshot = snapshot;
+                await SearchAsync();
+            }
+            else if (_snapshot is not null)
+            {
+                Render(_unfilteredRows, preserveSelection: false);
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException) { }
+    }
+
     private void OnMaterialClick(object sender, RoutedEventArgs args)
     {
         _appearance.UseClearGlass = !_appearance.UseClearGlass;
@@ -197,6 +238,7 @@ public partial class LauncherPanelWindow : Window
         _dismissing = true;
         _debounce.Stop();
         CancelSearch();
+        CancelDirectoryLoad();
         IsHitTestVisible = false;
         var ownsForeground = DockNativeMethods.GetForegroundWindow() == _handle;
         Close();
@@ -247,8 +289,8 @@ public partial class LauncherPanelWindow : Window
         var work = TaskbarEdgeGuard.AvoidNativeTaskbar(monitorWork, current.Bounds);
         var scale = Math.Max(1d, current.Dpi / 96d);
         Width = Math.Min(984, Math.Max(120, work.Width / scale - 24));
-        Height = Math.Min(610, Math.Max(120, work.Height / scale - 24));
-        BrowseNavigation.Width = Math.Clamp(Width * 0.14, 80, 136);
+        Height = Math.Min(620, Math.Max(120, work.Height / scale - 24));
+        BrowseNavigation.Width = Math.Clamp(Width * 0.16, 110, 162);
         var width = (int)Math.Round(Width * scale);
         var height = (int)Math.Round(Height * scale);
         var left = work.Left + Math.Max(0, (work.Width - width) / 2);
@@ -359,15 +401,21 @@ public partial class LauncherPanelWindow : Window
     private static List<PanelRow> BuildRows(LauncherPanelSnapshot snapshot, IReadOnlyList<LauncherPanelEntry> supplemental, string query, PanelFilter filter)
     {
         var favorites = snapshot.Favorites.Select(Identity).ToHashSet(StringComparer.Ordinal);
-        var all = snapshot.Favorites.Concat(snapshot.Entries).Concat(supplemental)
+        var recent = snapshot.RecentEntries ?? [];
+        var all = snapshot.Favorites.Concat(snapshot.Entries).Concat(recent).Concat(supplemental)
             .GroupBy(Identity, StringComparer.Ordinal)
             .Select(group =>
             {
                 var primary = group.FirstOrDefault(entry => !entry.IsSavedFallback && entry.Pinned is not null)
-                    ?? group.FirstOrDefault(entry => !entry.IsSavedFallback) ?? group.First();
+                    ?? group.FirstOrDefault(entry => !entry.IsSavedFallback && entry.Source != "最近使用")
+                    ?? group.FirstOrDefault(entry => !entry.IsSavedFallback)
+                    ?? group.First();
                 var sources = primary.IsSavedFallback ? group : group.Where(entry => !entry.IsSavedFallback);
                 var folder = group.Select(entry => entry.StartMenuFolder).FirstOrDefault(name => !string.IsNullOrEmpty(name));
-                return new PanelRow(primary, favorites.Contains(group.Key),
+                var lastAccessed = group.Select(entry => entry.LastAccessedLocal).Where(t => t.HasValue).Max();
+                var merged = lastAccessed.HasValue && primary.LastAccessedLocal is null
+                    ? primary with { LastAccessedLocal = lastAccessed } : primary;
+                return new PanelRow(merged, favorites.Contains(group.Key),
                     sources.Select(entry => entry.Source).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(), folder);
             })
             .Where(row => MatchesFilter(row.Entry, filter)).ToArray();
@@ -386,11 +434,19 @@ public partial class LauncherPanelWindow : Window
     private static bool MatchesFilter(LauncherPanelEntry entry, PanelFilter filter) => filter == PanelFilter.All
         || (entry.Candidate.Kind == TopBarSearchItemKind.App) == (filter == PanelFilter.Apps);
 
+    private static PanelFilter FilterForTab(LauncherMainTab tab) => tab switch
+    {
+        LauncherMainTab.Apps => PanelFilter.Apps,
+        LauncherMainTab.Files => PanelFilter.Files,
+        _ => PanelFilter.All
+    };
+
     private void Render(List<PanelRow> rows, bool preserveSelection)
     {
         var previous = preserveSelection ? (ResultsList.SelectedItem as PanelRow)?.Entry : null;
         if (!preserveSelection) ResultsList.Tag = !_queryWasEmpty;
         _unfilteredRows = rows;
+        ComputeEffectiveAppCategories(rows);
         var scope = ApplyOrganizerFilters(rows);
         var offset = preserveSelection ? ResultViewport?.VerticalOffset ?? 0 : 0;
         if (_queryWasEmpty && _restoreBrowseOffset)
@@ -401,22 +457,34 @@ public partial class LauncherPanelWindow : Window
         var items = BuildDisplayItems();
         _rows = items.OfType<PanelRow>().ToList();
         foreach (var row in _rows)
+        {
             if (_iconCache.TryGetValue(IconIdentity(row.Entry), out var icon)) row.Icon = icon;
+        }
 
+        UpdateResultsLayoutMode();
         ResultsList.ItemsSource = items;
         ResultsList.SelectedItem = (previous is null ? null : _rows.FirstOrDefault(row => row.Entry.Key == previous.Key))
             ?? _rows.FirstOrDefault();
-        SectionTitle.Text = scope ?? "";
-        SectionTitle.Visibility = scope is null || !_queryWasEmpty ? Visibility.Collapsed : Visibility.Visible;
+        UpdateContextHeader(scope);
         EmptyHint.Visibility = _rows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-        EmptyHint.Text = _queryWasEmpty && _category is not null ? "右键项目可加入此分组" : "没有匹配项目";
-        StatusText.Text = _rows.Count == 0 ? "" : $"{_rows.Count} 个项目";
+        EmptyHint.Text = ResolveEmptyHint();
+        StatusText.Text = ResolveStatusText();
         Dispatcher.BeginInvoke(() =>
         {
             if (_closed || !ReferenceEquals(ResultsList.ItemsSource, items)) return;
             ResultViewport?.ScrollToVerticalOffset(offset);
             QueueVisibleIcons();
         }, DispatcherPriority.Loaded);
+    }
+
+    private void UpdateResultsLayoutMode()
+    {
+        var listMode = IsListViewActive();
+        ResultsList.ItemTemplate = (DataTemplate)Resources[listMode ? "ListItemTemplate" : "TileItemTemplate"];
+        if (FindGrid(ResultsList) is { } grid && grid.IsListMode != listMode)
+        {
+            grid.IsListMode = listMode;
+        }
     }
 
     private async Task LoadIconsAsync(List<PanelRow> rows, int version)
@@ -466,7 +534,8 @@ public partial class LauncherPanelWindow : Window
     {
         SearchTools.Visibility = _queryWasEmpty ? Visibility.Collapsed : Visibility.Visible;
         BrowseNavigation.Visibility = _queryWasEmpty ? Visibility.Visible : Visibility.Collapsed;
-        if (!_queryWasEmpty) SectionTitle.Visibility = Visibility.Collapsed;
+        ContentHeaderBar.Visibility = _queryWasEmpty ? Visibility.Visible : Visibility.Collapsed;
+        UpdateMainTabButtons();
         foreach (var (button, filter) in new[] { (AllFilter, PanelFilter.All), (AppsFilter, PanelFilter.Apps), (FilesFilter, PanelFilter.Files) })
         {
             button.SetResourceReference(BackgroundProperty,
@@ -481,7 +550,9 @@ public partial class LauncherPanelWindow : Window
     {
         if (_queryWasEmpty)
         {
-            SelectBrowse(filter);
+            if (filter == PanelFilter.Files) SwitchMainTab(LauncherMainTab.Files, persist: false);
+            else if (filter == PanelFilter.Apps) SwitchMainTab(LauncherMainTab.Apps, persist: false);
+            else SelectBrowse(filter);
             return;
         }
         _filter = filter;
@@ -519,11 +590,30 @@ public partial class LauncherPanelWindow : Window
             if (args.Key == Key.Escape) { _menu.IsOpen = false; SearchBox.Focus(); args.Handled = true; }
             return;
         }
+        if (Keyboard.Modifiers == ModifierKeys.Alt && args.SystemKey == Key.Left && _queryWasEmpty
+            && _activeTab == LauncherMainTab.Files && _folderStack.Count > 0)
+        {
+            NavigateBackFolder();
+            args.Handled = true;
+            return;
+        }
         if (Keyboard.Modifiers == ModifierKeys.Control)
         {
-            if (args.Key is Key.D1 or Key.NumPad1) { SelectFilter(PanelFilter.Apps); args.Handled = true; return; }
-            if (args.Key is Key.D2 or Key.NumPad2) { SelectFilter(PanelFilter.Files); args.Handled = true; return; }
-            if (args.Key == Key.Tab) { SelectFilter(_filter == PanelFilter.Files ? PanelFilter.Apps : PanelFilter.Files); args.Handled = true; return; }
+            if (args.Key is Key.D1 or Key.NumPad1) { SwitchMainTab(LauncherMainTab.Apps); args.Handled = true; return; }
+            if (args.Key is Key.D2 or Key.NumPad2) { SwitchMainTab(LauncherMainTab.Files); args.Handled = true; return; }
+            if (args.Key is Key.D3 or Key.NumPad3) { SwitchMainTab(LauncherMainTab.Groups); args.Handled = true; return; }
+            if (args.Key == Key.Tab)
+            {
+                var next = _activeTab switch
+                {
+                    LauncherMainTab.Apps => LauncherMainTab.Files,
+                    LauncherMainTab.Files => LauncherMainTab.Groups,
+                    _ => LauncherMainTab.Apps
+                };
+                SwitchMainTab(next);
+                args.Handled = true;
+                return;
+            }
         }
         if (Keyboard.FocusedElement is Button && args.Key == Key.Return) return;
         switch (args.Key)
@@ -586,7 +676,7 @@ public partial class LauncherPanelWindow : Window
             if (_queryWasEmpty && !IsInsideScrollBar(args.OriginalSource as DependencyObject)) ResultsList.Tag = false;
             return;
         }
-        QueueOpen(row.Entry, locate: false);
+        ActivateEntry(row.Entry, locate: false);
         args.Handled = true;
     }
 
@@ -608,9 +698,22 @@ public partial class LauncherPanelWindow : Window
         if (_closed || _dismissing) return;
         _menu?.SetCurrentValue(ContextMenu.IsOpenProperty, false);
         var menu = new ContextMenu();
-        var open = new MenuItem { Header = "打开" };
-        open.Click += (_, _) => QueueOpen(row.Entry, locate: false);
-        menu.Items.Add(open);
+        if (CanDrillDown(row.Entry))
+        {
+            var expand = new MenuItem { Header = "在面板内展开" };
+            expand.Click += (_, _) => _ = DrillIntoDirectoryAsync(LocalPath(row.Entry)!, row.Name);
+            menu.Items.Add(expand);
+
+            var openExplorer = new MenuItem { Header = "在资源管理器中打开" };
+            openExplorer.Click += (_, _) => QueueOpen(row.Entry, locate: false);
+            menu.Items.Add(openExplorer);
+        }
+        else
+        {
+            var open = new MenuItem { Header = "打开" };
+            open.Click += (_, _) => QueueOpen(row.Entry, locate: false);
+            menu.Items.Add(open);
+        }
         if (LocalPath(row.Entry) is not null)
         {
             var locate = new MenuItem { Header = "打开所在位置" };
@@ -683,6 +786,11 @@ public partial class LauncherPanelWindow : Window
         return !string.IsNullOrWhiteSpace(path) && !FileMappingService.IsShellEntry(path) && Path.IsPathFullyQualified(path) ? path : null;
     }
 
+    private static bool CanDrillDown(LauncherPanelEntry entry) =>
+        entry.Candidate.Kind == TopBarSearchItemKind.Folder
+        && LocalPath(entry) is { Length: > 0 } path
+        && !path.StartsWith(@"\\", StringComparison.Ordinal);
+
     private static string? SendPath(LauncherPanelEntry entry)
     {
         var path = LocalPath(entry);
@@ -695,6 +803,16 @@ public partial class LauncherPanelWindow : Window
         return string.IsNullOrWhiteSpace(pin.WorkingDirectory)
             || string.Equals(pin.WorkingDirectory.TrimEnd('\\', '/'), defaultDirectory?.TrimEnd('\\', '/'), StringComparison.OrdinalIgnoreCase)
                 ? path : null;
+    }
+
+    private void ActivateEntry(LauncherPanelEntry entry, bool locate, int? searchVersion = null)
+    {
+        if (!locate && _queryWasEmpty && _activeTab == LauncherMainTab.Files && CanDrillDown(entry))
+        {
+            _ = DrillIntoDirectoryAsync(LocalPath(entry)!, entry.Candidate.DisplayName);
+            return;
+        }
+        QueueOpen(entry, locate, searchVersion);
     }
 
     private async Task OpenSelectionAsync(bool locate)
@@ -710,7 +828,7 @@ public partial class LauncherPanelWindow : Window
         }
         await _searchRowsReady;
         if (!IsActivationCurrent(version) || _renderedSearchVersion != version) return;
-        if (ResultsList.SelectedItem is PanelRow selected) QueueOpen(selected.Entry, locate, version);
+        if (ResultsList.SelectedItem is PanelRow selected) ActivateEntry(selected.Entry, locate, version);
     }
 
     private bool IsActivationCurrent(int? version) =>
@@ -805,26 +923,69 @@ public partial class LauncherPanelWindow : Window
 
     private enum PanelFilter { All, Apps, Files }
 
-    private sealed record CategoryChip(string? Key, string Name, bool IsSelected, LauncherAppCategory? Purpose = null)
+    private sealed record CategoryChip(
+        string? Key,
+        string Name,
+        bool IsSelected,
+        LauncherAppCategory? Purpose = null,
+        string Glyph = "\uE71D",
+        string CountText = "",
+        LauncherFileCategory? FileKind = null,
+        string? PlaceId = null)
     {
         public string SelectionStatus => IsSelected ? "已选择" : "";
     }
 
-    private sealed class PanelRow(LauncherPanelEntry entry, bool isFavorite, IReadOnlyList<string> sources,
-        string? startMenuFolder) : INotifyPropertyChanged
+    private sealed class PanelRow : INotifyPropertyChanged
     {
         private ImageSource? _icon;
-        public LauncherPanelEntry Entry { get; } = entry;
-        public bool IsFavorite { get; } = isFavorite;
+        public PanelRow(LauncherPanelEntry entry, bool isFavorite, IReadOnlyList<string> sources, string? startMenuFolder)
+        {
+            Entry = entry;
+            IsFavorite = isFavorite;
+            Sources = sources;
+            AutomaticCategory = entry.Candidate.Kind == TopBarSearchItemKind.App
+                ? LauncherAppCategoryRules.Classify(entry.Candidate.DisplayName, entry.Candidate.Path,
+                    entry.Pinned?.Arguments, startMenuFolder)
+                : LauncherAppCategory.Unclassified;
+            EffectiveCategory = AutomaticCategory;
+            FileCategory = entry.Candidate.Kind == TopBarSearchItemKind.App
+                ? LauncherFileCategory.Other
+                : LauncherFileCategoryRules.Classify(entry.Candidate.Path, entry.Candidate.Kind == TopBarSearchItemKind.Folder);
+        }
+
+        public LauncherPanelEntry Entry { get; }
+        public bool IsFavorite { get; }
         public bool IsSection => false;
-        public IReadOnlyList<string> Sources { get; } = sources;
-        public LauncherAppCategory AutomaticCategory { get; } = entry.Candidate.Kind == TopBarSearchItemKind.App
-            ? LauncherAppCategoryRules.Classify(entry.Candidate.DisplayName, entry.Candidate.Path,
-                entry.Pinned?.Arguments, startMenuFolder)
-            : LauncherAppCategory.Unclassified;
+        public IReadOnlyList<string> Sources { get; }
+        public LauncherAppCategory AutomaticCategory { get; }
+        public LauncherAppCategory EffectiveCategory { get; set; }
+        public LauncherFileCategory FileCategory { get; }
         public string Name => Entry.Candidate.DisplayName;
-        public string Glyph => Entry.Candidate.Kind switch { TopBarSearchItemKind.App => "\uE71D", TopBarSearchItemKind.Folder => "\uE8B7", _ => "\uE8A5" };
+        public string Glyph => Entry.Candidate.Kind == TopBarSearchItemKind.App
+            ? "\uE71D" : LauncherFileCategoryRules.Glyph(FileCategory);
         public string Location => $"{Name}\n{string.Join("、", Sources)} · {TopBarSearchRules.FormatLocation(Entry.Candidate.Path, 76)}";
+
+        public string SecondaryText
+        {
+            get
+            {
+                var sourceText = string.Join("、", Sources);
+                if (Entry.LastAccessedLocal is { } time)
+                {
+                    return $"{sourceText} · {LauncherFileCategoryRules.FormatRecentTime(time, DateTime.Today)} · {TopBarSearchRules.FormatLocation(Entry.Candidate.Path, 46)}";
+                }
+                return $"{sourceText} · {TopBarSearchRules.FormatLocation(Entry.Candidate.Path, 56)}";
+            }
+        }
+
+        public string KindLabel => Entry.Candidate.Kind switch
+        {
+            TopBarSearchItemKind.App => LauncherAppCategoryRules.DisplayName(EffectiveCategory),
+            TopBarSearchItemKind.Folder when CanDrillDown(Entry) => "展开目录 ›",
+            _ => LauncherFileCategoryRules.DisplayName(FileCategory)
+        };
+
         public ImageSource? Icon
         {
             get => _icon;

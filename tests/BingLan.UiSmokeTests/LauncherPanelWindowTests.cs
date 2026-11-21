@@ -498,7 +498,9 @@ internal static class LauncherPanelWindowTests
                 Path.Combine(Path.GetTempPath(), "BingLan-purpose", executable)), "开始菜单",
             new DockPinnedApp { DisplayName = name + suffix, ExecutablePath = Path.Combine(Path.GetTempPath(), "BingLan-purpose", executable) });
         var office = App("Word", "winword.exe");
-        var maps = App("QGIS", "qgis-bin.exe");
+        var office2 = App("Excel", "excel.exe");
+        var office3 = App("PowerPoint", "powerpnt.exe");
+        var sparseDesign = App("Photoshop", "photoshop.exe");
         var unknown = App("项目工具", "unknown-purpose.exe");
         var auxiliary = App("安装程序", "setup.exe");
         var file = new LauncherPanelEntry(new TopBarSearchCandidate(TopBarSearchItemKind.File,
@@ -508,31 +510,38 @@ internal static class LauncherPanelWindowTests
         LauncherGroupRules.TryAdd(mixed, new LauncherGroupMember(file.Key));
         var groups = new List<LauncherGroupState> { mixed };
         var overrides = new Dictionary<string, LauncherAppCategory>(StringComparer.Ordinal);
+        var preferences = new LauncherPreferencesState();
         var saves = 0;
-        var snapshot = new LauncherPanelSnapshot([office, maps, unknown, auxiliary, file], [office], false);
+        var snapshot = new LauncherPanelSnapshot([office, office2, office3, sparseDesign, unknown, auxiliary, file], [office], false);
         LauncherPanelWindow NewPanel() => new(() => Task.FromResult(snapshot),
             (_, _) => throw new InvalidOperationException("分类整理不能启动项目"), () => [],
             (_, _) => Task.FromResult("完成"), 0, MonitorCatalog.GetAll().First(),
-            readGroups: () => groups, saveOrganizer: () => saves++, readCategoryOverrides: () => overrides);
+            readGroups: () => groups, saveOrganizer: () => saves++, readCategoryOverrides: () => overrides,
+            preferences: preferences);
         var panel = NewPanel();
         try
         {
             show(panel);
-            until(() => panel.VisibleEntries.Count == 3, "概览应包含常用与正常应用，并收起辅助入口");
+            until(() => panel.VisibleEntries.Count == 5, "概览应包含常用与正常应用，并收起辅助入口");
             Assert(panel.VisibleEntries.Count(entry => entry.Key == office.Key) == 1, "概览中的常用应用应只出现一次");
             Assert(Require<ScrollViewer>(panel, "BrowseNavigation").IsVisible, "浏览时应显示用途导航");
             Assert(!Require<FrameworkElement>(panel, "SearchTools").IsVisible, "空查询应收起搜索类型工具");
 
-            SelectPurpose(panel, "地图与工程");
-            until(() => panel.VisibleEntries.Count == 1 && panel.VisibleEntries[0].Key == maps.Key,
-                "用途分类应筛选对应软件");
+            // 仅 1 项的自动类别应折叠进「其他」，满 3 项的「效率办公」保持独立
+            SelectPurpose(panel, "效率办公");
+            until(() => panel.VisibleEntries.Count == 3 && panel.VisibleEntries.Any(e => e.Key == office.Key),
+                "满 3 项的用途分类应独立显示");
+            SelectPurpose(panel, "其他");
+            until(() => panel.VisibleEntries.Count == 2 && panel.VisibleEntries.Any(e => e.Key == sparseDesign.Key),
+                "不足 3 项的自动分类应折叠到其他");
+
             var search = Require<TextBox>(panel, "SearchBox");
             search.Text = office.Candidate.DisplayName;
             until(() => panel.VisibleEntries.Any(entry => entry.Key == office.Key), "用途内搜索应默认跨类别");
             Assert(!Require<ScrollViewer>(panel, "BrowseNavigation").IsVisible
                 && Require<FrameworkElement>(panel, "SearchTools").IsVisible, "搜索时应收起导航并显示搜索类型");
             search.Text = "";
-            until(() => panel.VisibleEntries.Count == 1 && panel.VisibleEntries[0].Key == maps.Key,
+            until(() => panel.VisibleEntries.Count == 2 && panel.VisibleEntries.Any(e => e.Key == sparseDesign.Key),
                 "清空搜索应恢复用途分类");
 
             SelectCategory(panel, mixed.Name);
@@ -545,27 +554,28 @@ internal static class LauncherPanelWindowTests
             until(() => panel.VisibleEntries.Count == 2 && panel.VisibleEntries.Any(entry => entry.Key == office.Key),
                 "清空搜索应恢复混合分组的应用和文件");
 
+            Click(panel, "TabAppsButton");
             Click(panel, "OverviewButton");
-            until(() => panel.VisibleEntries.Count == 3, "返回概览应恢复正常应用");
+            until(() => panel.VisibleEntries.Count == 5, "返回概览应恢复正常应用");
             SelectResult(panel, unknown);
             Press(panel, Key.Apps);
             pump();
             var menu = OpenMenu(panel);
             var change = menu.Items.OfType<MenuItem>().Single(item => Equals(item.Header, "更改类别"));
-            change.Items.OfType<MenuItem>().Single(item => Equals(item.Header, "办公协作"))
+            change.Items.OfType<MenuItem>().Single(item => Equals(item.Header, "设计与创作"))
                 .RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
             menu.IsOpen = false;
-            until(() => overrides.TryGetValue(unknown.Key, out var category) && category == LauncherAppCategory.Office,
+            until(() => overrides.TryGetValue(unknown.Key, out var category) && category == LauncherAppCategory.Design,
                 "手动归类应保存用户选择");
             Assert(saves > 0, "手动归类应触发持久化");
-            SelectPurpose(panel, "办公协作");
-            until(() => panel.VisibleEntries.Count == 2, "手动类别应立即影响用途筛选");
+            SelectPurpose(panel, "设计与创作");
+            until(() => panel.VisibleEntries.Count == 2, "手动类别应立即独立显示并包含同类项");
             panel.Close();
 
             panel = NewPanel();
             show(panel);
-            until(() => panel.VisibleEntries.Count == 3, "重新打开后概览未载入");
-            SelectPurpose(panel, "办公协作");
+            until(() => panel.VisibleEntries.Count == 5, "重新打开后概览未载入");
+            SelectPurpose(panel, "设计与创作");
             until(() => panel.VisibleEntries.Count == 2, "重新打开后应继续采用手动类别");
             SelectResult(panel, unknown);
             Press(panel, Key.Apps);
@@ -835,9 +845,11 @@ internal static class LauncherPanelWindowTests
     {
         if (name == "全部")
         {
+            Click(panel, "TabAppsButton");
             Click(panel, "OverviewButton");
             return;
         }
+        Click(panel, "TabGroupsButton");
         var categories = Require<ItemsControl>(panel, "CategoriesList");
         categories.UpdateLayout();
         var button = Visuals<Button>(categories).Single(candidate =>
@@ -850,6 +862,7 @@ internal static class LauncherPanelWindowTests
 
     private static void SelectPurpose(LauncherPanelWindow panel, string name)
     {
+        Click(panel, "TabAppsButton");
         var purposes = Require<ItemsControl>(panel, "PurposeList");
         purposes.UpdateLayout();
         var button = Visuals<Button>(purposes).Single(candidate =>

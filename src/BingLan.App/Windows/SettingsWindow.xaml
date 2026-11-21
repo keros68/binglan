@@ -1859,6 +1859,15 @@
                                   Checked="LauncherEnabled_Changed"
                                   Unchecked="LauncherEnabled_Changed"/>
                     </local:SettingsRow>
+                    <local:SettingsRow x:Name="LauncherRecentFilesRow" Header="总览卡显示最近使用文件"
+                                       Description="在冰蓝总览卡的「文件」页只读显示 Windows 最近使用记录，可随时在总览卡或此处关闭"
+                                       local:SettingsSearch.Keywords="冰蓝总览卡 最近使用 最近文件 隐私">
+                        <CheckBox x:Name="LauncherRecentFilesCheckBox"
+                                  AutomationProperties.Name="冰蓝总览卡显示最近使用文件"
+                                  Style="{StaticResource ToggleSwitchStyle}"
+                                  Checked="LauncherRecentFiles_Changed"
+                                  Unchecked="LauncherRecentFiles_Changed"/>
+                    </local:SettingsRow>
 
                     <Expander x:Name="DockSection"
                               Margin="0,4,0,4"

@@ -29,14 +29,46 @@ public partial class LauncherPanelWindow
             .ToHashSet(StringComparer.Ordinal);
         var available = rows.Where(row => !row.Entry.IsSavedFallback
             || savedKeys.Contains(row.Entry.Key)).ToList();
-        if (_queryWasEmpty) UpdateBrowseNavigation(available, groups);
-        var typed = available.Where(row => MatchesFilter(row.Entry, _filter)).ToList();
-        var source = UpdateSourceChoices(typed);
-        SourceFilter.Tag = source.Key is null ? "筛选" : $"来源 · {source.Name}";
-        SourceFilter.ToolTip = source.Key is null ? "按来源筛选" : source.Name;
-        if (source.Key is not null)
+
+        if (_queryWasEmpty && _activeTab == LauncherMainTab.Groups)
         {
-            typed = typed.Where(row => row.Sources.Contains(source.Key, StringComparer.OrdinalIgnoreCase)).ToList();
+            EnsureGroupSelected();
+        }
+        if (_queryWasEmpty) UpdateBrowseNavigation(available, groups);
+
+        if (_queryWasEmpty && _activeTab == LauncherMainTab.Files)
+        {
+            SearchScope.Visibility = Visibility.Collapsed;
+            var fileRows = ApplyFilesFilter(available);
+            var canFilterSource = _folderStack.Count == 0 && _fileMode is FileBrowseMode.Overview or FileBrowseMode.FileType;
+            SourceFilter.Visibility = canFilterSource ? Visibility.Visible : Visibility.Collapsed;
+            if (canFilterSource)
+            {
+                var source = UpdateSourceChoices(fileRows);
+                SourceFilter.Tag = source.Key is null ? "筛选" : $"来源 · {source.Name}";
+                SourceFilter.ToolTip = source.Key is null ? "按来源筛选" : source.Name;
+                if (source.Key is not null)
+                {
+                    fileRows = fileRows.Where(row => row.Sources.Contains(source.Key, StringComparer.OrdinalIgnoreCase)).ToList();
+                }
+            }
+            _rows = fileRows;
+            return null;
+        }
+
+        var showSourceFilter = !_queryWasEmpty || _activeTab == LauncherMainTab.Apps;
+        SourceFilter.Visibility = showSourceFilter ? Visibility.Visible : Visibility.Collapsed;
+
+        var typed = available.Where(row => MatchesFilter(row.Entry, _filter)).ToList();
+        if (showSourceFilter)
+        {
+            var source = UpdateSourceChoices(typed);
+            SourceFilter.Tag = source.Key is null ? "筛选" : $"来源 · {source.Name}";
+            SourceFilter.ToolTip = source.Key is null ? "按来源筛选" : source.Name;
+            if (source.Key is not null)
+            {
+                typed = typed.Where(row => row.Sources.Contains(source.Key, StringComparer.OrdinalIgnoreCase)).ToList();
+            }
         }
 
         var activeGroup = groups.FirstOrDefault(group => group.Id.ToString("N") == _category);
@@ -45,8 +77,12 @@ public partial class LauncherPanelWindow
         SearchCurrentCategory.Content = selectedName is null ? "仅搜当前分组" : $"仅搜「{selectedName}」";
         if (selectedName is null)
         {
-            _rows = typed;
-            return _queryWasEmpty && _filter == PanelFilter.Files ? "文件与文件夹" : null;
+            _rows = _queryWasEmpty && _activeTab == LauncherMainTab.Groups
+                ? []
+                : _queryWasEmpty && _activeTab == LauncherMainTab.Apps
+                    ? typed.Where(row => PurposeOf(row) != LauncherAppCategory.Auxiliary).ToList()
+                    : typed;
+            return null;
         }
 
         var memberKeys = activeGroup?.Members.Select(member => member.Key).ToHashSet(StringComparer.Ordinal);
@@ -129,7 +165,12 @@ public partial class LauncherPanelWindow
             RememberGroupEntry(entry);
         EndGroupEditing();
         _saveOrganizer();
-        if (_queryWasEmpty) SelectBrowse(PanelFilter.All, group: group.Id.ToString("N"));
+        if (_queryWasEmpty)
+        {
+            _activeTab = LauncherMainTab.Groups;
+            _preferences.LastTab = LauncherMainTab.Groups;
+            SelectBrowse(PanelFilter.All, group: group.Id.ToString("N"));
+        }
         else Render(_unfilteredRows, preserveSelection: true);
         StatusText.Text = $"已创建「{group.Name}」";
     }

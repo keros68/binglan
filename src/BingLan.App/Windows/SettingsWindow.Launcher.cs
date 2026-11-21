@@ -26,8 +26,14 @@ public partial class SettingsWindow
         _loadingLauncherEnabled = true;
         try
         {
-            LauncherEnabledCheckBox.IsChecked = _maintenance.IsLauncherEnabled();
-            DockLauncherButtonCheckBox.IsEnabled = _maintenance.IsLauncherEnabled();
+            var enabled = _maintenance.IsLauncherEnabled();
+            LauncherEnabledCheckBox.IsChecked = enabled;
+            DockLauncherButtonCheckBox.IsEnabled = enabled;
+            if (LauncherRecentFilesCheckBox is not null)
+            {
+                LauncherRecentFilesCheckBox.IsChecked = _maintenance.IsLauncherShowRecentFiles();
+                LauncherRecentFilesCheckBox.IsEnabled = enabled;
+            }
         }
         finally
         {
@@ -40,6 +46,14 @@ public partial class SettingsWindow
         if (_loadingLauncherEnabled) return;
 
         _maintenance.SetLauncherEnabled(LauncherEnabledCheckBox.IsChecked == true);
+        LoadLauncherEnabled();
+    }
+
+    private void LauncherRecentFiles_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_loadingLauncherEnabled) return;
+
+        _maintenance.SetLauncherShowRecentFiles(LauncherRecentFilesCheckBox.IsChecked == true);
         LoadLauncherEnabled();
     }
 

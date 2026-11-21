@@ -146,8 +146,12 @@ static void TestLauncherAppCategories()
 {
     Assert(LauncherAppCategoryRules.Classify("办公", @"C:\Program Files\Microsoft Office\WINWORD.EXE", null)
         == LauncherAppCategory.Office, "已知程序应按文件名分类并忽略大小写");
-    Assert(LauncherAppCategoryRules.Classify("地图", @"C:\QGIS\bin\qgis-ltr-bin.exe", null)
-        == LauncherAppCategory.MapsAndEngineering, "QGIS 应进入地图与工程");
+    Assert(LauncherAppCategoryRules.Classify("设计", @"C:\Apps\Photoshop.exe", null)
+        == LauncherAppCategory.Design, "Photoshop 应进入设计与创作");
+    Assert(LauncherAppCategoryRules.Classify("影音", @"C:\Apps\vlc.exe", null)
+        == LauncherAppCategory.MediaAndEntertainment, "VLC 应进入影音娱乐");
+    Assert(LauncherAppCategoryRules.Classify("网盘", @"C:\Apps\baidunetdisk.exe", null)
+        == LauncherAppCategory.SystemTools, "网盘与传输工具应归入系统与工具");
     Assert(LauncherAppCategoryRules.Classify("开发", @"C:/Tools/Code.exe", "--profile personal")
         == LauncherAppCategory.Development, "正斜杠路径与启动参数应保留用途分类");
     Assert(LauncherAppCategoryRules.Classify("游戏", @"C:\Games\Steam.exe", null)
@@ -165,38 +169,102 @@ static void TestLauncherAppCategories()
     Assert(LauncherAppCategoryRules.Classify("Calculator",
         "shell:AppsFolder\\Microsoft.WindowsCalculator_8wekyb3d8bbwe!App", null)
         == LauncherAppCategory.SystemTools, "已知打包程序身份应可识别");
-    Assert(LauncherAppCategoryRules.Classify("供应商软件", @"C:\Apps\tool.exe", null, @"Programs\ArcGIS")
-        == LauncherAppCategory.MapsAndEngineering, "专用开始菜单文件夹可作为辅助线索");
+    Assert(LauncherAppCategoryRules.Classify("供应商软件", @"C:\Apps\tool.exe", null, @"Programs\JetBrains")
+        == LauncherAppCategory.Development, "专用开始菜单文件夹可作为辅助线索");
     Assert(LauncherAppCategoryRules.Classify("Office 游戏地图工具", @"C:\Tools\unknown.exe", null, @"C:\Office\Tools")
         == LauncherAppCategory.Unclassified, "泛化名称与近似文件夹不能决定用途");
     Assert(LauncherAppCategoryRules.Classify("未知", "bad\0target", null)
-        == LauncherAppCategory.Unclassified, "无效路径应安全保留为未分类");
-    Assert(LauncherAppCategoryRules.DisplayName(LauncherAppCategory.Unclassified) == "未分类"
+        == LauncherAppCategory.Unclassified, "无效路径应安全保留为其他");
+    Assert(LauncherAppCategoryRules.DisplayName(LauncherAppCategory.Unclassified) == "其他"
+        && LauncherAppCategoryRules.DisplayName(LauncherAppCategory.Office) == "效率办公"
+        && LauncherAppCategoryRules.DisplayName(LauncherAppCategory.Design) == "设计与创作"
         && LauncherAppCategoryRules.DisplayName(LauncherAppCategory.Auxiliary) == "辅助入口",
         "分类标题应使用统一显示名称");
+
+    // 少于 3 项的自动分类应自动收拢至「其他」，但人工归类与辅助入口应保留。
+    var resolved = LauncherAppCategoryRules.ResolveEffectiveCategories(
+        [
+            ("w1", LauncherAppCategory.Office, false),
+            ("w2", LauncherAppCategory.Office, false),
+            ("w3", LauncherAppCategory.Office, false),
+            ("g1", LauncherAppCategory.Games, false),
+            ("g2", LauncherAppCategory.Games, false),
+            ("d1", LauncherAppCategory.Design, true),
+            ("aux", LauncherAppCategory.Auxiliary, false)
+        ], StringComparer.Ordinal);
+    Assert(resolved["w1"] == LauncherAppCategory.Office
+        && resolved["g1"] == LauncherAppCategory.Unclassified
+        && resolved["g2"] == LauncherAppCategory.Unclassified
+        && resolved["d1"] == LauncherAppCategory.Design
+        && resolved["aux"] == LauncherAppCategory.Auxiliary,
+        "不足 3 项的自动类别应折叠为其他，人工指定类别与辅助入口应保留");
+
+    // 文件形态分类与最近时间分段规则。
+    Assert(LauncherFileCategoryRules.Classify(@"C:\Docs\报告.pdf", isFolder: false) == LauncherFileCategory.Document
+        && LauncherFileCategoryRules.Classify(@"C:\Pics\截图.PNG", isFolder: false) == LauncherFileCategory.Image
+        && LauncherFileCategoryRules.Classify(@"C:\Video\演示.mp4", isFolder: false) == LauncherFileCategory.Media
+        && LauncherFileCategoryRules.Classify(@"C:\Archive\素材.7z", isFolder: false) == LauncherFileCategory.Archive
+        && LauncherFileCategoryRules.Classify(@"C:\Work\项目", isFolder: true) == LauncherFileCategory.Folder
+        && LauncherFileCategoryRules.Classify(@"C:\Unknown\file.xyz", isFolder: false) == LauncherFileCategory.Other,
+        "文件形态规则应按文件夹与常见扩展名归类");
+    var today = new DateTime(2026, 11, 21);
+    Assert(LauncherFileCategoryRules.RecentBucket(new DateTimeOffset(2026, 11, 21, 9, 0, 0, TimeSpan.Zero), today) == "今天"
+        && LauncherFileCategoryRules.RecentBucket(new DateTimeOffset(2026, 11, 18, 9, 0, 0, TimeSpan.Zero), today) == "本周"
+        && LauncherFileCategoryRules.RecentBucket(new DateTimeOffset(2026, 11, 1, 9, 0, 0, TimeSpan.Zero), today) == "更早",
+        "最近使用时间分段应正确划分今天/本周/更早");
 
     var temp = Directory.CreateTempSubdirectory("BingLanLauncherCategories-");
     try
     {
         var store = new LocalStateStore(temp.FullName);
-        File.WriteAllText(store.StatePath, """{ "SchemaVersion": 51 }""");
+        File.WriteAllText(store.StatePath, """
+            {
+              "SchemaVersion": 53,
+              "LauncherAppCategoryOverrides": {
+                "legacy-storage": 3,
+                "legacy-maps": 5,
+                "valid-office": 1,
+                "invalid": 999
+              }
+            }
+            """);
         var state = store.Load();
-        Assert(state.SchemaVersion == AppState.CurrentSchemaVersion && state.LauncherAppCategoryOverrides.Count == 0,
-            "旧配置应迁移为空的人工分类");
+        Assert(state.SchemaVersion == AppState.CurrentSchemaVersion
+            && state.LauncherAppCategoryOverrides["legacy-storage"] == LauncherAppCategory.SystemTools
+            && state.LauncherAppCategoryOverrides["legacy-maps"] == LauncherAppCategory.Unclassified
+            && state.LauncherAppCategoryOverrides["valid-office"] == LauncherAppCategory.Office
+            && !state.LauncherAppCategoryOverrides.ContainsKey("invalid"),
+            "v53 人工分类应迁移旧类别枚举值并清理非法项");
+        Assert(state.LauncherPreferences.LastTab == LauncherMainTab.Apps
+            && state.LauncherPreferences.ShowRecentFiles
+            && !state.LauncherPreferences.AppsSortByName
+            && !state.LauncherPreferences.FilesUseListView,
+            "v53 迁移后的总览卡偏好应使用合理默认值");
+
         const string app = "C:\\TOOLS\\WORK.EXE\0--project Office\0";
-        state.LauncherAppCategoryOverrides[app] = LauncherAppCategory.MapsAndEngineering;
+        state.LauncherAppCategoryOverrides.Clear();
+        state.LauncherAppCategoryOverrides[app] = LauncherAppCategory.Design;
         state.LauncherAppCategoryOverrides["second"] = LauncherAppCategory.Unclassified;
         state.LauncherAppCategoryOverrides[""] = LauncherAppCategory.Office;
         state.LauncherAppCategoryOverrides["invalid"] = (LauncherAppCategory)999;
+        state.LauncherPreferences.LastTab = LauncherMainTab.Files;
+        state.LauncherPreferences.ShowRecentFiles = false;
+        state.LauncherPreferences.AppsSortByName = true;
+        state.LauncherPreferences.FilesUseListView = true;
         var overrides = state.LauncherAppCategoryOverrides;
         store.Save(state);
         Assert(ReferenceEquals(state.LauncherAppCategoryOverrides, overrides),
             "分类规范化应保留窗口持有的人工分类引用");
         var loaded = store.Load();
         Assert(loaded.LauncherAppCategoryOverrides.Count == 2
-            && loaded.LauncherAppCategoryOverrides[app] == LauncherAppCategory.MapsAndEngineering
+            && loaded.LauncherAppCategoryOverrides[app] == LauncherAppCategory.Design
             && loaded.LauncherAppCategoryOverrides["second"] == LauncherAppCategory.Unclassified,
-            "人工分类与手动未分类应保存，非法数据应清理");
+            "人工分类与手动其他分类应保存，非法数据应清理");
+        Assert(loaded.LauncherPreferences.LastTab == LauncherMainTab.Files
+            && !loaded.LauncherPreferences.ShowRecentFiles
+            && loaded.LauncherPreferences.AppsSortByName
+            && loaded.LauncherPreferences.FilesUseListView,
+            "总览卡上次停留标签、最近文件隐私开关与视图偏好应持久化");
     }
     finally
     {
