@@ -159,7 +159,7 @@ internal sealed class BoxMarqueeOverlay : Window
     {
         var text = new TextBlock
         {
-            Text = "拖动框选桌面区域，松开后在此处新建分组盒 · Esc 或右键取消",
+            Text = "拖动框选桌面区域，松开后在此处新建文件收纳盒 · Esc 或右键取消",
             Foreground = Brushes.White,
             FontSize = 13d
         };

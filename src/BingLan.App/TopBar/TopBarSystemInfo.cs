@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Net.NetworkInformation;
+using System.Runtime.InteropServices;
 using BingLan.App.Interop;
 using BingLan.Core.Models;
 using BingLan.Core.TopBar;
@@ -35,7 +36,7 @@ internal static class TopBarSystemInfo
         return scalar is { } value ? TopBarModuleRules.VolumePercentFromScalar(value) : null;
     }
 
-    internal static (bool Connected, string Label) ReadNetwork()
+    internal static TopBarNetworkStatus ReadNetwork()
     {
         try
         {
@@ -45,12 +46,122 @@ internal static class TopBarSystemInfo
                 .Select(candidate => (candidate.OperationalStatus == OperationalStatus.Up,
                     candidate.NetworkInterfaceType
                         is NetworkInterfaceType.Wireless80211
-                        or NetworkInterfaceType.Wman));
-            return TopBarModuleRules.ClassifyNetwork(interfaces);
+                        or NetworkInterfaceType.Wman))
+                .ToList();
+            var (connected, label) = TopBarModuleRules.ClassifyNetwork(interfaces);
+            if (!connected)
+            {
+                return TopBarModuleRules.DescribeNetwork(false, false);
+            }
+
+            var isWireless = string.Equals(label, "WLAN", StringComparison.Ordinal);
+            if (!isWireless)
+            {
+                return TopBarModuleRules.DescribeNetwork(true, false);
+            }
+
+            var (ssid, signalQuality) = ReadActiveWifiInfo();
+            return TopBarModuleRules.DescribeNetwork(true, true, ssid, signalQuality, showWifiName: false);
         }
         catch (NetworkInformationException)
         {
-            return (false, "未连接");
+            return TopBarModuleRules.DescribeNetwork(false, false);
+        }
+    }
+
+    internal static (string? Ssid, int? SignalQuality) ReadActiveWifiInfo()
+    {
+        nint clientHandle = 0;
+        nint listPtr = 0;
+        try
+        {
+            if (TopBarNativeMethods.WlanOpenHandle(
+                    TopBarNativeMethods.WlanClientVersionVista,
+                    0,
+                    out _,
+                    out clientHandle) != 0
+                || clientHandle == 0)
+            {
+                return (null, null);
+            }
+
+            if (TopBarNativeMethods.WlanEnumInterfaces(clientHandle, 0, out listPtr) != 0
+                || listPtr == 0)
+            {
+                return (null, null);
+            }
+
+            var count = Marshal.ReadInt32(listPtr);
+            if (count <= 0)
+            {
+                return (null, null);
+            }
+
+            var itemSize = Marshal.SizeOf<TopBarNativeMethods.WlanInterfaceInfo>();
+            var firstItemPtr = listPtr + 8;
+            for (var i = 0; i < count; i++)
+            {
+                var info = Marshal.PtrToStructure<TopBarNativeMethods.WlanInterfaceInfo>(
+                    firstItemPtr + i * itemSize);
+                if (info.State != TopBarNativeMethods.WlanInterfaceStateConnected)
+                {
+                    continue;
+                }
+
+                nint connPtr = 0;
+                try
+                {
+                    var guid = info.InterfaceGuid;
+                    if (TopBarNativeMethods.WlanQueryInterface(
+                            clientHandle,
+                            ref guid,
+                            TopBarNativeMethods.WlanIntfOpcodeCurrentConnection,
+                            0,
+                            out var dataSize,
+                            out connPtr,
+                            0) != 0
+                        || connPtr == 0
+                        || dataSize < Marshal.SizeOf<TopBarNativeMethods.WlanConnectionAttributes>())
+                    {
+                        continue;
+                    }
+
+                    var conn = Marshal.PtrToStructure<TopBarNativeMethods.WlanConnectionAttributes>(connPtr);
+                    var assoc = conn.AssociationAttributes;
+                    var ssidLen = (int)Math.Min(assoc.Dot11Ssid.SsidLength, 32u);
+                    var ssid = ssidLen > 0 && assoc.Dot11Ssid.Ssid is { Length: >= 32 }
+                        ? TopBarModuleRules.DecodeSsidBytes(
+                            assoc.Dot11Ssid.Ssid.AsSpan(0, ssidLen),
+                            TopBarNativeMethods.DecodeSystemAnsi)
+                        : null;
+                    var quality = (int)Math.Clamp(assoc.WlanSignalQuality, 0u, 100u);
+                    return (ssid, quality);
+                }
+                finally
+                {
+                    if (connPtr != 0)
+                    {
+                        TopBarNativeMethods.WlanFreeMemory(connPtr);
+                    }
+                }
+            }
+
+            return (null, null);
+        }
+        catch (Exception ex) when (ex is DllNotFoundException or EntryPointNotFoundException or AccessViolationException)
+        {
+            return (null, null);
+        }
+        finally
+        {
+            if (listPtr != 0)
+            {
+                TopBarNativeMethods.WlanFreeMemory(listPtr);
+            }
+            if (clientHandle != 0)
+            {
+                _ = TopBarNativeMethods.WlanCloseHandle(clientHandle, 0);
+            }
         }
     }
 

@@ -111,7 +111,7 @@ public sealed class TodoWidgetState
     private double _cornerRadius = WidgetAppearanceRules.DefaultCornerRadius;
 
     public Guid Id { get; set; } = Guid.NewGuid();
-    public string Title { get; set; } = "今日待办";
+    public string Title { get; set; } = WidgetTitleRules.DefaultTodoTitle;
     public bool HideCompleted { get; set; }
 
     /// <summary>The font of the card's text; null keeps the app's interface font.</summary>
@@ -338,12 +338,18 @@ public sealed class TodoItemState : INotifyPropertyChanged
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
 }
 
+public enum FileBoxEdgeDockSide
+{
+    Left = 1,
+    Right = 2
+}
+
 public sealed class FileBoxState
 {
     private double _cornerRadius = WidgetAppearanceRules.DefaultCornerRadius;
 
     public Guid Id { get; set; } = Guid.NewGuid();
-    public string Title { get; set; } = "桌面分组";
+    public string Title { get; set; } = WidgetTitleRules.DefaultFileBoxTitle;
     public DesktopGroupCategory DesktopCategory { get; set; }
 
     /// <summary>
@@ -367,6 +373,21 @@ public sealed class FileBoxState
 
     /// <summary>The height to unfold to, in DIPs; 0 while it has never been folded.</summary>
     public double ExpandedHeight { get; set; }
+
+    /// <summary>
+    /// Optional outer screen edge (Left/Right) this box docks to as a 6 DIP accent strip.
+    /// Machine-local nullable fields (never exported in themes; null keeps normal free placement).
+    /// </summary>
+    public FileBoxEdgeDockSide? EdgeDockSide { get; set; }
+
+    /// <summary>Vertical offset along the docked monitor's work area in DIPs.</summary>
+    public double? EdgeDockOffsetDip { get; set; }
+
+    /// <summary>Device name of the monitor this box docks to; falls back if disconnected.</summary>
+    public string? EdgeDockMonitorDeviceName { get; set; }
+
+    /// <summary>Whether this box is hidden from the desktop while keeping its mappings and settings.</summary>
+    public bool IsHidden { get; set; }
 
     public bool IsLocked { get; set; }
     public WidgetAppearanceState Appearance { get; set; } = new();

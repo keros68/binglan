@@ -176,7 +176,7 @@ internal static class LauncherPreviewCapture
         }
         coordinatorType.GetMethod("RemoveWidget", privateInstance)!.Invoke(coordinator, [target]);
         until(() => pending.IsCompleted, "删除目标分组盒后发送未结束");
-        if (pending.GetAwaiter().GetResult() != "该分组盒已移除。"
+        if (pending.GetAwaiter().GetResult() != "该文件收纳盒已移除。"
             || target.State.Items.Count != 0
             || new LocalStateStore(dataDirectory).Load().FileBoxes.Any(box => box.Id == target.State.Id)
             || !File.ReadAllBytes(sample).SequenceEqual(contents))
@@ -362,10 +362,10 @@ internal static class LauncherPreviewCapture
                 Environment.TickCount, Key.Apps) { RoutedEvent = UIElement.PreviewKeyDownEvent });
             ContextMenu? menu = null;
             until(() => (menu = field.GetValue(panel) as ContextMenu)?.IsOpen == true, "启动面板条目菜单未打开");
-            var send = menu!.Items.OfType<MenuItem>().Single(item => item.Header?.ToString() == "发送到分组盒");
+            var send = menu!.Items.OfType<MenuItem>().Single(item => item.Header?.ToString() == "发送到文件收纳盒");
             send.Items.OfType<MenuItem>().Single(item => item.Header?.ToString() == box.State.Title)
                 .RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
-            until(() => ((TextBlock)panel.FindName("StatusText")).Text.Contains(attempt == 0 ? "已新增" : "已经在分组盒"),
+            until(() => ((TextBlock)panel.FindName("StatusText")).Text.Contains(attempt == 0 ? "已新增" : "已经在文件收纳盒"),
                 "启动面板发送未返回预期结果");
             menu.IsOpen = false;
             pump();
@@ -480,7 +480,7 @@ internal static class LauncherPreviewCapture
             RoutedEvent = UIElement.MouseRightButtonUpEvent
         });
         pump();
-        ClickMenu("发送到分组盒…");
+        ClickMenu("发送到文件收纳盒…");
         ClickMenu(box.State.Title);
         until(() => box.State.Items.Count(item => item.Path == target) == 1, "Dock 发送后缺少文件映射");
         if (!File.ReadAllBytes(target).SequenceEqual(original))

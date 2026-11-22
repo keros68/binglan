@@ -16,7 +16,7 @@
         <Style TargetType="Button">
             <Setter Property="Foreground" Value="{DynamicResource FloatingGlassInkBrush}" />
             <Setter Property="Background" Value="{DynamicResource FloatingGlassControlBrush}" />
-            <Setter Property="BorderBrush" Value="{DynamicResource FloatingGlassControlBorderBrush}" />
+            <Setter Property="BorderBrush" Value="Transparent" />
             <Setter Property="BorderThickness" Value="1" />
             <Setter Property="Padding" Value="12,6" />
             <Setter Property="HorizontalContentAlignment" Value="Center" />
@@ -39,7 +39,7 @@
             </Setter>
         </Style>
         <Style x:Key="MainTabButtonStyle" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
-            <Setter Property="Padding" Value="12,6" />
+            <Setter Property="Padding" Value="12,0" />
             <Setter Property="FontSize" Value="13" />
             <Setter Property="Background" Value="Transparent" />
             <Setter Property="BorderBrush" Value="Transparent" />
@@ -47,7 +47,7 @@
             <Style.Triggers>
                 <Trigger Property="Tag" Value="Selected">
                     <Setter Property="Background" Value="{DynamicResource FloatingGlassSelectedBrush}" />
-                    <Setter Property="BorderBrush" Value="{DynamicResource FloatingGlassFocusBrush}" />
+                    <Setter Property="BorderBrush" Value="Transparent" />
                     <Setter Property="Foreground" Value="{DynamicResource FloatingGlassInkBrush}" />
                     <Setter Property="FontWeight" Value="SemiBold" />
                 </Trigger>
@@ -62,7 +62,7 @@
             <Style.Triggers>
                 <Trigger Property="Tag" Value="Selected">
                     <Setter Property="Background" Value="{DynamicResource FloatingGlassSelectedBrush}" />
-                    <Setter Property="BorderBrush" Value="{DynamicResource FloatingGlassFocusBrush}" />
+                    <Setter Property="BorderBrush" Value="Transparent" />
                     <Setter Property="Foreground" Value="{DynamicResource FloatingGlassInkBrush}" />
                     <Setter Property="FontWeight" Value="SemiBold" />
                 </Trigger>
@@ -78,8 +78,8 @@
             <Style.Triggers>
                 <DataTrigger Binding="{Binding IsSelected}" Value="True">
                     <Setter Property="Background" Value="{DynamicResource FloatingGlassSelectedBrush}" />
-                    <Setter Property="BorderBrush" Value="{DynamicResource FloatingGlassFocusBrush}" />
-                    <Setter Property="FontWeight" Value="SemiBold" />
+                    <Setter Property="BorderBrush" Value="Transparent" />
+                    <Setter Property="FontWeight" Value="Medium" />
                 </DataTrigger>
             </Style.Triggers>
         </Style>
@@ -92,7 +92,7 @@
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
-                    <TextBlock Text="{Binding Glyph}" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="12.5"
+                    <TextBlock Text="{Binding Glyph}" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="12"
                                Foreground="{DynamicResource FloatingGlassMutedBrush}" VerticalAlignment="Center" />
                     <TextBlock Grid.Column="1" Text="{Binding Name}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
                     <TextBlock Grid.Column="2" Text="{Binding CountText}" FontSize="11" Margin="6,0,0,0"
@@ -110,7 +110,7 @@
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
-                    <TextBlock Text="{Binding Glyph}" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="12.5"
+                    <TextBlock Text="{Binding Glyph}" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="12"
                                Foreground="{DynamicResource FloatingGlassMutedBrush}" VerticalAlignment="Center" />
                     <TextBlock Grid.Column="1" Text="{Binding Name}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
                     <TextBlock Grid.Column="2" Text="{Binding CountText}" FontSize="11" Margin="6,0,0,0"
@@ -127,14 +127,14 @@
                         <ColumnDefinition Width="32" />
                         <ColumnDefinition Width="*" />
                     </Grid.ColumnDefinitions>
-                    <Border Width="26" Height="26" CornerRadius="7" HorizontalAlignment="Left"
+                    <Border Width="26" Height="26" CornerRadius="8" HorizontalAlignment="Left"
                             Background="{DynamicResource FloatingGlassSelectedBrush}">
-                        <TextBlock Text="{Binding Glyph}" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="13.5"
+                        <TextBlock Text="{Binding Glyph}" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="13"
                                    Foreground="{DynamicResource FloatingGlassInkBrush}"
                                    HorizontalAlignment="Center" VerticalAlignment="Center" />
                     </Border>
                     <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                        <TextBlock Text="{Binding Name}" FontSize="12.5" FontWeight="SemiBold"
+                        <TextBlock Text="{Binding Name}" FontSize="12" FontWeight="SemiBold"
                                    Foreground="{DynamicResource FloatingGlassInkBrush}" TextTrimming="CharacterEllipsis" />
                         <TextBlock Text="{Binding Subtitle}" FontSize="11" Margin="0,1,0,0"
                                    Foreground="{DynamicResource FloatingGlassMutedBrush}" TextTrimming="CharacterEllipsis" />
@@ -143,9 +143,9 @@
             </Button>
         </DataTemplate>
         <ControlTemplate x:Key="SectionContainer" TargetType="ListBoxItem">
-            <Border Background="{DynamicResource FloatingGlassHeadingBrush}" CornerRadius="4" Padding="4,1"
+            <Border Background="{DynamicResource FloatingGlassHeadingBrush}" CornerRadius="6" Padding="4,1"
                     HorizontalAlignment="Left" VerticalAlignment="Center" Margin="5,3,0,0">
-                <TextBlock Text="{Binding Name}" FontSize="13.5" FontWeight="SemiBold"
+                <TextBlock Text="{Binding Name}" FontSize="12" FontWeight="SemiBold"
                            Foreground="{DynamicResource FloatingGlassInkBrush}" AutomationProperties.HeadingLevel="Level2" />
             </Border>
         </ControlTemplate>
@@ -158,7 +158,7 @@
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
-                        <Border x:Name="Bd" Background="{TemplateBinding Background}" CornerRadius="5" Padding="{TemplateBinding Padding}">
+                        <Border x:Name="Bd" Background="{TemplateBinding Background}" CornerRadius="6" Padding="{TemplateBinding Padding}">
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
                         </Border>
                         <ControlTemplate.Triggers>
@@ -192,7 +192,7 @@
                             <Setter Property="Template">
                                 <Setter.Value>
                                     <ControlTemplate TargetType="Button">
-                                        <Border x:Name="CrumbBd" Background="{TemplateBinding Background}" CornerRadius="5" Padding="{TemplateBinding Padding}">
+                                        <Border x:Name="CrumbBd" Background="{TemplateBinding Background}" CornerRadius="6" Padding="{TemplateBinding Padding}">
                                             <ContentPresenter VerticalAlignment="Center" />
                                         </Border>
                                         <ControlTemplate.Triggers>
@@ -231,19 +231,13 @@
         <DataTemplate x:Key="TileItemTemplate">
             <Grid>
                 <Grid.RowDefinitions><RowDefinition Height="44" /><RowDefinition Height="*" /></Grid.RowDefinitions>
-                <Grid Width="42" Height="42" VerticalAlignment="Top">
+                <Grid Width="44" Height="44" VerticalAlignment="Top">
+                    <Border CornerRadius="12" Background="{DynamicResource FloatingGlassControlBrush}" />
                     <TextBlock Text="{Binding Glyph}" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="30" Foreground="{DynamicResource FloatingGlassInkBrush}" VerticalAlignment="Center" HorizontalAlignment="Center">
                         <TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Visibility" Value="Collapsed" /><Style.Triggers><DataTrigger Binding="{Binding Icon}" Value="{x:Null}"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers></Style></TextBlock.Style>
                     </TextBlock>
-                    <Image Source="{Binding Icon}" Stretch="Uniform" />
-                </Grid>
-                <Border Grid.Row="1" Margin="3,2,3,0" HorizontalAlignment="Center" VerticalAlignment="Top"
-                        Background="{DynamicResource LauncherLabelPlateBrush}" CornerRadius="5" Padding="4,0">
-                    <TextBlock Text="{Binding Name}" FontSize="12" TextAlignment="Center"
-                               TextWrapping="WrapWithOverflow" TextTrimming="CharacterEllipsis"
-                               LineStackingStrategy="BlockLineHeight" LineHeight="16" MaxHeight="32" />
-                </Border>
-                <TextBlock Text="&#xE735;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="9" Foreground="{DynamicResource FloatingGlassMutedBrush}" HorizontalAlignment="Right" VerticalAlignment="Top">
+                    <Image Source="{Binding Icon}" Stretch="Uniform" Margin="5" RenderOptions.BitmapScalingMode="HighQuality" />
+                    <TextBlock Text="&#xE735;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="9" Foreground="{DynamicResource FloatingGlassMutedBrush}" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,0,-10,0">
                     <TextBlock.Style>
                         <Style TargetType="TextBlock">
                             <Setter Property="Visibility" Value="Collapsed" />
@@ -259,7 +253,7 @@
                         </Style>
                     </TextBlock.Style>
                 </TextBlock>
-                <Button HorizontalAlignment="Right" VerticalAlignment="Top" Padding="3,2"
+                <Button HorizontalAlignment="Right" VerticalAlignment="Top" Padding="3,2" Margin="0,0,-12,0"
                         Click="OnToggleFavoriteClick" ToolTip="{Binding FavoriteToolTip}"
                         AutomationProperties.Name="{Binding FavoriteToolTip}">
                     <Button.Style>
@@ -286,6 +280,13 @@
                     </Button.Style>
                     <TextBlock Text="{Binding FavoriteGlyph}" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="10" />
                 </Button>
+                </Grid>
+                <Border Grid.Row="1" Margin="3,2,3,0" HorizontalAlignment="Center" VerticalAlignment="Top"
+                        Background="{DynamicResource LauncherLabelPlateBrush}" CornerRadius="6" Padding="4,0">
+                    <TextBlock Text="{Binding Name}" FontSize="12" TextAlignment="Center"
+                               TextWrapping="WrapWithOverflow" TextTrimming="CharacterEllipsis"
+                               LineStackingStrategy="BlockLineHeight" LineHeight="16" MaxHeight="32" />
+                </Border>
             </Grid>
         </DataTemplate>
         <DataTemplate x:Key="ListItemTemplate">
@@ -301,10 +302,10 @@
                     </TextBlock>
                     <Image Source="{Binding Icon}" Stretch="Uniform" />
                 </Grid>
-                <Border Grid.Column="1" VerticalAlignment="Center" Margin="2,0,10,0" CornerRadius="5" Padding="5,2"
+                <Border Grid.Column="1" VerticalAlignment="Center" Margin="2,0,10,0" CornerRadius="6" Padding="5,2"
                         Background="{DynamicResource LauncherLabelPlateBrush}">
                     <StackPanel>
-                        <TextBlock Text="{Binding Name}" FontSize="12.5" FontWeight="Medium"
+                        <TextBlock Text="{Binding Name}" FontSize="12" FontWeight="Medium"
                                    Foreground="{DynamicResource FloatingGlassInkBrush}" TextTrimming="CharacterEllipsis" />
                         <TextBlock Text="{Binding SecondaryText}" FontSize="11"
                                    Foreground="{DynamicResource FloatingGlassMutedBrush}" TextTrimming="CharacterEllipsis" />
@@ -483,6 +484,16 @@
                     <Border x:Name="WallpaperTintOverlay" />
                 </Grid>
             </Border>
+            <!-- 玻璃质感：左上微亮、右下微暗的对角渐变，不改变底色与可读性逻辑 -->
+            <Border IsHitTestVisible="False" CornerRadius="{Binding CornerRadius, ElementName=PanelSurface}">
+                <Border.Background>
+                    <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                        <GradientStop Color="#1AFFFFFF" Offset="0" />
+                        <GradientStop Color="#00FFFFFF" Offset="0.45" />
+                        <GradientStop Color="#0F0A1A2A" Offset="1" />
+                    </LinearGradientBrush>
+                </Border.Background>
+            </Border>
             <Grid x:Name="PanelContentGrid" Margin="26,20,26,18">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
@@ -500,13 +511,13 @@
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
-                <Border CornerRadius="12" Background="{DynamicResource FloatingGlassHoverBrush}" BorderBrush="{DynamicResource FloatingGlassControlBorderBrush}" BorderThickness="1" Padding="14,9">
+                <Border CornerRadius="12" Height="40" Background="{DynamicResource FloatingGlassHoverBrush}" Padding="14,0">
                     <Grid>
                         <Grid.ColumnDefinitions><ColumnDefinition Width="24" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                         <TextBlock Text="&#xE721;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" Foreground="{DynamicResource FloatingGlassMutedBrush}" FontSize="15" VerticalAlignment="Center" />
                         <Grid Grid.Column="1">
                             <TextBlock x:Name="SearchPlaceholder" Text="搜索应用、文件和文件夹" Foreground="{DynamicResource FloatingGlassMutedBrush}" IsHitTestVisible="False" VerticalAlignment="Center" />
-                            <TextBox x:Name="SearchBox" FontSize="14.5" Foreground="{DynamicResource FloatingGlassInkBrush}"
+                            <TextBox x:Name="SearchBox" FontSize="15" VerticalContentAlignment="Center" Foreground="{DynamicResource FloatingGlassInkBrush}"
                                      CaretBrush="{DynamicResource FloatingGlassInkBrush}" Background="Transparent" BorderThickness="0" Padding="0"
                                      Effect="{DynamicResource LauncherTextShadowEffect}"
                                      AutomationProperties.Name="搜索应用、文件和文件夹" TextChanged="OnSearchTextChanged" />
@@ -514,9 +525,8 @@
                     </Grid>
                 </Border>
 
-                <Border Grid.Column="1" Margin="10,0,0,0" Padding="3" CornerRadius="10"
-                        Background="{DynamicResource FloatingGlassNavigationBrush}"
-                        BorderBrush="{DynamicResource FloatingGlassControlBorderBrush}" BorderThickness="1">
+                <Border Grid.Column="1" Margin="10,0,0,0" Padding="3" CornerRadius="10" Height="40"
+                        Background="{DynamicResource FloatingGlassNavigationBrush}">
                     <StackPanel Orientation="Horizontal">
                         <Button x:Name="TabAllButton" Style="{StaticResource MainTabButtonStyle}" Click="OnTabAllClick"
                                 Visibility="Collapsed" Margin="0,0,2,0" AutomationProperties.Name="全部" ToolTip="全部结果">
@@ -525,30 +535,30 @@
                         <Button x:Name="TabAppsButton" Style="{StaticResource MainTabButtonStyle}" Click="OnTabAppsClick"
                                 AutomationProperties.Name="应用" ToolTip="应用（Ctrl+1）">
                             <StackPanel Orientation="Horizontal">
-                                <TextBlock Text="&#xE80A;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="12.5" VerticalAlignment="Center" Margin="0,0,5,0" />
+                                <TextBlock Text="&#xE80A;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="12" VerticalAlignment="Center" Margin="0,0,5,0" />
                                 <TextBlock Text="应用" VerticalAlignment="Center" />
                             </StackPanel>
                         </Button>
                         <Button x:Name="TabFilesButton" Style="{StaticResource MainTabButtonStyle}" Click="OnTabFilesClick"
                                 Margin="2,0" AutomationProperties.Name="文件" ToolTip="文件（Ctrl+2）">
                             <StackPanel Orientation="Horizontal">
-                                <TextBlock Text="&#xE8B7;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="12.5" VerticalAlignment="Center" Margin="0,0,5,0" />
+                                <TextBlock Text="&#xE8B7;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="12" VerticalAlignment="Center" Margin="0,0,5,0" />
                                 <TextBlock Text="文件" VerticalAlignment="Center" />
                             </StackPanel>
                         </Button>
                         <Button x:Name="TabGroupsButton" Style="{StaticResource MainTabButtonStyle}" Click="OnTabGroupsClick"
                                 AutomationProperties.Name="我的分组" ToolTip="我的分组（Ctrl+3）">
                             <StackPanel Orientation="Horizontal">
-                                <TextBlock Text="&#xE734;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="12.5" VerticalAlignment="Center" Margin="0,0,5,0" />
+                                <TextBlock Text="&#xE734;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="12" VerticalAlignment="Center" Margin="0,0,5,0" />
                                 <TextBlock Text="我的分组" VerticalAlignment="Center" />
                             </StackPanel>
                         </Button>
                     </StackPanel>
                 </Border>
 
-                <Button x:Name="MaterialButton" Grid.Column="2" Content="磨砂" Margin="8,0,0,0" Click="OnMaterialClick" AutomationProperties.Name="切换玻璃材质" />
-                <Button x:Name="PinPanelButton" Grid.Column="3" Content="&#xE718;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="13" Margin="6,0,0,0" Padding="10,8" Click="OnPinPanelClick" ToolTip="固定并置顶（保持打开，可拖动空白处移到屏幕一侧）" AutomationProperties.Name="固定并置顶冰蓝总览卡" />
-                <Button Grid.Column="4" Content="&#xE8BB;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="13" Margin="6,0,0,0" Padding="12,8" Background="{DynamicResource LauncherLabelPlateBrush}" BorderThickness="0" Click="OnCloseClick" AutomationProperties.Name="关闭冰蓝总览卡" />
+                <Button x:Name="MaterialButton" Grid.Column="2" Content="磨砂" Height="40" Margin="8,0,0,0" Click="OnMaterialClick" AutomationProperties.Name="切换玻璃材质" />
+                <Button x:Name="PinPanelButton" Grid.Column="3" Content="&#xE718;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="13" Height="40" Width="40" Margin="6,0,0,0" Padding="0" Click="OnPinPanelClick" ToolTip="固定并置顶（保持打开，可拖动空白处移到屏幕一侧）" AutomationProperties.Name="固定并置顶冰蓝总览卡" />
+                <Button Grid.Column="4" Content="&#xE8BB;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="13" Height="40" Width="40" Margin="6,0,0,0" Padding="0" Background="{DynamicResource LauncherLabelPlateBrush}" BorderThickness="0" Click="OnCloseClick" AutomationProperties.Name="关闭冰蓝总览卡" />
             </Grid>
 
             <!-- 分组编辑器与删除确认 -->
@@ -567,7 +577,7 @@
                     <DockPanel LastChildFill="True">
                         <Button x:Name="CancelDeleteGroupButton" DockPanel.Dock="Right" Content="取消" Padding="9,5" Margin="6,0,0,0" Click="OnCancelDeleteGroupClick" />
                         <Button x:Name="ConfirmDeleteGroupButton" DockPanel.Dock="Right" Content="确认删除" Padding="9,5" Margin="6,0,0,0" Click="OnConfirmDeleteGroupClick" />
-                        <TextBlock x:Name="GroupDeletePrompt" VerticalAlignment="Center" FontSize="12.5"
+                        <TextBlock x:Name="GroupDeletePrompt" VerticalAlignment="Center" FontSize="12"
                                    Foreground="{DynamicResource FloatingGlassInkBrush}" TextWrapping="Wrap" />
                     </DockPanel>
                 </Border>
@@ -576,7 +586,7 @@
             <!-- 主体：左动态导航 + 右内容区 -->
             <Grid Grid.Row="2" Margin="0,12,0,0">
                 <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                <Border x:Name="NavigationSurface" Background="{DynamicResource FloatingGlassNavigationBrush}" CornerRadius="11"
+                <Border x:Name="NavigationSurface" Background="{DynamicResource FloatingGlassNavigationBrush}" CornerRadius="12"
                         Margin="0,0,12,0" Visibility="{Binding Visibility, ElementName=BrowseNavigation}">
                     <ScrollViewer x:Name="BrowseNavigation" Width="158"
                                   HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto"
@@ -588,7 +598,7 @@
                                         AutomationProperties.Name="全部应用">
                                     <Grid>
                                         <Grid.ColumnDefinitions><ColumnDefinition Width="20" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                        <TextBlock Text="&#xE80A;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="12.5" Foreground="{DynamicResource FloatingGlassMutedBrush}" VerticalAlignment="Center" />
+                                        <TextBlock Text="&#xE80A;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="12" Foreground="{DynamicResource FloatingGlassMutedBrush}" VerticalAlignment="Center" />
                                         <TextBlock Grid.Column="1" Text="全部应用" VerticalAlignment="Center" />
                                         <TextBlock Grid.Column="2" Text="{Binding CountText}" FontSize="11" Margin="6,0,0,0" Foreground="{DynamicResource FloatingGlassMutedBrush}" VerticalAlignment="Center" />
                                     </Grid>
@@ -603,7 +613,7 @@
                                         AutomationProperties.Name="文件总览">
                                     <Grid>
                                         <Grid.ColumnDefinitions><ColumnDefinition Width="20" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                                        <TextBlock Text="&#xE80F;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="12.5" Foreground="{DynamicResource FloatingGlassMutedBrush}" VerticalAlignment="Center" />
+                                        <TextBlock Text="&#xE80F;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="12" Foreground="{DynamicResource FloatingGlassMutedBrush}" VerticalAlignment="Center" />
                                         <TextBlock Grid.Column="1" Text="文件总览" VerticalAlignment="Center" />
                                     </Grid>
                                 </Button>
@@ -611,15 +621,15 @@
                                         AutomationProperties.Name="最近使用">
                                     <Grid>
                                         <Grid.ColumnDefinitions><ColumnDefinition Width="20" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                        <TextBlock Text="&#xE823;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="12.5" Foreground="{DynamicResource FloatingGlassMutedBrush}" VerticalAlignment="Center" />
+                                        <TextBlock Text="&#xE823;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="12" Foreground="{DynamicResource FloatingGlassMutedBrush}" VerticalAlignment="Center" />
                                         <TextBlock Grid.Column="1" Text="最近使用" VerticalAlignment="Center" />
                                         <TextBlock Grid.Column="2" Text="{Binding CountText}" FontSize="11" Margin="6,0,0,0" Foreground="{DynamicResource FloatingGlassMutedBrush}" VerticalAlignment="Center" />
                                     </Grid>
                                 </Button>
                                 <TextBlock Text="按文件形态" FontSize="11" Margin="9,8,0,3" Foreground="{DynamicResource FloatingGlassMutedBrush}" />
                                 <ItemsControl x:Name="FileTypeList" ItemTemplate="{StaticResource NavigationItem}" AutomationProperties.Name="按文件形态" />
-                                <TextBlock x:Name="FilePlacesNavHeading" Text="常用位置与分组盒" FontSize="11" Margin="9,8,0,3" Foreground="{DynamicResource FloatingGlassMutedBrush}" />
-                                <ItemsControl x:Name="FilePlacesNavList" ItemTemplate="{StaticResource NavigationItem}" AutomationProperties.Name="常用位置与分组盒" />
+                                <TextBlock x:Name="FilePlacesNavHeading" Text="常用位置与文件收纳盒" FontSize="11" Margin="9,8,0,3" Foreground="{DynamicResource FloatingGlassMutedBrush}" />
+                                <ItemsControl x:Name="FilePlacesNavList" ItemTemplate="{StaticResource NavigationItem}" AutomationProperties.Name="常用位置与文件收纳盒" />
                             </StackPanel>
 
                             <!-- 我的分组导航 -->
@@ -649,11 +659,10 @@
                     </Grid.RowDefinitions>
 
                     <!-- 内容区顶部上下文栏 -->
-                    <DockPanel x:Name="ContentHeaderBar" Margin="4,0,4,8" LastChildFill="True">
+                    <DockPanel x:Name="ContentHeaderBar" Margin="4,0,0,8" LastChildFill="True">
                         <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
                             <Border x:Name="AppSortToggle" Visibility="Collapsed" Padding="2" CornerRadius="8"
                                     Background="{DynamicResource FloatingGlassNavigationBrush}"
-                                    BorderBrush="{DynamicResource FloatingGlassControlBorderBrush}" BorderThickness="1"
                                     Margin="0,0,6,0">
                                 <StackPanel Orientation="Horizontal">
                                     <Button x:Name="SortByCategoryButton" Content="按分类" Style="{StaticResource CompactToggleStyle}" Click="OnSortByCategoryClick" AutomationProperties.Name="按分类浏览" />
@@ -663,7 +672,6 @@
 
                             <Border x:Name="FileSortToggle" Visibility="Collapsed" Padding="2" CornerRadius="8"
                                     Background="{DynamicResource FloatingGlassNavigationBrush}"
-                                    BorderBrush="{DynamicResource FloatingGlassControlBorderBrush}" BorderThickness="1"
                                     Margin="0,0,6,0">
                                 <StackPanel Orientation="Horizontal">
                                     <Button x:Name="FileSortByNameButton" Content="名称" Style="{StaticResource CompactToggleStyle}" Click="OnFileSortByNameClick" AutomationProperties.Name="文件按名称排序" />
@@ -694,7 +702,6 @@
 
                             <Border x:Name="LayoutToggle" Visibility="Collapsed" Padding="2" CornerRadius="8"
                                     Background="{DynamicResource FloatingGlassNavigationBrush}"
-                                    BorderBrush="{DynamicResource FloatingGlassControlBorderBrush}" BorderThickness="1"
                                     Margin="0,0,6,0">
                                 <StackPanel Orientation="Horizontal">
                                     <Button x:Name="ViewGridButton" Style="{StaticResource CompactToggleStyle}" Click="OnViewGridClick"
@@ -711,7 +718,7 @@
                             <Button x:Name="OpenDirectoryButton" Visibility="Collapsed" Padding="10,4" FontSize="12"
                                     Click="OnOpenCurrentDirectoryClick" AutomationProperties.Name="在资源管理器中打开当前目录">
                                 <StackPanel Orientation="Horizontal">
-                                    <TextBlock Text="&#xE8A7;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="11.5" VerticalAlignment="Center" Margin="0,0,5,0" />
+                                    <TextBlock Text="&#xE8A7;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="11" VerticalAlignment="Center" Margin="0,0,5,0" />
                                     <TextBlock Text="打开目录" VerticalAlignment="Center" />
                                 </StackPanel>
                             </Button>
@@ -729,12 +736,12 @@
                                     <ItemsPanelTemplate><StackPanel Orientation="Horizontal" /></ItemsPanelTemplate>
                                 </ItemsControl.ItemsPanel>
                             </ItemsControl>
-                            <Border Background="{DynamicResource FloatingGlassHeadingBrush}" CornerRadius="4" Padding="4,1"
+                            <Border Background="{DynamicResource FloatingGlassHeadingBrush}" CornerRadius="6" Padding="4,1"
                                     VerticalAlignment="Center" Visibility="{Binding Visibility, ElementName=SectionTitle}">
-                                <TextBlock x:Name="SectionTitle" FontSize="15.5" FontWeight="SemiBold"
+                                <TextBlock x:Name="SectionTitle" FontSize="15" FontWeight="SemiBold"
                                            Foreground="{DynamicResource FloatingGlassInkBrush}" />
                             </Border>
-                            <Border Background="{DynamicResource LauncherLabelPlateBrush}" CornerRadius="5" Padding="5,1"
+                            <Border Background="{DynamicResource LauncherLabelPlateBrush}" CornerRadius="6" Padding="5,1"
                                     Margin="8,1,0,0" VerticalAlignment="Center">
                                 <Border.Style>
                                     <Style TargetType="Border">
@@ -753,7 +760,7 @@
 
                     <!-- 文件总览顶部的常用位置与分组盒卡片条 -->
                     <ItemsControl x:Name="FilePlacesBar" Grid.Row="1" Visibility="Collapsed" Margin="2,0,2,4"
-                                  ItemTemplate="{StaticResource PlaceCardTemplate}" AutomationProperties.Name="常用位置与分组盒快捷入口">
+                                  ItemTemplate="{StaticResource PlaceCardTemplate}" AutomationProperties.Name="常用位置与文件收纳盒快捷入口">
                         <ItemsControl.ItemsPanel>
                             <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
                         </ItemsControl.ItemsPanel>
@@ -783,10 +790,10 @@
             </Grid>
 
             <!-- 底部状态、搜索范围与来源筛选 -->
-            <Grid Grid.Row="3" Margin="4,10,0,0">
+            <Grid Grid.Row="3" Margin="0,10,0,0">
                 <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                 <Border HorizontalAlignment="Left" VerticalAlignment="Center" Margin="0,0,12,0" Padding="6,3"
-                        CornerRadius="5" Background="{DynamicResource FloatingGlassLabelBrush}">
+                        CornerRadius="6" Background="{DynamicResource FloatingGlassLabelBrush}">
                     <Border.Style>
                         <Style TargetType="Border">
                             <Style.Triggers>
@@ -809,6 +816,17 @@
                           AutomationProperties.Name="按入口来源筛选" SelectionChanged="OnSourceFilterChanged" />
             </Grid>
             </Grid>
+            <!-- 玻璃边缘高光：上亮下淡的 1 px 内描边，跟随面板圆角 -->
+            <Border IsHitTestVisible="False" BorderThickness="1" Margin="1"
+                    CornerRadius="{Binding CornerRadius, ElementName=PanelSurface}">
+                <Border.BorderBrush>
+                    <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                        <GradientStop Color="#4DFFFFFF" Offset="0" />
+                        <GradientStop Color="#0DFFFFFF" Offset="0.5" />
+                        <GradientStop Color="#1AFFFFFF" Offset="1" />
+                    </LinearGradientBrush>
+                </Border.BorderBrush>
+            </Border>
         </Grid>
     </Border>
 </Window>

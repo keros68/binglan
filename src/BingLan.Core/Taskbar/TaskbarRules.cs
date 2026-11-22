@@ -161,6 +161,26 @@ public static class TaskbarCornerRules
         var right = Math.Max(monitor.Right - corner, left);
         return new PixelRect(left, monitor.Bottom - StripPixels, right, monitor.Bottom);
     }
+
+    /// <summary>
+    /// Full-width two-pixel strip along the bottom edge, blocking pointer edge reveal
+    /// across the entire monitor width while Win key and Dock Start button remain usable.
+    /// </summary>
+    public static PixelRect FullEdgeStrip(PixelRect monitor)
+    {
+        if (monitor.Width <= 0 || monitor.Height < StripPixels)
+        {
+            return new PixelRect(monitor.Left, monitor.Bottom, monitor.Left, monitor.Bottom);
+        }
+        return new PixelRect(monitor.Left, monitor.Bottom - StripPixels, monitor.Right, monitor.Bottom);
+    }
+
+    public static PixelRect? StripForMode(PixelRect monitor, uint dpi, TaskbarEdgeRevealMode mode) => mode switch
+    {
+        TaskbarEdgeRevealMode.CornersOnly => MiddleStrip(monitor, dpi) is { Width: > 0 } middle ? middle : null,
+        TaskbarEdgeRevealMode.Disabled => FullEdgeStrip(monitor) is { Width: > 0 } full ? full : null,
+        _ => null,
+    };
 }
 
 /// <summary>

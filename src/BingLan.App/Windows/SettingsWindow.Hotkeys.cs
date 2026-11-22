@@ -14,6 +14,7 @@ public partial class SettingsWindow
 
     private void LoadGlobalHotkeys()
     {
+        RefreshGlobalHotkeyRow(GlobalHotkeyKind.LauncherFiles);
         RefreshGlobalHotkeyRow(GlobalHotkeyKind.PeekFileBoxes);
         RefreshGlobalHotkeyRow(GlobalHotkeyKind.ToggleWidgets);
         RefreshGlobalHotkeyRow(GlobalHotkeyKind.QuickTodo);
@@ -23,6 +24,7 @@ public partial class SettingsWindow
 
     private (Button? Button, TextBlock? Hint) ResolveGlobalHotkeyControls(GlobalHotkeyKind kind) => kind switch
     {
+        GlobalHotkeyKind.LauncherFiles => (LauncherFilesHotkeyButton, LauncherFilesHotkeyHint),
         GlobalHotkeyKind.PeekFileBoxes => (PeekBoxesHotkeyButton, PeekBoxesHotkeyHint),
         GlobalHotkeyKind.ToggleWidgets => (ToggleWidgetsHotkeyButton, ToggleWidgetsHotkeyHint),
         GlobalHotkeyKind.QuickTodo => (QuickTodoHotkeyButton, QuickTodoHotkeyHint),
@@ -106,12 +108,17 @@ public partial class SettingsWindow
         }
         if (GlobalHotkeyRules.FindInternalConflict(_maintenance.Hotkeys, kind, text) is { } conflict)
         {
-            if (hint is not null) hint.Text = $"已用于「{GlobalHotkeyRules.DisplayName(conflict)}」";
+            if (hint is not null)
+            {
+                hint.Text = GlobalHotkeyRules.FormatConflictHint(
+                    GlobalHotkeyProbeResult.OwnedByBingLan(conflict));
+            }
             return;
         }
-        if (!_maintenance.ProbeGlobalHotkey(kind, text))
+        var probe = _maintenance.ProbeGlobalHotkey(kind, text);
+        if (!probe.IsAvailable)
         {
-            if (hint is not null) hint.Text = "该组合键已被其他程序占用";
+            if (hint is not null) hint.Text = GlobalHotkeyRules.FormatConflictHint(probe);
             return;
         }
 
@@ -151,7 +158,8 @@ public partial class SettingsWindow
         RefreshGlobalHotkeyRow(kind);
     }
 
-    private void OpenLauncherHotkeys_Click(object sender, RoutedEventArgs e) => ShowPage("Launcher");
+    private void OpenLauncherHotkeys_Click(object sender, RoutedEventArgs e) =>
+        SelectNavigationPage(SettingsNavigationRules.LauncherPageKey);
 
     private static List<string> CollectModifierParts()
     {

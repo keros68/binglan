@@ -2,7 +2,7 @@
                         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
                         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
                         xmlns:local="clr-namespace:BingLan.App.Windows"
-                        Title="桌面分组盒"
+                        Title="文件收纳盒"
                         Width="366"
                         Height="306"
                         MinWidth="226"
@@ -39,7 +39,7 @@
             <MenuItem Header="下移" Click="MoveMappingDown_Click"/>
             <Separator/>
             <MenuItem Header="修改显示名称…" Click="RenameMapping_Click"/>
-            <MenuItem Header="转移到其他分组盒"/>
+            <MenuItem Header="转移到其他文件收纳盒"/>
             <MenuItem Header="重新定位…">
                 <MenuItem Header="选择文件…" Click="RelinkFile_Click"/>
                 <MenuItem Header="选择文件夹…" Click="RelinkFolder_Click"/>
@@ -54,7 +54,7 @@
                      Opened="FileTileBatchContextMenu_Opened">
             <MenuItem Header="复制" InputGestureText="Ctrl+C" Click="BatchCopyFiles_Click"/>
             <MenuItem Header="移除映射" Tag="BatchRemove" Click="BatchRemoveMappings_Click"/>
-            <MenuItem Header="转移到其他分组盒" Tag="BatchTransfer"/>
+            <MenuItem Header="转移到其他文件收纳盒" Tag="BatchTransfer"/>
             <Separator Tag="DeleteOriginal"/>
             <MenuItem Header="删除到回收站…" Tag="DeleteOriginal" Click="BatchDeleteOriginals_Click"/>
             <Separator/>
@@ -257,10 +257,20 @@
         </DataTemplate>
     </local:WidgetWindowBase.Resources>
 
-    <Grid x:Name="BodySurface"
-          Background="{Binding WidgetBackgroundBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
-          ClipToBounds="True">
-        <Grid x:Name="BoxLayout">
+    <Grid Background="Transparent">
+        <Border x:Name="EdgeDockTab"
+                Width="6"
+                HorizontalAlignment="Left"
+                Visibility="Collapsed"
+                CornerRadius="0,3,3,0"
+                Background="{Binding WidgetHeaderBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
+        <Grid x:Name="BodySurface"
+              Background="{Binding WidgetBackgroundBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
+              ClipToBounds="True">
+            <Grid.RenderTransform>
+                <TranslateTransform x:Name="EdgeDockSlideTransform"/>
+            </Grid.RenderTransform>
+            <Grid x:Name="BoxLayout">
             <Grid.RowDefinitions>
                 <RowDefinition Height="48"/>
                 <RowDefinition Height="*"/>
@@ -298,7 +308,7 @@
                                     Background="{Binding WidgetHeaderBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
                             <TextBox x:Name="TitleEditor"
                                      Grid.Column="1"
-                                     AutomationProperties.Name="分组盒标题"
+                                     AutomationProperties.Name="文件收纳盒标题"
                                      Style="{StaticResource DesktopContentTitleStyle}"
                                      Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
                                      FontFamily="{Binding WidgetTitleFontFamily, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
@@ -316,7 +326,7 @@
                                Foreground="{Binding WidgetSecondaryTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
                     <Button x:Name="SettingsButton"
                             Grid.Column="2"
-                            AutomationProperties.Name="打开分组盒设置"
+                            AutomationProperties.Name="打开文件收纳盒设置"
                             Style="{StaticResource WidgetSettingsButtonStyle}"
                             Width="30"
                             Height="28"
@@ -385,7 +395,7 @@
                             Style="{StaticResource WidgetHeaderToolButtonStyle}"
                             Grid.Column="5"
                             Visibility="Collapsed"
-                            AutomationProperties.Name="暂时保持分组盒展开"
+                            AutomationProperties.Name="暂时保持文件收纳盒展开"
                             Width="28"
                             Height="28"
                             Padding="0"
@@ -400,7 +410,7 @@
                     <Button x:Name="CollapseButton"
                             Style="{StaticResource WidgetHeaderToolButtonStyle}"
                             Grid.Column="6"
-                            AutomationProperties.Name="折叠或展开分组盒"
+                            AutomationProperties.Name="折叠或展开文件收纳盒"
                             Width="28"
                             Height="28"
                             Padding="0"
@@ -441,14 +451,14 @@
                                FontSize="{StaticResource CardFont.Subhead}"
                                FontWeight="SemiBold"
                                Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
-                               Text="还没有收纳项目"
+                               Text="把文件或文件夹拖到这里"
                                TextAlignment="Center"
                                TextWrapping="Wrap"/>
                     <TextBlock x:Name="FileBoxEmptyGuideText"
                                Margin="{StaticResource CardSpace.TightGap}"
                                FontSize="{StaticResource CardFont.Meta}"
                                Foreground="{Binding WidgetSecondaryTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
-                               Text="拖入文件或文件夹，或点击右上角 + 添加"
+                               Text="只记录路径，不移动、不复制、不改原文件；也可点右上角 + 添加"
                                TextAlignment="Center"
                                TextWrapping="Wrap"/>
                 </StackPanel>
@@ -495,5 +505,6 @@
                 BorderThickness="{Binding WidgetBorderThickness, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
                 CornerRadius="{Binding SurfaceCornerRadius, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
                 IsHitTestVisible="False"/>
+        </Grid>
     </Grid>
 </local:WidgetWindowBase>

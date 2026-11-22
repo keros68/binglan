@@ -11,7 +11,27 @@ public enum GlobalHotkeyKind
     PeekFileBoxes = 1,
     ToggleWidgets = 2,
     QuickTodo = 3,
-    ToggleDesktopIcons = 4
+    ToggleDesktopIcons = 4,
+    LauncherFiles = 5
+}
+
+public enum GlobalHotkeyConflictSource
+{
+    None,
+    BingLan,
+    OtherProgram
+}
+
+public readonly record struct GlobalHotkeyProbeResult(
+    GlobalHotkeyConflictSource ConflictSource,
+    GlobalHotkeyKind? ConflictingKind = null)
+{
+    public bool IsAvailable => ConflictSource == GlobalHotkeyConflictSource.None;
+    public static GlobalHotkeyProbeResult Available => new(GlobalHotkeyConflictSource.None);
+    public static GlobalHotkeyProbeResult OwnedByBingLan(GlobalHotkeyKind kind) =>
+        new(GlobalHotkeyConflictSource.BingLan, kind);
+    public static GlobalHotkeyProbeResult OwnedByOtherProgram =>
+        new(GlobalHotkeyConflictSource.OtherProgram);
 }
 
 /// <summary>
@@ -28,6 +48,7 @@ public sealed class GlobalHotkeysState
     public string ToggleWidgets { get; set; } = string.Empty;
     public string QuickTodo { get; set; } = string.Empty;
     public string ToggleDesktopIcons { get; set; } = string.Empty;
+    public string LauncherFiles { get; set; } = string.Empty;
 
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? ExtensionData { get; set; }
@@ -41,10 +62,11 @@ public static class GlobalHotkeyRules
     public static string DisplayName(GlobalHotkeyKind kind) => kind switch
     {
         GlobalHotkeyKind.Launcher => "打开或收起冰蓝总览卡",
-        GlobalHotkeyKind.PeekFileBoxes => "临时速览桌面分组盒",
+        GlobalHotkeyKind.PeekFileBoxes => "临时浮起文件收纳盒",
         GlobalHotkeyKind.ToggleWidgets => "隐藏或显示全部桌面组件",
         GlobalHotkeyKind.QuickTodo => "快速新建一条待办",
         GlobalHotkeyKind.ToggleDesktopIcons => "临时切回原生桌面图标",
+        GlobalHotkeyKind.LauncherFiles => "打开常用文件夹",
         _ => "快捷键"
     };
 
@@ -58,6 +80,7 @@ public static class GlobalHotkeyRules
             GlobalHotkeyKind.ToggleWidgets => state.ToggleWidgets,
             GlobalHotkeyKind.QuickTodo => state.QuickTodo,
             GlobalHotkeyKind.ToggleDesktopIcons => state.ToggleDesktopIcons,
+            GlobalHotkeyKind.LauncherFiles => state.LauncherFiles,
             _ => string.Empty
         };
     }
@@ -86,6 +109,9 @@ public static class GlobalHotkeyRules
                 break;
             case GlobalHotkeyKind.ToggleDesktopIcons:
                 state.ToggleDesktopIcons = normalized;
+                break;
+            case GlobalHotkeyKind.LauncherFiles:
+                state.LauncherFiles = normalized;
                 break;
         }
     }
@@ -118,6 +144,40 @@ public static class GlobalHotkeyRules
         return null;
     }
 
+    public static GlobalHotkeyKind? FindRegisteredConflict(
+        IReadOnlyDictionary<GlobalHotkeyKind, string> registered,
+        GlobalHotkeyKind target,
+        string candidateText)
+    {
+        ArgumentNullException.ThrowIfNull(registered);
+        if (ParseOptional(candidateText) is not { } candidate)
+        {
+            return null;
+        }
+
+        foreach (var (kind, existingText) in registered)
+        {
+            if (kind == target)
+            {
+                continue;
+            }
+            if (ParseOptional(existingText) is { } existing && existing == candidate)
+            {
+                return kind;
+            }
+        }
+        return null;
+    }
+
+    public static string FormatConflictHint(GlobalHotkeyProbeResult result) => result.ConflictSource switch
+    {
+        GlobalHotkeyConflictSource.BingLan when result.ConflictingKind is { } conflict =>
+            $"已被冰蓝的‘{DisplayName(conflict)}’使用",
+        GlobalHotkeyConflictSource.BingLan => "已被冰蓝的其他快捷键使用",
+        GlobalHotkeyConflictSource.OtherProgram => "已被其他程序占用",
+        _ => string.Empty
+    };
+
     public static void Normalize(GlobalHotkeysState state)
     {
         ArgumentNullException.ThrowIfNull(state);
@@ -126,6 +186,7 @@ public static class GlobalHotkeyRules
         state.ToggleWidgets = Coerce(state.ToggleWidgets, string.Empty, allowEmpty: true);
         state.QuickTodo = Coerce(state.QuickTodo, string.Empty, allowEmpty: true);
         state.ToggleDesktopIcons = Coerce(state.ToggleDesktopIcons, string.Empty, allowEmpty: true);
+        state.LauncherFiles = Coerce(state.LauncherFiles, string.Empty, allowEmpty: true);
 
         // Two internal slots must never register the same combination; earlier slots win.
         var claimed = new HashSet<TopBarHotkeyBinding>();

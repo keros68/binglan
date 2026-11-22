@@ -43,8 +43,8 @@
                                      GroupName="CardLook"
                                      Style="{StaticResource SegmentRadioStyle}"
                                      Tag="Clear"
-                                     Content="无底板"
-                                     AutomationProperties.Name="卡片外观无底板"
+                                     Content="纯透明（无底板）"
+                                     AutomationProperties.Name="卡片外观纯透明（无底板）"
                                      Checked="CardLook_Changed"/>
                     </StackPanel>
                 </Border>

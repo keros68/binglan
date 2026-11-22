@@ -329,7 +329,7 @@ internal sealed class CleanDesktopAdapter : IDisposable
         {
             if (!IsOriginalStateKnown(checkpointPath))
             {
-                return (false, true, false, "无法确认开启清爽桌面前的图标状态");
+                return (false, true, false, "无法确认隐藏桌面图标前的图标状态");
             }
 
             var problem = Hide(checkpointPath);
@@ -351,7 +351,7 @@ internal sealed class CleanDesktopAdapter : IDisposable
         {
             TryMove(checkpointPath, InvalidCheckpointPath(checkpointPath));
             StartupLog.Write("桌面图标检查点损坏，已移旁，未改动桌面");
-            return (false, false, false, "无法确认开启清爽桌面前的图标状态");
+            return (false, false, false, "无法确认隐藏桌面图标前的图标状态");
         }
 
         try
@@ -416,7 +416,7 @@ internal sealed class CleanDesktopAdapter : IDisposable
                 if (!CleanDesktopRules.NeedsHide(view.ReadFolderFlags()))
                 {
                     StartupLog.Write("开启清爽桌面被拒：恢复检查点后图标仍为隐藏");
-                    return "开启清爽桌面前需要桌面图标可见，可稍后再试";
+                    return "隐藏桌面图标前需要当前图标可见，可稍后再试";
                 }
             }
 

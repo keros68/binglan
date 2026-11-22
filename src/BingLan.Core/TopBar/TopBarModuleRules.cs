@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text;
 using BingLan.Core.Models;
 using BingLan.Core.Services;
 
@@ -11,6 +12,14 @@ public enum TopBarBatteryStatus
     Charging,
     Unknown
 }
+
+public sealed record TopBarNetworkStatus(
+    bool Connected,
+    bool IsWireless,
+    string Label,
+    string? Ssid,
+    int? SignalQuality,
+    string Tooltip);
 
 /// <summary>Read-only value rules for the top bar's system status modules.</summary>
 public static class TopBarModuleRules
@@ -73,6 +82,122 @@ public static class TopBarModuleRules
         }
 
         return (true, usable.Any(candidate => candidate.IsWireless) ? "WLAN" : "以太网");
+    }
+
+    public const int MaxNetworkSsidDisplayLength = 14;
+
+    private static readonly UTF8Encoding StrictUtf8 = new(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
+
+    /// <summary>
+    /// Decodes raw 802.11 SSID bytes: strict UTF-8 first, falling back to the host's ANSI
+    /// decoder (e.g. Windows CP_ACP / GBK) when the bytes are not valid UTF-8 so legacy
+    /// router broadcasts do not turn into replacement-character garble.
+    /// </summary>
+    public static string? DecodeSsidBytes(
+        ReadOnlySpan<byte> rawBytes,
+        Func<ReadOnlySpan<byte>, string?>? ansiFallback = null)
+    {
+        var nullIndex = rawBytes.IndexOf((byte)0);
+        var slice = nullIndex >= 0 ? rawBytes[..nullIndex] : rawBytes;
+        if (slice.IsEmpty)
+        {
+            return null;
+        }
+
+        try
+        {
+            return SanitizeSsid(StrictUtf8.GetString(slice));
+        }
+        catch (DecoderFallbackException)
+        {
+            var fallback = ansiFallback?.Invoke(slice);
+            if (string.IsNullOrWhiteSpace(fallback) || fallback.Contains('\uFFFD'))
+            {
+                return null;
+            }
+            return SanitizeSsid(fallback);
+        }
+    }
+
+    /// <summary>
+    /// Formats a top-bar network snapshot. By default (<paramref name="showWifiName"/> is false)
+    /// wireless connections display "WLAN" in the bar to avoid exposing the SSID during screen
+    /// recording or streaming, while the hover tooltip keeps the full name and signal quality.
+    /// </summary>
+    public static TopBarNetworkStatus DescribeNetwork(
+        bool connected,
+        bool isWireless,
+        string? wifiSsid = null,
+        int? signalQuality = null,
+        bool showWifiName = false)
+    {
+        if (!connected)
+        {
+            return new TopBarNetworkStatus(false, false, "未连接", null, null, "网络未连接");
+        }
+
+        if (!isWireless)
+        {
+            return new TopBarNetworkStatus(true, false, "以太网", null, null, "以太网");
+        }
+
+        var cleanSsid = SanitizeSsid(wifiSsid);
+        var clampedSignal = signalQuality is { } q ? Math.Clamp(q, 0, 100) : (int?)null;
+        var label = FormatWirelessLabel(cleanSsid, showWifiName);
+        var tooltip = (cleanSsid, clampedSignal) switch
+        {
+            ({ } ssid, { } sig) => $"WLAN：{ssid}（信号 {sig}%）",
+            ({ } ssid, null) => $"WLAN：{ssid}",
+            (null, { } sig) => $"WLAN（信号 {sig}%）",
+            _ => "WLAN",
+        };
+        return new TopBarNetworkStatus(true, true, label, cleanSsid, clampedSignal, tooltip);
+    }
+
+    /// <summary>Formats the bar text for an already-captured network snapshot.</summary>
+    public static string FormatNetworkLabel(TopBarNetworkStatus status, bool showWifiName)
+    {
+        if (!status.Connected)
+        {
+            return "未连接";
+        }
+        return status.IsWireless
+            ? FormatWirelessLabel(SanitizeSsid(status.Ssid), showWifiName)
+            : "以太网";
+    }
+
+    private static string FormatWirelessLabel(string? cleanSsid, bool showWifiName) =>
+        !showWifiName || cleanSsid is null
+            ? "WLAN"
+            : cleanSsid.Length <= MaxNetworkSsidDisplayLength
+                ? cleanSsid
+                : cleanSsid[..(MaxNetworkSsidDisplayLength - 1)] + "…";
+
+    /// <summary>Maps 0–100 native Wi-Fi signal quality into 1–4 display bars.</summary>
+    public static int WifiSignalBars(int? signalQuality)
+    {
+        if (signalQuality is not { } quality)
+        {
+            return 4;
+        }
+        var clamped = Math.Clamp(quality, 0, 100);
+        return clamped switch
+        {
+            < 25 => 1,
+            < 50 => 2,
+            < 75 => 3,
+            _ => 4,
+        };
+    }
+
+    private static string? SanitizeSsid(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return null;
+        }
+        var cleaned = new string(raw.Where(ch => !char.IsControl(ch)).ToArray()).Trim();
+        return cleaned.Length == 0 ? null : cleaned;
     }
 
     /// <summary>A keyboard layout handle carries the language id in its low word.</summary>

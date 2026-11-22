@@ -74,7 +74,7 @@ public static class OriginalFileDeleteRules
     {
         OriginalFileDeleteBlock.ShellEntry => "系统入口不能删除，可以选择“移除映射”",
         OriginalFileDeleteBlock.Missing => "原文件已不存在，可以选择“移除映射”",
-        OriginalFileDeleteBlock.ProtectedLocation => "这是磁盘根目录或系统文件夹，不能从分组盒删除",
+        OriginalFileDeleteBlock.ProtectedLocation => "这是磁盘根目录或系统文件夹，不能从文件收纳盒删除",
         OriginalFileDeleteBlock.NotRecyclable => "此位置无法放入回收站，请在文件管理器中删除",
         _ => string.Empty
     };

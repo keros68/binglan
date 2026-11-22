@@ -17,8 +17,6 @@ internal static class InstalledFontCatalog
     // SIL Open Font License 1.1; the licence texts ship next to the program.
     private static readonly (string Name, string Family, FontWeight Weight)[] Bundled =
     [
-        ("Google Sans", "Google Sans", FontWeights.Normal),
-        ("Google Sans 中粗", "Google Sans", FontWeights.Medium),
         ("得意黑", "得意黑", FontWeights.Normal),
         ("Jost 极细", "Jost*", FontWeights.ExtraLight),
         ("Jost 细", "Jost*", FontWeights.Light),
@@ -38,8 +36,18 @@ internal static class InstalledFontCatalog
     /// <summary>The names of the fonts shipped with the app.</summary>
     public static IReadOnlyList<string> BundledNames { get; } = Bundled.Select(font => font.Name).ToArray();
 
+    // Google Sans used to ship with the app; saved cards and imported themes may still name it.
+    private const string LegacyGoogleSansPrefix = "Google Sans";
+    private const string LegacyGoogleSansReplacement = "Segoe UI Variable Text";
+
+    private static string? MapLegacyName(string? name) =>
+        name is not null && name.StartsWith(LegacyGoogleSansPrefix, StringComparison.OrdinalIgnoreCase)
+            ? LegacyGoogleSansReplacement
+            : name;
+
     public static string Resolve(string? requested)
     {
+        requested = MapLegacyName(requested);
         var exact = Names.FirstOrDefault(
             name => string.Equals(name, requested, StringComparison.CurrentCultureIgnoreCase));
         if (exact is not null)
@@ -68,6 +76,7 @@ internal static class InstalledFontCatalog
     /// <summary>The font family for a picker name, loading shipped fonts from the app.</summary>
     public static FontFamily Create(string name)
     {
+        name = MapLegacyName(name) ?? name;
         var bundled = Bundled.FirstOrDefault(font => font.Name == name);
         return bundled.Name is null
             ? new FontFamily(name)

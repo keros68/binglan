@@ -340,6 +340,8 @@ public static class DockPinRules
             ? Math.Clamp(state.BottomGapDip, DockState.MinimumBottomGapDip, DockState.MaximumBottomGapDip)
             : DockState.DefaultBottomGapDip;
 
+        state.HoverMagnificationScale = DockMagnificationRules.ClampScale(state.HoverMagnificationScale);
+
         if ((state.HiddenHandleLeftDip is { } handleLeft && !double.IsFinite(handleLeft))
             || (state.HiddenHandleTopDip is { } handleTop && !double.IsFinite(handleTop))
             || (state.HiddenHandleLeftDip is null) != (state.HiddenHandleTopDip is null))

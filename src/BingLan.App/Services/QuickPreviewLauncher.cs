@@ -15,6 +15,9 @@ internal static class QuickPreviewLauncher
 {
     private const int ConnectTimeoutMs = 150;
 
+    /// <summary>Tick of the last preview this app asked QuickLook to toggle; Peek uses it to tell its own preview from one opened elsewhere.</summary>
+    internal static long LastToggleTick { get; private set; }
+
     internal static Task<bool> TryTogglePreviewAsync(string? path)
     {
         if (string.IsNullOrWhiteSpace(path))
@@ -49,6 +52,7 @@ internal static class QuickPreviewLauncher
             var payload = Encoding.UTF8.GetBytes($"QuickLook.App.PipeMessage.Toggle|{path}\n");
             client.Write(payload, 0, payload.Length);
             client.Flush();
+            LastToggleTick = Environment.TickCount64;
             return true;
         }
         catch (Exception ex) when (ex is TimeoutException or IOException or UnauthorizedAccessException or InvalidOperationException)

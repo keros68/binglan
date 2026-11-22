@@ -158,8 +158,10 @@ public sealed class LauncherGridPanel : VirtualizingPanel, IScrollInfo
             _extent = new Size(width, y);
             return;
         }
-        var tileWidth = Math.Min(width, TileWidth);
         var columns = Math.Max(1, (int)(width / TileWidth));
+        // Share the leftover width across the columns so the grid fills the row evenly
+        // instead of leaving a gap on the right edge.
+        var tileWidth = width / columns;
         var column = 0;
         var top = 0d;
         foreach (var item in owner.Items)

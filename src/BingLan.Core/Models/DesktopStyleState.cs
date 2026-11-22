@@ -632,7 +632,7 @@ public static class DesktopStyleRules
         return style.Glass switch
         {
             GlassMode.Dark => $"深色玻璃 · {ink}",
-            GlassMode.Clear => $"无底板 · {ink}",
+            GlassMode.Clear => $"纯透明（无底板） · {ink}",
             _ => $"浅色玻璃 · {GetPalette(style.Palette).Name} · {ink}"
         };
     }

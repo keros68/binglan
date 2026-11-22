@@ -52,7 +52,7 @@
                 <ComboBox x:Name="MaterialSelector" AutomationProperties.Name="试选材质" SelectionChanged="Draft_Changed">
                     <ComboBoxItem Content="浅色玻璃"/>
                     <ComboBoxItem Content="深色玻璃"/>
-                    <ComboBoxItem Content="无底板"/>
+                    <ComboBoxItem Content="纯透明（无底板）"/>
                 </ComboBox>
                 <TextBlock Text="配色" Style="{StaticResource SectionHeaderStyle}"/>
                 <WrapPanel x:Name="PalettePanel"/>

@@ -122,11 +122,39 @@ public partial class TodoWidgetWindow : WidgetWindowBase
 
     protected override System.Windows.Controls.TextBox? TitleEditorBox => TitleEditor;
 
+    public override bool ApplyWidgetTitle(string? title, IEnumerable<string>? otherSameKindTitles = null)
+    {
+        var committed = WidgetTitleRules.CommitUniqueTitle(
+            title,
+            EditableWidgetTitleKind.Todo,
+            otherSameKindTitles ?? SameKindOtherTitles?.Invoke());
+        var changed = !string.Equals(State.Title, committed, StringComparison.Ordinal);
+        State.Title = committed;
+        if (!string.Equals(TitleEditor.Text, committed, StringComparison.Ordinal))
+        {
+            TitleEditor.Text = committed;
+        }
+        if (changed)
+        {
+            NotifyStateChanged();
+            NotifyTitleChanged();
+        }
+        return changed;
+    }
+
     protected override void CommitTitleEdit()
     {
-        State.Title = string.IsNullOrWhiteSpace(TitleEditor.Text) ? "待办便签" : TitleEditor.Text.Trim();
+        var previous = State.Title;
+        State.Title = WidgetTitleRules.CommitUniqueTitle(
+            TitleEditor.Text,
+            EditableWidgetTitleKind.Todo,
+            SameKindOtherTitles?.Invoke());
         TitleEditor.Text = State.Title;
         NotifyStateChanged();
+        if (!string.Equals(previous, State.Title, StringComparison.Ordinal))
+        {
+            NotifyTitleChanged();
+        }
     }
 
     protected override void OnLockChanged(bool locked)
@@ -916,6 +944,23 @@ public partial class TodoWidgetWindow : WidgetWindowBase
             CheckFileExists = true
         };
         if (dialog.ShowDialog(this) == true && TodoService.AddLinkedPaths(item, dialog.FileNames) > 0)
+        {
+            NotifyStateChanged();
+        }
+    }
+
+    private void LinkFolders_Click(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not TodoItemState item)
+        {
+            return;
+        }
+        var dialog = new Microsoft.Win32.OpenFolderDialog
+        {
+            Title = "关联文件夹",
+            Multiselect = true
+        };
+        if (dialog.ShowDialog(this) == true && TodoService.AddLinkedPaths(item, dialog.FolderNames) > 0)
         {
             NotifyStateChanged();
         }

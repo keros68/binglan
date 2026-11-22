@@ -36,6 +36,7 @@ internal sealed class DockAppBarController : IDisposable
     private double _contentLengthDip = DockLayoutMetrics.EmptyLengthDip;
     private double _thicknessDip = DockLayoutMetrics.DockThicknessDip;
     private double _edgeGapDip = DockLayoutMetrics.EdgeGapDip;
+    private double _topOverflowDip;
     private PixelRect? _floatingOverride;
     private bool _fullScreenDetected;
     private bool _positioning;
@@ -144,7 +145,8 @@ internal sealed class DockAppBarController : IDisposable
         bool reserveWorkArea,
         double contentLengthDip,
         double thicknessDip,
-        double edgeGapDip)
+        double edgeGapDip,
+        double topOverflowDip = 0d)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         var monitorChanged = _monitor is not null
@@ -164,6 +166,7 @@ internal sealed class DockAppBarController : IDisposable
         _contentLengthDip = Math.Max(DockLayoutMetrics.EmptyLengthDip, contentLengthDip);
         _thicknessDip = thicknessDip;
         _edgeGapDip = edgeGapDip;
+        _topOverflowDip = double.IsFinite(topOverflowDip) ? Math.Max(0d, topOverflowDip) : 0d;
         if (!reserveWorkArea || monitorChanged)
         {
             _consecutiveReserveFailures = 0;
@@ -316,12 +319,20 @@ internal sealed class DockAppBarController : IDisposable
                 edgeGapPixels);
 
             var placement = _floatingOverride ?? Bounds;
+            var overflowPixels = _topOverflowDip > 0d
+                ? (int)Math.Round(_topOverflowDip * scale)
+                : 0;
+            // Extend only the transparent top headroom of the HWND; AppBar reservation and
+            // Bounds remain unchanged so maximized/full-screen geometry is untouched.
+            var windowRect = overflowPixels > 0
+                ? placement with { Top = Math.Max(_monitor.Bounds.Top, placement.Top - overflowPixels) }
+                : placement;
             DockNativeMethods.MoveWindow(
                 _handle,
-                placement.Left,
-                placement.Top,
-                placement.Width,
-                placement.Height,
+                windowRect.Left,
+                windowRect.Top,
+                windowRect.Width,
+                windowRect.Height,
                 true);
             UpdateWindowLayer();
         }

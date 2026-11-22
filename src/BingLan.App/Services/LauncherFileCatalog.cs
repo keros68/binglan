@@ -97,7 +97,7 @@ internal static class LauncherFileCatalog
             places.Add(new LauncherPlace(
                 "box:" + id.ToString("N"),
                 title,
-                $"桌面分组盒 · {entries.Count} 项",
+                $"文件收纳盒 · {entries.Count} 项",
                 null,
                 "\uF12B",
                 IsFileBox: true,

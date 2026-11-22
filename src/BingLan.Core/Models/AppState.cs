@@ -5,7 +5,7 @@ namespace BingLan.Core.Models;
 
 public sealed class AppState
 {
-    public const int CurrentSchemaVersion = 56;
+    public const int CurrentSchemaVersion = 57;
 
     public int SchemaVersion { get; set; } = CurrentSchemaVersion;
 
@@ -50,6 +50,13 @@ public sealed class AppState
     public bool CleanDesktopEnabled { get; set; }
 
     /// <summary>
+    /// Whether left double-clicking an empty area of the desktop toggles
+    /// <see cref="CleanDesktopEnabled"/>. Machine-local setting, never exported into themes;
+    /// null or missing defaults to off.
+    /// </summary>
+    public bool? DoubleClickDesktopToToggleIcons { get; set; }
+
+    /// <summary>
     /// Whether file boxes watch the desktop and mapped folders: new desktop items join
     /// existing boxes and mappings whose originals were deleted are cleared on their own.
     /// Off by default; while off, organising still clears gone mappings.
@@ -67,4 +74,10 @@ public sealed class AppState
     /// (or the card is selected from the keyboard). Off by default.
     /// </summary>
     public bool HeaderToolsOnHover { get; set; }
+
+    /// <summary>
+    /// Last page key visited in the settings window. Machine-local preference, never exported
+    /// into themes; null defaults to the home page ("Scheme"), legacy "Bars" normalizes to "Dock".
+    /// </summary>
+    public string? LastSettingsPage { get; set; }
 }

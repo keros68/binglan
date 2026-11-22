@@ -221,8 +221,15 @@ internal sealed class DockGlassSurface : IDisposable
             var radiusX = radius * rect.Width / _surface.ActualWidth * dpi.M11;
             var radiusY = radius * rect.Height / _surface.ActualHeight * dpi.M22;
             rect.Transform(dpi);
+            var (backdropBounds, topInsetPx) = DockMagnificationRules.ComputeBackdropSurfaceBounds(
+                bounds,
+                (int)Math.Floor(rect.Y),
+                _tracking);
+            var visualRect = topInsetPx > 0
+                ? new Rect(rect.X, rect.Y - topInsetPx, rect.Width, rect.Height)
+                : rect;
             _backdrop ??= new DockCompositionBackdrop();
-            var visual = (Rect: rect, RadiusX: radiusX, RadiusY: radiusY,
+            var visual = (Rect: visualRect, RadiusX: radiusX, RadiusY: radiusY,
                 Opacity: _surface.Opacity * _window.Opacity, Fill: glassFill.Color, Stroke: stroke?.Color ?? Colors.Transparent);
             if (_lastVisual != visual)
             {
@@ -237,7 +244,7 @@ internal sealed class DockGlassSurface : IDisposable
                 _surface.BorderBrush = Brushes.Transparent;
                 _usingGlassFill = true;
             }
-            _backdrop.Position(handle, bounds, reorder);
+            _backdrop.Position(handle, backdropBounds, reorder);
         }
         catch (Exception error)
         {

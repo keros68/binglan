@@ -43,7 +43,7 @@
 
         <TextBlock Margin="0,18,0,6" FontWeight="SemiBold" Text="将包含"/>
         <TextBlock TextWrapping="Wrap"
-                   Text="组件的颜色、材质、圆角、字号、显示开关、相对布局、整体风格（文字阴影、吸附间距、Dock 动效、任务栏透明或模糊）、Dock 应用槽位及其自定义图标，和一张示意预览图。"/>
+                   Text="组件的颜色、材质、圆角、字号、显示开关、相对布局、整体风格（文字阴影、卡片间自动留白、Dock 动效、任务栏透明或模糊）、Dock 应用槽位及其自定义图标，和一张示意预览图。"/>
 
         <TextBlock Margin="0,12,0,6" FontWeight="SemiBold" Text="不包含"/>
         <TextBlock TextWrapping="Wrap"

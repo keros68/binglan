@@ -21,18 +21,24 @@ namespace BingLan.App.Services;
 /// </summary>
 internal sealed class DesktopPeekController : IDisposable
 {
+    private const long ForegroundGraceMs = 800;
     private static readonly uint CurrentProcessId = (uint)Environment.ProcessId;
     private readonly Action<IReadOnlyList<FileBoxWindow>> _returnBoxes;
+    private readonly Action<FileBoxWindow> _returnSingleBox;
     private readonly DispatcherTimer _foregroundWatchTimer;
     private readonly List<FileBoxWindow> _peekedBoxes = [];
     private PeekBackdropWindow? _backdrop;
     private nint _previousForeground;
     private bool _draggingOut;
     private bool _disposed;
+    private long _startedTick;
 
-    internal DesktopPeekController(Action<IReadOnlyList<FileBoxWindow>> returnBoxes)
+    internal DesktopPeekController(
+        Action<IReadOnlyList<FileBoxWindow>> returnBoxes,
+        Action<FileBoxWindow>? returnSingleBox = null)
     {
         _returnBoxes = returnBoxes;
+        _returnSingleBox = returnSingleBox ?? (box => returnBoxes([box]));
         _foregroundWatchTimer = new DispatcherTimer(
             TimeSpan.FromMilliseconds(200),
             DispatcherPriority.Background,
@@ -42,6 +48,32 @@ internal sealed class DesktopPeekController : IDisposable
     }
 
     internal bool IsActive => _backdrop is not null;
+
+    /// <summary>
+    /// Temporarily raises a single file box above ordinary windows (used by edge-dock reveal)
+    /// without creating a global dim backdrop or leaving the box unconditionally topmost.
+    /// </summary>
+    internal void RaiseSingleBoxTemporarily(FileBoxWindow box)
+    {
+        if (_disposed || box is null)
+        {
+            return;
+        }
+        box.RaiseAboveDesktop(DockNativeMethods.HwndTopmost, topmost: true);
+    }
+
+    /// <summary>
+    /// Returns only this single temporarily raised file box back to the desktop layer
+    /// without disturbing the Z-order of any other card.
+    /// </summary>
+    internal void ReturnSingleBox(FileBoxWindow box)
+    {
+        if (box is null)
+        {
+            return;
+        }
+        _returnSingleBox(box);
+    }
 
     internal bool Toggle(IReadOnlyList<FileBoxWindow> candidates, bool animate)
     {
@@ -98,6 +130,7 @@ internal sealed class DesktopPeekController : IDisposable
             DockNativeMethods.SetForegroundWindow(firstHandle);
         }
 
+        _startedTick = Environment.TickCount64;
         _foregroundWatchTimer.Start();
         return true;
     }
@@ -243,7 +276,8 @@ internal sealed class DesktopPeekController : IDisposable
 
     private void OnForegroundWatchTick(object? sender, EventArgs e)
     {
-        if (!IsActive || _draggingOut)
+        // The foreground hand-off after the hotkey can lag; do not read it as "user left".
+        if (!IsActive || _draggingOut || Environment.TickCount64 - _startedTick < ForegroundGraceMs)
         {
             return;
         }
@@ -253,10 +287,24 @@ internal sealed class DesktopPeekController : IDisposable
             return;
         }
         NativeMethods.GetWindowThreadProcessId(foreground, out var pid);
-        if (pid != CurrentProcessId && pid != 0)
+        if (pid != CurrentProcessId && pid != 0 && !(QuickPreviewLauncher.LastToggleTick >= _startedTick && IsQuickLook(pid)))
         {
             // User switched away via Alt+Tab or taskbar; exit Peek quietly.
             End(restoreForeground: false);
+        }
+    }
+
+    // Space on a tile opens QuickLook, which takes the foreground; that is part of Peek.
+    private static bool IsQuickLook(uint pid)
+    {
+        try
+        {
+            using var process = System.Diagnostics.Process.GetProcessById((int)pid);
+            return string.Equals(process.ProcessName, "QuickLook", StringComparison.OrdinalIgnoreCase);
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            return false;
         }
     }
 
@@ -272,7 +320,7 @@ internal sealed class DesktopPeekController : IDisposable
         internal PeekBackdropWindow(bool animate)
         {
             _animate = animate;
-            Title = "冰蓝速览遮罩";
+            Title = "冰蓝文件收纳盒浮起遮罩";
             WindowStyle = WindowStyle.None;
             ResizeMode = ResizeMode.NoResize;
             AllowsTransparency = true;

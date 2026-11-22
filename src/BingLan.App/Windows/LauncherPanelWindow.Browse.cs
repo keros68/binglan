@@ -82,6 +82,39 @@ public partial class LauncherPanelWindow
     private void OnTabFilesClick(object sender, RoutedEventArgs args) => SwitchMainTab(LauncherMainTab.Files);
     private void OnTabGroupsClick(object sender, RoutedEventArgs args) => SwitchMainTab(LauncherMainTab.Groups);
 
+    internal bool IsAtFilesCommonPlaces =>
+        _queryWasEmpty
+        && _activeTab == LauncherMainTab.Files
+        && _fileMode == FileBrowseMode.Overview
+        && _folderStack.Count == 0
+        && _selectedPlaceId is null
+        && _selectedFileType is null;
+
+    /// <summary>
+    /// Switches an already-open panel to the Files tab's common-places overview without
+    /// altering <see cref="LauncherPreferencesState.LastTab"/>.
+    /// </summary>
+    internal void NavigateToFilesCommonPlaces()
+    {
+        if (_closed || _dismissing)
+        {
+            return;
+        }
+        if (!string.IsNullOrEmpty(SearchBox.Text))
+        {
+            SearchBox.Text = string.Empty;
+        }
+        _queryWasEmpty = true;
+        CancelDirectoryLoad();
+        _folderStack.Clear();
+        _fileMode = FileBrowseMode.Overview;
+        _selectedFileType = null;
+        _selectedPlaceId = null;
+        SwitchMainTab(LauncherMainTab.Files, persist: false);
+        Activate();
+        SearchBox.Focus();
+    }
+
     private void SwitchMainTab(LauncherMainTab tab, bool persist = true)
     {
         if (!_queryWasEmpty)

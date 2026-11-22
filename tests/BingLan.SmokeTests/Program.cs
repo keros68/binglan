@@ -85,6 +85,9 @@ Run("清爽桌面无记录时关闭仍恢复显示", CleanDesktopTests.TestTurnO
 Run("清爽桌面接手无记录的隐藏图标", CleanDesktopTests.TestAdoptionOfOrphanedHiddenIcons);
 Run("清爽桌面检查点往返与拒绝", CleanDesktopTests.TestCheckpointRoundTripAndRejection);
 Run("清爽桌面设置迁移", CleanDesktopTests.TestSettingMigration);
+Run("双击桌面空白处时间与矩形判定（防三击连触）", CleanDesktopTests.TestDesktopDoubleClickDetection);
+Run("双击桌面空白处窗口祖先链与 MSAA 空白判定", CleanDesktopTests.TestDesktopDoubleClickHitRules);
+Run("双击桌面空白处设置默认值、迁移与主题导出隔离", CleanDesktopTests.TestDoubleClickSettingDefaultsMigrationAndThemeIsolation);
 Run("空状态文件从备份恢复且不覆盖备份", () => CleanDesktopTests.TestStateFallsBackToBackup(primaryMissing: false));
 Run("主状态文件缺失时从备份恢复", () => CleanDesktopTests.TestStateFallsBackToBackup(primaryMissing: true));
 Run("整体风格迁移与取值范围", ThemeStyleTests.TestStyleMigrationAndLimits);
@@ -94,6 +97,12 @@ Run("内置材质在亮暗壁纸上的墨色对比度", ThemeStyleTests.TestBuil
 Run("天气卡片最小高度随字号与疏密缩放", ThemeStyleTests.TestWeatherCardMinimumHeightScalesWithFontAndDensity);
 Run("卡片折叠与条目增删动效规格", ThemeStyleTests.TestWp6CardMotionRules);
 Run("设置窗口尺寸与最小尺寸不超过显示器工作区", ThemeStyleTests.TestSettingsWindowSizingRules);
+Run("设置中心更多选项折叠映射与搜索展开规则", SettingsFoldRulesTests.Run);
+Run("设置中心外观集中四行状态与手风琴互斥规则", AppearancePartLookRulesTests.Run);
+Run("设置中心分组导航、旧 Bars 迁移与页面键规范化", SettingsNavigationRulesTests.Run);
+Run("设置首页「我想…」任务入口定义与目标校验", SettingsQuickActionsTests.Run);
+Run("设置中心与全应用术语通俗化映射与搜索同义词校验", UserFacingTermsTests.Run);
+Run("卡片默认名称、重命名提交与组件列表溢出计数规则", WidgetTitleAndListRulesTests.Run);
 Run("时钟排版预设、Schema v47 迁移与 0.2.66 降级缺字段回退", ThemeStyleTests.TestClockLayoutPresetsAndMigration);
 Run("分组盒鼠标离开 5 秒自动收起规则与 Schema v48 迁移", ThemeStyleTests.TestFileBoxAutoCollapseRulesAndSchemaV48Migration);
 Run("全局统一外观摘要文本", ThemeStyleTests.TestDescribeSharedLookSummary);

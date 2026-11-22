@@ -1,7 +1,7 @@
 <Window x:Class="BingLan.App.Windows.TopBarWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="顶端信息条"
+        Title="顶部信息条"
         Width="800"
         Height="32"
         WindowStyle="None"
@@ -10,7 +10,7 @@
         ShowActivated="False"
         AllowsTransparency="True"
         Background="Transparent"
-        FontFamily="pack://application:,,,/BingLan;component/Assets/Fonts/#Google Sans, Segoe UI Variable Display, Segoe UI, Microsoft YaHei UI"
+        FontFamily="{StaticResource UiFont}"
         FontSize="13">
     <Window.Resources>
         <Style x:Key="ModuleButton" TargetType="Button">

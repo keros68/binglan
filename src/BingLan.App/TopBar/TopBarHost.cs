@@ -77,7 +77,7 @@ internal sealed class TopBarHost : IDisposable
         {
             System.Diagnostics.Debug.WriteLine($"顶端信息条打开失败：{exception}");
             Close();
-            _notify("顶端信息条未能打开，已恢复屏幕工作区。");
+            _notify("顶部信息条未能打开，已恢复屏幕工作区。");
         }
     }
 

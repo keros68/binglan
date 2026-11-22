@@ -81,6 +81,9 @@ internal sealed class TaskbarAdapter : IDisposable
 
     internal event Action? StatusChanged;
 
+    /// <summary>Explorer restarted and broadcast <c>TaskbarCreated</c>.</summary>
+    internal event Action? ExplorerRestarted;
+
     /// <summary>The user turned auto-hide off in Windows while this app held it.</summary>
     internal event Action? AutoHideTakenOver;
 
@@ -625,6 +628,10 @@ internal sealed class TaskbarAdapter : IDisposable
 
     private nint WatchTaskbar(nint hwnd, int message, nint wParam, nint lParam, ref bool handled)
     {
+        if ((uint)message == _taskbarCreatedMessage)
+        {
+            ExplorerRestarted?.Invoke();
+        }
         if ((uint)message == _taskbarCreatedMessage
             || message is TaskbarNativeMethods.WmSettingChange
                 or TaskbarNativeMethods.WmThemeChanged

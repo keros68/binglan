@@ -57,7 +57,7 @@ internal sealed class GlobalHotkeyHost : IDisposable
         {
             var enabled = kind switch
             {
-                GlobalHotkeyKind.Launcher => launcherEnabled,
+                GlobalHotkeyKind.Launcher or GlobalHotkeyKind.LauncherFiles => launcherEnabled,
                 GlobalHotkeyKind.ToggleDesktopIcons => cleanDesktopEnabled,
                 _ => true
             };
@@ -67,14 +67,25 @@ internal sealed class GlobalHotkeyHost : IDisposable
     }
 
     /// <summary>
-    /// Checks whether a candidate combination is free at the OS level. Temporarily lifts
-    /// <paramref name="kind"/>'s own live registration so re-recording the same key succeeds.
+    /// Checks whether a candidate combination is free, distinguishing another BingLan slot
+    /// from an external application. Temporarily lifts <paramref name="kind"/>'s own live
+    /// registration so re-recording the same key succeeds.
     /// </summary>
-    internal bool Probe(GlobalHotkeyKind kind, string candidateText)
+    internal GlobalHotkeyProbeResult Probe(GlobalHotkeyKind kind, string candidateText)
     {
         if (_disposed || _source.Handle == 0 || TopBarSearchRules.ParseHotkey(candidateText) is not { } binding)
         {
-            return false;
+            return GlobalHotkeyProbeResult.OwnedByOtherProgram;
+        }
+
+        if (GlobalHotkeyRules.FindRegisteredConflict(_registered, kind, candidateText) is { } registeredConflict)
+        {
+            return GlobalHotkeyProbeResult.OwnedByBingLan(registeredConflict);
+        }
+        if (_lastState is not null
+            && GlobalHotkeyRules.FindInternalConflict(_lastState, kind, candidateText) is { } configuredConflict)
+        {
+            return GlobalHotkeyProbeResult.OwnedByBingLan(configuredConflict);
         }
 
         var id = HotkeyId(kind);
@@ -103,7 +114,9 @@ internal sealed class GlobalHotkeyHost : IDisposable
             SyncSingle(kind, previousText);
         }
 
-        return free;
+        return free
+            ? GlobalHotkeyProbeResult.Available
+            : GlobalHotkeyProbeResult.OwnedByOtherProgram;
     }
 
     public void Dispose()

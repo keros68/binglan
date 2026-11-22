@@ -43,10 +43,11 @@ internal static class BackupSummaryTests
 
     internal static void TestNewCardTitlesAreUnique()
     {
-        Check(WidgetTitleRules.NextTitle("今日待办", []) == "今日待办", "第一张卡片沿用默认标题");
-        Check(WidgetTitleRules.NextTitle("今日待办", ["今日待办"]) == "今日待办 2", "重名时应编号");
-        Check(WidgetTitleRules.NextTitle("桌面分组", ["桌面分组", "桌面分组 2", "工作"]) == "桌面分组 3",
-            "应跳过已用的编号");
+        Check(WidgetTitleRules.NextTitle(WidgetTitleRules.DefaultTodoTitle, []) == "今日待办", "第一张待办卡片沿用默认标题");
+        Check(WidgetTitleRules.NextTitle(WidgetTitleRules.DefaultTodoTitle, ["今日待办"]) == "今日待办 2", "待办重名时应编号");
+        Check(WidgetTitleRules.NextTitle(WidgetTitleRules.DefaultFileBoxTitle, []) == "文件收纳盒", "第一个文件收纳盒默认名为“文件收纳盒”");
+        Check(WidgetTitleRules.NextTitle(WidgetTitleRules.DefaultFileBoxTitle, ["文件收纳盒", "文件收纳盒 2", "工作"]) == "文件收纳盒 3",
+            "文件收纳盒应跳过已用编号递增");
     }
 
     internal static void TestBackupCanBeDeleted()

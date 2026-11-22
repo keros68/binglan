@@ -21,7 +21,9 @@ internal sealed record SettingsSearchEntry(
     FrameworkElement Target,
     FrameworkElement Page,
     IReadOnlyList<Expander> Folds,
-    string? Scope)
+    string? Scope,
+    string PageKeywords = "",
+    string? AccordionPart = null)
 {
     /// <summary>“页面 › 分区 › 设置名”, as the result list and screen readers show it.</summary>
     public string Display => $"{Path} › {Name}";
@@ -52,6 +54,21 @@ internal static class SettingsSearch
     public static readonly DependencyProperty ExcludeProperty = DependencyProperty.RegisterAttached(
         "Exclude", typeof(bool), typeof(SettingsSearch), new PropertyMetadata(false));
 
+    /// <summary>
+    /// Explicit search entry name for standalone controls (such as pinned header action bars)
+    /// that do not live inside a <see cref="SettingsRow"/>.
+    /// </summary>
+    public static readonly DependencyProperty EntryNameProperty = DependencyProperty.RegisterAttached(
+        "EntryName", typeof(string), typeof(SettingsSearch), new PropertyMetadata(null));
+
+    /// <summary>
+    /// Marks an in-page accordion editor panel (such as one surface in AppearancePage's
+    /// "各部分外观") so search still indexes controls inside it while collapsed, and
+    /// opening a hit expands that accordion row automatically.
+    /// </summary>
+    public static readonly DependencyProperty AccordionPartProperty = DependencyProperty.RegisterAttached(
+        "AccordionPart", typeof(string), typeof(SettingsSearch), new PropertyMetadata(null));
+
     public static string GetKeywords(DependencyObject element) => (string)element.GetValue(KeywordsProperty);
     public static void SetKeywords(DependencyObject element, string value) => element.SetValue(KeywordsProperty, value);
     public static string? GetScope(DependencyObject element) => (string?)element.GetValue(ScopeProperty);
@@ -60,6 +77,10 @@ internal static class SettingsSearch
     public static void SetTitle(DependencyObject element, string? value) => element.SetValue(TitleProperty, value);
     public static bool GetExclude(DependencyObject element) => (bool)element.GetValue(ExcludeProperty);
     public static void SetExclude(DependencyObject element, bool value) => element.SetValue(ExcludeProperty, value);
+    public static string? GetEntryName(DependencyObject element) => (string?)element.GetValue(EntryNameProperty);
+    public static void SetEntryName(DependencyObject element, string? value) => element.SetValue(EntryNameProperty, value);
+    public static string? GetAccordionPart(DependencyObject element) => (string?)element.GetValue(AccordionPartProperty);
+    public static void SetAccordionPart(DependencyObject element, string? value) => element.SetValue(AccordionPartProperty, value);
 
     internal static List<SettingsSearchEntry> Build(
         IEnumerable<(FrameworkElement Page, string Title)> pages,
@@ -69,11 +90,11 @@ internal static class SettingsSearch
         var entries = new List<SettingsSearchEntry>();
         foreach (var (page, title) in pages)
         {
-            Walk(page, page, [title], [], null);
+            Walk(page, page, [title], [], null, GetKeywords(page), null);
         }
         return entries;
 
-        void Walk(DependencyObject node, FrameworkElement page, List<string> path, List<Expander> folds, string? scope)
+        void Walk(DependencyObject node, FrameworkElement page, List<string> path, List<Expander> folds, string? scope, string pageKeywords, string? accordionPart)
         {
             if (GetExclude(node))
             {
@@ -83,6 +104,10 @@ internal static class SettingsSearch
             if (GetScope(node) is { } nodeScope)
             {
                 scope = nodeScope;
+            }
+            if (GetAccordionPart(node) is { Length: > 0 } nodePart)
+            {
+                accordionPart = nodePart;
             }
             if (node is not Expander && GetTitle(node) is { Length: > 0 } scopeTitle)
             {
@@ -95,7 +120,7 @@ internal static class SettingsSearch
                     var foldTitle = GetTitle(fold) ?? AutomationProperties.GetName(fold);
                     if (foldTitle.Length > 0)
                     {
-                        entries.Add(Entry(foldTitle, path, fold, fold, page, folds, scope, includeChoices: false));
+                        entries.Add(Entry(foldTitle, path, fold, fold, page, folds, scope, pageKeywords, accordionPart, includeChoices: false));
                         path = [.. path, foldTitle];
                     }
                     folds = [.. folds, fold];
@@ -104,22 +129,25 @@ internal static class SettingsSearch
                     // A row without a control introduces the block below it, such as the
                     // top bar's module list; that block's options describe the row.
                     var options = row.Content is null ? NextSibling(row) ?? row : row;
-                    entries.Add(Entry(row.Header, path, row, row, page, folds, scope, row.Description, options: options));
+                    entries.Add(Entry(row.Header, path, row, row, page, folds, scope, pageKeywords, accordionPart, row.Description, options: options));
                     break;
                 case TextBlock { Text.Length: > 0 } heading when ReferenceEquals(heading.Style, sectionHeaderStyle):
                     // A heading stands for the block that follows it.
                     var block = NextSibling(heading) ?? heading;
-                    entries.Add(Entry(heading.Text, path, heading, block, page, folds, scope));
+                    entries.Add(Entry(heading.Text, path, heading, block, page, folds, scope, pageKeywords, accordionPart));
                     break;
                 case RadioButton card when ReferenceEquals(card.Style, choiceCardStyle)
                     && AutomationProperties.GetName(card) is { Length: > 0 } cardName:
-                    entries.Add(Entry(cardName, path, card, card, page, folds, scope));
+                    entries.Add(Entry(cardName, path, card, card, page, folds, scope, pageKeywords, accordionPart));
+                    break;
+                case FrameworkElement element when GetEntryName(element) is { Length: > 0 } entryName:
+                    entries.Add(Entry(entryName, path, element, element, page, folds, scope, pageKeywords, accordionPart, includeChoices: false));
                     break;
             }
 
             foreach (var child in LogicalTreeHelper.GetChildren(node).OfType<DependencyObject>())
             {
-                Walk(child, page, path, folds, scope);
+                Walk(child, page, path, folds, scope, pageKeywords, accordionPart);
             }
         }
     }
@@ -132,6 +160,8 @@ internal static class SettingsSearch
         FrameworkElement page,
         List<Expander> folds,
         string? scope,
+        string pageKeywords,
+        string? accordionPart,
         string description = "",
         bool includeChoices = true,
         FrameworkElement? options = null)
@@ -149,7 +179,7 @@ internal static class SettingsSearch
                 .OfType<string>()
             : [];
         var keywords = string.Join(' ', new[] { GetKeywords(source) }.Concat(choices));
-        return new SettingsSearchEntry(name, string.Join(" › ", path), keywords, description, target, page, folds, scope);
+        return new SettingsSearchEntry(name, string.Join(" › ", path), keywords, description, target, page, folds, scope, pageKeywords, accordionPart);
     }
 
     private static IEnumerable<DependencyObject> Descendants(DependencyObject root)
@@ -209,7 +239,7 @@ internal static class SettingsSearch
             var wordRank = Contains(entry.Name, word)
                 ? entry.Name.StartsWith(word, StringComparison.OrdinalIgnoreCase) ? 0 : 1
                 : Contains(entry.Keywords, word) ? 2
-                : Contains(entry.Path, word) ? 3
+                : Contains(entry.Path, word) || Contains(entry.PageKeywords, word) ? 3
                 : Contains(entry.Description, word) ? 4
                 : int.MaxValue;
             if (wordRank == int.MaxValue)
@@ -226,13 +256,14 @@ internal static class SettingsSearch
 
     /// <summary>
     /// Whether nothing between the element and <paramref name="stop"/> is collapsed; the
-    /// page itself and folds are left to the caller, which opens them.
+    /// page itself, folds, and in-page accordion editor panels are left to the caller, which opens them.
     /// </summary>
     internal static bool IsShown(FrameworkElement element, DependencyObject stop)
     {
         for (DependencyObject? node = element; node is not null && !ReferenceEquals(node, stop); node = LogicalTreeHelper.GetParent(node))
         {
-            if (node is UIElement { Visibility: Visibility.Collapsed })
+            if (node is UIElement { Visibility: Visibility.Collapsed }
+                && string.IsNullOrEmpty(GetAccordionPart(node)))
             {
                 return false;
             }

@@ -456,6 +456,7 @@ public class WidgetWindowBase : Window
     }
 
     public event Action<WidgetWindowBase>? WidgetChanged;
+    public event Action<WidgetWindowBase>? TitleChanged;
     public event Action<WidgetWindowBase>? Selected;
     public event Action? OrganizeDesktopRequested;
     public event Action<WidgetWindowBase>? OpenAppSettingsRequested;
@@ -721,6 +722,8 @@ public class WidgetWindowBase : Window
 
     protected void NotifyStateChanged() => WidgetChanged?.Invoke(this);
 
+    protected void NotifyTitleChanged() => TitleChanged?.Invoke(this);
+
     private void NotifyAppearanceChanged()
     {
         if (IsLoaded)
@@ -933,6 +936,18 @@ public class WidgetWindowBase : Window
     protected virtual void CommitTitleEdit()
     {
     }
+
+    /// <summary>
+    /// Optional provider returning titles of other cards of the same kind (excluding self)
+    /// so committing a rename or blank fallback avoids colliding with sibling cards.
+    /// </summary>
+    internal Func<IEnumerable<string>>? SameKindOtherTitles { get; set; }
+
+    /// <summary>
+    /// Updates an editable card's title from outside (e.g. SettingsWindow), syncing its
+    /// title editor and notifying listeners. Returns whether the stored title changed.
+    /// </summary>
+    public virtual bool ApplyWidgetTitle(string? title, IEnumerable<string>? otherSameKindTitles = null) => false;
 
     /// <summary>
     /// Makes the title editable in place. The title is otherwise part of the drag area,
@@ -1357,8 +1372,18 @@ public class WidgetWindowBase : Window
             : CreateCardShadowEffect(shadow);
     }
 
+    protected virtual bool SuppressLayeredClip => false;
+
+    protected void RefreshLayeredClip() => UpdateLayeredClip();
+
     private void UpdateLayeredClip()
     {
+        if (SuppressLayeredClip)
+        {
+            Clip = null;
+            return;
+        }
+
         var width = ActualWidth;
         var height = ActualHeight;
         if (width <= 0 || height <= 0)
@@ -2025,11 +2050,13 @@ public class WidgetWindowBase : Window
         return result.Bounds;
     }
 
+    protected virtual bool IsHitTestPointInside(Point point) => IsInsideRoundedSurface(point);
+
     private nint HandleHitTest(nint lParam, ref bool handled)
     {
         handled = true;
         var point = ClientPoint(lParam);
-        if (!IsInsideRoundedSurface(point))
+        if (!IsHitTestPointInside(point))
         {
             return NativeMethods.HtTransparent;
         }
@@ -2111,9 +2138,15 @@ public class WidgetWindowBase : Window
 
         menu.Items.Add(appSettings);
         menu.Items.Add(lockPosition);
+        PopulateContextMenu(menu);
         menu.Items.Add(new Separator());
         menu.Items.Add(delete);
         menu.Items.Add(exit);
         return menu;
+    }
+
+    /// <summary>Allows subclasses to append card-specific entries to the shared context menu.</summary>
+    protected virtual void PopulateContextMenu(ContextMenu menu)
+    {
     }
 }

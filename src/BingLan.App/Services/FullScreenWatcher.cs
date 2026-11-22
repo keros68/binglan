@@ -23,6 +23,13 @@ internal sealed class FullScreenWatcher : IDisposable
 
     internal bool IsFullScreenInFront { get; private set; }
 
+    /// <summary>
+    /// Whether the foreground window is truly full-screen (covers its monitor and is NOT a
+    /// maximized ordinary window). Used where maximized windows over an auto-hidden taskbar
+    /// should not suspend edge protection.
+    /// </summary>
+    internal bool IsTrueFullScreenInFront { get; private set; }
+
     internal event Action? Changed;
 
     internal void Start()
@@ -35,13 +42,16 @@ internal sealed class FullScreenWatcher : IDisposable
 
     private void Check()
     {
-        var fullScreen = IsFullScreen(DockNativeMethods.GetForegroundWindow());
-        if (fullScreen == IsFullScreenInFront)
+        var foreground = DockNativeMethods.GetForegroundWindow();
+        var fullScreen = IsFullScreen(foreground);
+        var trueFullScreen = fullScreen && !DockNativeMethods.IsZoomed(foreground);
+        if (fullScreen == IsFullScreenInFront && trueFullScreen == IsTrueFullScreenInFront)
         {
             return;
         }
 
         IsFullScreenInFront = fullScreen;
+        IsTrueFullScreenInFront = trueFullScreen;
         Changed?.Invoke();
     }
 

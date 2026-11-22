@@ -3,6 +3,8 @@ using BingLan.Core.Models;
 using BingLan.Core.Services;
 using BingLan.Core.Themes;
 using BingLan.Core.TopBar;
+using System.Runtime.InteropServices;
+using System.Text;
 using System.Text.Json;
 
 namespace BingLan.SmokeTests;
@@ -338,6 +340,51 @@ public static class TopBarTests
         network = TopBarModuleRules.ClassifyNetwork([(true, false)]);
         Assert(network is { Connected: true, Label: "以太网" }, "仅有线为以太网");
         network = TopBarModuleRules.ClassifyNetwork([(false, true)]);
+
+        var wifiDefault = TopBarModuleRules.DescribeNetwork(true, true, "Office-5G", 82);
+        Assert(wifiDefault is { Connected: true, IsWireless: true, Label: "WLAN", Ssid: "Office-5G", SignalQuality: 82 }
+            && wifiDefault.Tooltip == "WLAN：Office-5G（信号 82%）",
+            "默认状态顶栏应只显示 WLAN，悬停保留名称与信号强度");
+        Assert(TopBarModuleRules.FormatNetworkLabel(wifiDefault, showWifiName: false) == "WLAN"
+            && TopBarModuleRules.FormatNetworkLabel(wifiDefault, showWifiName: true) == "Office-5G",
+            "按开关切换顶栏是否显示 Wi-Fi 名称");
+        Assert(new TopBarState().ShowWifiName is null or false, "新状态默认不显示 Wi-Fi 名称");
+
+        var wifiShown = TopBarModuleRules.DescribeNetwork(true, true, "Office-5G", 82, showWifiName: true);
+        Assert(wifiShown is { Connected: true, IsWireless: true, Label: "Office-5G", SignalQuality: 82 }
+            && wifiShown.Tooltip == "WLAN：Office-5G（信号 82%）",
+            "开启显示名称后顶栏应展示 Wi-Fi 名称与信号提示");
+        var longWifi = TopBarModuleRules.DescribeNetwork(true, true, "VeryLongHomeNetworkName5G", 40, showWifiName: true);
+        Assert(longWifi.Label.Length == TopBarModuleRules.MaxNetworkSsidDisplayLength
+            && longWifi.Label.EndsWith("…", StringComparison.Ordinal)
+            && longWifi.Tooltip.Contains("VeryLongHomeNetworkName5G", StringComparison.Ordinal),
+            "超长 SSID 在顶栏截断、悬停保留全称");
+        var fallbackWifi = TopBarModuleRules.DescribeNetwork(true, true, "  \0 ", null, showWifiName: true);
+        Assert(fallbackWifi is { Label: "WLAN", Ssid: null, Tooltip: "WLAN" },
+            "无可读 SSID 时应安静回退 WLAN");
+        Assert(TopBarModuleRules.WifiSignalBars(10) == 1
+            && TopBarModuleRules.WifiSignalBars(35) == 2
+            && TopBarModuleRules.WifiSignalBars(60) == 3
+            && TopBarModuleRules.WifiSignalBars(90) == 4
+            && TopBarModuleRules.WifiSignalBars(null) == 4,
+            "信号格数档位映射正确");
+        var eth = TopBarModuleRules.DescribeNetwork(true, false, "Ignored", 100, showWifiName: true);
+        Assert(eth is { Connected: true, IsWireless: false, Label: "以太网", Tooltip: "以太网" },
+            "有线连接不显示 Wi-Fi SSID");
+
+        // SSID 解码：合法 UTF-8 优先，非法 UTF-8（如 GBK 路由器广播）回退系统 ANSI 不出乱码。
+        var utf8Ssid = Encoding.UTF8.GetBytes("客厅WiFi");
+        var fallbackInvoked = false;
+        var decodedUtf8 = TopBarModuleRules.DecodeSsidBytes(utf8Ssid, _ => { fallbackInvoked = true; return "wrong"; });
+        Assert(decodedUtf8 == "客厅WiFi" && !fallbackInvoked, "合法 UTF-8 SSID 不应触发 ANSI 回退");
+
+        // "客厅WiFi" 的 GBK (CP936) 字节序列：客=BF CD，厅=CC FC，WiFi=57 69 46 69。
+        byte[] gbkSsid = [0xBF, 0xCD, 0xCC, 0xFC, 0x57, 0x69, 0x46, 0x69];
+        var decodedGbk = TopBarModuleRules.DecodeSsidBytes(gbkSsid, DecodeCodePage936);
+        Assert(decodedGbk == "客厅WiFi" && !decodedGbk.Contains('\uFFFD'),
+            "GBK 非 UTF-8 SSID 回退 CP936 解码后不应出乱码");
+        var decodedWithoutFallback = TopBarModuleRules.DecodeSsidBytes(gbkSsid, null);
+        Assert(decodedWithoutFallback is null, "缺少 ANSI 回退时非法 UTF-8 应安全返回 null 而非乱码");
         Assert(network is { Connected: false, Label: "未连接" }, "无可用接口为未连接");
 
         Assert(TopBarModuleRules.ExtractLanguageId(0x08040804) == 0x0804, "取 HKL 低字语言 ID");
@@ -432,6 +479,7 @@ public static class TopBarTests
         state.TopBar.FollowCardLook = false;
         state.TopBar.SurfaceColor = "#112233";
         state.TopBar.SurfaceOpacity = 0.5d;
+        state.TopBar.ShowWifiName = true;
         state.Dock.PinnedApps.Clear();
 
         var area = new ThemeArea(0, 0, 1920, 1040);
@@ -443,19 +491,22 @@ public static class TopBarTests
         Assert(!package.Bindings.TopBarFollowCardLook, "导出自定义外观");
         Assert(package.Bindings.TopBarSurfaceColor == "#112233", "导出自定义颜色");
 
-        // 主题不含显示器标识。
+        // 主题不含显示器标识与本机隐私开关 ShowWifiName。
         var json = JsonSerializer.Serialize(package);
         Assert(!json.Contains("DISPLAY"), "主题不携带显示器标识");
         Assert(!json.Contains(state.TopBar.MonitorDeviceName ?? "null-marker"), "无显示器名");
+        Assert(!json.Contains("ShowWifiName", StringComparison.OrdinalIgnoreCase), "主题不携带 ShowWifiName 本机设置");
 
         var target = new TopBarState();
         target.MonitorDeviceName = "\\\\.\\DISPLAY7";
+        target.ShowWifiName = false;
         ThemeRules.ApplyTopBar(package, target);
         Assert(target.IsEnabled, "导入顶栏开关");
         Assert(target.VisibilityMode == TopBarVisibilityMode.SmartHide, "导入显示方式");
         Assert(!TopBarRules.IsModuleOn(target.Modules, TopBarModuleKind.InputMethod), "导入模块开关");
         Assert(!target.Modules.TrayOverflow, "导入保留托盘入口开关");
         Assert(target.MonitorDeviceName == "\\\\.\\DISPLAY7", "导入不动显示器");
+        Assert(target.ShowWifiName == false, "导入不动本机 ShowWifiName 设置");
 
         // 旧主题（无顶栏字段）导入：关闭顶栏、保留本机模块开关。
         var legacy = JsonSerializer.SerializeToNode(package)!;
@@ -475,5 +526,24 @@ public static class TopBarTests
         Assert(
             package.Bindings.TopBarVisibility == TopBarVisibilityMode.ReserveTopEdge,
             "主题顶栏显示方式回退");
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern int MultiByteToWideChar(
+        uint codePage,
+        uint flags,
+        byte[] multiByteStr,
+        int multiByteLength,
+        [Out] char[]? wideCharStr,
+        int wideCharLength);
+
+    private static string? DecodeCodePage936(ReadOnlySpan<byte> bytes)
+    {
+        var raw = bytes.ToArray();
+        var needed = MultiByteToWideChar(936, 0, raw, raw.Length, null, 0);
+        if (needed <= 0) return null;
+        var chars = new char[needed];
+        var written = MultiByteToWideChar(936, 0, raw, raw.Length, chars, chars.Length);
+        return written > 0 ? new string(chars, 0, written) : null;
     }
 }

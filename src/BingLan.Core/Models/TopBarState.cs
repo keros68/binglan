@@ -100,6 +100,11 @@ public sealed class TopBarState
     /// never exported with a theme. Invalid or missing text falls back to the default.</summary>
     public string SearchHotkey { get; set; } = DefaultSearchHotkey;
 
+    /// <summary>Whether the network module shows the connected Wi-Fi SSID in the bar itself.
+    /// Machine-local and off by default (null or false) to avoid leaking network names during
+    /// screen recording or streaming; never exported with a theme.</summary>
+    public bool? ShowWifiName { get; set; }
+
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? ExtensionData { get; set; }
 }

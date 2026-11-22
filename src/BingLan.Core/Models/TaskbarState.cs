@@ -11,15 +11,29 @@ public enum TaskbarMode
     Blur
 }
 
+public enum TaskbarEdgeRevealMode
+{
+    AnyEdge,
+    CornersOnly,
+    Disabled
+}
+
 public sealed class TaskbarState
 {
     public TaskbarMode Mode { get; set; } = TaskbarMode.SystemDefault;
 
     /// <summary>
-    /// Whether an auto-hidden bottom taskbar appears only at the left and right ends of the
-    /// edge rather than anywhere along it.
+    /// Legacy boolean kept for Schema &lt;= 56 compatibility; mirrored from
+    /// <see cref="EdgeRevealMode"/> on load and update.
     /// </summary>
     public bool RevealOnlyAtCorners { get; set; }
+
+    /// <summary>
+    /// Controls where pointer contact along the bottom screen edge can reveal an
+    /// auto-hidden taskbar: anywhere along the edge, only near the left/right corners,
+    /// or nowhere (keyboard Win key / Dock start button still open it).
+    /// </summary>
+    public TaskbarEdgeRevealMode EdgeRevealMode { get; set; } = TaskbarEdgeRevealMode.AnyEdge;
 
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? ExtensionData { get; set; }

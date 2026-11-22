@@ -23,6 +23,7 @@ Run("未读数字角标的标题解析与上限", TestUnreadBadgeRules);
 Run("托盘驻留应用的唤回快捷键", TestTrayAppRevealRules);
 Run("Dock 内容尺寸边界", TestContentLengthBounds);
 Run("Dock 图标大小决定按钮与高度并被钳制", TestDockIconSize);
+Run("Dock 悬停余弦放大与设置规范化", TestDockHoverMagnification);
 Run("Dock 距底部高度默认等于原固定间距并被钳制", TestDockBottomGap);
 Run("Dock 隐藏把手几何：默认角位、钳制与左右展开锚定", TestDockHandleGeometry);
 Run("Dock 隐藏把手位置状态规范化", TestDockHandleState);
@@ -2264,6 +2265,94 @@ static void TestMenuDismissState()
             out _,
             out _),
         "指针在菜单外且前台切换到其他窗口时应立即收起菜单");
+}
+
+static void TestDockHoverMagnification()
+{
+    var state = new DockState();
+    Assert(!state.HoverMagnification, "悬停放大应默认关闭");
+    AssertEqual(DockState.DefaultHoverMagnificationScale, state.HoverMagnificationScale, "默认放大强度应为 1.5");
+
+    // 规范化钳制范围 [1.2, 1.7] 与非法值回退。
+    state.HoverMagnificationScale = 2.5d;
+    DockPinRules.Normalize(state);
+    AssertEqual(1.7d, state.HoverMagnificationScale, "超出上限的放大强度应钳制到 1.7");
+    state.HoverMagnificationScale = 0.8d;
+    DockPinRules.Normalize(state);
+    AssertEqual(1.2d, state.HoverMagnificationScale, "低于下限的放大强度应钳制到 1.2");
+    state.HoverMagnificationScale = double.NaN;
+    DockPinRules.Normalize(state);
+    AssertEqual(1.5d, state.HoverMagnificationScale, "NaN 放大强度应回退到默认值 1.5");
+
+    // 余弦衰减：中心最大、对称、单调递减、边界精确为 1.0。
+    const double radius = 140d;
+    var peak = DockMagnificationRules.ComputeScale(0d, radius, 1.5d);
+    var near = DockMagnificationRules.ComputeScale(35d, radius, 1.5d);
+    var mid = DockMagnificationRules.ComputeScale(70d, radius, 1.5d);
+    var far = DockMagnificationRules.ComputeScale(105d, radius, 1.5d);
+    var edge = DockMagnificationRules.ComputeScale(radius, radius, 1.5d);
+    var outside = DockMagnificationRules.ComputeScale(radius + 40d, radius, 1.5d);
+    var symmetric = DockMagnificationRules.ComputeScale(-35d, radius, 1.5d);
+    Assert(Math.Abs(peak - 1.5d) < 1e-6, "距离为 0 时应达到最大放大倍数");
+    Assert(Math.Abs(mid - 1.25d) < 1e-6, "半半径处余弦权重应为 0.5");
+    Assert(peak > near && near > mid && mid > far && far > 1d, "余弦衰减应随距离严格单调递减");
+    Assert(Math.Abs(near - symmetric) < 1e-6, "左右两侧距离对称");
+    AssertEqual(1d, edge, "影响半径边界处应精确回落到 1.0");
+    AssertEqual(1d, outside, "超出影响半径应保持 1.0");
+
+    // 动效档位与系统动画偏好：标准有缩放和位移，减弱缩短时长且零位移，关闭/系统关动画不放大。
+    AssertEqual(1.5d, DockMagnificationRules.EffectiveMaxScale(true, 1.5d, MotionLevel.Standard, true), "标准档允许放大");
+    AssertEqual(1.5d, DockMagnificationRules.EffectiveMaxScale(true, 1.5d, MotionLevel.Reduced, true), "减弱档允许放大");
+    AssertEqual(1d, DockMagnificationRules.EffectiveMaxScale(true, 1.5d, MotionLevel.Off, true), "关闭档不放大");
+    AssertEqual(1d, DockMagnificationRules.EffectiveMaxScale(true, 1.5d, MotionLevel.Standard, false), "系统关闭动画时不放大");
+    AssertEqual(1d, DockMagnificationRules.EffectiveMaxScale(false, 1.5d, MotionLevel.Standard, true), "开关关闭时不放大");
+
+    Assert(DockMagnificationRules.ComputeLiftDip(1.5d, 40d, MotionLevel.Standard) < 0d, "标准档应有向上位移");
+    AssertEqual(0d, DockMagnificationRules.ComputeLiftDip(1.5d, 40d, MotionLevel.Reduced), "减弱档不得产生位移");
+    AssertEqual(0d, DockMagnificationRules.ComputeLiftDip(1.5d, 40d, MotionLevel.Off), "关闭档不得产生位移");
+    Assert(DockMagnificationRules.SmoothingRatePerSecond(MotionLevel.Reduced)
+        > DockMagnificationRules.SmoothingRatePerSecond(MotionLevel.Standard),
+        "减弱档收敛速率应快于标准档");
+    Assert(DockMagnificationRules.ReturnDuration(MotionLevel.Reduced)
+        < DockMagnificationRules.ReturnDuration(MotionLevel.Standard),
+        "减弱档归位时长应短于标准档");
+
+    // 顶部溢出缓冲区计算：开启时覆盖放大增量 + 抬升，关闭时为 0。
+    var overflowStandard = DockMagnificationRules.RequiredTopOverflowDip(true, 1.7d, 64d, MotionLevel.Standard, true);
+    var overflowReduced = DockMagnificationRules.RequiredTopOverflowDip(true, 1.7d, 64d, MotionLevel.Reduced, true);
+    Assert(overflowStandard > (0.7d * 64d) && overflowStandard > overflowReduced, "标准档缓冲区应大于图标净增量且覆盖抬升");
+    AssertEqual(0d, DockMagnificationRules.RequiredTopOverflowDip(false, 1.7d, 64d, MotionLevel.Standard, true), "关闭时不应预留顶部缓冲区");
+    AssertEqual(0d, DockMagnificationRules.RequiredTopOverflowDip(true, 1.7d, 64d, MotionLevel.Off, true), "关闭动效时不应预留顶部缓冲区");
+
+    // 命中区域（SetWindowRgn）与玻璃背景窗边界：常态完全排除顶部预留区，放大时才临时放开 Dock 窗口区域。
+    var idleRegion = DockMagnificationRules.ComputeHitRegionRect(1425, 134, 44, isMagnificationActive: false, isMorphAnimating: false);
+    Assert(idleRegion is { Left: 0, Top: 44, Right: 1425, Bottom: 134, Height: 90 },
+        "常态下 Dock 命中区域必须排除顶部 44 px 预留区，仅覆盖 90 px 本体");
+    Assert(DockMagnificationRules.ComputeHitRegionRect(1425, 134, 44, isMagnificationActive: true, isMorphAnimating: false) is null,
+        "悬停放大进行中应放开窗口区域，避免裁切放大的图标");
+    Assert(DockMagnificationRules.ComputeHitRegionRect(1425, 134, 44, isMagnificationActive: false, isMorphAnimating: true) is null,
+        "形变动画期间不应限制窗口区域");
+    Assert(DockMagnificationRules.ComputeHitRegionRect(1425, 90, 0, isMagnificationActive: false, isMorphAnimating: false) is null,
+        "关闭放大无预留区时不应设置裁剪区域");
+
+    var fullWindow = new PixelRect(567, 1424, 1992, 1558);
+    var (backdropIdle, insetIdle) = DockMagnificationRules.ComputeBackdropSurfaceBounds(fullWindow, 44, isMorphAnimating: false);
+    AssertEqual(44, insetIdle, "玻璃背景窗口应向下缩进 44 px 以避让预留区");
+    Assert(backdropIdle == new PixelRect(567, 1468, 1992, 1558) && backdropIdle.Height == 90,
+        "玻璃背景窗口的屏幕边界必须严格落在 Dock 本体 90 px 内，不得覆盖上方预留区");
+    var (backdropMorph, insetMorph) = DockMagnificationRules.ComputeBackdropSurfaceBounds(fullWindow, 44, isMorphAnimating: true);
+    AssertEqual(0, insetMorph, "形变动画期间玻璃背景应保留完整包围盒");
+    Assert(backdropMorph == fullWindow, "形变动画期间玻璃背景边界不应缩进");
+
+    // 运行中切换放大开关（关→开 / 开→关）需要重置槽位并剥离残余动画时钟；已开启状态下调整倍率不打断当前悬停。
+    Assert(DockMagnificationRules.ShouldResetSlotsOnOverflowChange(0d, 44d),
+        "悬停放大从关闭切换到开启时必须重置槽位以清除普通悬停 Zoom 留下的动画时钟");
+    Assert(DockMagnificationRules.ShouldResetSlotsOnOverflowChange(44d, 0d),
+        "悬停放大从开启切换到关闭时必须重置槽位");
+    Assert(DockMagnificationRules.ShouldResetSlotsOnOverflowChange(0d, 0d),
+        "保持关闭时允许重置槽位");
+    Assert(!DockMagnificationRules.ShouldResetSlotsOnOverflowChange(44d, 52d),
+        "保持开启仅改变放大倍率或尺寸时不应中断当前悬停放大");
 }
 
 static void Assert(bool condition, string message)

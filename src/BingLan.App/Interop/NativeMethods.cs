@@ -243,6 +243,42 @@ internal static class NativeMethods
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool UnhookWinEvent(nint hook);
 
+    [DllImport("user32.dll")]
+    internal static extern int SetWindowRgn(nint window, nint region, [MarshalAs(UnmanagedType.Bool)] bool redraw);
+
+    [DllImport("gdi32.dll")]
+    internal static extern nint CreateRectRgn(int left, int top, int right, int bottom);
+
+    [DllImport("gdi32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool DeleteObject(nint handle);
+
+    /// <summary>
+    /// Restricts a Win32 window's region to <paramref name="localRegion"/>, or clears the region
+    /// when <paramref name="localRegion"/> is null. Safely frees the GDI region if Windows rejects it.
+    /// </summary>
+    internal static void ApplyWindowRegion(nint window, BingLan.Core.Dock.PixelRect? localRegion)
+    {
+        if (window == 0)
+        {
+            return;
+        }
+        if (localRegion is not { HasArea: true } rect)
+        {
+            SetWindowRgn(window, 0, true);
+            return;
+        }
+        var hrgn = CreateRectRgn(rect.Left, rect.Top, rect.Right, rect.Bottom);
+        if (hrgn == 0)
+        {
+            return;
+        }
+        if (SetWindowRgn(window, hrgn, true) == 0)
+        {
+            DeleteObject(hrgn);
+        }
+    }
+
     [DllImport("dwmapi.dll")]
     internal static extern int DwmExtendFrameIntoClientArea(
         nint window,

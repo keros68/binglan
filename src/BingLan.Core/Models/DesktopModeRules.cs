@@ -170,7 +170,7 @@ public static class DesktopModeRules
 
         if (topBar is not null && topBar.IsEnabled != (mode == DesktopMode.AppleStyle))
         {
-            differences.Add(topBar.IsEnabled ? "开启了顶端信息条" : "关闭了顶端信息条");
+            differences.Add(topBar.IsEnabled ? "开启了顶部信息条" : "关闭了顶部信息条");
             weight += 2;
             changed.TopBar = true;
         }

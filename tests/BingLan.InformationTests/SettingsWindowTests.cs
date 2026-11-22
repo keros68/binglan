@@ -326,26 +326,37 @@ internal static class SettingsWindowTests
         try
         {
             var navigation = Require<ListBox>(window, "SettingsNavigationList");
-            var tags = navigation.Items.OfType<ListBoxItem>()
-                .Select(item => item.Tag as string)
+            var groupHeaders = navigation.Items.OfType<ListBoxItem>()
+                .Where(item => item.Tag is null)
+                .Select(item => item.Content as string)
                 .ToList();
-            Assert(tags.SequenceEqual(["Scheme", "Appearance", "Components", "Launcher", "Bars", "General"]),
-                "导航应为桌面方案、外观样式、桌面组件、冰蓝总览卡、顶栏与底栏、通用设置");
+            Assert(groupHeaders.Count == 1 && groupHeaders.All(string.IsNullOrEmpty),
+                "导航只在通用设置前保留一条分隔线，不显示分组名称");
+
+            var tags = navigation.Items.OfType<ListBoxItem>()
+                .Where(item => item.Tag is string)
+                .Select(item => (string)item.Tag)
+                .ToList();
+            Assert(tags.SequenceEqual(["Scheme", "Components", "TopBar", "Dock", "Taskbar", "Launcher", "Appearance", "General"]),
+                "导航应依次为桌面方案、桌面卡片、顶部信息条、冰蓝 Dock、Windows 任务栏、冰蓝总览卡、外观样式、通用设置");
 
             navigation.SelectedItem = navigation.Items
                 .OfType<ListBoxItem>()
-                .First(item => (item.Tag as string) == "Bars");
+                .First(item => (item.Tag as string) == "Dock");
             Pump();
             Assert(Require<FrameworkElement>(window, "DockPage").IsVisible
                 && !Require<FrameworkElement>(window, "TopBarPage").IsVisible
                 && !Require<FrameworkElement>(window, "TaskbarPage").IsVisible,
-                "顶栏与底栏页默认只显示当前标签（冰蓝 Dock）");
+                "切换到冰蓝 Dock 页后应只显示 Dock 设置");
 
-            Require<RadioButton>(window, "BarsTabTopBarRadio").IsChecked = true;
+            navigation.SelectedItem = navigation.Items
+                .OfType<ListBoxItem>()
+                .First(item => (item.Tag as string) == "TopBar");
             Pump();
             Assert(Require<FrameworkElement>(window, "TopBarPage").IsVisible
-                && !Require<FrameworkElement>(window, "DockPage").IsVisible,
-                "切换到顶端信息条标签后只显示顶端信息条设置");
+                && !Require<FrameworkElement>(window, "DockPage").IsVisible
+                && !Require<FrameworkElement>(window, "TaskbarPage").IsVisible,
+                "切换到顶部信息条页后应只显示顶部信息条设置");
 
             var enabled = Require<CheckBox>(window, "TopBarEnabledCheckBox");
             Assert(enabled.IsChecked == false, "顶端信息条默认关闭");
@@ -373,7 +384,7 @@ internal static class SettingsWindowTests
             Assert(topBar.VisibilityMode == TopBarVisibilityMode.SmartHide, "显示方式应写入状态");
 
             var topBarAdvanced = Require<Expander>(window, "TopBarAdvancedFold");
-            Assert(!topBarAdvanced.IsExpanded, "顶端信息条高度与外观默认收起");
+            Assert(!topBarAdvanced.IsExpanded, "顶端信息条高度默认收起");
             topBarAdvanced.IsExpanded = true;
             Pump();
 
@@ -382,7 +393,15 @@ internal static class SettingsWindowTests
             Pump();
             Assert(Math.Abs(topBar.Height - 40d) < 0.001d, "高度应写入状态");
 
+            var topBarLookSummary = Require<SettingsRow>(window, "TopBarLookSummaryRow");
+            Assert(topBarLookSummary.Header == "外观：跟随全局", "顶部信息条页应显示外观跟随全局单行摘要");
+            Click(Require<Button>(window, "TopBarLookJumpButton"));
+            Assert(Require<FrameworkElement>(window, "AppearancePage").IsVisible
+                && Require<FrameworkElement>(window, "AppearanceTopBarPartEditor").IsVisible,
+                "点击顶部信息条页去调整应跳到外观样式页并展开顶部信息条行");
+
             var frosted = Require<CheckBox>(window, "TopBarFrostedCheckBox");
+            Assert(frosted.IsVisible, "展开顶部信息条行后应显示磨砂玻璃开关");
             frosted.IsChecked = false;
             Pump();
             Assert(!topBar.FrostedGlass, "磨砂开关应写入状态");
@@ -390,6 +409,12 @@ internal static class SettingsWindowTests
             Require<RadioButton>(window, "TopBarCustomLookRadio").IsChecked = true;
             Pump();
             Assert(!topBar.FollowCardLook, "自定义外观应写入状态");
+            Assert(topBarLookSummary.Header == "外观：已自定义", "自定义后顶部信息条页摘要应同步更新为已自定义");
+
+            navigation.SelectedItem = navigation.Items
+                .OfType<ListBoxItem>()
+                .First(item => (item.Tag as string) == "TopBar");
+            Pump();
 
             var moduleGrid = Require<System.Windows.Controls.Primitives.UniformGrid>(window, "TopBarModulesPanel");
             foreach (var width in new[] { 900d, 1168d, 1600d })
@@ -433,11 +458,14 @@ internal static class SettingsWindowTests
             backdropCombo.SelectedIndex = 2;
             Pump();
             Assert(backdropMode == LauncherBackdropMode.ShowDesktop, "总览卡背景方式应支持弹出时切到桌面");
-            var launcherLook = Require<Expander>(window, "LauncherLookSection");
-            Assert(!launcherLook.IsExpanded, "冰蓝总览卡外观与材质默认收起");
-            launcherLook.IsExpanded = true;
-            Pump();
-            Assert(Require<RadioButton>(window, "LauncherFollowLookRadio").IsVisible, "展开后应显示冰蓝总览卡外观设置");
+            var launcherLookSummary = Require<SettingsRow>(window, "LauncherLookSummaryRow");
+            Assert(launcherLookSummary.Header == "外观：跟随全局", "冰蓝总览卡页应显示外观跟随全局单行摘要");
+            Click(Require<Button>(window, "LauncherLookJumpButton"));
+            Assert(Require<FrameworkElement>(window, "AppearancePage").IsVisible
+                && Require<FrameworkElement>(window, "AppearanceLauncherPartEditor").IsVisible
+                && !Require<FrameworkElement>(window, "AppearanceTopBarPartEditor").IsVisible
+                && Require<RadioButton>(window, "LauncherFollowLookRadio").IsVisible,
+                "点击冰蓝总览卡页去调整应跳到外观样式页并互斥展开冰蓝总览卡外观设置");
         }
         finally
         {

@@ -124,11 +124,11 @@ internal static class SettingsPalette
         target["SettingsMapWallpaperBrush"] = highContrast
             ? SystemColors.WindowBrush
             : Gradient(dark ? "#2D628F" : "#8EC5EA", dark ? "#0A1729" : "#27486E");
-        // A soft offset band stands in for a drop shadow: the process renders in software,
-        // where blur effects are re-rasterised on every scroll and hover.
+        // Cards are separated by a 1 px border only; the lift band stays transparent outside
+        // high contrast, where a solid band keeps the card edge visible.
         target["SettingsLiftShadowBrush"] = highContrast
             ? SystemColors.WindowBrush
-            : Solid(Parse(dark ? "#59000000" : "#14102440"));
+            : Brushes.Transparent;
     }
 
     private static Brush SystemBrush(HighContrast system) => system switch

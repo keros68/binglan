@@ -24,7 +24,9 @@ public sealed partial class WidgetCoordinator
     private DateTimeOffset _launcherAppsAt;
     private bool _launcherWarmupQueued;
 
-    internal void ToggleLauncherPanel()
+    internal void ToggleLauncherPanel() => ToggleLauncherPanelForTab(targetTab: null);
+
+    internal void ToggleLauncherPanelForTab(LauncherMainTab? targetTab)
     {
         if (_isExiting || _exitRequested || !_state.LauncherEnabled)
         {
@@ -32,6 +34,11 @@ public sealed partial class WidgetCoordinator
         }
         if (_launcherPanel is { } open)
         {
+            if (targetTab == LauncherMainTab.Files && !open.IsAtFilesCommonPlaces)
+            {
+                open.NavigateToFilesCommonPlaces();
+                return;
+            }
             open.Dismiss(restoreForeground: true);
             return;
         }
@@ -62,7 +69,7 @@ public sealed partial class WidgetCoordinator
             ReadLauncherSnapshotAsync, OpenLauncherTarget, ReadLauncherFileBoxes,
             SendLauncherPathToFileBoxAsync, foreground, monitor, _state.LauncherAppearance, _state.Style,
             PinLauncherEntry, () => _state.LauncherGroups, ScheduleSave, () => _state.LauncherAppCategoryOverrides,
-            _state.LauncherPreferences, unpinFromDock: UnpinLauncherEntry);
+            _state.LauncherPreferences, unpinFromDock: UnpinLauncherEntry, initialTab: targetTab);
         _launcherPanel = panel;
         panel.Closed += (_, _) =>
         {
@@ -235,11 +242,11 @@ public sealed partial class WidgetCoordinator
         var box = _windows.OfType<FileBoxWindow>().FirstOrDefault(window => window.State.Id == id);
         if (box is null || !_state.FileBoxes.Any(item => item.Id == id))
         {
-            return "该分组盒已移除。";
+            return "该文件收纳盒已移除。";
         }
 
         var status = await box.AddMappingsWithStatusAsync([path]);
-        return _state.FileBoxes.Any(item => item.Id == id) ? status : "该分组盒已移除。";
+        return _state.FileBoxes.Any(item => item.Id == id) ? status : "该文件收纳盒已移除。";
     }
 
     private async void OpenLauncherTarget(LauncherPanelEntry entry, bool locate)

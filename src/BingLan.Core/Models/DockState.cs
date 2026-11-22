@@ -61,6 +61,9 @@ public sealed class DockState
     public const double MinimumBottomGapDip = 0d;
     public const double MaximumBottomGapDip = 64d;
     public const double DefaultBottomGapDip = DockLayoutMetrics.EdgeGapDip;
+    public const double MinimumHoverMagnificationScale = 1.2d;
+    public const double MaximumHoverMagnificationScale = 1.7d;
+    public const double DefaultHoverMagnificationScale = 1.5d;
     public const string DefaultSurfaceColor = "#EAF5FC";
     public const double DefaultSurfaceOpacity = 0.84d;
 
@@ -100,6 +103,15 @@ public sealed class DockState
 
     /// <summary>Gap between the dock's bottom edge and the work-area bottom, in DIPs.</summary>
     public double BottomGapDip { get; set; } = DefaultBottomGapDip;
+
+    /// <summary>
+    /// Whether hovering over the dock applies macOS-style cosine-falloff magnification across
+    /// nearby icons. Off by default; respects motion level and OS animation settings.
+    /// </summary>
+    public bool HoverMagnification { get; set; }
+
+    /// <summary>Peak magnification factor (1.2–1.7, default 1.5) when hover magnification is on.</summary>
+    public double HoverMagnificationScale { get; set; } = DefaultHoverMagnificationScale;
 
     /// <summary>
     /// Whether a reserved dock releases its work-area strip while a window is

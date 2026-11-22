@@ -80,7 +80,11 @@ public partial class FileBoxWindow : WidgetWindowBase
         DragEnter += (_, e) =>
         {
             _externalDragOver = true;
-            if (State.IsCollapsed && e.Data.GetDataPresent(System.Windows.DataFormats.FileDrop))
+            if (IsEdgeDocked && !IsEdgeDockExpanded && e.Data.GetDataPresent(System.Windows.DataFormats.FileDrop))
+            {
+                EdgeDockFileDragNear?.Invoke(this);
+            }
+            else if (State.IsCollapsed && e.Data.GetDataPresent(System.Windows.DataFormats.FileDrop))
             {
                 _dragExpandTimer.Stop();
                 _dragExpandTimer.Start();
@@ -112,6 +116,163 @@ public partial class FileBoxWindow : WidgetWindowBase
     internal bool InitialProbeCompleted { get; private set; }
 
     internal bool IsAutoCollapseTimerRunning => _autoCollapseTimer.IsEnabled;
+
+    internal bool IsEdgeDocked => State.EdgeDockSide is not null;
+
+    internal bool IsEdgeDockExpanded { get; private set; }
+
+    internal bool IsEdgeDockInteractionBusy =>
+        IsTitleEditing
+        || HasOpenContextMenu()
+        || _modalDialogDepth > 0
+        || _isTileOrFileDragActive
+        || _externalDragOver
+        || IsDraggingOrResizing;
+
+    internal event Action<FileBoxWindow, bool>? EdgeDockToggled;
+
+    internal event Action<FileBoxWindow>? EdgeDockFileDragNear;
+
+    protected override void PopulateContextMenu(System.Windows.Controls.ContextMenu menu)
+    {
+        var edgeDock = new System.Windows.Controls.MenuItem
+        {
+            Header = "贴边隐藏",
+            IsCheckable = true
+        };
+        edgeDock.Click += (_, _) => EdgeDockToggled?.Invoke(this, edgeDock.IsChecked);
+        menu.Opened += (_, _) => edgeDock.IsChecked = IsEdgeDocked;
+        menu.Items.Add(edgeDock);
+    }
+
+    protected override bool SuppressLayeredClip => IsEdgeDocked && !IsEdgeDockExpanded;
+
+    protected override bool IsHitTestPointInside(System.Windows.Point point)
+    {
+        if (IsEdgeDocked && !IsEdgeDockExpanded && State.EdgeDockSide is { } side)
+        {
+            var width = ActualWidth;
+            var height = ActualHeight;
+            if (point.Y < 0d || point.Y > height || width <= 0d || height <= 0d)
+            {
+                return false;
+            }
+            var strip = Math.Min(FileBoxEdgeDockRules.VisibleTabWidthDip, width);
+            return side == FileBoxEdgeDockSide.Left
+                ? point.X >= 0d && point.X <= strip
+                : point.X >= width - strip && point.X <= width;
+        }
+        return base.IsHitTestPointInside(point);
+    }
+
+    internal void EnterEdgeDockedHiddenVisual(FileBoxEdgeDockSide side, BingLan.Core.Dock.PixelRect tabBounds)
+    {
+        IsEdgeDockExpanded = false;
+        _autoCollapseTimer.Stop();
+        EdgeDockSlideTransform.BeginAnimation(System.Windows.Media.TranslateTransform.XProperty, null);
+        EdgeDockSlideTransform.X = 0;
+        BodySurface.BeginAnimation(OpacityProperty, null);
+        BodySurface.Opacity = 1;
+        BodySurface.Visibility = Visibility.Collapsed;
+        BoxLayout.Visibility = Visibility.Collapsed;
+        EdgeDockTab.Width = FileBoxEdgeDockRules.VisibleTabWidthDip;
+        EdgeDockTab.HorizontalAlignment = side == FileBoxEdgeDockSide.Left
+            ? System.Windows.HorizontalAlignment.Left
+            : System.Windows.HorizontalAlignment.Right;
+        EdgeDockTab.CornerRadius = side == FileBoxEdgeDockSide.Left
+            ? new CornerRadius(0, 3, 3, 0)
+            : new CornerRadius(3, 0, 0, 3);
+        RefreshEdgeDockTabToolTip();
+        EdgeDockTab.Visibility = Visibility.Visible;
+        MinWidth = FileBoxEdgeDockRules.VisibleTabWidthDip;
+        MinHeight = 32;
+        // Clear any collapsed title-bar MaxHeight (48 DIP) so a newly docked collapsed box
+        // immediately takes the full rule-computed tab height matching its trigger zone.
+        MaxHeight = double.PositiveInfinity;
+        RefreshLayeredClip();
+        UpdateEdgeDockPosition(tabBounds);
+    }
+
+    internal void EnterEdgeDockedExpandedVisual(FileBoxEdgeDockSide side, BingLan.Core.Dock.PixelRect expandedBounds, bool animate)
+    {
+        IsEdgeDockExpanded = true;
+        _autoCollapseTimer.Stop();
+        if (State.IsCollapsed)
+        {
+            SetCollapsed(false, animate: false);
+        }
+        EdgeDockTab.Visibility = Visibility.Collapsed;
+        BodySurface.Visibility = Visibility.Visible;
+        BoxLayout.Visibility = Visibility.Visible;
+        MinWidth = FileBoxEdgeDockRules.MinExpandedWidthDip;
+        MinHeight = FileBoxEdgeDockRules.MinExpandedHeightDip;
+        UpdateEdgeDockPosition(expandedBounds);
+        RefreshLayeredClip();
+
+        EdgeDockSlideTransform.BeginAnimation(System.Windows.Media.TranslateTransform.XProperty, null);
+        BodySurface.BeginAnimation(OpacityProperty, null);
+        if (!animate || CardMotionAnimator.Motion == MotionLevel.Off)
+        {
+            EdgeDockSlideTransform.X = 0;
+            BodySurface.Opacity = 1;
+            return;
+        }
+
+        if (CardMotionAnimator.Motion == MotionLevel.Reduced)
+        {
+            EdgeDockSlideTransform.X = 0;
+            var fade = new System.Windows.Media.Animation.DoubleAnimation(0.25, 1d, TimeSpan.FromMilliseconds(90));
+            BodySurface.BeginAnimation(OpacityProperty, fade);
+            return;
+        }
+
+        var fromX = side == FileBoxEdgeDockSide.Left ? -28d : 28d;
+        var slide = new System.Windows.Media.Animation.DoubleAnimation(fromX, 0d, TimeSpan.FromMilliseconds(150))
+        {
+            EasingFunction = new System.Windows.Media.Animation.QuadraticEase
+            {
+                EasingMode = System.Windows.Media.Animation.EasingMode.EaseOut
+            }
+        };
+        EdgeDockSlideTransform.BeginAnimation(System.Windows.Media.TranslateTransform.XProperty, slide);
+        BodySurface.Opacity = 1;
+    }
+
+    internal void ExitEdgeDockedVisual(BingLan.Core.Dock.PixelRect restoredBounds)
+    {
+        IsEdgeDockExpanded = false;
+        EdgeDockSlideTransform.BeginAnimation(System.Windows.Media.TranslateTransform.XProperty, null);
+        EdgeDockSlideTransform.X = 0;
+        BodySurface.BeginAnimation(OpacityProperty, null);
+        BodySurface.Opacity = 1;
+        EdgeDockTab.Visibility = Visibility.Collapsed;
+        BodySurface.Visibility = Visibility.Visible;
+        BoxLayout.Visibility = Visibility.Visible;
+        MinWidth = FileBoxEdgeDockRules.MinExpandedWidthDip;
+        MinHeight = State.IsCollapsed ? CollapsedHeight : FileBoxEdgeDockRules.MinExpandedHeightDip;
+        MaxHeight = State.IsCollapsed ? CollapsedHeight : double.PositiveInfinity;
+        // Crossing to a monitor with different DPI triggers WM_DPICHANGED resizing on the first
+        // move; a second pass locks the exact restored size.
+        UpdateEdgeDockPosition(restoredBounds);
+        UpdateEdgeDockPosition(restoredBounds);
+        RefreshLayeredClip();
+        RefreshAutoCollapseTimer();
+    }
+
+    internal void UpdateEdgeDockPosition(BingLan.Core.Dock.PixelRect bounds)
+    {
+        if (WindowHandle is var handle && handle != 0 && bounds.HasArea)
+        {
+            BingLan.App.Interop.NativeMethods.SetWindowPos(
+                handle,
+                0,
+                bounds.Left,
+                bounds.Top,
+                bounds.Width,
+                bounds.Height,
+                BingLan.App.Interop.NativeMethods.SwpNoZOrder | BingLan.App.Interop.NativeMethods.SwpNoActivate);
+        }
+    }
 
     public void SetAutoCollapse(bool enabled)
     {
@@ -235,19 +396,66 @@ public partial class FileBoxWindow : WidgetWindowBase
 
     internal void AssignDesktopCategory(DesktopGroupCategory category, string title)
     {
+        var previous = State.Title;
         State.DesktopCategory = category;
         State.Title = title;
         TitleEditor.Text = title;
+        RefreshEdgeDockTabToolTip();
         NotifyStateChanged();
+        if (!string.Equals(previous, State.Title, StringComparison.Ordinal))
+        {
+            NotifyTitleChanged();
+        }
     }
 
     protected override System.Windows.Controls.TextBox? TitleEditorBox => TitleEditor;
 
+    private void RefreshEdgeDockTabToolTip()
+    {
+        if (EdgeDockTab is not null)
+        {
+            EdgeDockTab.ToolTip = FileBoxEdgeDockRules.FormatTabToolTip(State.Title);
+        }
+    }
+
+    private IEnumerable<string> GetOtherFileBoxTitles() =>
+        SameKindOtherTitles?.Invoke() ?? OtherBoxes().Select(other => other.State.Title);
+
+    public override bool ApplyWidgetTitle(string? title, IEnumerable<string>? otherSameKindTitles = null)
+    {
+        var committed = WidgetTitleRules.CommitUniqueTitle(
+            title,
+            EditableWidgetTitleKind.FileBox,
+            otherSameKindTitles ?? GetOtherFileBoxTitles());
+        var changed = !string.Equals(State.Title, committed, StringComparison.Ordinal);
+        State.Title = committed;
+        if (!string.Equals(TitleEditor.Text, committed, StringComparison.Ordinal))
+        {
+            TitleEditor.Text = committed;
+        }
+        RefreshEdgeDockTabToolTip();
+        if (changed)
+        {
+            NotifyStateChanged();
+            NotifyTitleChanged();
+        }
+        return changed;
+    }
+
     protected override void CommitTitleEdit()
     {
-        State.Title = string.IsNullOrWhiteSpace(TitleEditor.Text) ? "桌面分组" : TitleEditor.Text.Trim();
+        var previous = State.Title;
+        State.Title = WidgetTitleRules.CommitUniqueTitle(
+            TitleEditor.Text,
+            EditableWidgetTitleKind.FileBox,
+            GetOtherFileBoxTitles());
         TitleEditor.Text = State.Title;
+        RefreshEdgeDockTabToolTip();
         NotifyStateChanged();
+        if (!string.Equals(previous, State.Title, StringComparison.Ordinal))
+        {
+            NotifyTitleChanged();
+        }
     }
 
     protected override void OnLockChanged(bool locked)
@@ -286,7 +494,7 @@ public partial class FileBoxWindow : WidgetWindowBase
         }
         State.IsCollapsed = collapsed;
         CollapseButton.Content = collapsed ? "\uE70D" : "\uE70E";
-        CollapseButton.ToolTip = collapsed ? "展开分组盒" : "折叠成标题条";
+        CollapseButton.ToolTip = collapsed ? "展开文件收纳盒" : "折叠成标题条";
         AddButton.Visibility = collapsed ? Visibility.Collapsed : Visibility.Visible;
         SortButton.Visibility = collapsed ? Visibility.Collapsed : Visibility.Visible;
         CollapsedSummaryText.Visibility = collapsed ? Visibility.Visible : Visibility.Collapsed;
@@ -381,7 +589,7 @@ public partial class FileBoxWindow : WidgetWindowBase
     {
         var dialog = new WpfOpenFileDialog
         {
-            Title = "选择要映射到桌面分组盒的文件",
+            Title = "选择要映射到文件收纳盒的文件",
             CheckFileExists = true,
             Multiselect = true
         };
@@ -395,7 +603,7 @@ public partial class FileBoxWindow : WidgetWindowBase
     {
         var dialog = new WpfOpenFolderDialog
         {
-            Title = "选择要映射到桌面分组盒的文件夹"
+            Title = "选择要映射到文件收纳盒的文件夹"
         };
         if (RunModalInteraction(() => dialog.ShowDialog(this) == true))
         {
@@ -456,10 +664,13 @@ public partial class FileBoxWindow : WidgetWindowBase
 
     public void CaptureState()
     {
-        CopyPlacementTo(State.Placement);
-        if (State.IsCollapsed)
+        if (!IsEdgeDocked)
         {
-            State.Placement.Height = CollapsedHeight;
+            CopyPlacementTo(State.Placement);
+            if (State.IsCollapsed)
+            {
+                State.Placement.Height = CollapsedHeight;
+            }
         }
         State.CornerRadius = WidgetCornerRadius;
         State.Items = _items.Select(x => x.Mapping).ToList();
@@ -832,7 +1043,7 @@ public partial class FileBoxWindow : WidgetWindowBase
             {
                 item.Visibility = locationVisibility;
             }
-            else if (Equals(item.Header, "转移到其他分组盒"))
+            else if (Equals(item.Header, "转移到其他文件收纳盒"))
             {
                 var others = OtherBoxes();
                 item.Items.Clear();
@@ -1604,7 +1815,7 @@ public partial class FileBoxWindow : WidgetWindowBase
         var skipped = invalid > 0 ? $"{invalid} 项路径无效，已跳过" : string.Empty;
         StatusText.Text = added > 0
             ? skipped.Length > 0 ? $"已新增 {added} 项；{skipped}" : $"已新增 {added} 项"
-            : skipped.Length > 0 && invalid == total ? skipped : "这些项目已经在分组盒中" + (skipped.Length > 0 ? $"；{skipped}" : string.Empty);
+            : skipped.Length > 0 && invalid == total ? skipped : "这些项目已经在文件收纳盒中" + (skipped.Length > 0 ? $"；{skipped}" : string.Empty);
         return StatusText.Text;
     }
 
@@ -1818,6 +2029,11 @@ public partial class FileBoxWindow : WidgetWindowBase
 
     private void RefreshAutoCollapseTimer()
     {
+        if (IsEdgeDocked)
+        {
+            _autoCollapseTimer.Stop();
+            return;
+        }
         var shouldRun = FileBoxAutoCollapseRules.ShouldRunCountdown(
             State.AutoCollapse,
             State.IsCollapsed,

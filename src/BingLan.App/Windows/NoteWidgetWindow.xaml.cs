@@ -21,6 +21,7 @@ public partial class NoteWidgetWindow : WidgetWindowBase
 
     private readonly DispatcherTimer _changeTimer;
     private bool _isApplyingTypography;
+    private bool _isSyncingTitle;
 
     public NoteWidgetWindow(NoteWidgetState state)
     {
@@ -48,8 +49,13 @@ public partial class NoteWidgetWindow : WidgetWindowBase
         _changeTimer.Tick += (_, _) =>
         {
             _changeTimer.Stop();
+            var previousTitle = State.Title;
             CommitEditors();
             NotifyStateChanged();
+            if (!string.Equals(previousTitle, State.Title, StringComparison.Ordinal))
+            {
+                NotifyTitleChanged();
+            }
         };
     }
 
@@ -57,10 +63,51 @@ public partial class NoteWidgetWindow : WidgetWindowBase
 
     protected override System.Windows.Controls.TextBox? TitleEditorBox => TitleEditor;
 
+    public override bool ApplyWidgetTitle(string? title, IEnumerable<string>? otherSameKindTitles = null)
+    {
+        var committed = WidgetTitleRules.CommitUniqueTitle(
+            title,
+            EditableWidgetTitleKind.Note,
+            otherSameKindTitles ?? SameKindOtherTitles?.Invoke());
+        var changed = !string.Equals(State.Title, committed, StringComparison.Ordinal);
+        State.Title = committed;
+        if (!string.Equals(TitleEditor.Text, committed, StringComparison.Ordinal))
+        {
+            _isSyncingTitle = true;
+            try
+            {
+                TitleEditor.Text = committed;
+            }
+            finally
+            {
+                _isSyncingTitle = false;
+            }
+        }
+        if (changed)
+        {
+            NotifyStateChanged();
+            NotifyTitleChanged();
+        }
+        return changed;
+    }
+
     protected override void CommitTitleEdit()
     {
+        var previousTitle = State.Title;
         CommitNow();
-        TitleEditor.Text = State.Title;
+        _isSyncingTitle = true;
+        try
+        {
+            TitleEditor.Text = State.Title;
+        }
+        finally
+        {
+            _isSyncingTitle = false;
+        }
+        if (!string.Equals(previousTitle, State.Title, StringComparison.Ordinal))
+        {
+            NotifyTitleChanged();
+        }
     }
 
     protected override void OnLockChanged(bool locked) => State.IsLocked = locked;
@@ -80,7 +127,7 @@ public partial class NoteWidgetWindow : WidgetWindowBase
 
     private void CommitEditors()
     {
-        NoteService.CommitTitle(State, TitleEditor.Text);
+        NoteService.CommitTitle(State, TitleEditor.Text, SameKindOtherTitles?.Invoke());
         NoteService.CommitContent(State, BodyEditor.Text);
     }
 
@@ -106,7 +153,7 @@ public partial class NoteWidgetWindow : WidgetWindowBase
 
     private void TitleEditor_TextChanged(object sender, TextChangedEventArgs e)
     {
-        if (IsLoaded)
+        if (IsLoaded && !_isSyncingTitle)
         {
             ScheduleChangeNotification();
         }

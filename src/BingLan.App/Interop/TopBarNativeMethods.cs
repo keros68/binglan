@@ -89,4 +89,118 @@ internal static class TopBarNativeMethods
     /// it and close it right away.
     /// </summary>
     internal static void ConsumeMouseButtonDown(int key) => GetAsyncKeyState(key);
+
+    // Native Wi-Fi (wlanapi.dll) read-only query for active SSID and signal quality.
+    internal const uint WlanClientVersionVista = 2;
+    internal const int WlanInterfaceStateConnected = 1;
+    internal const int WlanIntfOpcodeCurrentConnection = 7;
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    internal struct WlanInterfaceInfo
+    {
+        internal Guid InterfaceGuid;
+
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 256)]
+        internal string InterfaceDescription;
+
+        internal int State;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct Dot11Ssid
+    {
+        internal uint SsidLength;
+
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 32)]
+        internal byte[] Ssid;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct WlanAssociationAttributes
+    {
+        internal Dot11Ssid Dot11Ssid;
+        internal int Dot11BssType;
+
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 6)]
+        internal byte[] Dot11Bssid;
+
+        internal int Dot11PhyType;
+        internal uint Dot11PhyIndex;
+        internal uint WlanSignalQuality;
+        internal uint RxRate;
+        internal uint TxRate;
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    internal struct WlanConnectionAttributes
+    {
+        internal int State;
+        internal int ConnectionMode;
+
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 256)]
+        internal string ProfileName;
+
+        internal WlanAssociationAttributes AssociationAttributes;
+    }
+
+    [DllImport("wlanapi.dll")]
+    internal static extern uint WlanOpenHandle(
+        uint clientVersion,
+        nint reserved,
+        out uint negotiatedVersion,
+        out nint clientHandle);
+
+    [DllImport("wlanapi.dll")]
+    internal static extern uint WlanCloseHandle(nint clientHandle, nint reserved);
+
+    [DllImport("wlanapi.dll")]
+    internal static extern uint WlanEnumInterfaces(
+        nint clientHandle,
+        nint reserved,
+        out nint interfaceList);
+
+    [DllImport("wlanapi.dll")]
+    internal static extern uint WlanQueryInterface(
+        nint clientHandle,
+        ref Guid interfaceGuid,
+        int opCode,
+        nint reserved,
+        out uint dataSize,
+        out nint data,
+        nint opcodeValueType);
+
+    [DllImport("wlanapi.dll")]
+    internal static extern void WlanFreeMemory(nint memory);
+
+    private const uint CpAcp = 0;
+
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern int MultiByteToWideChar(
+        uint codePage,
+        uint flags,
+        byte[] multiByteStr,
+        int multiByteLength,
+        [Out] char[]? wideCharStr,
+        int wideCharLength);
+
+    /// <summary>
+    /// Decodes non-UTF-8 bytes using the current Windows system ANSI code page (e.g. GBK /
+    /// CP936 on Simplified Chinese Windows) without requiring external encoding packages.
+    /// </summary>
+    internal static string? DecodeSystemAnsi(ReadOnlySpan<byte> bytes)
+    {
+        if (bytes.IsEmpty)
+        {
+            return null;
+        }
+        var buffer = bytes.ToArray();
+        var needed = MultiByteToWideChar(CpAcp, 0, buffer, buffer.Length, null, 0);
+        if (needed <= 0)
+        {
+            return null;
+        }
+        var chars = new char[needed];
+        var written = MultiByteToWideChar(CpAcp, 0, buffer, buffer.Length, chars, chars.Length);
+        return written > 0 ? new string(chars, 0, written) : null;
+    }
 }

@@ -1,6 +1,7 @@
 using System.Text.Json;
 using BingLan.Core.Models;
 using BingLan.Core.Services;
+using BingLan.Core.Themes;
 using BingLan.Core.TopBar;
 
 namespace BingLan.SmokeTests;
@@ -20,28 +21,73 @@ internal static class QuickAccessAndHotkeysTests
     {
         var state = new GlobalHotkeysState();
         GlobalHotkeyRules.Normalize(state);
+        Assert((int)GlobalHotkeyKind.Launcher == 0
+            && (int)GlobalHotkeyKind.PeekFileBoxes == 1
+            && (int)GlobalHotkeyKind.ToggleWidgets == 2
+            && (int)GlobalHotkeyKind.QuickTodo == 3
+            && (int)GlobalHotkeyKind.ToggleDesktopIcons == 4
+            && (int)GlobalHotkeyKind.LauncherFiles == 5,
+            "新增 LauncherFiles 必须追加在末尾且不改变 0–4 编号");
         Assert(state.Launcher == "Ctrl+Alt+F", "默认总览卡热键为 Ctrl+Alt+F");
         Assert(state.PeekFileBoxes == "Ctrl+Alt+Space", "默认速览分组盒热键为 Ctrl+Alt+Space");
         Assert(state.ToggleWidgets == string.Empty
             && state.QuickTodo == string.Empty
-            && state.ToggleDesktopIcons == string.Empty, "其余热键默认留空");
+            && state.ToggleDesktopIcons == string.Empty
+            && state.LauncherFiles == string.Empty, "其余热键（含常用文件夹）默认留空");
 
-        // Internal conflict check detects another slot holding the same combination.
+        // Invalid text on LauncherFiles normalizes back to empty string.
+        state.LauncherFiles = "NotAValidKey";
+        GlobalHotkeyRules.Normalize(state);
+        Assert(state.LauncherFiles == string.Empty, "常用文件夹非法热键规范化后应回退为空");
+
+        // Internal conflict check detects another slot holding the same combination, and
+        // registered-map conflict distinguishes BingLan's own slots from other programs.
+        Assert(GlobalHotkeyRules.FindInternalConflict(state, GlobalHotkeyKind.LauncherFiles, "ctrl+alt+f") == GlobalHotkeyKind.Launcher,
+            "常用文件夹与总览卡使用同组合键应判为内部冲突");
         Assert(GlobalHotkeyRules.FindInternalConflict(state, GlobalHotkeyKind.QuickTodo, "ctrl+alt+f") == GlobalHotkeyKind.Launcher,
             "应检测到与总览卡热键的内部冲突");
         Assert(GlobalHotkeyRules.FindInternalConflict(state, GlobalHotkeyKind.Launcher, "Ctrl+Alt+F") is null,
             "重新录制同一槽位的原热键不算冲突");
 
+        var registered = new Dictionary<GlobalHotkeyKind, string>
+        {
+            [GlobalHotkeyKind.Launcher] = "Ctrl+Alt+F",
+            [GlobalHotkeyKind.PeekFileBoxes] = "Ctrl+Alt+Space"
+        };
+        var regConflict = GlobalHotkeyRules.FindRegisteredConflict(registered, GlobalHotkeyKind.LauncherFiles, "ctrl+alt+f");
+        Assert(regConflict == GlobalHotkeyKind.Launcher, "已登记热键表应识别为冰蓝自身占用");
+        var bingLanProbe = GlobalHotkeyProbeResult.OwnedByBingLan(regConflict!.Value);
+        Assert(bingLanProbe.ConflictSource == GlobalHotkeyConflictSource.BingLan
+            && GlobalHotkeyRules.FormatConflictHint(bingLanProbe) == "已被冰蓝的‘打开或收起冰蓝总览卡’使用",
+            "冰蓝自身冲突提示文案应明确指出冲突项");
+        Assert(GlobalHotkeyRules.DisplayName(GlobalHotkeyKind.PeekFileBoxes) == "临时浮起文件收纳盒",
+            "文件收纳盒浮起快捷键显示名应使用通俗术语");
+        Assert(GlobalHotkeyRules.FormatConflictHint(GlobalHotkeyProbeResult.OwnedByOtherProgram) == "已被其他程序占用",
+            "外部程序占用提示文案应独立区分");
+        Assert(GlobalHotkeyRules.FindRegisteredConflict(registered, GlobalHotkeyKind.Launcher, "Ctrl+Alt+F") is null,
+            "重录同一槽位已登记热键不构成冲突");
+
         // Duplicate slots in state are deduplicated in enum order (earlier slot wins).
         state.ToggleWidgets = "Ctrl+Alt+Space";
+        state.LauncherFiles = "Ctrl+Alt+F";
         GlobalHotkeyRules.Normalize(state);
-        Assert(state.PeekFileBoxes == "Ctrl+Alt+Space" && state.ToggleWidgets == string.Empty,
+        Assert(state.PeekFileBoxes == "Ctrl+Alt+Space" && state.ToggleWidgets == string.Empty
+            && state.Launcher == "Ctrl+Alt+F" && state.LauncherFiles == string.Empty,
             "重复热键规范化时应保留靠前槽位并清空后续冲突槽位");
 
         // Explicit empty string disables a slot and survives normalization.
         GlobalHotkeyRules.Set(state, GlobalHotkeyKind.Launcher, string.Empty);
         GlobalHotkeyRules.Normalize(state);
         Assert(state.Launcher == string.Empty, "显式清空热键在规范化后应保持为空");
+
+        // Machine-local hotkeys (including LauncherFiles) must never leak into exported themes.
+        var exportState = new AppState();
+        GlobalHotkeyRules.Set(exportState.Hotkeys, GlobalHotkeyKind.LauncherFiles, "Ctrl+Alt+D");
+        var exported = ThemeRules.Export(exportState, "热键隔离主题", new ThemeArea(0, 0, 1920, 1040), new Version(0, 3, 0));
+        var exportedJson = JsonSerializer.Serialize(exported);
+        Assert(!exportedJson.Contains("LauncherFiles", StringComparison.OrdinalIgnoreCase)
+            && !exportedJson.Contains("Ctrl+Alt+D", StringComparison.OrdinalIgnoreCase),
+            "主题导出不得包含 LauncherFiles 等本机快捷键");
     }
 
     private static void TestSchemaV56MigrationAndRoundTrip()
@@ -74,6 +120,22 @@ internal static class QuickAccessAndHotkeysTests
             Assert(reloaded.Hotkeys.Launcher == string.Empty, "清空的总览卡热键重载后应保持为空");
             Assert(reloaded.Hotkeys.QuickTodo == "Ctrl+Alt+T", "快速新建待办热键应持久化");
             Assert(reloaded.Hotkeys.ToggleWidgets == "Ctrl+Alt+H", "隐藏组件热键应持久化");
+            // Old v56 state lacking LauncherFiles must load with LauncherFiles empty and keep existing hotkeys untouched.
+            var legacyV56Node = JsonSerializer.SerializeToNode(reloaded)!;
+            legacyV56Node["SchemaVersion"] = 56;
+            legacyV56Node["Hotkeys"]!.AsObject().Remove("LauncherFiles");
+            File.WriteAllText(Path.Combine(dir, "widgets.json"), legacyV56Node.ToJsonString());
+            var fromLegacyV56 = store.Load();
+            Assert(fromLegacyV56.Hotkeys.LauncherFiles == string.Empty
+                && fromLegacyV56.Hotkeys.Launcher == string.Empty
+                && fromLegacyV56.Hotkeys.QuickTodo == "Ctrl+Alt+T"
+                && fromLegacyV56.Hotkeys.ToggleWidgets == "Ctrl+Alt+H",
+                "缺少 LauncherFiles 字段的旧状态载入后该项缺省为空，且不改写其余快捷键");
+
+            GlobalHotkeyRules.Set(fromLegacyV56.Hotkeys, GlobalHotkeyKind.LauncherFiles, "Ctrl+Alt+E");
+            store.Save(fromLegacyV56);
+            var roundTripped = store.Load();
+            Assert(roundTripped.Hotkeys.LauncherFiles == "Ctrl+Alt+E", "常用文件夹快捷键应完整持久化往返");
         }
         finally
         {

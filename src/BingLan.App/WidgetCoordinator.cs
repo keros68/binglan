@@ -54,13 +54,20 @@ public sealed partial class WidgetCoordinator : IDisposable
     private readonly StartupRegistration _startup;
     private readonly FullScreenWatcher _fullScreenWatcher = new();
     private readonly DesktopSurfaceWatcher _desktopSurfaceWatcher;
+    private readonly DesktopBlankHitTester _desktopBlankHitTester = new();
+    private DesktopDoubleClickWatcher? _doubleClickWatcher;
+    private bool _isHandlingDesktopDoubleClick;
     private readonly GlobalHotkeyHost _hotkeys;
     private readonly DesktopPeekController _peek;
+    private readonly FileBoxEdgeDockController _edgeDock;
     private readonly FileMappingWatchService _mappingWatcher;
     private readonly List<WidgetWindowBase> _windowsHiddenFromTray = [];
     private TrayMenuItem? _toggleDesktopMenuItem;
     private bool _desktopHidden;
     private bool _temporaryNativeDesktopActive;
+    private bool _widgetsHiddenByNativeToggle;
+    private int _desktopToggleVersion;
+    private int _nativeToggleVersion;
     private bool _saveFailureShown;
     private readonly string[] _launchArguments;
     private readonly bool _showOnboarding;
@@ -106,7 +113,8 @@ public sealed partial class WidgetCoordinator : IDisposable
         _desktopSurfaceWatcher = new DesktopSurfaceWatcher(GetDesktopProtectedHandles);
         _hotkeys = new GlobalHotkeyHost();
         _hotkeys.HotkeyPressed += OnGlobalHotkeyPressed;
-        _peek = new DesktopPeekController(ReturnPeekedFileBoxes);
+        _peek = new DesktopPeekController(ReturnPeekedFileBoxes, ReturnSingleFileBoxToDesktop);
+        _edgeDock = new FileBoxEdgeDockController(_peek, _windows, ScheduleSave);
         // Only the installed app checks on its own; test and interactive runs keep quiet.
         _updater = new AppUpdater(_state.Updates, AppVersion, ScheduleSave, Exit, canAutoCheck: dataDirectory is null);
         _updater.ReleaseFound += OnReleaseFound;
@@ -233,8 +241,15 @@ public sealed partial class WidgetCoordinator : IDisposable
         // Leaving high contrast puts the default row surface back; the material's one returns.
         AccessibilityThemeManager.HighContrastChanged += OnHighContrastChanged;
         _fullScreenWatcher.Changed += UpdateSamplingMode;
-        _fullScreenWatcher.Changed += () => _cornerReveal.SetSuspended(_fullScreenWatcher.IsFullScreenInFront);
+        _fullScreenWatcher.Changed += () => _cornerReveal.SetSuspended(_fullScreenWatcher.IsTrueFullScreenInFront);
+        _cornerReveal.Raised += () => _dock.EnsureAboveDesktop();
+        _taskbar.ExplorerRestarted += () =>
+        {
+            _cornerReveal.Update();
+            _edgeDock.ApplyAll();
+        };
         _fullScreenWatcher.Start();
+        _edgeDock.ApplyAll();
         _desktopSurfaceWatcher.Changed += OnDesktopSurfaceChanged;
         _desktopSurfaceWatcher.Start();
         SyncGlobalHotkeys();
@@ -308,6 +323,9 @@ public sealed partial class WidgetCoordinator : IDisposable
             return;
         }
 
+        RunShellStep("桌面空白双击监听", () => _ = SyncDesktopDoubleClickWatcher());
+        _settingsWindow?.RefreshCleanDesktopSettings();
+
         RunShellStep("Dock ", _dock.Apply);
         RunShellStep("顶端信息条", _topBar.Apply);
         // A bar-only desktop has no information card whose load would start the shared
@@ -315,7 +333,7 @@ public sealed partial class WidgetCoordinator : IDisposable
         RunShellStep("共享采样", UpdateSamplingMode);
         await ApplyTaskbarModeAsync();
         StartupLog.Write("任务栏模式已应用");
-        RunShellStep("任务栏两角唤出", () => _cornerReveal.SetEnabled(_state.Taskbar.RevealOnlyAtCorners));
+        RunShellStep("任务栏边缘唤出", () => _cornerReveal.SetMode(_state.Taskbar.EdgeRevealMode));
         if (!_cleanDesktopRecovered)
         {
             // The original icon state is unknown or could not be put back; stay off
@@ -690,10 +708,12 @@ public sealed partial class WidgetCoordinator : IDisposable
                 }
                 // Saving captures the cards again, now remembered for this arrangement.
                 WindowScreenRecovery.SettleLayout();
-                if (_state.Taskbar.RevealOnlyAtCorners)
+                if (_state.Taskbar.EdgeRevealMode != TaskbarEdgeRevealMode.AnyEdge)
                 {
                     _cornerReveal.Update();
                 }
+                _edgeDock.InvalidateMonitors();
+                _edgeDock.ApplyAll();
                 _settingsWindow?.RefreshTaskbarSettings();
                 ScheduleSave();
             });
@@ -723,6 +743,7 @@ public sealed partial class WidgetCoordinator : IDisposable
 
     private void ToggleDesktop()
     {
+        _desktopToggleVersion++;
         if (_desktopHidden)
         {
             foreach (var window in _windowsHiddenFromTray.Where(_windows.Contains))
@@ -819,7 +840,10 @@ public sealed partial class WidgetCoordinator : IDisposable
         AccessibilityThemeManager.HighContrastChanged -= OnHighContrastChanged;
         _fullScreenWatcher.Dispose();
         _desktopSurfaceWatcher.Dispose();
+        StopDesktopDoubleClickWatcher();
+        _hotkeys.Dispose();
         _mappingWatcher.Dispose();
+        _edgeDock.Dispose();
         _dock.Dispose();
         _cornerReveal.Dispose();
         _taskbar.Dispose();
@@ -839,6 +863,9 @@ public sealed partial class WidgetCoordinator : IDisposable
         {
             ShowInTaskbar = false
         };
+        window.SameKindOtherTitles = () => _state.TodoWidgets
+            .Where(other => other.Id != state.Id)
+            .Select(other => other.Title);
         if (IsPrimaryTodo(state))
         {
             var component = _state.DesktopExperience.GetComponent(DesktopComponentKind.Todo);
@@ -930,10 +957,22 @@ public sealed partial class WidgetCoordinator : IDisposable
             .OfType<FileBoxWindow>()
             .Where(other => !ReferenceEquals(other, window))
             .ToList();
+        window.SameKindOtherTitles = () => _state.FileBoxes
+            .Where(other => other.Id != state.Id)
+            .Select(other => other.Title);
         window.IsDeleteOriginalsEnabled = () => _state.FileBoxDeleteOriginalsEnabled;
+        window.EdgeDockToggled += (box, enabled) => _edgeDock.ToggleEdgeDock(box, enabled);
+        window.EdgeDockFileDragNear += box => _edgeDock.RevealImmediatelyForDrag(box);
         Wire(window);
         _windows.Add(window);
-        window.Show();
+        if (!state.IsHidden)
+        {
+            window.Show();
+            if (window.IsEdgeDocked)
+            {
+                _edgeDock.ApplyAll();
+            }
+        }
         return window;
     }
 
@@ -944,9 +983,15 @@ public sealed partial class WidgetCoordinator : IDisposable
         {
             ShowInTaskbar = false
         };
+        window.SameKindOtherTitles = () => _state.NoteWidgets
+            .Where(other => other.Id != state.Id)
+            .Select(other => other.Title);
         Wire(window);
         _windows.Add(window);
-        window.Show();
+        if (!state.IsHidden)
+        {
+            window.Show();
+        }
     }
 
     private InformationWidgetWindow CreateInformationWindow(
@@ -1062,12 +1107,13 @@ public sealed partial class WidgetCoordinator : IDisposable
         {
             _peek.End(restoreForeground: false);
         }
+        _edgeDock.CollapseAllExpanded();
         if (_desktopSurfaceWatcher.IsDesktopShown)
         {
             var slot = RaiseCardsAboveDesktop();
             _topBar.SetDesktopShown(true, slot, _desktopSurfaceWatcher.IsTopmostLayerRequired);
-            _dock.EnsureAboveDesktop();
             _cornerReveal.Raise();
+            _dock.EnsureAboveDesktop();
             return;
         }
         WidgetWindowBase.ReturnBelowOrdinaryWindows(_windows);
@@ -1408,17 +1454,22 @@ public sealed partial class WidgetCoordinator : IDisposable
                     ApplyQuickPlaces();
                     ScheduleSave();
                 },
+                SetWidgetVisibility = SetWidgetVisibility,
                 DeleteWidget = window =>
                 {
+                    var wasVisible = window.IsVisible;
                     DeleteWidget(window);
-                    return !_windows.Contains(window) || !window.IsVisible;
+                    return !_windows.Contains(window) || (wasVisible && !window.IsVisible);
                 },
                 ExportTheme = ExportTheme,
                 ReadTheme = ReadTheme,
                 ImportTheme = ImportThemeAsync,
                 PinBoundApp = PinBoundApp,
                 IsCleanDesktopEnabled = () => _state.CleanDesktopEnabled,
+                IsCleanDesktopAvailable = IsCleanDesktopAvailable,
                 SetCleanDesktop = SetCleanDesktopAsync,
+                IsDoubleClickDesktopToToggleIconsEnabled = () => _state.DoubleClickDesktopToToggleIcons == true,
+                SetDoubleClickDesktopToToggleIcons = SetDoubleClickDesktopToToggleIcons,
                 IsFileBoxAutomationEnabled = () => _state.FileBoxAutomationEnabled,
                 SetFileBoxAutomation = SetFileBoxAutomation,
                 IsFileBoxDeleteOriginalsEnabled = () => _state.FileBoxDeleteOriginalsEnabled,
@@ -1441,6 +1492,16 @@ public sealed partial class WidgetCoordinator : IDisposable
                     SyncGlobalHotkeys();
                     _topBar.Apply();
                     ScheduleSave();
+                },
+                GetLastSettingsPage = () => _state.LastSettingsPage,
+                SetLastSettingsPage = page =>
+                {
+                    var normalized = SettingsNavigationRules.NormalizePageKey(page);
+                    if (!string.Equals(_state.LastSettingsPage, normalized, StringComparison.Ordinal))
+                    {
+                        _state.LastSettingsPage = normalized;
+                        ScheduleSave();
+                    }
                 },
                 SetFileBoxDeleteOriginals = enabled =>
                 {
@@ -1741,6 +1802,13 @@ public sealed partial class WidgetCoordinator : IDisposable
                 }
                 ToggleLauncherPanel();
                 break;
+            case GlobalHotkeyKind.LauncherFiles:
+                if (_peek.IsActive)
+                {
+                    _peek.End(restoreForeground: false);
+                }
+                ToggleLauncherPanelForTab(LauncherMainTab.Files);
+                break;
             case GlobalHotkeyKind.PeekFileBoxes:
                 if (_launcherPanel is { } openPanel)
                 {
@@ -1790,9 +1858,10 @@ public sealed partial class WidgetCoordinator : IDisposable
         var boxes = _windows.OfType<FileBoxWindow>().ToList();
         if (boxes.Count == 0)
         {
-            _trayIcon.ShowBalloonTip(2500, "桌面分组盒", "当前还没有桌面分组盒，可在托盘菜单新建。", TrayTipKind.Info);
+            _trayIcon.ShowBalloonTip(2500, "文件收纳盒", "当前还没有文件收纳盒，可在托盘菜单新建。", TrayTipKind.Info);
             return;
         }
+        _edgeDock.CollapseAllExpanded();
         _peek.Toggle(boxes, CardMotionAnimator.IsAnimationEnabled);
     }
 
@@ -1804,6 +1873,16 @@ public sealed partial class WidgetCoordinator : IDisposable
             return;
         }
         WidgetWindowBase.ReturnBelowOrdinaryWindows(boxes);
+    }
+
+    private void ReturnSingleFileBoxToDesktop(FileBoxWindow box)
+    {
+        if (_desktopSurfaceWatcher.IsDesktopShown)
+        {
+            box.RaiseAboveDesktop(FindCardRaiseSlot(), _desktopSurfaceWatcher.IsTopmostLayerRequired);
+            return;
+        }
+        WidgetWindowBase.ReturnBelowOrdinaryWindows([box]);
     }
 
     private void TriggerQuickTodo()
@@ -1845,21 +1924,33 @@ public sealed partial class WidgetCoordinator : IDisposable
                 {
                     _peek.End(restoreForeground: false);
                 }
-                if (!_desktopHidden)
+                // Only undo what this toggle did: widgets the user hid from the tray stay hidden.
+                var hidWidgets = !_desktopHidden;
+                if (hidWidgets)
                 {
                     ToggleDesktop();
                 }
-                await _cleanDesktop.DisableAsync();
+                if (!await _cleanDesktop.DisableAsync())
+                {
+                    if (hidWidgets && _desktopHidden)
+                    {
+                        ToggleDesktop();
+                    }
+                    return;
+                }
                 _temporaryNativeDesktopActive = true;
+                _widgetsHiddenByNativeToggle = hidWidgets;
+                _nativeToggleVersion = _desktopToggleVersion;
             }
             else
             {
-                await _cleanDesktop.EnableAsync();
-                _temporaryNativeDesktopActive = false;
-                if (_desktopHidden)
+                if ((await _cleanDesktop.EnableAsync()).Length > 0)
                 {
-                    ToggleDesktop();
+                    // Icons are still visible, so the temporary native state is still true.
+                    return;
                 }
+                _temporaryNativeDesktopActive = false;
+                RestoreWidgetsHiddenByNativeToggle();
             }
         }
         finally
@@ -1868,11 +1959,134 @@ public sealed partial class WidgetCoordinator : IDisposable
         }
     }
 
+    // Shows the widgets only if this toggle hid them and the user has not toggled them since.
+    private void RestoreWidgetsHiddenByNativeToggle()
+    {
+        if (_widgetsHiddenByNativeToggle && _desktopHidden && _desktopToggleVersion == _nativeToggleVersion)
+        {
+            ToggleDesktop();
+        }
+        _widgetsHiddenByNativeToggle = false;
+    }
+
+    private bool IsCleanDesktopAvailable() => _cleanDesktopRecovered && !_cleanDesktopRestoreFailed;
+
+    private string SyncDesktopDoubleClickWatcher()
+    {
+        var shouldRun = !_isExiting
+            && !_exitRequested
+            && _state.DoubleClickDesktopToToggleIcons == true
+            && IsCleanDesktopAvailable();
+        if (!shouldRun)
+        {
+            StopDesktopDoubleClickWatcher();
+            return string.Empty;
+        }
+
+        if (_doubleClickWatcher is { IsRegistered: true })
+        {
+            return string.Empty;
+        }
+
+        StopDesktopDoubleClickWatcher();
+        var watcher = new DesktopDoubleClickWatcher(Dispatcher.CurrentDispatcher);
+        watcher.DoubleClickDetected += OnDesktopDoubleClickDetected;
+        if (!watcher.Start())
+        {
+            watcher.DoubleClickDetected -= OnDesktopDoubleClickDetected;
+            watcher.Dispose();
+            return "无法启用桌面空白处双击监听，请稍后再试";
+        }
+
+        _doubleClickWatcher = watcher;
+        return string.Empty;
+    }
+
+    private void StopDesktopDoubleClickWatcher()
+    {
+        if (_doubleClickWatcher is null)
+        {
+            return;
+        }
+
+        _doubleClickWatcher.DoubleClickDetected -= OnDesktopDoubleClickDetected;
+        _doubleClickWatcher.Dispose();
+        _doubleClickWatcher = null;
+    }
+
+    private string SetDoubleClickDesktopToToggleIcons(bool enabled)
+    {
+        if (!enabled)
+        {
+            _state.DoubleClickDesktopToToggleIcons = false;
+            StopDesktopDoubleClickWatcher();
+            ScheduleSave();
+            return string.Empty;
+        }
+
+        if (!IsCleanDesktopAvailable())
+        {
+            return "隐藏桌面图标当前不可用，请先完成上方恢复";
+        }
+
+        _state.DoubleClickDesktopToToggleIcons = true;
+        var problem = SyncDesktopDoubleClickWatcher();
+        if (problem.Length > 0)
+        {
+            _state.DoubleClickDesktopToToggleIcons = false;
+            ScheduleSave();
+            return problem;
+        }
+
+        ScheduleSave();
+        return string.Empty;
+    }
+
+    private async void OnDesktopDoubleClickDetected(int x, int y)
+    {
+        if (_isExiting
+            || _exitRequested
+            || _isHandlingDesktopDoubleClick
+            || _state.DoubleClickDesktopToToggleIcons != true
+            || !IsCleanDesktopAvailable()
+            || _cleanDesktopGate.CurrentCount == 0)
+        {
+            return;
+        }
+
+        _isHandlingDesktopDoubleClick = true;
+        try
+        {
+            if (!await _desktopBlankHitTester.IsDesktopBlankAtAsync(x, y))
+            {
+                return;
+            }
+            if (_isExiting
+                || _exitRequested
+                || _state.DoubleClickDesktopToToggleIcons != true
+                || !IsCleanDesktopAvailable())
+            {
+                return;
+            }
+
+            var status = await SetCleanDesktopAsync(!_state.CleanDesktopEnabled);
+            _settingsWindow?.RefreshCleanDesktopSettings(status);
+        }
+        catch (Exception exception)
+        {
+            Debug.WriteLine($"双击桌面空白处切换桌面图标失败：{exception.Message}");
+        }
+        finally
+        {
+            _isHandlingDesktopDoubleClick = false;
+        }
+    }
+
     private string CleanDesktopNotice() =>
         _cleanDesktopRestoreFailed
             ? "上次隐藏的桌面图标未能自动恢复。可点“重新恢复”再试。"
             : !_cleanDesktopRecovered
-                ? "无法确认开启清爽桌面前的图标状态。可点“重新恢复”显示桌面图标，再开启清爽桌面。"
+                ? "无法确认隐藏桌面图标前的原状态。可点“重新恢复”显示桌面图标，再开启“隐藏 Windows 桌面图标”。"
                 : string.Empty;
 
     /// <summary>
@@ -1903,6 +2117,7 @@ public sealed partial class WidgetCoordinator : IDisposable
             // known once more; the restore clears an unreadable record's marker.
             _cleanDesktopRecovered = restored
                 && CleanDesktopAdapter.IsOriginalStateKnown(CleanDesktopCheckpointPath(_store.DataDirectory));
+            _ = SyncDesktopDoubleClickWatcher();
             return restored ? "桌面图标已恢复" : "仍未能恢复，可稍后再试";
         }
         finally
@@ -1930,6 +2145,7 @@ public sealed partial class WidgetCoordinator : IDisposable
             if (!enabled)
             {
                 _temporaryNativeDesktopActive = false;
+                RestoreWidgetsHiddenByNativeToggle();
                 _state.CleanDesktopEnabled = false;
                 SyncGlobalHotkeys();
                 ScheduleSave();
@@ -1950,11 +2166,13 @@ public sealed partial class WidgetCoordinator : IDisposable
 
             var problem = await _cleanDesktop.EnableAsync();
             _temporaryNativeDesktopActive = false;
+            RestoreWidgetsHiddenByNativeToggle();
             _state.CleanDesktopEnabled = problem.Length == 0;
             SyncGlobalHotkeys();
             // A successful turn-on either recorded visible icons or found them hidden with
             // a known history, so the original state is known again from here on.
             _cleanDesktopRecovered |= problem.Length == 0;
+            _ = SyncDesktopDoubleClickWatcher();
             ScheduleSave();
             return problem.Length == 0
                 ? "桌面图标已隐藏，可从快捷入口打开此电脑、回收站、下载和桌面"
@@ -1975,6 +2193,12 @@ public sealed partial class WidgetCoordinator : IDisposable
         ApplyItemSurface();
         IceBlueDockWindow.Motion = _state.Style.Motion;
         CardMotionAnimator.Motion = _state.Style.Motion;
+        // The constructor runs this before the dock exists; the dock reads the settings itself
+        // when it first applies, so there is nothing to refresh yet.
+        if (_dock is not null && _state.Dock.IsEnabled && _state.Dock.HoverMagnification)
+        {
+            _dock.Apply();
+        }
         foreach (var window in _windows)
         {
             window.ApplyStyle(_state.Style);
@@ -2104,7 +2328,7 @@ public sealed partial class WidgetCoordinator : IDisposable
     private void ApplyTaskbar()
     {
         _ = ApplyTaskbarModeAsync();
-        _cornerReveal.SetEnabled(_state.Taskbar.RevealOnlyAtCorners);
+        _cornerReveal.SetMode(_state.Taskbar.EdgeRevealMode);
         SaveNow();
     }
 
@@ -2217,6 +2441,51 @@ public sealed partial class WidgetCoordinator : IDisposable
     }
 
 
+    private void SetWidgetVisibility(WidgetWindowBase window, bool visible)
+    {
+        switch (window)
+        {
+            case FileBoxWindow box:
+                box.State.IsHidden = !visible;
+                if (visible)
+                {
+                    _windowsHiddenFromTray.Remove(box);
+                    box.Show();
+                    if (box.IsEdgeDocked)
+                    {
+                        _edgeDock.ApplyAll();
+                    }
+                }
+                else
+                {
+                    _windowsHiddenFromTray.Remove(box);
+                    box.HideFromApp();
+                    if (box.IsEdgeDocked)
+                    {
+                        _edgeDock.ApplyAll();
+                    }
+                }
+                break;
+            case NoteWidgetWindow note:
+                note.State.IsHidden = !visible;
+                _windowsHiddenFromTray.Remove(note);
+                if (visible)
+                {
+                    note.Show();
+                }
+                else
+                {
+                    note.HideFromApp();
+                }
+                break;
+            default:
+                return;
+        }
+
+        UpdateSamplingMode();
+        ScheduleSave();
+    }
+
     private void DeleteWidget(WidgetWindowBase window)
     {
         var message = window switch
@@ -2224,9 +2493,10 @@ public sealed partial class WidgetCoordinator : IDisposable
             NoteWidgetWindow => "将删除此便签及其中的文字。继续吗？",
             InformationWidgetWindow { ComponentKind: { } kind } =>
                 $"将从桌面隐藏“{DesktopExperienceRules.GetComponentName(kind)}”。继续吗？",
+            QuickPlacesWindow => "将从桌面隐藏“快捷入口”。继续吗？",
             InformationWidgetWindow => "将删除此桌面信息组件及其本机设置。继续吗？",
             TodoWidgetWindow => "将删除此待办及其中的项目。继续吗？",
-            FileBoxWindow => "将删除此分组盒及其中的映射。继续吗？",
+            FileBoxWindow => "将删除此文件收纳盒及其中的映射。继续吗？",
             _ => "将删除此组件。继续吗？"
         };
         var answer = System.Windows.MessageBox.Show(
@@ -2680,7 +2950,7 @@ public sealed partial class WidgetCoordinator : IDisposable
                            box.Items.Count == 0 &&
                            box.CollectExtensions.Count == 0 &&
                            !box.CollectFolders &&
-                           box.Title == "桌面分组");
+                           WidgetTitleRules.IsDefaultFileBoxTitle(box.Title));
                 if (state is null)
                 {
                     state = CreateCategorizedFileBox(category);
@@ -2708,7 +2978,7 @@ public sealed partial class WidgetCoordinator : IDisposable
             if (left > 0)
             {
                 // Deleted category boxes stay deleted; a box with a collect rule takes them.
-                status += $"；{left} 项的分类盒已删除，留在桌面（可给分组盒设置收集规则）";
+                status += $"；{left} 项的分类盒已删除，留在桌面（可给文件收纳盒设置收集规则）";
             }
             foreach (var box in _windows.OfType<FileBoxWindow>())
             {
@@ -2718,7 +2988,7 @@ public sealed partial class WidgetCoordinator : IDisposable
             // while that setting is off.
             var hint = _state.CleanDesktopEnabled
                 ? string.Empty
-                : "桌面上的原图标仍会显示；在设置的“桌面方案”页开启“清爽桌面”后可只显示分组盒。";
+                : "桌面上的原图标仍会显示；在设置的“桌面方案”页开启“隐藏 Windows 桌面图标”后可只显示文件收纳盒。";
             _trayIcon.ShowBalloonTip(
                 6000,
                 "桌面归类完成",
@@ -2793,7 +3063,7 @@ public sealed partial class WidgetCoordinator : IDisposable
         DesktopGroupCategory.Applications => "软件与快捷入口",
         DesktopGroupCategory.Folders => "桌面文件夹",
         DesktopGroupCategory.Files => "桌面文件",
-        _ => "桌面分组"
+        _ => WidgetTitleRules.DefaultFileBoxTitle
     };
 
     private void ScheduleSave()
@@ -2890,6 +3160,7 @@ public sealed partial class WidgetCoordinator : IDisposable
         _settingsWindow = null;
         _launcherPanel?.Close();
         _peek.Dispose();
+        StopDesktopDoubleClickWatcher();
         _hotkeys.Dispose();
         _mappingWatcher.Dispose();
         _dock.Dispose();
@@ -2913,7 +3184,7 @@ public sealed partial class WidgetCoordinator : IDisposable
         var trayIcon = new TrayIconHost(interactiveQa ? "冰蓝桌面（测试预览）" : "冰蓝桌面");
         _launcherMenuItem = trayIcon.AddItem("打开冰蓝总览卡", ToggleLauncherPanel);
         _launcherMenuItem.Visible = _state.LauncherEnabled;
-        trayIcon.AddItem("速览桌面分组盒", TogglePeekFileBoxes);
+        trayIcon.AddItem("临时浮起文件收纳盒", TogglePeekFileBoxes);
         trayIcon.AddItem("一键整理桌面", async () => await OrganizeDesktopAsync());
         trayIcon.AddSeparator();
         _toggleDesktopMenuItem = trayIcon.AddItem("隐藏桌面组件", ToggleDesktop);
@@ -2921,8 +3192,8 @@ public sealed partial class WidgetCoordinator : IDisposable
         trayIcon.AddItem("显示桌面信息", AddInformation);
         trayIcon.AddItem("新建待办便签", AddTodo);
         trayIcon.AddItem("新建普通便签", AddNote);
-        trayIcon.AddItem("新建桌面分组盒", () => AddFileBox());
-        trayIcon.AddItem("框选新建分组盒…", StartMarqueeFileBox);
+        trayIcon.AddItem("新建文件收纳盒", () => AddFileBox());
+        trayIcon.AddItem("框选新建文件收纳盒…", StartMarqueeFileBox);
         trayIcon.AddSeparator();
         _updateMenuItem = trayIcon.AddItem(string.Empty, () => OpenSettings("About"));
         _updateMenuItem.Visible = false;

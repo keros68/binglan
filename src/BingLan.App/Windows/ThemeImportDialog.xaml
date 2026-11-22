@@ -50,7 +50,7 @@
 
         <TextBlock Margin="0,14,0,4" FontWeight="SemiBold" Text="将改变"/>
         <TextBlock TextWrapping="Wrap"
-                   Text="组件外观、显示开关、相对布局、整体风格（文字阴影、吸附间距、Dock 动效、任务栏透明或模糊）和 Dock 固定应用及其自定义图标；任务栏设为自动隐藏时保持不变。应用前会先备份当前设置。"/>
+                   Text="组件外观、显示开关、相对布局、整体风格（文字阴影、卡片间自动留白、Dock 动效、任务栏透明或模糊）和 Dock 固定应用及其自定义图标；任务栏设为自动隐藏时保持不变。应用前会先备份当前设置。"/>
 
         <TextBlock Margin="0,10,0,4" FontWeight="SemiBold" Text="保持不变"/>
         <TextBlock TextWrapping="Wrap"

@@ -18,6 +18,39 @@
         <local:FileNameConverter x:Key="FileNameConverter"/>
         <!-- Events and standalone countdowns use a marker instead of a completion box. -->
         <Style x:Key="TodoKindCheckBox" TargetType="CheckBox" BasedOn="{StaticResource {x:Type CheckBox}}">
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="CheckBox">
+                        <Grid Background="Transparent" SnapsToDevicePixels="True">
+                            <StackPanel Orientation="Horizontal">
+                                <Grid Width="16" Height="16" VerticalAlignment="Center">
+                                    <Border x:Name="Box" CornerRadius="4" BorderThickness="1.5"
+                                            BorderBrush="{TemplateBinding Foreground}" Opacity="0.7"/>
+                                    <Path x:Name="Tick" Data="M4,8.5 L7,11.5 L12,5" Stroke="White" StrokeThickness="1.8"
+                                          StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"
+                                          Visibility="Collapsed"/>
+                                </Grid>
+                                <ContentPresenter Margin="6,0,0,0" VerticalAlignment="Center" RecognizesAccessKey="True"/>
+                            </StackPanel>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Box" Property="Opacity" Value="1"/>
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="Box" Property="BorderThickness" Value="2.5"/>
+                                <Setter TargetName="Box" Property="Opacity" Value="1"/>
+                            </Trigger>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Box" Property="Background" Value="#5B9BD5"/>
+                                <Setter TargetName="Box" Property="BorderBrush" Value="#5B9BD5"/>
+                                <Setter TargetName="Box" Property="Opacity" Value="1"/>
+                                <Setter TargetName="Tick" Property="Visibility" Value="Visible"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
             <Style.Triggers>
                 <DataTrigger Binding="{Binding Kind}" Value="Event">
                     <Setter Property="Visibility" Value="Collapsed"/>
@@ -514,6 +547,7 @@
                                         <MenuItem Style="{StaticResource TargetDateMenuItem}" Click="SetTargetDate_Click"/>
                                         <Separator/>
                                         <MenuItem Header="关联文件…" Click="LinkFiles_Click"/>
+                                        <MenuItem Header="关联文件夹…" Click="LinkFolders_Click"/>
                                         <Separator/>
                                         <MenuItem Header="删除" Click="DeleteTodo_Click"/>
                                     </ContextMenu>

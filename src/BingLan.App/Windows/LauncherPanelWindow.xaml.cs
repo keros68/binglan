@@ -7,6 +7,7 @@ using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
 using System.Windows.Threading;
 using BingLan.App.Dock;
 using BingLan.App.Interop;
@@ -114,7 +115,8 @@ public partial class LauncherPanelWindow : Window
         Action? saveOrganizer = null,
         Func<IDictionary<string, LauncherAppCategory>>? readCategoryOverrides = null,
         LauncherPreferencesState? preferences = null,
-        Func<LauncherPanelEntry, string>? unpinFromDock = null)
+        Func<LauncherPanelEntry, string>? unpinFromDock = null,
+        LauncherMainTab? initialTab = null)
     {
         _loadSnapshot = loadSnapshot;
         _openTarget = openTarget;
@@ -130,7 +132,9 @@ public partial class LauncherPanelWindow : Window
         _appearance = appearance ?? new LauncherAppearanceState();
         _preferences = preferences ?? new LauncherPreferencesState();
         _preferences.Normalize();
-        _activeTab = _preferences.LastTab;
+        // Direct-jump hotkeys (e.g. LauncherFiles) open the requested tab without overwriting
+        // LastTab so the regular launcher hotkey still returns to the user's own last tab.
+        _activeTab = initialTab ?? _preferences.LastTab;
         _filter = _browseFilter = FilterForTab(_activeTab);
         _style = style ?? new DesktopStyleState();
         InitializeComponent();
@@ -139,6 +143,7 @@ public partial class LauncherPanelWindow : Window
         NewGroupButton.Visibility = saveOrganizer is null ? Visibility.Collapsed : Visibility.Visible;
         ApplyAppearance();
         UpdateMainTabButtons();
+        WatchStatusText();
         AccessibilityThemeManager.HighContrastChanged += OnHighContrastChanged;
         _debounce = new DispatcherTimer(DispatcherPriority.Background, Dispatcher)
         {
@@ -383,9 +388,50 @@ public partial class LauncherPanelWindow : Window
             _ = DockNativeMethods.SetForegroundWindow(PreviousForeground);
     }
 
+    // Transient notices (copied, pinned, ...) clear themselves; load errors and progress stay.
+    private DispatcherTimer? _statusFade;
+
+    private void WatchStatusText()
+    {
+        _statusFade = new DispatcherTimer(DispatcherPriority.Background, Dispatcher) { Interval = TimeSpan.FromSeconds(4) };
+        _statusFade.Tick += (_, _) =>
+        {
+            _statusFade.Stop();
+            if (!_closed && !IsPersistentStatus(StatusText.Text)) StatusText.Text = string.Empty;
+        };
+        System.ComponentModel.DependencyPropertyDescriptor
+            .FromProperty(System.Windows.Controls.TextBlock.TextProperty, typeof(System.Windows.Controls.TextBlock))
+            .AddValueChanged(StatusText, (_, _) =>
+            {
+                _statusFade.Stop();
+                if (!string.IsNullOrEmpty(StatusText.Text) && !IsPersistentStatus(StatusText.Text)) _statusFade.Start();
+            });
+    }
+
+    private static bool IsPersistentStatus(string text) =>
+        text.StartsWith("正在", StringComparison.Ordinal) || text.Contains("无法", StringComparison.Ordinal)
+        || text.Contains("失败", StringComparison.Ordinal) || text.Contains("没有", StringComparison.Ordinal);
+
+    // 160 ms fade and 6 px rise of the content on open; skipped when system or app motion is off.
+    // Only the content moves: the glass backdrop reads PanelSurface's opacity and bounds when it
+    // updates, so animating the surface itself would leave the glass stuck at a mid-animation value.
+    private void PlayOpenAnimation()
+    {
+        if (!CardMotionAnimator.IsAnimationEnabled) return;
+        var rise = new TranslateTransform(0d, 6d);
+        PanelContentGrid.RenderTransform = rise;
+        var duration = TimeSpan.FromMilliseconds(160);
+        var ease = CardMotionAnimator.CreateEase();
+        PanelContentGrid.BeginAnimation(OpacityProperty, new DoubleAnimation(0d, 1d, duration) { EasingFunction = ease });
+        var up = new DoubleAnimation(6d, 0d, duration) { EasingFunction = ease };
+        up.Completed += (_, _) => PanelContentGrid.RenderTransform = Transform.Identity;
+        rise.BeginAnimation(TranslateTransform.YProperty, up);
+    }
+
     private async void OnPanelLoaded(object sender, RoutedEventArgs args)
     {
         PositionPanel();
+        PlayOpenAnimation();
         Activate();
         SearchBox.Focus();
         if (DockNativeMethods.GetForegroundWindow() != _handle)
@@ -1399,9 +1445,9 @@ public partial class LauncherPanelWindow : Window
         AddPurposeMenu(menu, row);
         if (SendPath(row.Entry) is { } path)
         {
-            var send = new MenuItem { Header = "发送到分组盒" };
+            var send = new MenuItem { Header = "发送到文件收纳盒" };
             var boxes = _readFileBoxes();
-            if (boxes.Count == 0) send.Items.Add(new MenuItem { Header = "尚无分组盒", IsEnabled = false });
+            if (boxes.Count == 0) send.Items.Add(new MenuItem { Header = "尚无文件收纳盒", IsEnabled = false });
             for (var index = 0; index < boxes.Count; index++)
             {
                 var box = boxes[index];
@@ -1415,7 +1461,7 @@ public partial class LauncherPanelWindow : Window
                     }
                     catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException)
                     {
-                        if (!_closed) StatusText.Text = "暂时无法发送到分组盒";
+                        if (!_closed) StatusText.Text = "暂时无法发送到文件收纳盒";
                     }
                 };
                 send.Items.Add(target);

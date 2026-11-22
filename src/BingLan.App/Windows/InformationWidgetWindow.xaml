@@ -86,9 +86,9 @@
                         <ColumnDefinition Width="1.25*"/>
                     </Grid.ColumnDefinitions>
                     <StackPanel Grid.Column="0" VerticalAlignment="Center">
-                        <TextBlock x:Name="CpuLabelText" Tag="Secondary" Text="CPU" FontSize="{StaticResource CardFont.Caption}" FontWeight="Bold"
+                        <TextBlock x:Name="CpuLabelText" Tag="Secondary" Text="CPU" FontSize="{StaticResource CardFont.Caption}" FontWeight="Medium"
                                    Foreground="{Binding WidgetSecondaryTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
-                        <TextBlock x:Name="CpuValueText" Text="--" FontSize="{StaticResource CardFont.Title}" FontWeight="Bold"
+                        <TextBlock x:Name="CpuValueText" Typography.NumeralAlignment="Tabular" Text="--" FontSize="{StaticResource CardFont.Title}" FontWeight="SemiBold"
                                    Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
                         <!-- A thin bar that follows the value, as in the original desktop theme. -->
                         <Grid Height="3" Margin="0,5,8,0">
@@ -106,9 +106,9 @@
                     <Rectangle Grid.Column="1" Width="1" Margin="0,3,10,3" Opacity="0.2"
                                Fill="{Binding Foreground, ElementName=CpuValueText}"/>
                     <StackPanel Grid.Column="2" VerticalAlignment="Center">
-                        <TextBlock x:Name="RamLabelText" Tag="Secondary" Text="RAM" FontSize="{StaticResource CardFont.Caption}" FontWeight="Bold"
+                        <TextBlock x:Name="RamLabelText" Tag="Secondary" Text="RAM" FontSize="{StaticResource CardFont.Caption}" FontWeight="Medium"
                                    Foreground="{Binding WidgetSecondaryTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
-                        <TextBlock x:Name="RamValueText" Text="--" FontSize="{StaticResource CardFont.Title}" FontWeight="Bold"
+                        <TextBlock x:Name="RamValueText" Typography.NumeralAlignment="Tabular" Text="--" FontSize="{StaticResource CardFont.Title}" FontWeight="SemiBold"
                                    Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
                         <!-- A thin bar that follows the value, as in the original desktop theme. -->
                         <Grid Height="3" Margin="0,5,8,0">
@@ -135,15 +135,15 @@
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
                         </Grid.RowDefinitions>
-                        <TextBlock Grid.ColumnSpan="2" Margin="0,0,0,3" x:Name="NetworkLabelText" Tag="Secondary" Text="NETWORK" FontSize="{StaticResource CardFont.Caption}" FontWeight="Bold"
+                        <TextBlock Grid.ColumnSpan="2" Margin="0,0,0,3" x:Name="NetworkLabelText" Tag="Secondary" Text="NETWORK" FontSize="{StaticResource CardFont.Caption}" FontWeight="Medium"
                                    Foreground="{Binding WidgetSecondaryTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
                         <TextBlock Grid.Row="1" Margin="0,0,6,0" x:Name="UploadLabelText" Text="↑" FontSize="{StaticResource CardFont.Meta}" FontWeight="Bold"
                                    Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
-                        <TextBlock x:Name="UploadValueText" Grid.Row="1" Grid.Column="1" Text="--" FontSize="{StaticResource CardFont.Meta}"
+                        <TextBlock x:Name="UploadValueText" Typography.NumeralAlignment="Tabular" Grid.Row="1" Grid.Column="1" Text="--" FontSize="{StaticResource CardFont.Meta}"
                                    FontWeight="Bold" Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
                         <TextBlock Grid.Row="2" Margin="0,0,6,0" x:Name="DownloadLabelText" Text="↓" FontSize="{StaticResource CardFont.Meta}" FontWeight="Bold"
                                    Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
-                        <TextBlock x:Name="DownloadValueText" Grid.Row="2" Grid.Column="1" Text="--" FontSize="{StaticResource CardFont.Meta}"
+                        <TextBlock x:Name="DownloadValueText" Typography.NumeralAlignment="Tabular" Grid.Row="2" Grid.Column="1" Text="--" FontSize="{StaticResource CardFont.Meta}"
                                    FontWeight="Bold" Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
                     </Grid>
                 </Grid>
@@ -165,7 +165,7 @@
                         <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
                     <!-- A thin rule over the city, as in the original desktop theme. -->
-                    <Rectangle Height="1" Margin="0,0,0,7" Opacity="0.4" Fill="{Binding Foreground, ElementName=WeatherCityText}"/>
+                    <Rectangle Height="1" Margin="0,0,0,7" Opacity="0.2" Fill="{Binding Foreground, ElementName=WeatherCityText}"/>
                     <Grid Grid.Row="1">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*"/>

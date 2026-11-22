@@ -543,7 +543,7 @@ internal static class LauncherPanelWindowTests
             pump();
             var menu = (ContextMenu?)typeof(LauncherPanelWindow).GetField("_menu", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(panel);
             Assert(menu?.IsOpen == true, "键盘菜单键应打开所选项目菜单");
-            Assert(!menu!.Items.OfType<MenuItem>().Any(item => item.Header?.ToString() == "发送到分组盒"), "带参数应用不可发送为会丢失参数的文件映射");
+            Assert(!menu!.Items.OfType<MenuItem>().Any(item => item.Header?.ToString() == "发送到文件收纳盒"), "带参数应用不可发送为会丢失参数的文件映射");
             Press(panel, Key.Escape);
             pump();
             Assert(panel.IsVisible && !menu.IsOpen, "菜单内 Escape 应只关闭菜单");
@@ -832,7 +832,7 @@ internal static class LauncherPanelWindowTests
                 pump();
                 var menu = (ContextMenu?)typeof(LauncherPanelWindow).GetField("_menu", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(panel);
                 Assert(menu?.IsOpen == true, "发送测试应打开实际项目右键菜单");
-                var send = menu!.Items.OfType<MenuItem>().Single(item => item.Header?.ToString() == "发送到分组盒");
+                var send = menu!.Items.OfType<MenuItem>().Single(item => item.Header?.ToString() == "发送到文件收纳盒");
                 var target = send.Items.OfType<MenuItem>().Single(item => item.Header?.ToString() == state.Title);
                 target.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
                 var expected = attempt;
@@ -842,7 +842,7 @@ internal static class LauncherPanelWindowTests
                 Assert(state.Items.Count == 1 && state.Items[0].Path == path, "重复发送应只保留一个真实文件映射");
                 Assert(File.ReadAllText(path) == contents && File.GetLastWriteTimeUtc(path) == modified, "发送到分组盒不得修改原始文件");
             }
-            Assert(Require<TextBlock>(panel, "StatusText").Text.Contains("已经在分组盒"), "重复发送应显示已存在反馈");
+            Assert(Require<TextBlock>(panel, "StatusText").Text.Contains("已经在文件收纳盒"), "重复发送应显示已存在反馈");
         }
         finally
         {

@@ -647,7 +647,7 @@ public sealed partial class TopBarWindow : Window
     private sealed record TopBarSystemFacts(
         (int Percent, TopBarBatteryStatus Status) Battery,
         int? VolumePercent,
-        (bool Connected, string Label) Network);
+        TopBarNetworkStatus Network);
 
     // ---------------------------------------------------------------- modules
 
@@ -664,6 +664,10 @@ public sealed partial class TopBarWindow : Window
     private const string GlyphLocation = "\uE707";
     private const string GlyphDiagnostic = "\uE9D9";
     private const string GlyphWifi = "\uE701";
+    private const string GlyphWifi1 = "\uE872";
+    private const string GlyphWifi2 = "\uE873";
+    private const string GlyphWifi3 = "\uE874";
+    private const string GlyphEthernet = "\uE839";
     private const string GlyphWifiOff = "\uE871";
     private const string GlyphVolume = "\uE767";
     private const string GlyphVolume0 = "\uE992";
@@ -2068,10 +2072,26 @@ public sealed partial class TopBarWindow : Window
         }
         if (ModuleText(TopBarModuleKind.Network) is { } network)
         {
-            network.Text = facts.Network.Label;
+            network.Text = TopBarModuleRules.FormatNetworkLabel(
+                facts.Network,
+                _state.ShowWifiName == true);
+            if (_modules.TryGetValue(TopBarModuleKind.Network, out var networkButton))
+            {
+                networkButton.ToolTip = facts.Network.Tooltip;
+            }
             if (ModuleIcon(TopBarModuleKind.Network) is { } networkIcon)
             {
-                networkIcon.Text = facts.Network.Connected ? GlyphWifi : GlyphWifiOff;
+                networkIcon.Text = !facts.Network.Connected
+                    ? GlyphWifiOff
+                    : !facts.Network.IsWireless
+                        ? GlyphEthernet
+                        : TopBarModuleRules.WifiSignalBars(facts.Network.SignalQuality) switch
+                        {
+                            1 => GlyphWifi1,
+                            2 => GlyphWifi2,
+                            3 => GlyphWifi3,
+                            _ => GlyphWifi,
+                        };
             }
         }
     }

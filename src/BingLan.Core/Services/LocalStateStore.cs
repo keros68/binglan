@@ -920,6 +920,18 @@ public sealed class LocalStateStore
                 box.DesktopCategory = DesktopGroupCategory.None;
             }
             box.CollectExtensions = FileMappingService.NormalizeExtensions(box.CollectExtensions);
+            if (box.EdgeDockSide is { } dockSide && !Enum.IsDefined(dockSide))
+            {
+                box.EdgeDockSide = null;
+            }
+            if (box.EdgeDockOffsetDip is { } dockOffset && !double.IsFinite(dockOffset))
+            {
+                box.EdgeDockOffsetDip = null;
+            }
+            if (string.IsNullOrWhiteSpace(box.EdgeDockMonitorDeviceName))
+            {
+                box.EdgeDockMonitorDeviceName = null;
+            }
         }
         foreach (var note in state.NoteWidgets)
         {
@@ -967,10 +979,28 @@ public sealed class LocalStateStore
         state.TopBar ??= new TopBarState();
         TopBarRules.Normalize(state.TopBar);
         state.Taskbar ??= new TaskbarState();
+        if (state.SchemaVersion < 57)
+        {
+            if (state.Taskbar.EdgeRevealMode == TaskbarEdgeRevealMode.AnyEdge
+                && state.Taskbar.RevealOnlyAtCorners)
+            {
+                state.Taskbar.EdgeRevealMode = TaskbarEdgeRevealMode.CornersOnly;
+            }
+            state.SchemaVersion = 57;
+        }
         if (!Enum.IsDefined(state.Taskbar.Mode))
         {
             state.Taskbar.Mode = TaskbarMode.SystemDefault;
         }
+        if (!Enum.IsDefined(state.Taskbar.EdgeRevealMode))
+        {
+            state.Taskbar.EdgeRevealMode = TaskbarEdgeRevealMode.AnyEdge;
+        }
+        state.Taskbar.RevealOnlyAtCorners =
+            state.Taskbar.EdgeRevealMode == TaskbarEdgeRevealMode.CornersOnly;
+        state.LastSettingsPage = string.IsNullOrWhiteSpace(state.LastSettingsPage)
+            ? null
+            : SettingsNavigationRules.NormalizePageKey(state.LastSettingsPage);
 
         state.SchemaVersion = AppState.CurrentSchemaVersion;
     }

@@ -267,6 +267,42 @@ internal static class ThemeStyleTests
         Check(narrow.Left == -864 && narrow.Right == -160, "窄屏两端至少留 160 DIP，负坐标的副屏也正确");
         var tiny = BingLan.Core.Taskbar.TaskbarCornerRules.MiddleStrip(new BingLan.Core.Dock.PixelRect(0, 0, 200, 100), 96);
         Check(tiny.Width == 0, "屏幕太窄时不挡任何位置");
+
+        var full = BingLan.Core.Taskbar.TaskbarCornerRules.FullEdgeStrip(monitor);
+        Check(full.Left == 0 && full.Right == 2560 && full.Top == 1438 && full.Bottom == 1440,
+            "禁止触边唤出模式应铺满底边 2 像素");
+        var fullNeg = BingLan.Core.Taskbar.TaskbarCornerRules.FullEdgeStrip(new BingLan.Core.Dock.PixelRect(-1920, 0, 0, 1080));
+        Check(fullNeg.Left == -1920 && fullNeg.Right == 0 && fullNeg.Top == 1078 && fullNeg.Bottom == 1080,
+            "负坐标副屏的满宽挡板应保持正确边界");
+        Check(BingLan.Core.Taskbar.TaskbarCornerRules.StripForMode(monitor, 120, TaskbarEdgeRevealMode.AnyEdge) is null,
+            "任意位置唤出模式不应创建挡板");
+        Check(BingLan.Core.Taskbar.TaskbarCornerRules.StripForMode(monitor, 120, TaskbarEdgeRevealMode.CornersOnly) == strip,
+            "仅两角模式应返回中间细条");
+        Check(BingLan.Core.Taskbar.TaskbarCornerRules.StripForMode(monitor, 120, TaskbarEdgeRevealMode.Disabled) == full,
+            "禁止触边唤出模式应返回全宽细条");
+
+        var temp = Path.Combine(Path.GetTempPath(), $"BingLan-taskbar-edge-{Guid.NewGuid():N}");
+        try
+        {
+            var store = new LocalStateStore(temp);
+            Directory.CreateDirectory(temp);
+            File.WriteAllText(store.StatePath, """{ "SchemaVersion": 56, "Taskbar": { "Mode": 2, "RevealOnlyAtCorners": true } }""");
+            var migrated = store.Load();
+            Check(migrated.SchemaVersion == AppState.CurrentSchemaVersion
+                && migrated.Taskbar.EdgeRevealMode == TaskbarEdgeRevealMode.CornersOnly
+                && migrated.Taskbar.RevealOnlyAtCorners,
+                "v56 的 RevealOnlyAtCorners=true 应迁移为 EdgeRevealMode.CornersOnly");
+
+            migrated.Taskbar.EdgeRevealMode = TaskbarEdgeRevealMode.Disabled;
+            store.Save(migrated);
+            var reloaded = store.Load();
+            Check(reloaded.Taskbar.EdgeRevealMode == TaskbarEdgeRevealMode.Disabled && !reloaded.Taskbar.RevealOnlyAtCorners,
+                "EdgeRevealMode.Disabled 应完整持久化往返");
+        }
+        finally
+        {
+            if (Directory.Exists(temp)) Directory.Delete(temp, true);
+        }
     }
 
     internal static void TestStyleMigrationAndLimits()
@@ -1861,8 +1897,8 @@ internal static class ThemeStyleTests
             TextInk = TextInk.Custom,
             CustomTextColor = "#D8ECFF"
         };
-        Check(DesktopStyleRules.DescribeSharedLookSummary(clearCustom) == "无底板 · 自定义字色 #D8ECFF",
-            "无底板自定义字色摘要应包含具体颜色值");
+        Check(DesktopStyleRules.DescribeSharedLookSummary(clearCustom) == "纯透明（无底板） · 自定义字色 #D8ECFF",
+            "纯透明（无底板）自定义字色摘要应包含具体颜色值");
     }
 
     private static void Check(bool condition, string message)

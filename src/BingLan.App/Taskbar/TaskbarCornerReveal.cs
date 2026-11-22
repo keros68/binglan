@@ -4,6 +4,7 @@ using System.Windows.Threading;
 using BingLan.App.Dock;
 using BingLan.App.Interop;
 using BingLan.Core.Dock;
+using BingLan.Core.Models;
 using BingLan.Core.Taskbar;
 using Color = System.Windows.Media.Color;
 using SolidColorBrush = System.Windows.Media.SolidColorBrush;
@@ -34,8 +35,9 @@ internal sealed class TaskbarCornerReveal : IDisposable
     private nint _locationHook;
     private uint _explorerProcessId;
     private long _lastRaise;
-    private bool _enabled;
+    private TaskbarEdgeRevealMode _mode = TaskbarEdgeRevealMode.AnyEdge;
     private bool _suspended;
+    private bool _raising;
 
     internal TaskbarCornerReveal()
     {
@@ -54,11 +56,15 @@ internal sealed class TaskbarCornerReveal : IDisposable
         _taskbarEventCallback = OnTaskbarEvent;
     }
 
-    /// <summary>Turns the behaviour on or off.</summary>
-    internal void SetEnabled(bool enabled)
+    /// <summary>Turns the behaviour on or off (legacy boolean wrapper).</summary>
+    internal void SetEnabled(bool enabled) =>
+        SetMode(enabled ? TaskbarEdgeRevealMode.CornersOnly : TaskbarEdgeRevealMode.AnyEdge);
+
+    /// <summary>Sets how pointer contact along the bottom edge may reveal an auto-hidden taskbar.</summary>
+    internal void SetMode(TaskbarEdgeRevealMode mode)
     {
-        _enabled = enabled;
-        if (enabled)
+        _mode = mode;
+        if (mode != TaskbarEdgeRevealMode.AnyEdge)
         {
             _timer.Start();
         }
@@ -70,23 +76,35 @@ internal sealed class TaskbarCornerReveal : IDisposable
         Update();
     }
 
-    /// <summary>A full-screen app is in front: the strips step aside until it leaves.</summary>
+    /// <summary>Raised after strips are placed or re-raised to topmost so visible dock surfaces can keep higher Z-order.</summary>
+    internal event Action? Raised;
+
+    /// <summary>A truly full-screen app is in front: the strips step aside until it leaves.</summary>
     internal void SetSuspended(bool suspended)
     {
+        if (_suspended == suspended)
+        {
+            return;
+        }
         _suspended = suspended;
         Update();
+        if (!suspended && _strips.Count > 0)
+        {
+            Raise();
+        }
     }
 
     internal void Update()
     {
         var wanted = new Dictionary<string, PixelRect>(StringComparer.OrdinalIgnoreCase);
-        if (_enabled && !_suspended)
+        if (_mode != TaskbarEdgeRevealMode.AnyEdge && !_suspended)
         {
             foreach (var monitor in MonitorCatalog.GetAll())
             {
-                if (TaskbarEdgeGuard.HasBottomAutoHideBar(monitor.Bounds))
+                if (TaskbarEdgeGuard.HasBottomAutoHideBar(monitor.Bounds)
+                    && TaskbarCornerRules.StripForMode(monitor.Bounds, monitor.Dpi, _mode) is { } stripBounds)
                 {
-                    wanted[monitor.DeviceName] = TaskbarCornerRules.MiddleStrip(monitor.Bounds, monitor.Dpi);
+                    wanted[monitor.DeviceName] = stripBounds;
                 }
             }
         }
@@ -106,8 +124,15 @@ internal sealed class TaskbarCornerReveal : IDisposable
             }
             strip.Place(bounds);
         }
-        if (_strips.Count > 0) WatchTaskbar();
-        else Unhook();
+        if (_strips.Count > 0)
+        {
+            WatchTaskbar();
+            NotifyRaised();
+        }
+        else
+        {
+            Unhook();
+        }
     }
 
     internal static bool IsTaskbarClass(string className) =>
@@ -158,10 +183,32 @@ internal sealed class TaskbarCornerReveal : IDisposable
     /// <summary>Puts the existing strips back above the taskbar without re-reading monitors.</summary>
     internal void Raise()
     {
+        if (_strips.Count == 0 || _raising)
+        {
+            return;
+        }
         _lastRaise = Environment.TickCount64;
         foreach (var strip in _strips.Values)
         {
             strip.Raise();
+        }
+        NotifyRaised();
+    }
+
+    private void NotifyRaised()
+    {
+        if (_raising)
+        {
+            return;
+        }
+        _raising = true;
+        try
+        {
+            Raised?.Invoke();
+        }
+        finally
+        {
+            _raising = false;
         }
     }
 

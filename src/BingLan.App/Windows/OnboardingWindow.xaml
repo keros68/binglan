@@ -149,7 +149,7 @@
                 <CheckBox x:Name="DownloadsCheckBox"
                           Margin="0,16,0,0"
                           IsChecked="True"
-                          Content="在桌面分组盒中添加“下载”入口"/>
+                          Content="在文件收纳盒中添加“下载”入口"/>
                 <StackPanel Margin="22,6,0,0" Orientation="Horizontal">
                     <TextBlock x:Name="DownloadsFolderText"
                                MaxWidth="440"

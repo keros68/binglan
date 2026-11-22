@@ -4,14 +4,17 @@ namespace BingLan.Core.Services;
 
 public static class NoteService
 {
-    public const string DefaultTitle = "便签";
+    public const string DefaultTitle = WidgetTitleRules.DefaultNoteTitle;
 
     public static NoteWidgetState CreateDefaultWidget() => new();
 
-    public static void CommitTitle(NoteWidgetState note, string? title)
+    public static void CommitTitle(NoteWidgetState note, string? title) =>
+        CommitTitle(note, title, otherNoteTitles: null);
+
+    public static void CommitTitle(NoteWidgetState note, string? title, IEnumerable<string>? otherNoteTitles)
     {
         ArgumentNullException.ThrowIfNull(note);
-        note.Title = string.IsNullOrWhiteSpace(title) ? DefaultTitle : title.Trim();
+        note.Title = WidgetTitleRules.CommitUniqueTitle(title, EditableWidgetTitleKind.Note, otherNoteTitles);
     }
 
     public static void CommitContent(NoteWidgetState note, string? content)

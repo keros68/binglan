@@ -537,13 +537,13 @@ public partial class LauncherPanelWindow
             if (place is not null)
             {
                 var subtitle = place.IsFileBox
-                    ? "桌面分组盒"
+                    ? "文件收纳盒"
                     : (_loadingDirectory
                         ? "正在读取…"
                         : (_directoryTruncated ? (place.Path ?? string.Empty) : $"{place.Path} · {_rows.Count} 项"));
                 return (place.Name, subtitle);
             }
         }
-        return ("文件总览", "常用位置、桌面分组盒与最近使用（只读路径，不移动原文件）");
+        return ("文件总览", "常用位置、文件收纳盒与最近使用（只读路径，不移动原文件）");
     }
 }

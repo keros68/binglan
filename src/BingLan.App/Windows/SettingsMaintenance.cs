@@ -42,6 +42,9 @@ public sealed class SettingsMaintenance
     /// <summary>Applies a look read from a Rainmeter skin to every card; returns a status line.</summary>
     public Func<RainmeterLook, string, string> ImportRainmeterLook { get; init; } = (_, _) => string.Empty;
 
+    /// <summary>Shows or hides a standalone widget (note or file box) without deleting it.</summary>
+    public Action<WidgetWindowBase, bool>? SetWidgetVisibility { get; init; }
+
     /// <summary>Deletes (or, for built-in cards, hides) a card after asking; true when it went.</summary>
     public Func<WidgetWindowBase, bool> DeleteWidget { get; init; } = _ => false;
     public Func<string, string, string> ExportTheme { get; init; } = (_, _) => string.Empty;
@@ -85,8 +88,11 @@ public sealed class SettingsMaintenance
     /// <summary>Writes the shared card material from <see cref="Style"/> to every card.</summary>
     public Action ApplyGlass { get; init; } = () => { };
     public Func<bool> IsCleanDesktopEnabled { get; init; } = () => false;
+    public Func<bool> IsCleanDesktopAvailable { get; init; } = () => true;
     public Func<bool, Task<string>> SetCleanDesktop { get; init; } =
-        _ => Task.FromResult("清爽桌面不可用");
+        _ => Task.FromResult("当前无法隐藏 Windows 桌面图标");
+    public Func<bool> IsDoubleClickDesktopToToggleIconsEnabled { get; init; } = () => false;
+    public Func<bool, string> SetDoubleClickDesktopToToggleIcons { get; init; } = _ => string.Empty;
     public Func<string> CleanDesktopNotice { get; init; } = () => string.Empty;
 
     /// <summary>
@@ -106,6 +112,9 @@ public sealed class SettingsMaintenance
     public Func<bool> IsHeaderToolsOnHover { get; init; } = () => false;
     public Action<bool> SetHeaderToolsOnHover { get; init; } = _ => { };
     public BingLan.Core.Models.GlobalHotkeysState Hotkeys { get; init; } = new();
-    public Func<BingLan.Core.Models.GlobalHotkeyKind, string, bool> ProbeGlobalHotkey { get; init; } = (_, _) => true;
+    public Func<BingLan.Core.Models.GlobalHotkeyKind, string, BingLan.Core.Models.GlobalHotkeyProbeResult> ProbeGlobalHotkey { get; init; } =
+        (_, _) => BingLan.Core.Models.GlobalHotkeyProbeResult.Available;
     public Action ApplyGlobalHotkeys { get; init; } = () => { };
+    public Func<string?>? GetLastSettingsPage { get; init; }
+    public Action<string>? SetLastSettingsPage { get; init; }
 }

@@ -45,7 +45,9 @@
         </Style>
     </Window.Resources>
     <Border x:Name="DockSurface"
+            VerticalAlignment="Bottom"
             Padding="14,5"
+            ClipToBounds="False"
             Background="{DynamicResource DockSurfaceBrush}"
             BorderBrush="{DynamicResource DockSurfaceBorderBrush}"
             BorderThickness="1"
@@ -55,7 +57,9 @@
         <ScrollViewer x:Name="ItemScroller"
                       HorizontalScrollBarVisibility="Hidden"
                       VerticalScrollBarVisibility="Disabled">
-            <StackPanel x:Name="ItemPanel" Orientation="Horizontal"/>
+            <StackPanel x:Name="ItemPanel"
+                        Orientation="Horizontal"
+                        VerticalAlignment="Bottom"/>
         </ScrollViewer>
     </Border>
 </Window>

@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using BingLan.Core.Services;
 
 namespace BingLan.Core.Models;
 
@@ -88,8 +89,12 @@ public sealed class NoteWidgetState
     private double _cornerRadius = WidgetAppearanceRules.DefaultCornerRadius;
 
     public Guid Id { get; set; } = Guid.NewGuid();
-    public string Title { get; set; } = "便签";
+    public string Title { get; set; } = WidgetTitleRules.DefaultNoteTitle;
     public string Content { get; set; } = "";
+
+    /// <summary>Whether this note is hidden from the desktop while keeping its text and settings.</summary>
+    public bool IsHidden { get; set; }
+
     public bool IsLocked { get; set; }
     public WidgetAppearanceState Appearance { get; set; } = new();
     public double CornerRadius

@@ -109,13 +109,41 @@ public partial class IceBlueDockWindow : Window
     private string[]? _cachedDragPaths;
     private Task<IReadOnlyList<DroppedPathInfo>>? _cachedDragInfoTask;
 
+    // Pre-allocated hover magnification slots (rebuilt only when dock items change) so
+    // pointer movement allocates nothing; timer stops immediately on MouseLeave/hide.
+    private sealed class MagnificationSlot(Button button, ScaleTransform scale, TranslateTransform translate)
+    {
+        public Button Button { get; } = button;
+        public ScaleTransform Scale { get; } = scale;
+        public TranslateTransform Translate { get; } = translate;
+        public double CurrentScale = 1d;
+        public double TargetScale = 1d;
+        public double CurrentLiftY;
+        public double TargetLiftY;
+    }
+
+    private readonly List<MagnificationSlot> _magSlots = [];
+    private readonly DispatcherTimer _magTimer;
+    private readonly System.Diagnostics.Stopwatch _magClock = new();
+    private long _magLastTicks;
+    private double _topOverflowDip;
+    private bool _magReturnAnimating;
+    private bool _magRegionExpanded;
+    private bool _hasAppliedHitRegion;
+    private PixelRect? _appliedHitRegion;
+    private int _magReturnGeneration;
+
     internal IceBlueDockWindow(DockState state)
     {
         _state = state;
         InitializeComponent();
         _morph = new DockMorphAnimator(DockSurface);
         _glass = new DockGlassSurface(this, DockSurface, "DockSurfaceBrush", "DockSurfaceBorderBrush");
-        _morph.StateChanged += () => _glass.TrackAnimation(_morph.ActiveKind != DockMorphKind.None);
+        _morph.StateChanged += () =>
+        {
+            _glass.TrackAnimation(_morph.ActiveKind != DockMorphKind.None);
+            SyncMagnificationHitRegion();
+        };
         _morph.CollapseCompleted += OnCollapseMorphCompleted;
         _watcher = new WindowEventWatcher(Dispatcher);
         _watcher.SnapshotInvalidated += RefreshWindows;
@@ -160,11 +188,20 @@ public partial class IceBlueDockWindow : Window
             (_, _) => OnDragHoverTick(),
             Dispatcher);
         _dragHoverTimer.Stop();
+        _magTimer = new DispatcherTimer(
+            TimeSpan.FromMilliseconds(16),
+            DispatcherPriority.Render,
+            (_, _) => StepMagnification(),
+            Dispatcher);
+        _magTimer.Stop();
         SourceInitialized += OnSourceInitialized;
+        SizeChanged += (_, _) => SyncMagnificationHitRegion();
         Closing += OnClosing;
         DockSurface.DragOver += OnSurfaceDragOver;
         DockSurface.DragLeave += OnSurfaceDragLeave;
         DockSurface.Drop += OnDropOnSurface;
+        DockSurface.PreviewMouseMove += OnDockSurfacePreviewMouseMove;
+        DockSurface.MouseLeave += OnDockSurfaceMouseLeave;
         // When the row overflows, the wheel scrolls it sideways instead of doing nothing.
         ItemScroller.PreviewMouseWheel += (sender, e) =>
         {
@@ -233,6 +270,7 @@ public partial class IceBlueDockWindow : Window
 
     private void HideFromApp()
     {
+        StopMagnification(animateReturn: false);
         _isChangingVisibilityByApp = true;
         try
         {
@@ -272,12 +310,27 @@ public partial class IceBlueDockWindow : Window
             && !_vacatedForMaximized;
         _lastReservationAttempt = DateTimeOffset.UtcNow;
         UpdateEffectiveIconSize(monitor, _items);
+        var thicknessDip = DockLayoutMetrics.Thickness(_state.IconSize);
+        var topOverflowDip = DockMagnificationRules.RequiredTopOverflowDip(
+            _state.HoverMagnification,
+            _state.HoverMagnificationScale,
+            _effectiveIconSize,
+            Motion,
+            SystemParameters.ClientAreaAnimation);
+        var previousTopOverflowDip = _topOverflowDip;
+        ApplyOverflowLayout(thicknessDip, topOverflowDip);
+        if (DockMagnificationRules.ShouldResetSlotsOnOverflowChange(previousTopOverflowDip, topOverflowDip))
+        {
+            StopMagnification(animateReturn: false);
+        }
         _appBar.Apply(
             monitor,
             reserveWorkArea,
             ContentLengthDip(),
-            DockLayoutMetrics.Thickness(_state.IconSize),
-            _state.BottomGapDip);
+            thicknessDip,
+            _state.BottomGapDip,
+            topOverflowDip);
+        SyncMagnificationHitRegion();
         if (!reserveWorkArea || _appBar.IsReserved)
         {
             _reservationFailureReported = false;
@@ -532,6 +585,8 @@ public partial class IceBlueDockWindow : Window
         _foregroundTimer.Stop();
         _yieldReleaseTimer.Stop();
         _yieldHideTimer.Stop();
+        _magTimer.Stop();
+        _magClock.Stop();
         _watcher.Dispose();
         _maximizeWatcher.Dispose();
         _appBar?.Dispose();
@@ -635,8 +690,10 @@ public partial class IceBlueDockWindow : Window
         }
 
         ClearDragTargetVisual();
+        StopMagnification(animateReturn: false);
         _lastStructureKey = structureKey;
         _itemButtons.Clear();
+        _magSlots.Clear();
         ItemPanel.Children.Clear();
         if (commands.Start)
         {
@@ -1149,16 +1206,315 @@ public partial class IceBlueDockWindow : Window
             : new WindowCommandResult(false, $"{name} 不支持从 Dock 启动新实例"));
     }
 
-    private static ScaleTransform AddHoverZoom(Button button, UIElement icon)
+    private ScaleTransform AddHoverZoom(Button button, UIElement icon)
     {
         var scale = new ScaleTransform(1, 1);
+        var translate = new TranslateTransform(0, 0);
+        var group = new TransformGroup();
+        group.Children.Add(scale);
+        group.Children.Add(translate);
         icon.RenderTransformOrigin = new Point(0.5, 1);
-        icon.RenderTransform = scale;
-        button.MouseEnter += (_, _) => Zoom(
-            scale,
-            DesktopStyleRules.HoverZoom(Motion, SystemParameters.ClientAreaAnimation));
-        button.MouseLeave += (_, _) => Zoom(scale, 1);
+        icon.RenderTransform = group;
+        _magSlots.Add(new MagnificationSlot(button, scale, translate));
+        button.MouseEnter += (_, _) =>
+        {
+            if (!_state.HoverMagnification)
+            {
+                Zoom(scale, DesktopStyleRules.HoverZoom(Motion, SystemParameters.ClientAreaAnimation));
+            }
+        };
+        button.MouseLeave += (_, _) =>
+        {
+            if (!_state.HoverMagnification)
+            {
+                Zoom(scale, 1);
+            }
+        };
         return scale;
+    }
+
+    private void ApplyOverflowLayout(double thicknessDip, double topOverflowDip)
+    {
+        _topOverflowDip = topOverflowDip;
+        DockSurface.Height = thicknessDip;
+        ItemScroller.Margin = topOverflowDip > 0d
+            ? new Thickness(0, -topOverflowDip, 0, 0)
+            : new Thickness(0);
+    }
+
+    private void OnDockSurfacePreviewMouseMove(object sender, MouseEventArgs e)
+    {
+        if (_closing || _dragging || _externalDragActive || _menuOpen || _morph.ActiveKind != DockMorphKind.None)
+        {
+            return;
+        }
+
+        var maxScale = DockMagnificationRules.EffectiveMaxScale(
+            _state.HoverMagnification,
+            _state.HoverMagnificationScale,
+            Motion,
+            SystemParameters.ClientAreaAnimation);
+        if (maxScale <= 1d || _magSlots.Count == 0)
+        {
+            return;
+        }
+
+        var cursorX = e.GetPosition(ItemPanel).X;
+        var radiusDip = DockLayoutMetrics.ItemCell(_effectiveIconSize) * DockMagnificationRules.InfluenceRadiusCells;
+        var motion = Motion;
+        var clearReturn = _magReturnAnimating;
+        _magReturnAnimating = false;
+        _magReturnGeneration++;
+        if (!_magRegionExpanded)
+        {
+            _magRegionExpanded = true;
+            SyncMagnificationHitRegion();
+        }
+
+        for (var i = 0; i < _magSlots.Count; i++)
+        {
+            var slot = _magSlots[i];
+            if (clearReturn || slot.Scale.HasAnimatedProperties || slot.Translate.HasAnimatedProperties)
+            {
+                DetachSlotAnimations(slot);
+            }
+            var offset = VisualTreeHelper.GetOffset(slot.Button);
+            var centerX = offset.X + (slot.Button.ActualWidth * 0.5d);
+            var targetScale = DockMagnificationRules.ComputeScale(cursorX - centerX, radiusDip, maxScale);
+            slot.TargetScale = targetScale;
+            slot.TargetLiftY = DockMagnificationRules.ComputeLiftDip(targetScale, _effectiveIconSize, motion);
+        }
+
+        if (!_magTimer.IsEnabled)
+        {
+            if (!_magClock.IsRunning)
+            {
+                _magClock.Restart();
+            }
+            _magLastTicks = _magClock.ElapsedTicks;
+            _magTimer.Start();
+        }
+    }
+
+    private void OnDockSurfaceMouseLeave(object sender, MouseEventArgs e)
+    {
+        if (_state.HoverMagnification)
+        {
+            StopMagnification(animateReturn: true);
+        }
+    }
+
+    private void StepMagnification()
+    {
+        if (_closing || _magSlots.Count == 0)
+        {
+            _magTimer.Stop();
+            return;
+        }
+
+        var nowTicks = _magClock.ElapsedTicks;
+        var dt = Math.Clamp((nowTicks - _magLastTicks) / (double)System.Diagnostics.Stopwatch.Frequency, 0.001d, 0.05d);
+        _magLastTicks = nowTicks;
+
+        var rate = DockMagnificationRules.SmoothingRatePerSecond(Motion);
+        var alpha = double.IsPositiveInfinity(rate) ? 1d : 1d - Math.Exp(-rate * dt);
+        var anyPending = false;
+
+        for (var i = 0; i < _magSlots.Count; i++)
+        {
+            var slot = _magSlots[i];
+            var nextScale = slot.CurrentScale + ((slot.TargetScale - slot.CurrentScale) * alpha);
+            var nextLift = slot.CurrentLiftY + ((slot.TargetLiftY - slot.CurrentLiftY) * alpha);
+            if (Math.Abs(slot.TargetScale - nextScale) < 0.0015d && Math.Abs(slot.TargetLiftY - nextLift) < 0.05d)
+            {
+                nextScale = slot.TargetScale;
+                nextLift = slot.TargetLiftY;
+            }
+            else
+            {
+                anyPending = true;
+            }
+
+            if (nextScale != slot.CurrentScale)
+            {
+                slot.CurrentScale = nextScale;
+                slot.Scale.ScaleX = nextScale;
+                slot.Scale.ScaleY = nextScale;
+            }
+            if (nextLift != slot.CurrentLiftY)
+            {
+                slot.CurrentLiftY = nextLift;
+                slot.Translate.Y = nextLift;
+            }
+        }
+
+        if (!anyPending)
+        {
+            _magTimer.Stop();
+        }
+    }
+
+    private void StopMagnification(bool animateReturn)
+    {
+        // Always stop the animation timer immediately when leaving or hiding the dock.
+        _magTimer.Stop();
+        var generation = ++_magReturnGeneration;
+        if (_magSlots.Count == 0)
+        {
+            _magReturnAnimating = false;
+            _magRegionExpanded = false;
+            SyncMagnificationHitRegion();
+            return;
+        }
+
+        var returnDuration = animateReturn && SystemParameters.ClientAreaAnimation
+            ? DockMagnificationRules.ReturnDuration(Motion)
+            : TimeSpan.Zero;
+        if (returnDuration > TimeSpan.Zero)
+        {
+            var ease = new QuadraticEase { EasingMode = EasingMode.EaseOut };
+            ease.Freeze();
+            var scaleBack = new DoubleAnimation(1d, new Duration(returnDuration)) { EasingFunction = ease };
+            var liftBack = new DoubleAnimation(0d, new Duration(returnDuration)) { EasingFunction = ease };
+            scaleBack.Freeze();
+            liftBack.Freeze();
+
+            var startedAny = false;
+            ScaleTransform? completionHost = null;
+            for (var i = 0; i < _magSlots.Count; i++)
+            {
+                var slot = _magSlots[i];
+                var wasMagnified = Math.Abs(slot.CurrentScale - 1d) > 0.001d || Math.Abs(slot.CurrentLiftY) > 0.05d;
+                slot.CurrentScale = 1d;
+                slot.TargetScale = 1d;
+                slot.CurrentLiftY = 0d;
+                slot.TargetLiftY = 0d;
+                if (wasMagnified)
+                {
+                    if (completionHost is null)
+                    {
+                        completionHost = slot.Scale;
+                        var completionScaleBack = new DoubleAnimation(1d, new Duration(returnDuration))
+                        {
+                            EasingFunction = ease
+                        };
+                        completionScaleBack.Completed += (_, _) =>
+                        {
+                            if (_closing || _magReturnGeneration != generation)
+                            {
+                                return;
+                            }
+                            _magReturnAnimating = false;
+                            _magRegionExpanded = false;
+                            ResetMagnificationSlotsImmediate();
+                            SyncMagnificationHitRegion();
+                        };
+                        slot.Scale.BeginAnimation(ScaleTransform.ScaleXProperty, completionScaleBack);
+                        slot.Scale.BeginAnimation(ScaleTransform.ScaleYProperty, scaleBack);
+                    }
+                    else
+                    {
+                        slot.Scale.BeginAnimation(ScaleTransform.ScaleXProperty, scaleBack);
+                        slot.Scale.BeginAnimation(ScaleTransform.ScaleYProperty, scaleBack);
+                    }
+                    slot.Translate.BeginAnimation(TranslateTransform.YProperty, liftBack);
+                    startedAny = true;
+                }
+            }
+            _magReturnAnimating = startedAny;
+            if (!startedAny)
+            {
+                _magRegionExpanded = false;
+                SyncMagnificationHitRegion();
+            }
+            return;
+        }
+
+        _magReturnAnimating = false;
+        _magRegionExpanded = false;
+        ResetMagnificationSlotsImmediate();
+        SyncMagnificationHitRegion();
+    }
+
+    private static void DetachSlotAnimations(MagnificationSlot slot)
+    {
+        var currentScale = slot.Scale.ScaleX;
+        var currentLift = slot.Translate.Y;
+        slot.Scale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
+        slot.Scale.BeginAnimation(ScaleTransform.ScaleYProperty, null);
+        slot.Translate.BeginAnimation(TranslateTransform.YProperty, null);
+        if (!double.IsFinite(currentScale) || currentScale <= 0d)
+        {
+            currentScale = 1d;
+        }
+        if (!double.IsFinite(currentLift))
+        {
+            currentLift = 0d;
+        }
+
+        slot.CurrentScale = currentScale;
+        slot.Scale.ScaleX = currentScale;
+        slot.Scale.ScaleY = currentScale;
+        slot.CurrentLiftY = currentLift;
+        slot.Translate.Y = currentLift;
+    }
+
+    private void ResetMagnificationSlotsImmediate()
+    {
+        for (var i = 0; i < _magSlots.Count; i++)
+        {
+            var slot = _magSlots[i];
+            slot.CurrentScale = 1d;
+            slot.TargetScale = 1d;
+            slot.CurrentLiftY = 0d;
+            slot.TargetLiftY = 0d;
+            slot.Scale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
+            slot.Scale.BeginAnimation(ScaleTransform.ScaleYProperty, null);
+            slot.Translate.BeginAnimation(TranslateTransform.YProperty, null);
+            slot.Scale.ScaleX = 1d;
+            slot.Scale.ScaleY = 1d;
+            slot.Translate.Y = 0d;
+        }
+    }
+
+    private void SyncMagnificationHitRegion()
+    {
+        if (_closing || _handle == 0 || !DockNativeMethods.GetWindowRect(_handle, out var native))
+        {
+            return;
+        }
+
+        var widthPx = native.Right - native.Left;
+        var heightPx = native.Bottom - native.Top;
+        var topOverflowPx = 0;
+        if (_topOverflowDip > 0d && PresentationSource.FromVisual(this) is { CompositionTarget: { } target })
+        {
+            var dpiY = target.TransformToDevice.M22;
+            if (DockSurface.IsLoaded && DockSurface.ActualHeight > 0d)
+            {
+                var surfaceTopDip = DockSurface.TransformToAncestor(this).Transform(new Point(0d, 0d)).Y;
+                topOverflowPx = Math.Max(0, (int)Math.Floor(surfaceTopDip * dpiY));
+            }
+            if (topOverflowPx <= 0)
+            {
+                topOverflowPx = Math.Max(0, (int)Math.Round(_topOverflowDip * dpiY));
+            }
+        }
+
+        var desired = DockMagnificationRules.ComputeHitRegionRect(
+            widthPx,
+            heightPx,
+            topOverflowPx,
+            _magRegionExpanded,
+            _morph.ActiveKind != DockMorphKind.None);
+        if (_hasAppliedHitRegion && _appliedHitRegion == desired)
+        {
+            return;
+        }
+
+        NativeMethods.ApplyWindowRegion(_handle, desired);
+        _appliedHitRegion = desired;
+        _hasAppliedHitRegion = true;
     }
 
     private static void Zoom(ScaleTransform scale, double target)
@@ -1174,12 +1530,34 @@ public partial class IceBlueDockWindow : Window
             return;
         }
 
-        var animation = new DoubleAnimation(target, new Duration(DesktopStyleRules.HoverZoomDuration(Motion)))
+        var fromX = scale.ScaleX;
+        var fromY = scale.ScaleY;
+        scale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
+        scale.BeginAnimation(ScaleTransform.ScaleYProperty, null);
+        scale.ScaleX = target;
+        scale.ScaleY = target;
+        if (Math.Abs(fromX - target) < 0.0001d && Math.Abs(fromY - target) < 0.0001d)
         {
-            EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut }
+            return;
+        }
+
+        var duration = new Duration(DesktopStyleRules.HoverZoomDuration(Motion));
+        var ease = new QuadraticEase { EasingMode = EasingMode.EaseOut };
+        ease.Freeze();
+        var animationX = new DoubleAnimation(fromX, target, duration)
+        {
+            EasingFunction = ease,
+            FillBehavior = FillBehavior.Stop
         };
-        scale.BeginAnimation(ScaleTransform.ScaleXProperty, animation);
-        scale.BeginAnimation(ScaleTransform.ScaleYProperty, animation);
+        var animationY = new DoubleAnimation(fromY, target, duration)
+        {
+            EasingFunction = ease,
+            FillBehavior = FillBehavior.Stop
+        };
+        animationX.Freeze();
+        animationY.Freeze();
+        scale.BeginAnimation(ScaleTransform.ScaleXProperty, animationX);
+        scale.BeginAnimation(ScaleTransform.ScaleYProperty, animationY);
     }
 
     private void Report(WindowCommandResult result)
@@ -1243,7 +1621,7 @@ public partial class IceBlueDockWindow : Window
         if (mappingPath is not null && System.IO.Path.IsPathFullyQualified(mappingPath)
             && ReadFileBoxes is not null && SendToFileBox is not null)
         {
-            menu.AddItem("发送到分组盒…", () => OpenSendToFileBoxMenu(mappingPath, anchor));
+            menu.AddItem("发送到文件收纳盒…", () => OpenSendToFileBoxMenu(mappingPath, anchor));
         }
 
         if (menu.HasItems)
@@ -1300,7 +1678,7 @@ public partial class IceBlueDockWindow : Window
         var boxes = read();
         if (boxes.Count == 0)
         {
-            CommandFailed?.Invoke("请先新建分组盒。");
+            CommandFailed?.Invoke("请先新建文件收纳盒。");
             return;
         }
 
@@ -2154,6 +2532,7 @@ public partial class IceBlueDockWindow : Window
     // widened) placement; the completion restores the strip placement and hides.
     private void BeginSmartHide()
     {
+        StopMagnification(animateReturn: false);
         if (!MorphEnabled
             || _trueFullScreenForeground
             || _handleWindow is not { IsDragActive: false } handle)

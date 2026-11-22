@@ -137,6 +137,37 @@
 
 底边中间放一条 2 像素高、透明度 1/255 的置顶工具窗口，挡在自动隐藏的任务栏前面。实验：没有细条时鼠标到底边中间任务栏弹出（顶边 1438 → 1380），放上细条后不弹出。用模拟鼠标输入测试“两端照常弹出”时，连没有细条的对照组也时弹时不弹，模拟输入不足以验证，需以真实鼠标确认。
 
+## 「禁止鼠标触边唤出」冲突排查与真机验证清单（2026-11-22）
+
+### 1. 源码级冲突分析与实际生效行为
+
+1. **最大化窗口底边（已修复误暂停 + 明确边界）**
+   - 原实现中 `WidgetCoordinator` 用 `FullScreenWatcher.IsFullScreenInFront` 暂停挡板，但该属性未排除最大化普通窗口；任务栏自动隐藏且 Dock 智能隐藏时，最大化窗口铺满整屏会误触发暂停，导致挡板失效。已改为绑定 `FullScreenWatcher.IsTrueFullScreenInFront`（`excludeMaximized: true`）：最大化普通窗口保持生效，仅真全屏应用撤下挡板。
+   - 固有边界：不注入 Explorer 前提下，全宽 2 物理像素置顶细条会吞掉屏幕最底 2 物理像素的鼠标点击（150% 缩放约 1.3 DIP），仅在用户主动选择「禁止鼠标触边唤出」时生效；带 `WS_MAXIMIZE` 样式的无边框窗口化游戏也会被 `IsZoomed` 判为最大化窗口而不撤下挡板（见下表第 10 项）。
+2. **Dock「只用屏幕底边」与「底边和把手」唤出（Z 序协调，无回路）**
+   - Dock 底边唤出通过 `GetCursorPos` + `DockRevealRules.IsInRevealZone` 判定屏幕坐标，不依赖命中任务栏窗口，因此 2 px 挡板不会阻止 Dock 底边唤出；不能在 Dock 隐藏时挖空挡板，否则唤出 Dock 时原生任务栏会同时弹出。
+   - Z 序调整：显示桌面时先抬挡板再抬 Dock；`TaskbarCornerReveal` 每次重排或置顶后触发 `Raised` 事件，由 `WidgetCoordinator` 调用 `_dock.EnsureAboveDesktop()` 保持可见 Dock 与把手位于挡板之上。
+   - **防回环依据**：`IceBlueDockWindow.EnsureAboveDesktop()` 仅对本进程自己的 Dock HWND（`DockAppBarController.UpdateWindowLayer`：`SetWindowPos(..., SwpNoMove | SwpNoSize | SwpNoActivate)`）和把手 HWND（`DockHandleWindow.EnsureAboveDesktop`：`SetWindowPos(..., SwpNoMove | SwpNoSize | SwpNoActivate)`）重申 Z 序，不触碰任务栏也不调用 `SHAppBarMessage`；`TaskbarCornerReveal` 的两个 `SetWinEventHook` 严格按 `explorer.exe` PID 且按类名过滤 `Shell_TrayWnd`/`Shell_SecondaryTrayWnd`，不会因本进程窗口 Z 序变化被唤醒；此外 `TaskbarCornerReveal` 内部仍加了 `_raising` 重入卫士兜底。
+3. **全屏切回与 Explorer 重启**
+   - `TaskbarCornerReveal.SetSuspended(false)` 恢复后立即补一次 `Raise()`；`TaskbarAdapter` 收到 `TaskbarCreated` 后触发 `ExplorerRestarted`，立即重建挡板与新 Explorer PID 的 `WinEventHook`（不再等待 5 秒轮询）。
+
+### 2. 待执行的真机验证清单（由用户在预览版逐项核对）
+
+环境记录：Windows 版本 `________`、显示器与缩放 `________`。
+
+| # | 场景 | 操作步骤 | 预期结果 | 结论 |
+| --- | --- | --- | --- | --- |
+| 1 | 单屏基础拦截 | 任务栏设为「自动隐藏」+「禁止鼠标触边唤出」，将鼠标沿底边左/中/右慢速与快速滑到底 | 原生任务栏均不弹出 | [ ] |
+| 2 | Win 键与 Dock 开始按钮 | 承上，按键盘 `Win` 键，再试点击 Dock 左端开始按钮与 `Win+X` | 原生开始菜单与任务栏正常打开；关闭菜单后任务栏收回，底边继续禁唤出 | [ ] |
+| 3 | Dock「只用屏幕底边」唤出 | Dock 设为智能隐藏 +「只用屏幕底边」，鼠标推至底边中间 | 冰蓝 Dock 正常唤出、图标（含贴底 `BottomGapDip=0` 时底缘）可正常点击，原生任务栏不同步弹出 | [ ] |
+| 4 | Dock 右下角把手贴底 | Dock 设为智能隐藏 +「屏幕底边和把手」，将把手拖至紧贴屏幕最底边 | 悬停展开、按住拖动把手、拖入文件到把手底缘均正常响应，不被 2 px 挡板吞掉 | [ ] |
+| 5 | 最大化窗口底边 | 打开浏览器或编辑器并最大化（非 F11 真全屏），鼠标移至屏幕底边 | 挡板保持生效，任务栏不弹出；页面底部主内容正常可读可点（仅最底 2 物理像素被挡板占用） | [ ] |
+| 6 | 真全屏与全屏切回 | 打开全屏视频（F11/播放器全屏）或全屏游戏，操作底边进度条/控制栏，再退出全屏 | 真全屏期间挡板撤下、底边完全畅通；退出全屏约 2 秒内挡板自动恢复且继续拦截任务栏 | [ ] |
+| 7 | 多屏与混合 DPI | 连接双屏（不同缩放，如 150% + 100%），在有/无副屏自动隐藏任务栏的显示器上分别测试底边 | 仅存在底边自动隐藏任务栏的屏幕生成对应尺寸挡板；无副任务栏的副屏不受影响；跨屏移动无错位 | [ ] |
+| 8 | Explorer 重启 | 任务管理器重启「Windows 资源管理器」 | 新 Explorer 就绪后自动隐藏恢复，挡板自动重挂新进程钩子，底边继续不弹任务栏 | [ ] |
+| 9 | 宿主强杀后任务栏恢复 | 任务管理器强制结束 `BingLan.exe` 进程，随后测试底边与再次启动 | 强杀瞬间 2 px 挡板随进程消失，鼠标碰底边可立即正常唤出原生任务栏；下次启动或 `--restore-taskbar` 按检查点恢复进入前状态 | [ ] |
+| 10 | 无边框窗口化游戏（带最大化样式） | 运行带最大化样式（`WS_MAXIMIZE`）的无边框窗口化游戏，尝试点击游戏画面最底 2 像素区域 | 核对底部 2 像素点击是否被挡板拦截（因 `IsTrueFullScreenInFront` 以 `IsZoomed` 排除最大化，此类窗口不撤下挡板） | [ ] |
+
 ## 原有窗口材质后端的限制
 
 - 恢复时透明、模糊一律回到 Windows 系统默认外观。Windows 没有读取任务栏当前材质的接口，冰蓝桌面只在检测不到其他任务栏工具时接管，按“接管前就是系统默认”处理；如果名单之外的工具事先改过任务栏外观，退出后不会还原成那个外观。
