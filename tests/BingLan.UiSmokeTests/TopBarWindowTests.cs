@@ -427,6 +427,11 @@ internal static class TopBarWindowTests
         var state = BarState();
         state.VisibilityMode = TopBarVisibilityMode.SmartHide;
         state.Modules.Volume = false;
+        state.Modules.TodoSummary = false;
+        state.Modules.Attention = false;
+        state.Modules.InputMethod = false;
+        state.Modules.Battery = false;
+        state.Modules.TrayOverflow = false;
         state.Modules.Network = false;
         using var sampler = new WindowsPerformanceSamplingService();
         var bar = new TopBarWindow(state, new DesktopStyleState(), new FakeEnvironment(), sampler);
