@@ -19,7 +19,8 @@ public sealed partial class WidgetCoordinator
     private static readonly TimeSpan LauncherAppCacheLifetime = TimeSpan.FromMinutes(10);
     private LauncherPanelWindow? _launcherPanel;
     private long? _launcherLostFocusAt;
-    private Task<(DockPinnedApp Pin, string? Folder)[]>? _launcherApps;
+    private Task<(DockPinnedApp Pin, string? Folder, string? Shortcut)[]>? _launcherApps;
+    private Task<(DockPinnedApp Pin, string? Folder, string? Shortcut)[]>? _launcherAppsRefresh;
     private DateTimeOffset _launcherAppsAt;
     private bool _launcherWarmupQueued;
 
@@ -62,7 +63,7 @@ public sealed partial class WidgetCoordinator
             ReadLauncherSnapshotAsync, OpenLauncherTarget, ReadLauncherFileBoxes,
             SendLauncherPathToFileBoxAsync, foreground, monitor, _state.LauncherAppearance, _state.Style,
             PinLauncherEntry, () => _state.LauncherGroups, ScheduleSave, () => _state.LauncherAppCategoryOverrides,
-            _state.LauncherPreferences);
+            _state.LauncherPreferences, unpinFromDock: UnpinLauncherEntry);
         _launcherPanel = panel;
         panel.Closed += (_, _) =>
         {
@@ -116,22 +117,52 @@ public sealed partial class WidgetCoordinator
         }));
     }
 
-    private Task<(DockPinnedApp Pin, string? Folder)[]> ReadLauncherAppsAsync()
+    private Task<(DockPinnedApp Pin, string? Folder, string? Shortcut)[]> ReadLauncherAppsAsync()
     {
         var now = DateTimeOffset.Now;
-        if (_launcherApps is null || _launcherApps.IsFaulted
-            || (_launcherApps.IsCompleted && now - _launcherAppsAt >= LauncherAppCacheLifetime))
+        if (_launcherApps is null || _launcherApps.IsFaulted || _launcherApps.IsCanceled)
         {
             _launcherAppsAt = now;
-            _launcherApps = Task.Run(() =>
-            {
-                var folders = new Dictionary<DockPinnedApp, string>();
-                return DockShortcuts.ReadStartMenuApps(preserveLaunchVariants: true, folders)
-                    .Select(pin => (Pin: pin, Folder: folders.GetValueOrDefault(pin))).ToArray();
-            });
+            _launcherApps = ScanLauncherAppsAsync();
+            return _launcherApps;
         }
+
+        if (_launcherApps.IsCompletedSuccessfully
+            && now - _launcherAppsAt >= LauncherAppCacheLifetime
+            && _launcherAppsRefresh is null)
+        {
+            var refresh = ScanLauncherAppsAsync();
+            _launcherAppsRefresh = refresh;
+            var scheduler = SynchronizationContext.Current is not null
+                ? TaskScheduler.FromCurrentSynchronizationContext()
+                : TaskScheduler.Default;
+            _ = refresh.ContinueWith(task =>
+            {
+                if (ReferenceEquals(_launcherAppsRefresh, refresh))
+                {
+                    _launcherAppsRefresh = null;
+                }
+                if (task.IsCompletedSuccessfully && !_isExiting && !_exitRequested)
+                {
+                    _launcherApps = refresh;
+                    _launcherAppsAt = DateTimeOffset.Now;
+                    LauncherIconCache.Clear();
+                }
+            }, CancellationToken.None, TaskContinuationOptions.None, scheduler);
+        }
+
         return _launcherApps;
     }
+
+    private static Task<(DockPinnedApp Pin, string? Folder, string? Shortcut)[]> ScanLauncherAppsAsync() =>
+        Task.Run(() =>
+        {
+            var folders = new Dictionary<DockPinnedApp, string>();
+            var shortcuts = new Dictionary<DockPinnedApp, string>();
+            return DockShortcuts.ReadStartMenuApps(preserveLaunchVariants: true, folders, shortcutPaths: shortcuts)
+                .Select(pin => (Pin: pin, Folder: folders.GetValueOrDefault(pin), Shortcut: shortcuts.GetValueOrDefault(pin)))
+                .ToArray();
+        });
 
     private nint ResolveLauncherForeground(nint current)
     {
@@ -194,7 +225,9 @@ public sealed partial class WidgetCoordinator
 
     private string PinLauncherEntry(LauncherPanelEntry entry)
     {
-        var pin = entry.Pinned ?? DockPinRules.CreateFromPath(entry.Candidate.Path, entry.Candidate.DisplayName);
+        var pin = entry.Pinned is { } source
+            ? DockPinRules.Copy(source)
+            : DockPinRules.CreateFromPath(entry.Candidate.Path, entry.Candidate.DisplayName);
         if (pin is null) return "此入口无法固定到 Dock";
         if (!DockPinRules.Pin(_state.Dock, pin))
         {
@@ -205,18 +238,21 @@ public sealed partial class WidgetCoordinator
         return "已固定到 Dock";
     }
 
+    private string UnpinLauncherEntry(LauncherPanelEntry entry)
+    {
+        var pin = entry.Pinned ?? DockPinRules.CreateFromPath(entry.Candidate.Path, entry.Candidate.DisplayName);
+        if (pin is null || !DockPinRules.Unpin(_state.Dock, DockPinRules.IdentityKey(pin)))
+        {
+            return "此入口不在 Dock 中";
+        }
+        ApplyDock();
+        ScheduleSave();
+        return "已从 Dock 取消固定";
+    }
+
     private async Task<LauncherPanelSnapshot> ReadLauncherSnapshotAsync()
     {
-        var pins = _state.Dock.PinnedApps.Select(pin => new DockPinnedApp
-        {
-            DisplayName = pin.DisplayName,
-            ExecutablePath = pin.ExecutablePath,
-            TargetPath = pin.TargetPath,
-            AppUserModelId = pin.AppUserModelId,
-            Arguments = pin.Arguments,
-            WorkingDirectory = pin.WorkingDirectory,
-            IconFile = pin.IconFile
-        }).ToArray();
+        var pins = _state.Dock.PinnedApps.Select(DockPinRules.Copy).ToArray();
         var mapped = _state.FileBoxes.SelectMany(box => box.Items.Select(item =>
             (item.Path, item.Title, Source: box.Title))).ToArray();
         var fileBoxSummaries = _state.FileBoxes.Select(box => (
@@ -238,9 +274,9 @@ public sealed partial class WidgetCoordinator
             {
                 AddPin(pin, "Dock", favorites);
             }
-            foreach (var (app, folder) in apps)
+            foreach (var (app, folder, shortcut) in apps)
             {
-                AddPin(app, "开始菜单", startMenuFolder: folder);
+                AddPin(app, "开始菜单", startMenuFolder: folder, iconSource: shortcut);
             }
             foreach (var (path, title, source) in mapped)
             {
@@ -283,32 +319,34 @@ public sealed partial class WidgetCoordinator
                     {
                         pin.DisplayName = name;
                     }
-                    AddPin(pin, source);
+                    var iconSource = Path.GetExtension(path).Equals(".lnk", StringComparison.OrdinalIgnoreCase) ? path : null;
+                    AddPin(pin, source, iconSource: iconSource);
                     return;
                 }
                 Add(path, name, source, ClassifyLauncherPath(path));
             }
 
             void AddPin(DockPinnedApp pin, string source, List<LauncherPanelEntry>? favoriteList = null,
-                bool isSavedFallback = false, string? startMenuFolder = null)
+                bool isSavedFallback = false, string? startMenuFolder = null, string? iconSource = null)
             {
                 var path = pin.TargetPath ?? pin.ExecutablePath
                     ?? (pin.AppUserModelId is { } id ? DockAppResolver.AppsFolderPath(id) : null);
                 if (path is not null)
                 {
                     var kind = pin.TargetPath is null ? TopBarSearchItemKind.App : ClassifyLauncherPath(path);
-                    Add(path, pin.DisplayName, source, kind, pin, favoriteList, isSavedFallback, startMenuFolder);
+                    Add(path, pin.DisplayName, source, kind, pin, favoriteList, isSavedFallback, startMenuFolder, iconSource);
                 }
             }
 
             void Add(string path, string? name, string source, TopBarSearchItemKind kind,
                 DockPinnedApp? pin = null, List<LauncherPanelEntry>? favoriteList = null, bool isSavedFallback = false,
-                string? startMenuFolder = null)
+                string? startMenuFolder = null, string? iconSource = null)
             {
                 var fullName = Path.GetFileName(Path.TrimEndingDirectorySeparator(path));
                 var displayName = string.IsNullOrWhiteSpace(name) ? FileMappingService.GetDisplayName(path) : name;
                 var entry = new LauncherPanelEntry(
-                    new TopBarSearchCandidate(kind, displayName, fullName, path), source, pin, isSavedFallback, startMenuFolder);
+                    new TopBarSearchCandidate(kind, displayName, fullName, path), source, pin, isSavedFallback, startMenuFolder,
+                    IconSource: iconSource);
                 entries.Add(entry);
                 favoriteList?.Add(entry);
             }
@@ -318,7 +356,7 @@ public sealed partial class WidgetCoordinator
     private static TopBarSearchItemKind ClassifyLauncherPath(string path) =>
         FileMappingService.IsShellEntry(path)
         || Path.EndsInDirectorySeparator(path)
-        || (!path.StartsWith(@"\\", StringComparison.Ordinal) && Directory.Exists(path))
+        || (!LauncherFileCatalog.IsRemotePath(path) && Directory.Exists(path))
             ? TopBarSearchItemKind.Folder
             : TopBarSearchItemKind.File;
 

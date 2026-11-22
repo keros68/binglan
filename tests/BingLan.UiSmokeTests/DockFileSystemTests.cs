@@ -1,8 +1,11 @@
 using System.IO;
 using System.Runtime.InteropServices;
 using BingLan.App.Dock;
+using BingLan.App.Services;
+using BingLan.App.Windows;
 using BingLan.Core.Dock;
 using BingLan.Core.Models;
+using BingLan.Core.TopBar;
 
 internal static class DockFileSystemTests
 {
@@ -81,6 +84,45 @@ internal static class DockFileSystemTests
         {
             if (shortcut is not null) Marshal.FinalReleaseComObject(shortcut);
             Marshal.FinalReleaseComObject(shell);
+        }
+    }
+
+    internal static void NormalizeSupplementalEntries()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "BingLanLauncherSupplemental", Path.GetRandomFileName());
+        var startMenu = Directory.CreateDirectory(Path.Combine(directory, "StartMenu")).FullName;
+        var groupFolder = Directory.CreateDirectory(Path.Combine(startMenu, "GroupFolder")).FullName;
+        try
+        {
+            var executable = Environment.ProcessPath!;
+            var appShortcut = Path.Combine(startMenu, "App.lnk");
+            var uninstallShortcut = Path.Combine(startMenu, "卸载App.lnk");
+            CreateShortcut(appShortcut, executable, "", "");
+            CreateShortcut(uninstallShortcut, executable, "", "");
+            var plainFile = Path.Combine(directory, "Plain.txt");
+            File.WriteAllText(plainFile, "plain");
+
+            var input = new[]
+            {
+                new LauncherPanelEntry(new TopBarSearchCandidate(TopBarSearchItemKind.Folder, "GroupFolder", "GroupFolder", groupFolder), "Windows 索引"),
+                new LauncherPanelEntry(new TopBarSearchCandidate(TopBarSearchItemKind.File, "App.lnk", "App.lnk", appShortcut), "Windows 索引"),
+                new LauncherPanelEntry(new TopBarSearchCandidate(TopBarSearchItemKind.File, "卸载App.lnk", "卸载App.lnk", uninstallShortcut), "Windows 索引"),
+                new LauncherPanelEntry(new TopBarSearchCandidate(TopBarSearchItemKind.File, "Plain.txt", "Plain.txt", plainFile), "Windows 索引")
+            };
+
+            var normalized = LauncherSupplementalNormalizer.Normalize(input, [startMenu]);
+            Assert(normalized.Count == 2, $"应只保留应用与普通文件 2 项，实际 {normalized.Count} 项");
+            Assert(normalized[0].Candidate.Kind == TopBarSearchItemKind.App
+                && string.Equals(normalized[0].Pinned?.ExecutablePath, executable, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(normalized[0].IconSource, appShortcut, StringComparison.OrdinalIgnoreCase),
+                "补充快捷方式应归一为应用入口并保留 lnk 图标来源");
+            Assert(normalized[1].Candidate.Kind == TopBarSearchItemKind.File
+                && string.Equals(normalized[1].Candidate.Path, plainFile, StringComparison.OrdinalIgnoreCase),
+                "普通文件应原样保留");
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
         }
     }
 

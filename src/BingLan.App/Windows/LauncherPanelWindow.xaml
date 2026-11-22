@@ -7,6 +7,7 @@
         ShowInTaskbar="False" WindowStartupLocation="Manual"
         PreviewKeyDown="OnPanelKeyDown" Deactivated="OnPanelDeactivated">
     <Window.Resources>
+        <SolidColorBrush x:Key="LauncherLabelPlateBrush" Color="Transparent" />
         <Style TargetType="ScrollBar" BasedOn="{StaticResource CardScrollBarStyle}" />
         <Style TargetType="Button">
             <Setter Property="Foreground" Value="{DynamicResource FloatingGlassInkBrush}" />
@@ -87,7 +88,7 @@
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
-                    <TextBlock Text="{Binding Glyph}" FontFamily="Segoe Fluent Icons" FontSize="12.5"
+                    <TextBlock Text="{Binding Glyph}" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="12.5"
                                Foreground="{DynamicResource FloatingGlassMutedBrush}" VerticalAlignment="Center" />
                     <TextBlock Grid.Column="1" Text="{Binding Name}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
                     <TextBlock Grid.Column="2" Text="{Binding CountText}" FontSize="11" Margin="6,0,0,0"
@@ -105,7 +106,7 @@
                     </Grid.ColumnDefinitions>
                     <Border Width="26" Height="26" CornerRadius="7" HorizontalAlignment="Left"
                             Background="{DynamicResource FloatingGlassSelectedBrush}">
-                        <TextBlock Text="{Binding Glyph}" FontFamily="Segoe Fluent Icons" FontSize="13.5"
+                        <TextBlock Text="{Binding Glyph}" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="13.5"
                                    Foreground="{DynamicResource FloatingGlassInkBrush}"
                                    HorizontalAlignment="Center" VerticalAlignment="Center" />
                     </Border>
@@ -129,16 +130,18 @@
             <Grid>
                 <Grid.RowDefinitions><RowDefinition Height="44" /><RowDefinition Height="*" /></Grid.RowDefinitions>
                 <Grid Width="42" Height="42" VerticalAlignment="Top">
-                    <TextBlock Text="{Binding Glyph}" FontFamily="Segoe Fluent Icons" FontSize="30" Foreground="{DynamicResource FloatingGlassInkBrush}" VerticalAlignment="Center" HorizontalAlignment="Center">
+                    <TextBlock Text="{Binding Glyph}" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="30" Foreground="{DynamicResource FloatingGlassInkBrush}" VerticalAlignment="Center" HorizontalAlignment="Center">
                         <TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Visibility" Value="Collapsed" /><Style.Triggers><DataTrigger Binding="{Binding Icon}" Value="{x:Null}"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers></Style></TextBlock.Style>
                     </TextBlock>
                     <Image Source="{Binding Icon}" Stretch="Uniform" />
                 </Grid>
-                <TextBlock Grid.Row="1" Margin="3,2,3,0" Text="{Binding Name}" FontSize="12" TextAlignment="Center"
-                           HorizontalAlignment="Center" VerticalAlignment="Top"
-                           TextWrapping="Wrap" TextTrimming="CharacterEllipsis"
-                           LineStackingStrategy="BlockLineHeight" LineHeight="16" MaxHeight="32" />
-                <TextBlock Text="&#xE735;" FontFamily="Segoe Fluent Icons" FontSize="9" Foreground="{DynamicResource FloatingGlassMutedBrush}" HorizontalAlignment="Right" VerticalAlignment="Top">
+                <Border Grid.Row="1" Margin="3,2,3,0" HorizontalAlignment="Center" VerticalAlignment="Top"
+                        Background="{DynamicResource LauncherLabelPlateBrush}" CornerRadius="5" Padding="4,0">
+                    <TextBlock Text="{Binding Name}" FontSize="12" TextAlignment="Center"
+                               TextWrapping="WrapWithOverflow" TextTrimming="CharacterEllipsis"
+                               LineStackingStrategy="BlockLineHeight" LineHeight="16" MaxHeight="32" />
+                </Border>
+                <TextBlock Text="&#xE735;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="9" Foreground="{DynamicResource FloatingGlassMutedBrush}" HorizontalAlignment="Right" VerticalAlignment="Top">
                     <TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Visibility" Value="Collapsed" /><Style.Triggers><DataTrigger Binding="{Binding IsFavorite}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers></Style></TextBlock.Style>
                 </TextBlock>
             </Grid>
@@ -151,17 +154,20 @@
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <Grid Width="26" Height="26" HorizontalAlignment="Left" VerticalAlignment="Center">
-                    <TextBlock Text="{Binding Glyph}" FontFamily="Segoe Fluent Icons" FontSize="18" Foreground="{DynamicResource FloatingGlassInkBrush}" VerticalAlignment="Center" HorizontalAlignment="Center">
+                    <TextBlock Text="{Binding Glyph}" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="18" Foreground="{DynamicResource FloatingGlassInkBrush}" VerticalAlignment="Center" HorizontalAlignment="Center">
                         <TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Visibility" Value="Collapsed" /><Style.Triggers><DataTrigger Binding="{Binding Icon}" Value="{x:Null}"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers></Style></TextBlock.Style>
                     </TextBlock>
                     <Image Source="{Binding Icon}" Stretch="Uniform" />
                 </Grid>
-                <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="2,0,10,0">
-                    <TextBlock Text="{Binding Name}" FontSize="12.5" FontWeight="Medium"
-                               Foreground="{DynamicResource FloatingGlassInkBrush}" TextTrimming="CharacterEllipsis" />
-                    <TextBlock Text="{Binding SecondaryText}" FontSize="11"
-                               Foreground="{DynamicResource FloatingGlassMutedBrush}" TextTrimming="CharacterEllipsis" />
-                </StackPanel>
+                <Border Grid.Column="1" VerticalAlignment="Center" Margin="2,0,10,0" CornerRadius="5" Padding="5,2"
+                        Background="{DynamicResource LauncherLabelPlateBrush}">
+                    <StackPanel>
+                        <TextBlock Text="{Binding Name}" FontSize="12.5" FontWeight="Medium"
+                                   Foreground="{DynamicResource FloatingGlassInkBrush}" TextTrimming="CharacterEllipsis" />
+                        <TextBlock Text="{Binding SecondaryText}" FontSize="11"
+                                   Foreground="{DynamicResource FloatingGlassMutedBrush}" TextTrimming="CharacterEllipsis" />
+                    </StackPanel>
+                </Border>
                 <Border Grid.Column="2" CornerRadius="6" Padding="7,2" VerticalAlignment="Center"
                         Background="{DynamicResource FloatingGlassControlBrush}">
                     <TextBlock Text="{Binding KindLabel}" FontSize="11" Foreground="{DynamicResource FloatingGlassMutedBrush}" />
@@ -283,7 +289,7 @@
                 <Border CornerRadius="12" Background="{DynamicResource FloatingGlassHoverBrush}" BorderBrush="{DynamicResource FloatingGlassControlBorderBrush}" BorderThickness="1" Padding="14,9">
                     <Grid>
                         <Grid.ColumnDefinitions><ColumnDefinition Width="24" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                        <TextBlock Text="&#xE721;" FontFamily="Segoe Fluent Icons" Foreground="{DynamicResource FloatingGlassMutedBrush}" FontSize="15" VerticalAlignment="Center" />
+                        <TextBlock Text="&#xE721;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" Foreground="{DynamicResource FloatingGlassMutedBrush}" FontSize="15" VerticalAlignment="Center" />
                         <Grid Grid.Column="1">
                             <TextBlock x:Name="SearchPlaceholder" Text="搜索应用、文件和文件夹" Foreground="{DynamicResource FloatingGlassMutedBrush}" IsHitTestVisible="False" VerticalAlignment="Center" />
                             <TextBox x:Name="SearchBox" FontSize="14.5" Foreground="{DynamicResource FloatingGlassInkBrush}"
@@ -300,21 +306,21 @@
                         <Button x:Name="TabAppsButton" Style="{StaticResource MainTabButtonStyle}" Click="OnTabAppsClick"
                                 AutomationProperties.Name="应用" ToolTip="应用（Ctrl+1）">
                             <StackPanel Orientation="Horizontal">
-                                <TextBlock Text="&#xE80A;" FontFamily="Segoe Fluent Icons" FontSize="12.5" VerticalAlignment="Center" Margin="0,0,5,0" />
+                                <TextBlock Text="&#xE80A;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="12.5" VerticalAlignment="Center" Margin="0,0,5,0" />
                                 <TextBlock Text="应用" VerticalAlignment="Center" />
                             </StackPanel>
                         </Button>
                         <Button x:Name="TabFilesButton" Style="{StaticResource MainTabButtonStyle}" Click="OnTabFilesClick"
                                 Margin="2,0" AutomationProperties.Name="文件" ToolTip="文件（Ctrl+2）">
                             <StackPanel Orientation="Horizontal">
-                                <TextBlock Text="&#xE8B7;" FontFamily="Segoe Fluent Icons" FontSize="12.5" VerticalAlignment="Center" Margin="0,0,5,0" />
+                                <TextBlock Text="&#xE8B7;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="12.5" VerticalAlignment="Center" Margin="0,0,5,0" />
                                 <TextBlock Text="文件" VerticalAlignment="Center" />
                             </StackPanel>
                         </Button>
                         <Button x:Name="TabGroupsButton" Style="{StaticResource MainTabButtonStyle}" Click="OnTabGroupsClick"
                                 AutomationProperties.Name="我的分组" ToolTip="我的分组（Ctrl+3）">
                             <StackPanel Orientation="Horizontal">
-                                <TextBlock Text="&#xE734;" FontFamily="Segoe Fluent Icons" FontSize="12.5" VerticalAlignment="Center" Margin="0,0,5,0" />
+                                <TextBlock Text="&#xE734;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="12.5" VerticalAlignment="Center" Margin="0,0,5,0" />
                                 <TextBlock Text="我的分组" VerticalAlignment="Center" />
                             </StackPanel>
                         </Button>
@@ -322,7 +328,7 @@
                 </Border>
 
                 <Button x:Name="MaterialButton" Grid.Column="2" Content="磨砂" Margin="8,0,0,0" Click="OnMaterialClick" AutomationProperties.Name="切换玻璃材质" />
-                <Button Grid.Column="3" Content="&#xE8BB;" FontFamily="Segoe Fluent Icons" FontSize="13" Margin="6,0,0,0" Padding="12,8" Background="Transparent" BorderThickness="0" Click="OnCloseClick" AutomationProperties.Name="关闭冰蓝总览卡" />
+                <Button Grid.Column="3" Content="&#xE8BB;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="13" Margin="6,0,0,0" Padding="12,8" Background="{DynamicResource LauncherLabelPlateBrush}" BorderThickness="0" Click="OnCloseClick" AutomationProperties.Name="关闭冰蓝总览卡" />
             </Grid>
 
             <!-- 搜索工具与分组编辑器 -->
@@ -363,7 +369,7 @@
                                         AutomationProperties.Name="全部应用">
                                     <Grid>
                                         <Grid.ColumnDefinitions><ColumnDefinition Width="20" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                        <TextBlock Text="&#xE80A;" FontFamily="Segoe Fluent Icons" FontSize="12.5" Foreground="{DynamicResource FloatingGlassMutedBrush}" VerticalAlignment="Center" />
+                                        <TextBlock Text="&#xE80A;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="12.5" Foreground="{DynamicResource FloatingGlassMutedBrush}" VerticalAlignment="Center" />
                                         <TextBlock Grid.Column="1" Text="全部应用" VerticalAlignment="Center" />
                                         <TextBlock Grid.Column="2" Text="{Binding CountText}" FontSize="11" Margin="6,0,0,0" Foreground="{DynamicResource FloatingGlassMutedBrush}" VerticalAlignment="Center" />
                                     </Grid>
@@ -378,7 +384,7 @@
                                         AutomationProperties.Name="文件总览">
                                     <Grid>
                                         <Grid.ColumnDefinitions><ColumnDefinition Width="20" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                                        <TextBlock Text="&#xE80F;" FontFamily="Segoe Fluent Icons" FontSize="12.5" Foreground="{DynamicResource FloatingGlassMutedBrush}" VerticalAlignment="Center" />
+                                        <TextBlock Text="&#xE80F;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="12.5" Foreground="{DynamicResource FloatingGlassMutedBrush}" VerticalAlignment="Center" />
                                         <TextBlock Grid.Column="1" Text="文件总览" VerticalAlignment="Center" />
                                     </Grid>
                                 </Button>
@@ -386,7 +392,7 @@
                                         AutomationProperties.Name="最近使用">
                                     <Grid>
                                         <Grid.ColumnDefinitions><ColumnDefinition Width="20" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                        <TextBlock Text="&#xE823;" FontFamily="Segoe Fluent Icons" FontSize="12.5" Foreground="{DynamicResource FloatingGlassMutedBrush}" VerticalAlignment="Center" />
+                                        <TextBlock Text="&#xE823;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="12.5" Foreground="{DynamicResource FloatingGlassMutedBrush}" VerticalAlignment="Center" />
                                         <TextBlock Grid.Column="1" Text="最近使用" VerticalAlignment="Center" />
                                         <TextBlock Grid.Column="2" Text="{Binding CountText}" FontSize="11" Margin="6,0,0,0" Foreground="{DynamicResource FloatingGlassMutedBrush}" VerticalAlignment="Center" />
                                     </Grid>
@@ -406,7 +412,7 @@
                                         Style="{StaticResource CategoryStyle}" Click="OnNewGroupClick">
                                     <Grid>
                                         <Grid.ColumnDefinitions><ColumnDefinition Width="20" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                                        <TextBlock Text="&#xE710;" FontFamily="Segoe Fluent Icons" FontSize="12" Foreground="{DynamicResource FloatingGlassMutedBrush}" VerticalAlignment="Center" />
+                                        <TextBlock Text="&#xE710;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="12" Foreground="{DynamicResource FloatingGlassMutedBrush}" VerticalAlignment="Center" />
                                         <TextBlock Grid.Column="1" Text="新建分组" VerticalAlignment="Center" />
                                     </Grid>
                                 </Button>
@@ -447,11 +453,11 @@
                                 <StackPanel Orientation="Horizontal">
                                     <Button x:Name="ViewGridButton" Style="{StaticResource CompactToggleStyle}" Click="OnViewGridClick"
                                             ToolTip="图标网格" AutomationProperties.Name="图标视图">
-                                        <TextBlock Text="&#xE80A;" FontFamily="Segoe Fluent Icons" FontSize="12" />
+                                        <TextBlock Text="&#xE80A;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="12" />
                                     </Button>
                                     <Button x:Name="ViewListButton" Style="{StaticResource CompactToggleStyle}" Click="OnViewListClick"
                                             ToolTip="详细列表" AutomationProperties.Name="列表视图">
-                                        <TextBlock Text="&#xE8FD;" FontFamily="Segoe Fluent Icons" FontSize="12" />
+                                        <TextBlock Text="&#xE8FD;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="12" />
                                     </Button>
                                 </StackPanel>
                             </Border>
@@ -459,7 +465,7 @@
                             <Button x:Name="OpenDirectoryButton" Visibility="Collapsed" Padding="10,4" FontSize="12"
                                     Click="OnOpenCurrentDirectoryClick" AutomationProperties.Name="在资源管理器中打开当前目录">
                                 <StackPanel Orientation="Horizontal">
-                                    <TextBlock Text="&#xE8A7;" FontFamily="Segoe Fluent Icons" FontSize="11.5" VerticalAlignment="Center" Margin="0,0,5,0" />
+                                    <TextBlock Text="&#xE8A7;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="11.5" VerticalAlignment="Center" Margin="0,0,5,0" />
                                     <TextBlock Text="打开目录" VerticalAlignment="Center" />
                                 </StackPanel>
                             </Button>
@@ -468,15 +474,27 @@
                         <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                             <Button x:Name="BackFolderButton" Visibility="Collapsed" Padding="8,4" Margin="0,0,8,0"
                                     Click="OnBackFolderClick" ToolTip="返回上一级（Alt+Left）" AutomationProperties.Name="返回上一级文件夹">
-                                <TextBlock Text="&#xE72B;" FontFamily="Segoe Fluent Icons" FontSize="12" />
+                                <TextBlock Text="&#xE72B;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="12" />
                             </Button>
                             <Border Background="{DynamicResource FloatingGlassHeadingBrush}" CornerRadius="4" Padding="4,1"
                                     VerticalAlignment="Center" Visibility="{Binding Visibility, ElementName=SectionTitle}">
                                 <TextBlock x:Name="SectionTitle" FontSize="15.5" FontWeight="SemiBold"
                                            Foreground="{DynamicResource FloatingGlassInkBrush}" />
                             </Border>
-                            <TextBlock x:Name="SectionSubtitle" FontSize="12" Margin="8,1,0,0" VerticalAlignment="Center"
-                                       Foreground="{DynamicResource FloatingGlassMutedBrush}" TextTrimming="CharacterEllipsis" />
+                            <Border Background="{DynamicResource LauncherLabelPlateBrush}" CornerRadius="5" Padding="5,1"
+                                    Margin="8,1,0,0" VerticalAlignment="Center">
+                                <Border.Style>
+                                    <Style TargetType="Border">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding Text, ElementName=SectionSubtitle}" Value="">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Border.Style>
+                                <TextBlock x:Name="SectionSubtitle" FontSize="12"
+                                           Foreground="{DynamicResource FloatingGlassMutedBrush}" TextTrimming="CharacterEllipsis" />
+                            </Border>
                         </StackPanel>
                     </DockPanel>
 

@@ -238,10 +238,35 @@ internal static class LauncherFileCatalog
         }
     }
 
+    internal static bool IsRemotePath(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return false;
+        }
+        if (path.StartsWith(@"\\", StringComparison.Ordinal))
+        {
+            return true;
+        }
+        try
+        {
+            var root = Path.GetPathRoot(path);
+            if (string.IsNullOrWhiteSpace(root))
+            {
+                return false;
+            }
+            return new DriveInfo(root).DriveType is DriveType.Network or DriveType.NoRootDirectory;
+        }
+        catch (Exception ex) when (ex is ArgumentException or IOException or NotSupportedException)
+        {
+            return true;
+        }
+    }
+
     internal static TopBarSearchItemKind ClassifyPath(string path) =>
         FileMappingService.IsShellEntry(path)
         || Path.EndsInDirectorySeparator(path)
-        || (!path.StartsWith(@"\\", StringComparison.Ordinal) && Directory.Exists(path))
+        || (!IsRemotePath(path) && Directory.Exists(path))
             ? TopBarSearchItemKind.Folder
             : TopBarSearchItemKind.File;
 

@@ -36,9 +36,22 @@ public sealed class LauncherAppearanceState
 
     public DockGlass ResolveGlass(DesktopStyleState style)
     {
+        var (rgb, opacity) = ResolveSurface(style);
+        return DesktopStyleRules.CustomDock(rgb, opacity);
+    }
+
+    public (DockGlass Glass, LauncherReadability Readability) ResolveReadableGlass(DesktopStyleState style)
+    {
+        var (rgb, opacity) = ResolveSurface(style);
+        var readability = LauncherReadabilityRules.Resolve(rgb, opacity);
+        return (DesktopStyleRules.CustomDock(rgb, readability.SurfaceOpacity), readability);
+    }
+
+    private (string Rgb, double Opacity) ResolveSurface(DesktopStyleState style)
+    {
         if (!FollowCardLook)
         {
-            return DesktopStyleRules.CustomDock(SurfaceColor, SurfaceOpacity);
+            return (SurfaceColor, SurfaceOpacity);
         }
 
         var opacity = Math.Clamp(DefaultSurfaceOpacity + (style.GlassDensity - DesktopStyleRules.DefaultGlassDensity) * 0.6d,
@@ -46,10 +59,9 @@ public sealed class LauncherAppearanceState
         var palette = DesktopStyleRules.GetPalette(style.Palette);
         return style.Glass switch
         {
-            GlassMode.Dark => DesktopStyleRules.CustomDock("#18222F", opacity),
-            GlassMode.Clear => DesktopStyleRules.CustomDock(DefaultSurfaceColor, MinimumSurfaceOpacity),
-            _ => DesktopStyleRules.CustomDock(palette.Key == DesktopStyleRules.DefaultPalette
-                ? DefaultSurfaceColor : palette.Body, opacity)
+            GlassMode.Dark => ("#18222F", opacity),
+            GlassMode.Clear => (DefaultSurfaceColor, MinimumSurfaceOpacity),
+            _ => (palette.Key == DesktopStyleRules.DefaultPalette ? DefaultSurfaceColor : palette.Body, opacity)
         };
     }
 }

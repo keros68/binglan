@@ -38,6 +38,7 @@ Run("启动面板外观 v48 迁移与独立设置保存", TestLauncherAppearance
 Run("启动面板总开关迁移、保存与独立 Dock 偏好", TestLauncherEnabledPersistence);
 Run("启动面板分组迁移、多组关联与保存", TestLauncherGroupsPersistence);
 Run("启动面板用途分类、维护入口与人工归类保存", TestLauncherAppCategories);
+Run("总览卡应用身份合并、变体折叠与可读性下限", LauncherIdentityTests.Run);
 Run("启动面板多屏幕尺寸、缩放与竖屏自适应布局", TestLauncherLayoutBounds);
 Run("卡片按显示器排列记住位置", DisplayLayoutTests.TestPositionPerArrangement);
 Run("按排列记住的位置保存与 v21 迁移", DisplayLayoutTests.TestPersistenceAndMigration);

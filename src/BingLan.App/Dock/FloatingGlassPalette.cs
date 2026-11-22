@@ -9,10 +9,11 @@ namespace BingLan.App.Dock;
 
 internal static class FloatingGlassPalette
 {
-    internal static void Apply(ResourceDictionary resources, DockGlass dock, bool highContrast = false, bool launcher = false)
+    internal static void Apply(ResourceDictionary resources, DockGlass dock, bool highContrast = false,
+        bool launcher = false, bool? darkInk = null)
     {
         var tint = (Color)ColorConverter.ConvertFromString(dock.Surface);
-        var light = (0.2126d * tint.R + 0.7152d * tint.G + 0.0722d * tint.B) / 255d > 0.6d;
+        var light = darkInk ?? (0.2126d * tint.R + 0.7152d * tint.G + 0.0722d * tint.B) / 255d > 0.6d;
         var solid = tint;
         solid.A = byte.MaxValue;
 

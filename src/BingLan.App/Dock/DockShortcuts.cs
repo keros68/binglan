@@ -48,6 +48,9 @@ internal static class DockShortcuts
     // Start menu entries that are not apps people pin.
     private static readonly string[] SkippedNames = ["卸载", "uninstall", "帮助", "help", "readme", "说明", "官网", "website", "修复", "repair"];
 
+    internal static bool IsSkippedShortcutName(string name) =>
+        SkippedNames.Any(skipped => name.Contains(skipped, StringComparison.OrdinalIgnoreCase));
+
     /// <summary>
     /// Programs in the current user's and the shared Start menu, one per program, sorted
     /// by name. Uninstallers, help files and other non-app entries are left out.
@@ -57,7 +60,8 @@ internal static class DockShortcuts
 
     internal static IReadOnlyList<DockPinnedApp> ReadStartMenuApps(bool preserveLaunchVariants,
         IDictionary<DockPinnedApp, string>? startMenuFolders = null,
-        IEnumerable<string>? startMenuRoots = null)
+        IEnumerable<string>? startMenuRoots = null,
+        IDictionary<DockPinnedApp, string>? shortcutPaths = null)
     {
         var options = new EnumerationOptions
         {
@@ -80,16 +84,20 @@ internal static class DockShortcuts
             foreach (var shortcut in Directory.EnumerateFiles(folder, "*.lnk", options))
             {
                 var name = Path.GetFileNameWithoutExtension(shortcut);
-                if (SkippedNames.Any(skipped => name.Contains(skipped, StringComparison.OrdinalIgnoreCase)))
+                if (IsSkippedShortcutName(name))
                 {
                     continue;
                 }
                 if (CreatePin(shortcut) is { ExecutablePath: { } path } app)
                 {
-                    if (apps.TryAdd(Key(path, app), app) && startMenuFolders is not null
-                        && Path.GetFileName(Path.GetDirectoryName(shortcut)) is { Length: > 0 } group)
+                    if (apps.TryAdd(Key(path, app), app))
                     {
-                        startMenuFolders.Add(app, group);
+                        if (startMenuFolders is not null
+                            && Path.GetFileName(Path.GetDirectoryName(shortcut)) is { Length: > 0 } group)
+                        {
+                            startMenuFolders.Add(app, group);
+                        }
+                        shortcutPaths?.Add(app, shortcut);
                     }
                 }
             }

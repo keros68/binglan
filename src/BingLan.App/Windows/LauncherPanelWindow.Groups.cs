@@ -28,7 +28,7 @@ public partial class LauncherPanelWindow
         var savedKeys = groups.SelectMany(group => group.Members).Select(member => member.Key)
             .ToHashSet(StringComparer.Ordinal);
         var available = rows.Where(row => !row.Entry.IsSavedFallback
-            || savedKeys.Contains(row.Entry.Key)).ToList();
+            || row.Keys.Any(savedKeys.Contains)).ToList();
 
         if (_queryWasEmpty && _activeTab == LauncherMainTab.Groups)
         {
@@ -86,8 +86,9 @@ public partial class LauncherPanelWindow
         }
 
         var memberKeys = activeGroup?.Members.Select(member => member.Key).ToHashSet(StringComparer.Ordinal);
-        bool InCategory(PanelRow row) => memberKeys?.Contains(row.Entry.Key)
-            ?? (row.Entry.Candidate.Kind == TopBarSearchItemKind.App && PurposeOf(row) == _purpose);
+        bool InCategory(PanelRow row) => memberKeys is not null
+            ? row.Keys.Any(memberKeys.Contains)
+            : (row.Entry.Candidate.Kind == TopBarSearchItemKind.App && PurposeOf(row) == _purpose);
         var restrict = _queryWasEmpty || SearchCurrentCategory.IsChecked == true;
         _rows = restrict ? typed.Where(InCategory).ToList() : typed.OrderByDescending(InCategory).ToList();
         return restrict ? selectedName : null;
@@ -183,7 +184,7 @@ public partial class LauncherPanelWindow
         var join = new MenuItem { Header = "加入面板分组" };
         foreach (var group in groups)
         {
-            var belongs = group.Members.Any(existing => existing.Key == member.Key);
+            var belongs = group.Members.Any(existing => row.Keys.Contains(existing.Key));
             var choice = new MenuItem { Header = group.Name, IsEnabled = !belongs, IsChecked = belongs, IsCheckable = true, StaysOpenOnClick = false };
             choice.Click += (_, _) =>
             {
@@ -200,15 +201,15 @@ public partial class LauncherPanelWindow
         join.Items.Add(create);
         menu.Items.Add(join);
 
-        var current = groups.FirstOrDefault(group => group.Id.ToString("N") == _category
-            && group.Members.Any(existing => existing.Key == member.Key));
-        if (current is null) return;
+        var current = groups.FirstOrDefault(group => group.Id.ToString("N") == _category);
+        var matchedMember = current?.Members.FirstOrDefault(existing => row.Keys.Contains(existing.Key));
+        if (current is null || matchedMember is null) return;
         var remove = new MenuItem { Header = "移出当前面板分组" };
         remove.Click += (_, _) =>
         {
-            if (!LauncherGroupRules.Remove(current, member.Key)) return;
-            if (!_readGroups().Any(group => group.Members.Any(existing => existing.Key == member.Key)))
-                _groupEntries.Remove(member.Key);
+            if (!LauncherGroupRules.Remove(current, matchedMember.Key)) return;
+            if (!_readGroups().Any(group => group.Members.Any(existing => existing.Key == matchedMember.Key)))
+                _groupEntries.Remove(matchedMember.Key);
             _saveOrganizer();
             Render(_unfilteredRows, preserveSelection: true);
             StatusText.Text = $"已移出「{current.Name}」";
@@ -219,7 +220,7 @@ public partial class LauncherPanelWindow
     private static LauncherGroupMember DescribeMember(LauncherPanelEntry entry) =>
         new(entry.Key, entry.Pinned is null
             ? LocalPath(entry) ?? (FileMappingService.IsShellEntry(entry.Candidate.Path) ? entry.Candidate.Path : null)
-            : null, entry.Candidate.DisplayName, entry.Pinned);
+            : null, entry.Candidate.DisplayName, entry.Pinned is { } pin ? BingLan.Core.Dock.DockPinRules.Copy(pin) : null);
 
     private void RememberGroupEntry(LauncherPanelEntry entry) =>
         _groupEntries[entry.Key] = entry with { Source = "已保存入口", IsSavedFallback = true };

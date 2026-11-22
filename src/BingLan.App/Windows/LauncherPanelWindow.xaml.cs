@@ -25,7 +25,8 @@ internal sealed record LauncherPanelEntry(
     DockPinnedApp? Pinned = null,
     bool IsSavedFallback = false,
     string? StartMenuFolder = null,
-    DateTimeOffset? LastAccessedLocal = null)
+    DateTimeOffset? LastAccessedLocal = null,
+    string? IconSource = null)
 {
     internal string Key
     {
@@ -56,6 +57,7 @@ public partial class LauncherPanelWindow : Window
     private readonly Func<IReadOnlyList<(Guid Id, string Title)>> _readFileBoxes;
     private readonly Func<Guid, string, Task<string>> _sendToFileBox;
     private readonly Func<LauncherPanelEntry, string>? _pinToDock;
+    private readonly Func<LauncherPanelEntry, string>? _unpinFromDock;
     private readonly Func<IList<LauncherGroupState>> _readGroups;
     private readonly Func<IDictionary<string, LauncherAppCategory>>? _readCategoryOverrides;
     private readonly Action? _saveOrganizer;
@@ -66,7 +68,6 @@ public partial class LauncherPanelWindow : Window
     private readonly LauncherAppearanceState _appearance;
     private readonly LauncherPreferencesState _preferences;
     private readonly DesktopStyleState _style;
-    private readonly Dictionary<string, ImageSource?> _iconCache = new(StringComparer.OrdinalIgnoreCase);
     private CancellationTokenSource? _searchCancellation;
     private Task _searchRowsReady = Task.CompletedTask;
     private LauncherPanelSnapshot? _snapshot;
@@ -102,13 +103,15 @@ public partial class LauncherPanelWindow : Window
         Func<IList<LauncherGroupState>>? readGroups = null,
         Action? saveOrganizer = null,
         Func<IDictionary<string, LauncherAppCategory>>? readCategoryOverrides = null,
-        LauncherPreferencesState? preferences = null)
+        LauncherPreferencesState? preferences = null,
+        Func<LauncherPanelEntry, string>? unpinFromDock = null)
     {
         _loadSnapshot = loadSnapshot;
         _openTarget = openTarget;
         _readFileBoxes = readFileBoxes;
         _sendToFileBox = sendToFileBox;
         _pinToDock = pinToDock;
+        _unpinFromDock = unpinFromDock;
         _readGroups = readGroups ?? (() => Array.Empty<LauncherGroupState>());
         _saveOrganizer = saveOrganizer;
         _readCategoryOverrides = readCategoryOverrides;
@@ -177,13 +180,26 @@ public partial class LauncherPanelWindow : Window
     {
         PanelSurface.CornerRadius = new CornerRadius(_appearance.FollowCardLook
             ? LauncherAppearanceState.DefaultCornerRadius : _appearance.CornerRadius);
-        var glass = _appearance.ResolveGlass(_style);
-        FloatingGlassPalette.Apply(Resources, glass,
-            AccessibilityThemeManager.IsHighContrastEnabled || SystemParameters.HighContrast, launcher: true);
-        if (_appearance.UseClearGlass || ((Color)ColorConverter.ConvertFromString(glass.Surface)).A < 90)
+        var (glass, readability) = _appearance.ResolveReadableGlass(_style);
+        var highContrast = AccessibilityThemeManager.IsHighContrastEnabled || SystemParameters.HighContrast;
+        FloatingGlassPalette.Apply(Resources, glass, highContrast, launcher: true, darkInk: readability.DarkInk);
+        if (_appearance.UseClearGlass || readability.SurfaceOpacity < 0.35d)
         {
             Resources["FloatingGlassNavigationBrush"] = Resources["FloatingGlassLabelBrush"];
             Resources["FloatingGlassHeadingBrush"] = Resources["FloatingGlassLabelBrush"];
+        }
+        if (_appearance.UseClearGlass && !highContrast)
+        {
+            var baseColor = (Color)ColorConverter.ConvertFromString(glass.Surface);
+            var plateColor = Color.FromArgb((byte)Math.Round(readability.PlateOpacity * 255d),
+                baseColor.R, baseColor.G, baseColor.B);
+            var plateBrush = new SolidColorBrush(plateColor);
+            plateBrush.Freeze();
+            Resources["LauncherLabelPlateBrush"] = plateBrush;
+        }
+        else
+        {
+            Resources["LauncherLabelPlateBrush"] = Brushes.Transparent;
         }
         _glass.SetClearMode(_appearance.UseClearGlass);
         MaterialButton.Content = _appearance.UseClearGlass ? "清透" : "磨砂";
@@ -205,11 +221,11 @@ public partial class LauncherPanelWindow : Window
                 var snapshot = await _loadSnapshot();
                 if (_closed || _dismissing) return;
                 _snapshot = snapshot;
-                await SearchAsync();
+                await SearchAsync(preserveView: true);
             }
             else if (_snapshot is not null)
             {
-                Render(_unfilteredRows, preserveSelection: false);
+                await SearchAsync(preserveView: true);
             }
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException) { }
@@ -260,7 +276,8 @@ public partial class LauncherPanelWindow : Window
                 _ = DockNativeMethods.SetForegroundWindow(_handle);
                 Activate();
                 SearchBox.Focus();
-                if (DockNativeMethods.GetForegroundWindow() != _handle) ClosePanel(restoreForeground: false);
+                // Keep the panel visible if Windows denies foreground activation so the user
+                // can click to focus it or click the launcher trigger again to dismiss it.
             }, DispatcherPriority.Input);
         }
         if (_closed) return;
@@ -273,7 +290,8 @@ public partial class LauncherPanelWindow : Window
             if (_composing) StatusText.Text = "";
             else await SearchAsync();
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException)
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException
+            or System.Runtime.InteropServices.COMException or ArgumentException)
         {
             if (!_closed) StatusText.Text = "暂时无法载入项目，请关闭后重试";
         }
@@ -344,7 +362,7 @@ public partial class LauncherPanelWindow : Window
         _searchCancellation = null;
     }
 
-    private async Task SearchAsync()
+    private async Task SearchAsync(bool preserveView = false)
     {
         if (_closed || _dismissing || _composing || _snapshot is not { } snapshot) return;
         snapshot = IncludeGroupEntries(snapshot);
@@ -358,11 +376,12 @@ public partial class LauncherPanelWindow : Window
         var query = SearchBox.Text.Trim();
         var filter = _queryWasEmpty ? PanelFilter.All : _filter;
         var supplemental = _supplemental;
+        var includeRecent = _preferences.ShowRecentFiles;
         try
         {
-            var results = await Task.Run(() => BuildRows(snapshot, supplemental, query, filter), token);
+            var results = await Task.Run(() => BuildRows(snapshot, supplemental, query, filter, includeRecent), token);
             if (!IsCurrent(version, token)) return;
-            Render(results, preserveSelection: false);
+            Render(results, preserveSelection: preserveView);
             _renderedSearchVersion = version;
             UpdateFilters();
             rowsReady.TrySetResult();
@@ -370,17 +389,19 @@ public partial class LauncherPanelWindow : Window
             StatusText.Text = "正在补充本机搜索结果…";
             var indexed = await WindowsIndexSearchClient.SearchAsync(query, token);
             if (!IsCurrent(version, token)) return;
-            var extra = indexed.Candidates.Select(candidate => new LauncherPanelEntry(candidate, "Windows 索引")).ToList();
+            var raw = indexed.Candidates.Select(candidate => new LauncherPanelEntry(candidate, "Windows 索引")).ToList();
             var available = indexed.Available;
             if (snapshot.EverythingEnabled && _everything is { } everything)
             {
                 var found = await everything.SearchAsync(query, token);
                 if (!IsCurrent(version, token)) return;
                 available |= found.Available;
-                extra.AddRange(found.Candidates.Select(candidate => new LauncherPanelEntry(candidate, "Everything")));
+                raw.AddRange(found.Candidates.Select(candidate => new LauncherPanelEntry(candidate, "Everything")));
             }
+            var extra = await Task.Run(() => LauncherSupplementalNormalizer.Normalize(raw), token);
+            if (!IsCurrent(version, token)) return;
             _supplemental = extra;
-            results = await Task.Run(() => BuildRows(snapshot, extra, query, filter), token);
+            results = await Task.Run(() => BuildRows(snapshot, extra, query, filter, includeRecent), token);
             if (!IsCurrent(version, token)) return;
             Render(results, preserveSelection: true);
             if (!available) StatusText.Text = _rows.Count == 0
@@ -398,25 +419,58 @@ public partial class LauncherPanelWindow : Window
 
     private bool IsCurrent(int version, CancellationToken token) => !_closed && !token.IsCancellationRequested && version == _searchVersion;
 
-    private static List<PanelRow> BuildRows(LauncherPanelSnapshot snapshot, IReadOnlyList<LauncherPanelEntry> supplemental, string query, PanelFilter filter)
+    private static List<PanelRow> BuildRows(
+        LauncherPanelSnapshot snapshot,
+        IReadOnlyList<LauncherPanelEntry> supplemental,
+        string query,
+        PanelFilter filter,
+        bool includeRecent)
     {
-        var favorites = snapshot.Favorites.Select(Identity).ToHashSet(StringComparer.Ordinal);
-        var recent = snapshot.RecentEntries ?? [];
-        var all = snapshot.Favorites.Concat(snapshot.Entries).Concat(recent).Concat(supplemental)
-            .GroupBy(Identity, StringComparer.Ordinal)
+        var favoriteKeys = snapshot.Favorites.Select(entry => entry.Key).ToHashSet(StringComparer.Ordinal);
+        var dockKeys = snapshot.Favorites
+            .Where(entry => entry.Pinned is not null)
+            .Select(entry => DockPinRules.IdentityKey(entry.Pinned!))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var recent = includeRecent ? snapshot.RecentEntries ?? [] : [];
+        var all = LauncherIdentityRules.Group(
+                snapshot.Favorites.Concat(snapshot.Entries).Concat(recent).Concat(supplemental),
+                IdentityOf)
             .Select(group =>
             {
                 var primary = group.FirstOrDefault(entry => !entry.IsSavedFallback && entry.Pinned is not null)
                     ?? group.FirstOrDefault(entry => !entry.IsSavedFallback && entry.Source != "最近使用")
                     ?? group.FirstOrDefault(entry => !entry.IsSavedFallback)
-                    ?? group.First();
+                    ?? group[0];
                 var sources = primary.IsSavedFallback ? group : group.Where(entry => !entry.IsSavedFallback);
                 var folder = group.Select(entry => entry.StartMenuFolder).FirstOrDefault(name => !string.IsNullOrEmpty(name));
                 var lastAccessed = group.Select(entry => entry.LastAccessedLocal).Where(t => t.HasValue).Max();
                 var merged = lastAccessed.HasValue && primary.LastAccessedLocal is null
                     ? primary with { LastAccessedLocal = lastAccessed } : primary;
-                return new PanelRow(merged, favorites.Contains(group.Key),
-                    sources.Select(entry => entry.Source).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(), folder);
+                var preferredName = LauncherIdentityRules.PreferDisplayName(
+                    merged.Candidate.DisplayName,
+                    merged.Pinned?.ExecutablePath,
+                    group.Where(entry => entry.IconSource is not null).Select(entry => entry.Candidate.DisplayName));
+                if (!string.Equals(preferredName, merged.Candidate.DisplayName, StringComparison.Ordinal))
+                {
+                    merged = merged with { Candidate = merged.Candidate with { DisplayName = preferredName } };
+                }
+                if (merged.IconSource is null
+                    && string.IsNullOrWhiteSpace(merged.Pinned?.IconFile)
+                    && string.IsNullOrWhiteSpace(merged.Pinned?.AppUserModelId))
+                {
+                    var shortcutIcon = group.Select(entry => entry.IconSource)
+                        .FirstOrDefault(path => !string.IsNullOrEmpty(path));
+                    if (shortcutIcon is not null)
+                    {
+                        merged = merged with { IconSource = shortcutIcon };
+                    }
+                }
+                var isFavorite = group.Any(entry => favoriteKeys.Contains(entry.Key)
+                    || (entry.Pinned is { } pin && dockKeys.Contains(DockPinRules.IdentityKey(pin))));
+                var keys = group.Select(entry => entry.Key).Prepend(primary.Key).Distinct(StringComparer.Ordinal).ToArray();
+                return new PanelRow(merged, isFavorite,
+                    sources.Select(entry => entry.Source).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
+                    folder, keys);
             })
             .Where(row => MatchesFilter(row.Entry, filter)).ToArray();
         if (query.Length == 0)
@@ -429,7 +483,9 @@ public partial class LauncherPanelWindow : Window
             .SelectMany(candidate => byCandidate[candidate]).ToList();
     }
 
-    private static string Identity(LauncherPanelEntry entry) => entry.Key;
+    internal static LauncherIdentityInput IdentityOf(LauncherPanelEntry entry) =>
+        new(entry.Pinned?.ExecutablePath, entry.Pinned?.AppUserModelId, entry.Pinned?.TargetPath,
+            entry.Candidate.Path, entry.Pinned?.Arguments, entry.Candidate.DisplayName);
 
     private static bool MatchesFilter(LauncherPanelEntry entry, PanelFilter filter) => filter == PanelFilter.All
         || (entry.Candidate.Kind == TopBarSearchItemKind.App) == (filter == PanelFilter.Apps);
@@ -458,7 +514,7 @@ public partial class LauncherPanelWindow : Window
         _rows = items.OfType<PanelRow>().ToList();
         foreach (var row in _rows)
         {
-            if (_iconCache.TryGetValue(IconIdentity(row.Entry), out var icon)) row.Icon = icon;
+            if (LauncherIconCache.TryGet(IconIdentity(row.Entry), out var icon)) row.Icon = icon;
         }
 
         UpdateResultsLayoutMode();
@@ -490,45 +546,120 @@ public partial class LauncherPanelWindow : Window
     private async Task LoadIconsAsync(List<PanelRow> rows, int version)
     {
         // Keep shell work bounded when the user changes pages or a path responds slowly.
-        // An individual timeout leaves a type glyph and does not cancel the rest of the page.
+        // A gate or extraction timeout skips waiting on that item, lets the remaining items
+        // load, and writes late completions back through the process-wide icon cache.
         foreach (var row in rows)
         {
             if (_closed || _dismissing || version != _iconViewVersion) return;
-            var path = row.Entry.Candidate.Path;
             var iconKey = IconIdentity(row.Entry);
-            if (_iconCache.ContainsKey(iconKey)) continue;
+            if (LauncherIconCache.TryGet(iconKey, out var cached))
+            {
+                row.Icon = cached;
+                continue;
+            }
+            if (!LauncherIconCache.TryBeginLoad(iconKey))
+            {
+                if (LauncherIconCache.TryGet(iconKey, out cached))
+                {
+                    row.Icon = cached;
+                }
+                continue;
+            }
             try
             {
-                if (!await IconGate.WaitAsync(TimeSpan.FromMilliseconds(600), _lifetime.Token)) return;
+                if (!await IconGate.WaitAsync(TimeSpan.FromMilliseconds(600), _lifetime.Token))
+                {
+                    LauncherIconCache.Complete(iconKey, null);
+                    continue;
+                }
                 if (_closed || _dismissing || version != _iconViewVersion)
                 {
                     IconGate.Release();
+                    LauncherIconCache.Complete(iconKey, null);
                     return;
                 }
+                var entry = row.Entry;
+                var name = row.Name;
                 var work = Task.Run(() =>
                 {
                     try
                     {
-                        return row.Entry.Pinned is { } pin
-                            ? DockAppResolver.Resolve(new DockItem(iconKey, row.Name, pin, null)).Icon
-                            : ShellIconProvider.GetIcon(path);
+                        return ExtractIcon(entry, iconKey, name);
+                    }
+                    catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException
+                        or System.Runtime.InteropServices.COMException)
+                    {
+                        return null;
                     }
                     finally { IconGate.Release(); }
                 });
+                _ = work.ContinueWith(completed =>
+                {
+                    var resolved = completed.IsCompletedSuccessfully ? completed.Result : null;
+                    LauncherIconCache.Complete(iconKey, resolved);
+                    if (resolved is not null && !_closed)
+                    {
+                        Dispatcher.BeginInvoke(() => ApplyIcon(iconKey, resolved));
+                    }
+                }, CancellationToken.None, TaskContinuationOptions.None, TaskScheduler.Default);
+
                 var icon = await work.WaitAsync(TimeSpan.FromMilliseconds(600), _lifetime.Token);
                 if (_closed) return;
-                _iconCache[iconKey] = icon;
-                if (version == _iconViewVersion) row.Icon = icon;
+                if (icon is not null)
+                {
+                    ApplyIcon(iconKey, icon);
+                }
             }
             catch (TimeoutException) { }
             catch (OperationCanceledException) { return; }
-            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException
-                or System.Runtime.InteropServices.COMException) { }
         }
     }
 
+    private void ApplyIcon(string iconKey, ImageSource? icon)
+    {
+        if (_closed || icon is null) return;
+        foreach (var row in _rows)
+        {
+            if (string.Equals(IconIdentity(row.Entry), iconKey, StringComparison.OrdinalIgnoreCase))
+            {
+                row.Icon = icon;
+            }
+        }
+    }
+
+    private static ImageSource? ExtractIcon(LauncherPanelEntry entry, string iconKey, string name)
+    {
+        ImageSource? icon;
+        if (entry.Pinned is { } customPin
+            && (!string.IsNullOrWhiteSpace(customPin.IconFile) || !string.IsNullOrWhiteSpace(customPin.AppUserModelId)))
+        {
+            icon = DockAppResolver.Resolve(new DockItem(iconKey, name, customPin, null)).Icon;
+        }
+        else if (!string.IsNullOrWhiteSpace(entry.IconSource))
+        {
+            icon = ShellIconProvider.GetIcon(entry.IconSource)
+                ?? (entry.Pinned is { } pin
+                    ? DockAppResolver.Resolve(new DockItem(iconKey, name, pin, null)).Icon
+                    : ShellIconProvider.GetIcon(entry.Candidate.Path));
+        }
+        else if (entry.Pinned is { } pin)
+        {
+            icon = DockAppResolver.Resolve(new DockItem(iconKey, name, pin, null)).Icon;
+        }
+        else
+        {
+            icon = ShellIconProvider.GetIcon(entry.Candidate.Path);
+        }
+
+        if (icon is Freezable { IsFrozen: false, CanFreeze: true } freezable)
+        {
+            freezable.Freeze();
+        }
+        return icon;
+    }
+
     private static string IconIdentity(LauncherPanelEntry entry) =>
-        entry.Candidate.Path + '\0' + entry.Pinned?.AppUserModelId + '\0' + entry.Pinned?.IconFile;
+        (entry.IconSource ?? entry.Candidate.Path) + '\0' + entry.Pinned?.AppUserModelId + '\0' + entry.Pinned?.IconFile;
 
     private void UpdateFilters()
     {
@@ -720,11 +851,21 @@ public partial class LauncherPanelWindow : Window
             locate.Click += (_, _) => QueueOpen(row.Entry, locate: true);
             menu.Items.Add(locate);
         }
-        if (_pinToDock is not null && (row.Entry.Pinned is not null || LocalPath(row.Entry) is not null))
+        if ((row.IsFavorite ? _unpinFromDock is not null || _pinToDock is not null : _pinToDock is not null)
+            && (row.Entry.Pinned is not null || LocalPath(row.Entry) is not null))
         {
-            var pin = new MenuItem { Header = "固定到 Dock", IsEnabled = !row.IsFavorite, IsChecked = row.IsFavorite };
-            pin.Click += async (_, _) => await PinEntryAsync(row.Entry);
-            menu.Items.Add(pin);
+            if (row.IsFavorite && _unpinFromDock is not null)
+            {
+                var unpin = new MenuItem { Header = "从 Dock 取消固定" };
+                unpin.Click += async (_, _) => await ChangeDockPinAsync(row.Entry, pin: false);
+                menu.Items.Add(unpin);
+            }
+            else
+            {
+                var pin = new MenuItem { Header = "固定到 Dock", IsEnabled = !row.IsFavorite, IsChecked = row.IsFavorite };
+                pin.Click += async (_, _) => await ChangeDockPinAsync(row.Entry, pin: true);
+                menu.Items.Add(pin);
+            }
         }
         AddOrganizerMenu(menu, row);
         AddPurposeMenu(menu, row);
@@ -857,27 +998,35 @@ public partial class LauncherPanelWindow : Window
         finally { _openingTarget = false; }
     }
 
-    private async Task PinEntryAsync(LauncherPanelEntry entry)
+    private async Task ChangeDockPinAsync(LauncherPanelEntry entry, bool pin)
     {
-        if (_closed || _dismissing || _pinningTarget || _pinToDock is null) return;
+        var action = pin ? _pinToDock : _unpinFromDock;
+        if (_closed || _dismissing || _pinningTarget || action is null) return;
         _pinningTarget = true;
+        var updated = false;
         try
         {
-            if (string.IsNullOrWhiteSpace(entry.Pinned?.AppUserModelId) && LocalPath(entry) is { } path
+            if (pin && string.IsNullOrWhiteSpace(entry.Pinned?.AppUserModelId) && LocalPath(entry) is { } path
                 && !await CheckLocalTargetAsync(path)) return;
             if (_closed || _dismissing) return;
-            var message = _pinToDock(entry);
+            var message = action(entry);
+            updated = true;
             var snapshot = await _loadSnapshot();
             if (_closed || _dismissing) return;
             _snapshot = snapshot;
-            await SearchAsync();
+            await SearchAsync(preserveView: true);
             if (!_closed && !_dismissing) StatusText.Text = message;
         }
         catch (OperationCanceledException) { }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException
             or ArgumentException or System.Runtime.InteropServices.COMException)
         {
-            if (!_closed && !_dismissing) StatusText.Text = "暂时无法刷新 Dock 状态，请检查 Dock 后重试";
+            if (!_closed && !_dismissing)
+            {
+                StatusText.Text = updated
+                    ? "已更新 Dock，但暂时无法刷新列表"
+                    : "暂时无法更新 Dock，请稍后重试";
+            }
         }
         finally { _pinningTarget = false; }
     }
@@ -939,11 +1088,14 @@ public partial class LauncherPanelWindow : Window
     private sealed class PanelRow : INotifyPropertyChanged
     {
         private ImageSource? _icon;
-        public PanelRow(LauncherPanelEntry entry, bool isFavorite, IReadOnlyList<string> sources, string? startMenuFolder)
+        public PanelRow(LauncherPanelEntry entry, bool isFavorite, IReadOnlyList<string> sources,
+            string? startMenuFolder, IReadOnlyList<string>? keys = null)
         {
             Entry = entry;
             IsFavorite = isFavorite;
             Sources = sources;
+            StartMenuFolder = startMenuFolder;
+            Keys = keys is { Count: > 0 } ? keys : [entry.Key];
             AutomaticCategory = entry.Candidate.Kind == TopBarSearchItemKind.App
                 ? LauncherAppCategoryRules.Classify(entry.Candidate.DisplayName, entry.Candidate.Path,
                     entry.Pinned?.Arguments, startMenuFolder)
@@ -958,6 +1110,8 @@ public partial class LauncherPanelWindow : Window
         public bool IsFavorite { get; }
         public bool IsSection => false;
         public IReadOnlyList<string> Sources { get; }
+        public string? StartMenuFolder { get; }
+        public IReadOnlyList<string> Keys { get; }
         public LauncherAppCategory AutomaticCategory { get; }
         public LauncherAppCategory EffectiveCategory { get; set; }
         public LauncherFileCategory FileCategory { get; }

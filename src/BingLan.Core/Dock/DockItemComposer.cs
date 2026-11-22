@@ -90,6 +90,24 @@ public static class DockItemComposer
 
 public static class DockPinRules
 {
+    public static DockPinnedApp Copy(DockPinnedApp app)
+    {
+        ArgumentNullException.ThrowIfNull(app);
+        return new DockPinnedApp
+        {
+            DisplayName = app.DisplayName,
+            ExecutablePath = app.ExecutablePath,
+            AppUserModelId = app.AppUserModelId,
+            TargetPath = app.TargetPath,
+            Arguments = app.Arguments,
+            WorkingDirectory = app.WorkingDirectory,
+            IconFile = app.IconFile,
+            ExtensionData = app.ExtensionData is null
+                ? null
+                : new Dictionary<string, System.Text.Json.JsonElement>(app.ExtensionData)
+        };
+    }
+
     public static string IdentityKey(DockPinnedApp app)
     {
         ArgumentNullException.ThrowIfNull(app);

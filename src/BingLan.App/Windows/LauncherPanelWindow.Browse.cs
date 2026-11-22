@@ -23,10 +23,16 @@ public partial class LauncherPanelWindow
 
     private LauncherAppCategory RawPurposeOf(PanelRow row, out bool isManual)
     {
-        if (_readCategoryOverrides?.Invoke().TryGetValue(row.Entry.Key, out var category) == true)
+        if (_readCategoryOverrides?.Invoke() is { } overrides)
         {
-            isManual = true;
-            return category;
+            foreach (var key in row.Keys)
+            {
+                if (overrides.TryGetValue(key, out var category))
+                {
+                    isManual = true;
+                    return category;
+                }
+            }
         }
         isManual = false;
         return row.AutomaticCategory;
@@ -38,10 +44,21 @@ public partial class LauncherPanelWindow
 
     private void ComputeEffectiveAppCategories(List<PanelRow> rows)
     {
+        var families = LauncherIdentityRules.FindLaunchVariantFamilies(rows
+            .Where(row => row.Entry.Candidate.Kind == TopBarSearchItemKind.App)
+            .Select(row => (
+                row.Entry.Key,
+                LauncherIdentityRules.TargetKey(IdentityOf(row.Entry)),
+                row.StartMenuFolder,
+                LauncherIdentityRules.StripBenignArguments(row.Entry.Pinned?.Arguments).Length > 0)));
         var apps = rows.Where(row => row.Entry.Candidate.Kind == TopBarSearchItemKind.App)
             .Select(row =>
             {
                 var raw = RawPurposeOf(row, out var isManual);
+                if (!isManual && raw == LauncherAppCategory.Unclassified && families.Contains(row.Entry.Key))
+                {
+                    raw = LauncherAppCategory.Auxiliary;
+                }
                 return (row.Entry.Key, raw, isManual);
             });
         _effectiveCategories = new Dictionary<string, LauncherAppCategory>(
@@ -414,10 +431,16 @@ public partial class LauncherPanelWindow
             categoryMenu.Items.Add(choice);
         }
         categoryMenu.Items.Add(new Separator());
-        var reset = new MenuItem { Header = "恢复自动分类", IsEnabled = _readCategoryOverrides().ContainsKey(key) };
+        var overrides = _readCategoryOverrides();
+        var reset = new MenuItem { Header = "恢复自动分类", IsEnabled = row.Keys.Any(overrides.ContainsKey) };
         reset.Click += (_, _) =>
         {
-            if (!_readCategoryOverrides().Remove(key)) return;
+            var removed = false;
+            foreach (var candidateKey in row.Keys)
+            {
+                removed |= overrides.Remove(candidateKey);
+            }
+            if (!removed) return;
             _saveOrganizer();
             Render(_unfilteredRows, preserveSelection: true);
             StatusText.Text = "已恢复自动分类";

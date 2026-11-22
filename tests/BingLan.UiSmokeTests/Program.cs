@@ -165,6 +165,7 @@ internal static class Program
         Run("开始菜单应用列表可直接固定到 Dock", TestStartMenuApps, failures);
         Run("固定项保留快捷方式的启动参数与工作目录", TestPinKeepsShortcutArguments, failures);
         Run("Dock 拖入路径在后台解析且保留真实类型与快捷方式参数", DockFileSystemTests.PrepareDroppedPaths, failures);
+        Run("总览卡补充索引结果归一快捷方式并过滤卸载与开始菜单目录", DockFileSystemTests.NormalizeSupplementalEntries, failures);
         Run("Dock 后台检查保留缺失文件与程序的失败提示", () => DockFileSystemTests.LaunchMissingTargets(PumpUntil), failures);
         Run("应用列表打开时其他窗口仍可用且按钮可见", TestAppPickerKeepsAppUsable, failures);
         Run("内置开源字体从程序中加载并带对应字重", TestBundledFonts, failures);
