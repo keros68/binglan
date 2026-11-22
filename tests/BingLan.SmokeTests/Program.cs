@@ -57,6 +57,7 @@ Run("Dock 与悬浮图标形变动效规格", DockMorphTests.Run);
 Run("Dock 智能隐藏的延迟与最大化立即收起", DockSmartHideTests.Run);
 Run("顶端信息条模型、持久化与编排", TopBarTests.Run);
 Run("顶栏搜索匹配、热键与 v29 迁移", TopBarSearchTests.Run);
+Run("全局快捷键、总览卡收藏文件夹与频次排序、分组盒临时固定展开", QuickAccessAndHotkeysTests.Run);
 Run("备份列表与重启后恢复", TestBackupRestore);
 Run("首次引导只对新安装显示", TestOnboardingFlagMigration);
 Run("主题导出不含个人信息", TestThemeExportExcludesPersonalInfo);

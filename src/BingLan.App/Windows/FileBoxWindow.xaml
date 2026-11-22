@@ -282,6 +282,7 @@
                             <ColumnDefinition Width="Auto"/>
                             <ColumnDefinition Width="Auto"/>
                             <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
                         <Grid Grid.Column="0">
                             <Grid.ColumnDefinitions>
@@ -380,9 +381,25 @@
                             </ContextMenu>
                         </Button.ContextMenu>
                     </Button>
-                    <Button x:Name="CollapseButton"
+                    <Button x:Name="PinOpenButton"
                             Style="{StaticResource WidgetHeaderToolButtonStyle}"
                             Grid.Column="5"
+                            Visibility="Collapsed"
+                            AutomationProperties.Name="暂时保持分组盒展开"
+                            Width="28"
+                            Height="28"
+                            Padding="0"
+                            Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
+                            Background="Transparent"
+                            BorderThickness="0"
+                            FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
+                            FontSize="{StaticResource CardFont.Meta}"
+                            Content="&#xE718;"
+                            ToolTip="暂时保持展开（鼠标移开不自动收起）"
+                            Click="PinOpenButton_Click"/>
+                    <Button x:Name="CollapseButton"
+                            Style="{StaticResource WidgetHeaderToolButtonStyle}"
+                            Grid.Column="6"
                             AutomationProperties.Name="折叠或展开分组盒"
                             Width="28"
                             Height="28"

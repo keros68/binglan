@@ -77,6 +77,8 @@ public static class LauncherBackdropRules
 public sealed class LauncherPreferencesState
 {
     public const int MaxFavoriteKeys = 64;
+    public const int MaxPinnedFolders = 16;
+    public const int MaxOpenCounts = 200;
 
     public LauncherMainTab LastTab { get; set; } = LauncherMainTab.Apps;
     public bool ShowRecentFiles { get; set; } = true;
@@ -88,6 +90,8 @@ public sealed class LauncherPreferencesState
     public LauncherFavoriteMode FavoriteMode { get; set; } = LauncherFavoriteMode.FollowDock;
     public LauncherBackdropMode BackdropMode { get; set; } = LauncherBackdropMode.LiveWindow;
     public List<string> FavoriteKeys { get; set; } = [];
+    public List<string> PinnedFolders { get; set; } = [];
+    public Dictionary<string, int> OpenCounts { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
     public void Normalize()
     {
@@ -109,6 +113,147 @@ public sealed class LauncherPreferencesState
             .Distinct(StringComparer.Ordinal)
             .Take(MaxFavoriteKeys)
             .ToList();
+        PinnedFolders = (PinnedFolders ?? [])
+            .Select(NormalizeFolderPath)
+            .Where(path => path is not null)
+            .Select(path => path!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(MaxPinnedFolders)
+            .ToList();
+        var cleanedCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        if (OpenCounts is { Count: > 0 })
+        {
+            foreach (var pair in OpenCounts
+                         .Where(p => !string.IsNullOrWhiteSpace(p.Key) && p.Value > 0)
+                         .OrderByDescending(p => p.Value)
+                         .ThenBy(p => p.Key, StringComparer.OrdinalIgnoreCase))
+            {
+                var key = pair.Key.Trim();
+                if (!cleanedCounts.ContainsKey(key))
+                {
+                    cleanedCounts[key] = pair.Value;
+                    if (cleanedCounts.Count >= MaxOpenCounts)
+                    {
+                        break;
+                    }
+                }
+            }
+        }
+        OpenCounts = cleanedCounts;
+    }
+
+    public static string? NormalizeFolderPath(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return null;
+        }
+        var trimmed = path.Trim();
+        if (!Path.IsPathFullyQualified(trimmed))
+        {
+            return null;
+        }
+        try
+        {
+            var full = Path.GetFullPath(trimmed);
+            var root = Path.GetPathRoot(full);
+            return string.Equals(full, root, StringComparison.OrdinalIgnoreCase)
+                ? full
+                : full.TrimEnd('\\', '/');
+        }
+        catch (Exception ex) when (ex is ArgumentException or IOException or NotSupportedException)
+        {
+            return null;
+        }
+    }
+
+    public bool IsFolderPinned(string? path)
+    {
+        if (NormalizeFolderPath(path) is not { } normalized || PinnedFolders is not { Count: > 0 })
+        {
+            return false;
+        }
+        return PinnedFolders.Any(existing => string.Equals(existing, normalized, StringComparison.OrdinalIgnoreCase));
+    }
+
+    public bool PinFolder(string? path)
+    {
+        if (NormalizeFolderPath(path) is not { } normalized)
+        {
+            return false;
+        }
+        PinnedFolders ??= [];
+        if (PinnedFolders.Any(existing => string.Equals(existing, normalized, StringComparison.OrdinalIgnoreCase)))
+        {
+            return false;
+        }
+        if (PinnedFolders.Count >= MaxPinnedFolders)
+        {
+            PinnedFolders.RemoveAt(0);
+        }
+        PinnedFolders.Add(normalized);
+        return true;
+    }
+
+    public bool UnpinFolder(string? path)
+    {
+        if (NormalizeFolderPath(path) is not { } normalized || PinnedFolders is null)
+        {
+            return false;
+        }
+        return PinnedFolders.RemoveAll(existing => string.Equals(existing, normalized, StringComparison.OrdinalIgnoreCase)) > 0;
+    }
+
+    public void RecordOpen(string? key)
+    {
+        if (string.IsNullOrWhiteSpace(key))
+        {
+            return;
+        }
+        OpenCounts ??= new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var trimmed = key.Trim();
+        OpenCounts[trimmed] = OpenCounts.TryGetValue(trimmed, out var count)
+            ? Math.Min(count + 1, 10000)
+            : 1;
+        if (OpenCounts.Count > MaxOpenCounts)
+        {
+            // Halve older counts and prune least-used entries so the dictionary stays bounded.
+            foreach (var existingKey in OpenCounts.Keys.ToArray())
+            {
+                if (string.Equals(existingKey, trimmed, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+                var decayed = OpenCounts[existingKey] / 2;
+                if (decayed <= 0)
+                {
+                    OpenCounts.Remove(existingKey);
+                }
+                else
+                {
+                    OpenCounts[existingKey] = decayed;
+                }
+            }
+            while (OpenCounts.Count > MaxOpenCounts)
+            {
+                var lowest = OpenCounts
+                    .Where(p => !string.Equals(p.Key, trimmed, StringComparison.OrdinalIgnoreCase))
+                    .OrderBy(p => p.Value)
+                    .Select(p => p.Key)
+                    .FirstOrDefault();
+                if (lowest is null) break;
+                OpenCounts.Remove(lowest);
+            }
+        }
+    }
+
+    public int GetOpenCount(string? key)
+    {
+        if (string.IsNullOrWhiteSpace(key) || OpenCounts is not { Count: > 0 })
+        {
+            return 0;
+        }
+        return OpenCounts.TryGetValue(key.Trim(), out var count) ? count : 0;
     }
 
     public bool IsIndependentFavorite(IEnumerable<string> keys)

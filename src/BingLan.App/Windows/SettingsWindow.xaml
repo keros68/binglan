@@ -1611,9 +1611,9 @@
                                       Checked="LauncherEnabled_Changed"
                                       Unchecked="LauncherEnabled_Changed"/>
                         </local:SettingsRow>
-                        <local:SettingsRow x:Name="LauncherSearchHotkeyRow" Header="搜索热键"
-                                           Description="打开或收起冰蓝总览卡搜索的全局组合键，需至少一个修饰键（Ctrl/Alt/Shift/Win）；关闭搜索模块或冰蓝总览卡后热键同时注销"
-                                           local:SettingsSearch.Keywords="快捷键 组合键 全局热键 唤出">
+                        <local:SettingsRow x:Name="LauncherSearchHotkeyRow" Header="呼出快捷键"
+                                           Description="在任意软件里直接打开或收起冰蓝总览卡（不依赖顶端信息条，随时生效），需至少一个修饰键；清空可停用"
+                                           local:SettingsSearch.Keywords="快捷键 组合键 全局热键 搜索热键 唤出">
                             <StackPanel Orientation="Horizontal">
                                 <TextBlock x:Name="TopBarSearchHotkeyHint"
                                            MaxWidth="180"
@@ -1623,13 +1623,20 @@
                                            FontSize="11"
                                            TextWrapping="Wrap"/>
                                 <Button x:Name="TopBarSearchHotkeyButton"
-                                        MinWidth="150"
+                                        MinWidth="140"
                                         Padding="14,5"
                                         FontFamily="Consolas, Cascadia Mono, Segoe UI"
                                         AutomationProperties.Name="搜索热键录制"
                                         Click="TopBarSearchHotkey_Click"
                                         PreviewKeyDown="TopBarSearchHotkey_PreviewKeyDown"
                                         LostKeyboardFocus="TopBarSearchHotkey_LostKeyboardFocus"/>
+                                <Button x:Name="TopBarSearchHotkeyClearButton"
+                                        Margin="6,0,0,0"
+                                        Padding="10,5"
+                                        Content="清空"
+                                        ToolTip="停用此快捷键"
+                                        AutomationProperties.Name="清空总览卡快捷键"
+                                        Click="TopBarSearchHotkeyClear_Click"/>
                             </StackPanel>
                         </local:SettingsRow>
                         <local:SettingsRow x:Name="LauncherBackdropModeRow" Header="总览卡背景方式"
@@ -2516,6 +2523,129 @@
                                        Text="安装时冰蓝桌面会暂时退出，装完自动重新打开。"/>
                         </StackPanel>
                     </Border>
+
+                    <TextBlock Style="{StaticResource SectionHeaderStyle}" Text="快捷键" local:SettingsSearch.Keywords="热键 组合键 速览 Peek 隐藏组件 快速待办"/>
+                    <local:SettingsGroup>
+                        <local:SettingsRow Header="临时速览桌面分组盒"
+                                           Description="不返回桌面，直接把桌面分组盒临时浮到当前软件上方拿文件或拖拽；松手、按 Esc 或点击空白处自动退回"
+                                           local:SettingsSearch.Keywords="速览 Peek 唤出 分组盒 拖拽 快捷键">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock x:Name="PeekBoxesHotkeyHint"
+                                           MaxWidth="160"
+                                           VerticalAlignment="Center"
+                                           Margin="0,0,8,0"
+                                           Foreground="{DynamicResource IceMutedInkBrush}"
+                                           FontSize="11"
+                                           TextWrapping="Wrap"/>
+                                <Button x:Name="PeekBoxesHotkeyButton"
+                                        Tag="PeekFileBoxes"
+                                        MinWidth="140"
+                                        Padding="14,5"
+                                        FontFamily="Consolas, Cascadia Mono, Segoe UI"
+                                        AutomationProperties.Name="临时速览桌面分组盒快捷键"
+                                        Click="GlobalHotkey_Click"
+                                        PreviewKeyDown="GlobalHotkey_PreviewKeyDown"
+                                        LostKeyboardFocus="GlobalHotkey_LostKeyboardFocus"/>
+                                <Button Tag="PeekFileBoxes"
+                                        Margin="6,0,0,0"
+                                        Padding="10,5"
+                                        Content="清空"
+                                        AutomationProperties.Name="清空临时速览快捷键"
+                                        Click="GlobalHotkeyClear_Click"/>
+                            </StackPanel>
+                        </local:SettingsRow>
+                        <local:SettingsRow Header="隐藏或显示全部桌面组件"
+                                           Description="一键隐藏或恢复所有桌面卡片，适合录屏、投屏或看壁纸（默认不设）"
+                                           local:SettingsSearch.Keywords="隐藏组件 显示组件 清场 快捷键">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock x:Name="ToggleWidgetsHotkeyHint"
+                                           MaxWidth="160"
+                                           VerticalAlignment="Center"
+                                           Margin="0,0,8,0"
+                                           Foreground="{DynamicResource IceMutedInkBrush}"
+                                           FontSize="11"
+                                           TextWrapping="Wrap"/>
+                                <Button x:Name="ToggleWidgetsHotkeyButton"
+                                        Tag="ToggleWidgets"
+                                        MinWidth="140"
+                                        Padding="14,5"
+                                        FontFamily="Consolas, Cascadia Mono, Segoe UI"
+                                        AutomationProperties.Name="隐藏或显示全部桌面组件快捷键"
+                                        Click="GlobalHotkey_Click"
+                                        PreviewKeyDown="GlobalHotkey_PreviewKeyDown"
+                                        LostKeyboardFocus="GlobalHotkey_LostKeyboardFocus"/>
+                                <Button Tag="ToggleWidgets"
+                                        Margin="6,0,0,0"
+                                        Padding="10,5"
+                                        Content="清空"
+                                        AutomationProperties.Name="清空隐藏组件快捷键"
+                                        Click="GlobalHotkeyClear_Click"/>
+                            </StackPanel>
+                        </local:SettingsRow>
+                        <local:SettingsRow Header="快速新建一条待办"
+                                           Description="不返回桌面，直接唤起待办卡并聚焦新条目输入框（默认不设）"
+                                           local:SettingsSearch.Keywords="待办 新建待办 快捷记录 快捷键">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock x:Name="QuickTodoHotkeyHint"
+                                           MaxWidth="160"
+                                           VerticalAlignment="Center"
+                                           Margin="0,0,8,0"
+                                           Foreground="{DynamicResource IceMutedInkBrush}"
+                                           FontSize="11"
+                                           TextWrapping="Wrap"/>
+                                <Button x:Name="QuickTodoHotkeyButton"
+                                        Tag="QuickTodo"
+                                        MinWidth="140"
+                                        Padding="14,5"
+                                        FontFamily="Consolas, Cascadia Mono, Segoe UI"
+                                        AutomationProperties.Name="快速新建待办快捷键"
+                                        Click="GlobalHotkey_Click"
+                                        PreviewKeyDown="GlobalHotkey_PreviewKeyDown"
+                                        LostKeyboardFocus="GlobalHotkey_LostKeyboardFocus"/>
+                                <Button Tag="QuickTodo"
+                                        Margin="6,0,0,0"
+                                        Padding="10,5"
+                                        Content="清空"
+                                        AutomationProperties.Name="清空快速待办快捷键"
+                                        Click="GlobalHotkeyClear_Click"/>
+                            </StackPanel>
+                        </local:SettingsRow>
+                        <local:SettingsRow Header="临时切回原生桌面图标"
+                                           Description="仅在开启「清爽桌面」时生效，临时显示原生桌面图标并隐藏卡片，再按一次恢复（默认不设）"
+                                           local:SettingsSearch.Keywords="清爽桌面 桌面图标 原生桌面 快捷键">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock x:Name="ToggleDesktopIconsHotkeyHint"
+                                           MaxWidth="160"
+                                           VerticalAlignment="Center"
+                                           Margin="0,0,8,0"
+                                           Foreground="{DynamicResource IceMutedInkBrush}"
+                                           FontSize="11"
+                                           TextWrapping="Wrap"/>
+                                <Button x:Name="ToggleDesktopIconsHotkeyButton"
+                                        Tag="ToggleDesktopIcons"
+                                        MinWidth="140"
+                                        Padding="14,5"
+                                        FontFamily="Consolas, Cascadia Mono, Segoe UI"
+                                        AutomationProperties.Name="临时切回原生桌面图标快捷键"
+                                        Click="GlobalHotkey_Click"
+                                        PreviewKeyDown="GlobalHotkey_PreviewKeyDown"
+                                        LostKeyboardFocus="GlobalHotkey_LostKeyboardFocus"/>
+                                <Button Tag="ToggleDesktopIcons"
+                                        Margin="6,0,0,0"
+                                        Padding="10,5"
+                                        Content="清空"
+                                        AutomationProperties.Name="清空原生桌面图标快捷键"
+                                        Click="GlobalHotkeyClear_Click"/>
+                            </StackPanel>
+                        </local:SettingsRow>
+                        <local:SettingsRow Header="打开或收起冰蓝总览卡"
+                                           Description="在「冰蓝总览卡」页录制或清空总览卡呼出快捷键（默认 Ctrl+Alt+F）"
+                                           local:SettingsSearch.Keywords="总览卡 快捷键 搜索热键">
+                            <Button Content="调整 →"
+                                    AutomationProperties.Name="前往冰蓝总览卡设置快捷键"
+                                    Click="OpenLauncherHotkeys_Click"/>
+                        </local:SettingsRow>
+                    </local:SettingsGroup>
 
                     <TextBlock Style="{StaticResource SectionHeaderStyle}" Text="备份" local:SettingsSearch.Keywords="恢复 还原 备份全部"/>
                     <Border Style="{StaticResource SettingsPanelStyle}">

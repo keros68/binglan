@@ -120,7 +120,8 @@
         </DataTemplate>
         <DataTemplate x:Key="PlaceCardTemplate">
             <Button Margin="0,0,8,8" Padding="10,8" Width="216" HorizontalContentAlignment="Stretch"
-                    Click="OnPlaceCardClick" AutomationProperties.Name="{Binding Name}">
+                    Click="OnPlaceCardClick" PreviewMouseRightButtonDown="OnPlaceCardRightClick"
+                    AutomationProperties.Name="{Binding Name}">
                 <Grid>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="32" />
@@ -469,7 +470,8 @@
         </Style>
     </Window.Resources>
     <Border x:Name="PanelSurface" CornerRadius="24" Background="{DynamicResource FloatingGlassSurfaceBrush}"
-            BorderBrush="{DynamicResource FloatingGlassBorderBrush}" BorderThickness="1" Padding="0">
+            BorderBrush="{DynamicResource FloatingGlassBorderBrush}" BorderThickness="1" Padding="0"
+            MouseLeftButtonDown="OnPanelSurfaceMouseLeftButtonDown">
         <Grid>
             <Border x:Name="WallpaperBackdropHost" Visibility="Collapsed" IsHitTestVisible="False"
                     CornerRadius="{Binding CornerRadius, ElementName=PanelSurface}" ClipToBounds="True">
@@ -489,10 +491,11 @@
                     <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
 
-            <!-- 顶栏：搜索框 + 一级三主入口 + 材质快切 + 关闭 -->
+            <!-- 顶栏：搜索框 + 一级三主入口 + 材质快切 + 保持打开 + 关闭 -->
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="Auto" />
@@ -544,7 +547,8 @@
                 </Border>
 
                 <Button x:Name="MaterialButton" Grid.Column="2" Content="磨砂" Margin="8,0,0,0" Click="OnMaterialClick" AutomationProperties.Name="切换玻璃材质" />
-                <Button Grid.Column="3" Content="&#xE8BB;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="13" Margin="6,0,0,0" Padding="12,8" Background="{DynamicResource LauncherLabelPlateBrush}" BorderThickness="0" Click="OnCloseClick" AutomationProperties.Name="关闭冰蓝总览卡" />
+                <Button x:Name="PinPanelButton" Grid.Column="3" Content="&#xE718;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="13" Margin="6,0,0,0" Padding="10,8" Click="OnPinPanelClick" ToolTip="固定并置顶（保持打开，可拖动空白处移到屏幕一侧）" AutomationProperties.Name="固定并置顶冰蓝总览卡" />
+                <Button Grid.Column="4" Content="&#xE8BB;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="13" Margin="6,0,0,0" Padding="12,8" Background="{DynamicResource LauncherLabelPlateBrush}" BorderThickness="0" Click="OnCloseClick" AutomationProperties.Name="关闭冰蓝总览卡" />
             </Grid>
 
             <!-- 分组编辑器与删除确认 -->
@@ -666,6 +670,16 @@
                                     <Button x:Name="FileSortByModifiedButton" Content="最近修改" Style="{StaticResource CompactToggleStyle}" Click="OnFileSortByModifiedClick" AutomationProperties.Name="文件按最近修改排序" />
                                 </StackPanel>
                             </Border>
+
+                            <Button x:Name="AddPinnedFolderButton" Visibility="Collapsed"
+                                    Padding="10,4" FontSize="12" Margin="0,0,6,0" Click="OnAddPinnedFolderClick"
+                                    ToolTip="收藏常用文件夹到此处，下次快捷键一步直达"
+                                    AutomationProperties.Name="收藏常用文件夹">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="&#xE710;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="11" VerticalAlignment="Center" Margin="0,0,4,0" />
+                                    <TextBlock Text="收藏文件夹" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </Button>
 
                             <Button x:Name="RecentPrivacyButton" Visibility="Collapsed" Content="隐藏最近"
                                     Padding="10,4" FontSize="12" Margin="0,0,6,0" Click="OnToggleRecentPrivacyClick"

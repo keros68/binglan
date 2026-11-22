@@ -48,6 +48,121 @@ public partial class LauncherPanelWindow
         }
     }
 
+    private void OnPlaceCardRightClick(object sender, System.Windows.Input.MouseButtonEventArgs args)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not LauncherPlace place || place.IsFileBox)
+        {
+            return;
+        }
+        args.Handled = true;
+        if (_closed || _dismissing) return;
+        _menu?.SetCurrentValue(System.Windows.Controls.ContextMenu.IsOpenProperty, false);
+        var menu = new System.Windows.Controls.ContextMenu();
+        var expand = new System.Windows.Controls.MenuItem { Header = "在面板内展开" };
+        expand.Click += (_, _) => SelectPlace(place.Id);
+        menu.Items.Add(expand);
+
+        if (place.Path is { Length: > 0 } dirPath)
+        {
+            var openExplorer = new System.Windows.Controls.MenuItem { Header = "在资源管理器中打开" };
+            openExplorer.Click += (_, _) =>
+            {
+                var entry = new LauncherPanelEntry(
+                    new TopBarSearchCandidate(TopBarSearchItemKind.Folder, place.Name, Path.GetFileName(dirPath), dirPath),
+                    "位置");
+                QueueOpen(entry, locate: false);
+            };
+            menu.Items.Add(openExplorer);
+
+            if (place.IsPinnedCustom && _saveOrganizer is not null)
+            {
+                menu.Items.Add(new System.Windows.Controls.Separator());
+                var unpin = new System.Windows.Controls.MenuItem { Header = "取消收藏" };
+                unpin.Click += (_, _) => _ = TogglePinnedFolderAsync(dirPath);
+                menu.Items.Add(unpin);
+            }
+        }
+        menu.Closed += (_, _) =>
+        {
+            if (ReferenceEquals(_menu, menu)) _menu = null;
+        };
+        menu.PlacementTarget = sender as UIElement ?? FilePlacesBar;
+        _menu = menu;
+        menu.IsOpen = true;
+    }
+
+    private async void OnAddPinnedFolderClick(object sender, RoutedEventArgs args)
+    {
+        if (_closed || _dismissing || _saveOrganizer is null) return;
+        var dialog = new Microsoft.Win32.OpenFolderDialog
+        {
+            Title = "选择要收藏到常用位置的文件夹"
+        };
+        _modalDialogOpen = true;
+        bool? picked;
+        try
+        {
+            picked = dialog.ShowDialog(this);
+        }
+        finally
+        {
+            _modalDialogOpen = false;
+        }
+        if (picked != true || string.IsNullOrWhiteSpace(dialog.FolderName))
+        {
+            return;
+        }
+        await TogglePinnedFolderAsync(dialog.FolderName, pinOnly: true);
+    }
+
+    private async Task TogglePinnedFolderAsync(string path, bool pinOnly = false)
+    {
+        if (_closed || _dismissing || _saveOrganizer is null) return;
+        var normalized = LauncherPreferencesState.NormalizeFolderPath(path);
+        if (normalized is null) return;
+
+        bool added;
+        if (_preferences.IsFolderPinned(normalized))
+        {
+            if (pinOnly)
+            {
+                StatusText.Text = "该文件夹已在常用位置中";
+                return;
+            }
+            _preferences.UnpinFolder(normalized);
+            added = false;
+        }
+        else
+        {
+            if (!_preferences.PinFolder(normalized))
+            {
+                return;
+            }
+            added = true;
+        }
+        _saveOrganizer();
+        var folderName = Path.GetFileName(Path.TrimEndingDirectorySeparator(normalized));
+        if (string.IsNullOrWhiteSpace(folderName)) folderName = normalized;
+        try
+        {
+            var snapshot = await _loadSnapshot();
+            if (_closed || _dismissing) return;
+            _snapshot = snapshot;
+            if (!added && _fileMode == FileBrowseMode.Place && _selectedPlaceId == "pinned:" + normalized)
+            {
+                _fileMode = FileBrowseMode.Overview;
+                _selectedPlaceId = null;
+                _folderStack.Clear();
+            }
+            await SearchAsync(preserveView: true);
+            if (!_closed && !_dismissing)
+            {
+                StatusText.Text = added ? $"已收藏常用文件夹：{folderName}" : $"已从常用位置移除：{folderName}";
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException) { }
+    }
+
     private void OnBackFolderClick(object sender, RoutedEventArgs args) => NavigateBackFolder();
 
     private void OnBreadcrumbClick(object sender, RoutedEventArgs args)

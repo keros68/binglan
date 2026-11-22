@@ -52,7 +52,7 @@ public partial class LauncherPanelWindow : Window
     // Native file checks cannot be cancelled. Limit the outstanding checks across
     // repeated panel sessions; consider a dedicated provider only if this proves insufficient.
     private static readonly SemaphoreSlim PathCheckGate = new(2, 2);
-    private static readonly SemaphoreSlim IconGate = new(2, 2);
+    private static readonly SemaphoreSlim IconGate = new(4, 4);
     private readonly Func<Task<LauncherPanelSnapshot>> _loadSnapshot;
     private readonly Action<LauncherPanelEntry, bool> _openTarget;
     private readonly Func<IReadOnlyList<(Guid Id, string Title)>> _readFileBoxes;
@@ -87,6 +87,8 @@ public partial class LauncherPanelWindow : Window
     private bool _composing;
     private bool _openingTarget;
     private bool _pinningTarget;
+    private bool _isPinned;
+    private bool _modalDialogOpen;
     private bool _draggingOut;
     private bool _suppressNextClick;
     private System.Windows.Point? _dragStartPoint;
@@ -325,6 +327,34 @@ public partial class LauncherPanelWindow : Window
         _saveOrganizer?.Invoke();
     }
 
+    private void OnPinPanelClick(object sender, RoutedEventArgs args)
+    {
+        _isPinned = !_isPinned;
+        Topmost = _isPinned;
+        UpdatePinPanelButton();
+        StatusText.Text = _isPinned
+            ? "已固定并置顶：切到其他软件不会关闭，可拖动顶部空白处移到屏幕一侧（双击归位）"
+            : "已取消固定：切到其他软件时自动收起";
+    }
+
+    private void UpdatePinPanelButton()
+    {
+        if (PinPanelButton is null) return;
+        PinPanelButton.Content = _isPinned ? "\uE840" : "\uE718";
+        PinPanelButton.Tag = _isPinned ? "Selected" : null;
+        PinPanelButton.Background = _isPinned
+            ? (Brush)FindResource("FloatingGlassSelectedBrush")
+            : (Brush)FindResource("FloatingGlassControlBrush");
+        PinPanelButton.BorderBrush = _isPinned
+            ? (Brush)FindResource("FloatingGlassFocusBrush")
+            : (Brush)FindResource("FloatingGlassControlBorderBrush");
+        PinPanelButton.ToolTip = _isPinned
+            ? "已固定置顶（点击取消；拖动空白处移动，双击归位）"
+            : "固定并置顶（保持打开，可拖动空白处移到屏幕一侧）";
+        System.Windows.Automation.AutomationProperties.SetName(
+            PinPanelButton, _isPinned ? "取消固定冰蓝总览卡" : "固定并置顶冰蓝总览卡");
+    }
+
     internal nint PreviousForeground { get; }
     internal bool DismissedOnDeactivation { get; private set; }
     internal bool LaunchedTarget { get; private set; }
@@ -340,6 +370,8 @@ public partial class LauncherPanelWindow : Window
     {
         if (_closed || _dismissing) return;
         _dismissing = true;
+        _isPinned = false;
+        Topmost = false;
         _debounce.Stop();
         CancelSearch();
         CancelDirectoryLoad();
@@ -480,11 +512,14 @@ public partial class LauncherPanelWindow : Window
         var includeRecent = _preferences.ShowRecentFiles;
         var favoriteMode = _preferences.FavoriteMode;
         var independentFavorites = _preferences.FavoriteKeys.ToHashSet(StringComparer.Ordinal);
+        var openCounts = _preferences.OpenCounts.Count > 0
+            ? new Dictionary<string, int>(_preferences.OpenCounts, StringComparer.OrdinalIgnoreCase)
+            : null;
         var canManageGroups = _saveOrganizer is not null;
         try
         {
             var results = await Task.Run(() => BuildRows(
-                snapshot, supplemental, query, filter, includeRecent, favoriteMode, independentFavorites, canManageGroups), token);
+                snapshot, supplemental, query, filter, includeRecent, favoriteMode, independentFavorites, canManageGroups, openCounts), token);
             if (!IsCurrent(version, token)) return;
             Render(results, preserveSelection: preserveView);
             _renderedSearchVersion = version;
@@ -507,7 +542,7 @@ public partial class LauncherPanelWindow : Window
             if (!IsCurrent(version, token)) return;
             _supplemental = extra;
             results = await Task.Run(() => BuildRows(
-                snapshot, extra, query, filter, includeRecent, favoriteMode, independentFavorites, canManageGroups), token);
+                snapshot, extra, query, filter, includeRecent, favoriteMode, independentFavorites, canManageGroups, openCounts), token);
             if (!IsCurrent(version, token)) return;
             Render(results, preserveSelection: true);
             if (!available) StatusText.Text = _rows.Count == 0
@@ -533,7 +568,8 @@ public partial class LauncherPanelWindow : Window
         bool includeRecent,
         LauncherFavoriteMode favoriteMode,
         IReadOnlySet<string> independentFavorites,
-        bool canManageGroups)
+        bool canManageGroups,
+        IReadOnlyDictionary<string, int>? openCounts = null)
     {
         var favoriteKeys = snapshot.Favorites.Select(entry => entry.Key).ToHashSet(StringComparer.Ordinal);
         var dockKeys = snapshot.Favorites
@@ -603,7 +639,7 @@ public partial class LauncherPanelWindow : Window
                 .ThenBy(row => row.IsFavorite ? string.Empty : row.Name, StringComparer.CurrentCultureIgnoreCase).ToList();
         }
         var byCandidate = all.ToLookup(row => row.Entry.Candidate);
-        return TopBarSearchRules.Search(byCandidate.Select(group => group.Key), query, int.MaxValue)
+        return TopBarSearchRules.Search(byCandidate.Select(group => group.Key), query, int.MaxValue, openCounts)
             .SelectMany(candidate => byCandidate[candidate]).ToList();
     }
 
@@ -645,9 +681,18 @@ public partial class LauncherPanelWindow : Window
         }
         var items = BuildDisplayItems();
         _rows = items.OfType<PanelRow>().ToList();
-        foreach (var row in _rows)
+        var missingInitial = new List<PanelRow>();
+        for (var i = 0; i < _rows.Count; i++)
         {
-            if (LauncherIconCache.TryGet(IconIdentity(row.Entry), out var icon)) row.Icon = icon;
+            var row = _rows[i];
+            if (LauncherIconCache.TryGet(IconIdentity(row.Entry), out var icon))
+            {
+                row.Icon = icon;
+            }
+            else if (i < 36)
+            {
+                missingInitial.Add(row);
+            }
         }
 
         UpdateResultsLayoutMode();
@@ -662,11 +707,20 @@ public partial class LauncherPanelWindow : Window
         EmptyHint.Visibility = _rows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         EmptyHint.Text = ResolveEmptyHint();
         StatusText.Text = ResolveStatusText();
+        // Kick off first-viewport icon loads immediately instead of waiting for two
+        // Dispatcher hops (Loaded -> Background), eliminating the visible pop-in delay.
+        if (missingInitial.Count > 0)
+        {
+            _ = LoadIconsAsync(missingInitial, ++_iconViewVersion);
+        }
         Dispatcher.BeginInvoke(() =>
         {
             if (_closed || !ReferenceEquals(ResultsList.ItemsSource, items)) return;
             ResultViewport?.ScrollToVerticalOffset(offset);
-            QueueVisibleIcons();
+            if (offset > 0 || missingInitial.Count == 0)
+            {
+                QueueVisibleIcons();
+            }
         }, DispatcherPriority.Loaded);
     }
 
@@ -682,74 +736,100 @@ public partial class LauncherPanelWindow : Window
 
     private async Task LoadIconsAsync(List<PanelRow> rows, int version)
     {
-        // Keep shell work bounded when the user changes pages or a path responds slowly.
-        // A gate or extraction timeout skips waiting on that item, lets the remaining items
-        // load, and writes late completions back through the process-wide icon cache.
+        // Fan out bounded concurrent icon extractions so a full viewport populates in one
+        // quick wave instead of trickling in serially one icon at a time.
+        var pending = new List<(string IconKey, LauncherPanelEntry Entry, string Name)>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var row in rows)
         {
             if (_closed || _dismissing || version != _iconViewVersion) return;
             var iconKey = IconIdentity(row.Entry);
             if (LauncherIconCache.TryGet(iconKey, out var cached))
             {
-                row.Icon = cached;
+                if (row.Icon is null) row.Icon = cached;
                 continue;
             }
-            if (!LauncherIconCache.TryBeginLoad(iconKey))
+            if (seen.Add(iconKey))
             {
-                if (LauncherIconCache.TryGet(iconKey, out cached))
-                {
-                    row.Icon = cached;
-                }
-                continue;
+                pending.Add((iconKey, row.Entry, row.Name));
             }
-            try
+        }
+        if (pending.Count == 0) return;
+
+        var tasks = pending.Select(item => LoadSingleIconAsync(item.IconKey, item.Entry, item.Name, version)).ToArray();
+        try
+        {
+            await Task.WhenAll(tasks);
+        }
+        catch (OperationCanceledException) { }
+    }
+
+    private async Task LoadSingleIconAsync(string iconKey, LauncherPanelEntry entry, string name, int version)
+    {
+        if (_closed || _dismissing || version != _iconViewVersion) return;
+        try
+        {
+            var iconTask = LauncherIconCache.GetOrLoadAsync(iconKey, () => ExtractIconGuardedAsync(entry, iconKey, name, _lifetime.Token));
+            var icon = await iconTask.WaitAsync(TimeSpan.FromMilliseconds(900), _lifetime.Token);
+            if (!_closed && icon is not null)
             {
-                if (!await IconGate.WaitAsync(TimeSpan.FromMilliseconds(600), _lifetime.Token))
-                {
-                    LauncherIconCache.Complete(iconKey, null);
-                    continue;
-                }
-                if (_closed || _dismissing || version != _iconViewVersion)
-                {
-                    IconGate.Release();
-                    LauncherIconCache.Complete(iconKey, null);
-                    return;
-                }
-                var entry = row.Entry;
-                var name = row.Name;
-                var work = Task.Run(() =>
-                {
-                    try
-                    {
-                        return ExtractIcon(entry, iconKey, name);
-                    }
-                    catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException
-                        or System.Runtime.InteropServices.COMException)
-                    {
-                        return null;
-                    }
-                    finally { IconGate.Release(); }
-                });
-                _ = work.ContinueWith(completed =>
+                ApplyIcon(iconKey, icon);
+            }
+        }
+        catch (TimeoutException)
+        {
+            // Keep listening so a slow disk icon still populates when it completes.
+            _ = LauncherIconCache.GetOrLoadAsync(iconKey, () => Task.FromResult<ImageSource?>(null))
+                .ContinueWith(completed =>
                 {
                     var resolved = completed.IsCompletedSuccessfully ? completed.Result : null;
-                    LauncherIconCache.Complete(iconKey, resolved);
                     if (resolved is not null && !_closed)
                     {
                         Dispatcher.BeginInvoke(() => ApplyIcon(iconKey, resolved));
                     }
                 }, CancellationToken.None, TaskContinuationOptions.None, TaskScheduler.Default);
-
-                var icon = await work.WaitAsync(TimeSpan.FromMilliseconds(600), _lifetime.Token);
-                if (_closed) return;
-                if (icon is not null)
-                {
-                    ApplyIcon(iconKey, icon);
-                }
-            }
-            catch (TimeoutException) { }
-            catch (OperationCanceledException) { return; }
         }
+        catch (OperationCanceledException) { }
+    }
+
+    internal static async Task<ImageSource?> ExtractIconGuardedAsync(
+        LauncherPanelEntry entry,
+        string iconKey,
+        string name,
+        CancellationToken token)
+    {
+        if (!await IconGate.WaitAsync(TimeSpan.FromMilliseconds(900), token).ConfigureAwait(false))
+        {
+            return null;
+        }
+        try
+        {
+            if (token.IsCancellationRequested) return null;
+            return await Task.Run(() =>
+            {
+                try
+                {
+                    return ExtractIcon(entry, iconKey, name);
+                }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException
+                    or System.Runtime.InteropServices.COMException)
+                {
+                    return null;
+                }
+            }, token).ConfigureAwait(false);
+        }
+        finally
+        {
+            IconGate.Release();
+        }
+    }
+
+    internal static void PrewarmIcon(LauncherPanelEntry entry)
+    {
+        var iconKey = IconIdentity(entry);
+        if (LauncherIconCache.TryGet(iconKey, out _)) return;
+        var name = entry.Candidate.DisplayName;
+        _ = LauncherIconCache.GetOrLoadAsync(iconKey, () => ExtractIconGuardedAsync(entry, iconKey, name, CancellationToken.None));
     }
 
     private void ApplyIcon(string iconKey, ImageSource? icon)
@@ -864,6 +944,16 @@ public partial class LauncherPanelWindow : Window
         }
         if (Keyboard.Modifiers == ModifierKeys.Control)
         {
+            if (args.Key == Key.C
+                && ResultsList.SelectedItem is PanelRow copyRow
+                && (!SearchBox.IsKeyboardFocusWithin || SearchBox.SelectionLength == 0))
+            {
+                if (CopyRowFileToClipboard(copyRow))
+                {
+                    args.Handled = true;
+                    return;
+                }
+            }
             if (args.Key is Key.D1 or Key.NumPad1) { SwitchMainTab(LauncherMainTab.Apps); args.Handled = true; return; }
             if (args.Key is Key.D2 or Key.NumPad2) { SwitchMainTab(LauncherMainTab.Files); args.Handled = true; return; }
             if (args.Key is Key.D3 or Key.NumPad3) { SwitchMainTab(LauncherMainTab.Groups); args.Handled = true; return; }
@@ -916,22 +1006,27 @@ public partial class LauncherPanelWindow : Window
                 _ = OpenSelectionAsync(Keyboard.Modifiers == ModifierKeys.Control);
                 args.Handled = true;
                 break;
+            case Key.Space when Keyboard.Modifiers == ModifierKeys.None && !inSearch
+                && ResultsList.SelectedItem is PanelRow previewRow && LocalPath(previewRow.Entry) is { } previewPath:
+                _ = QuickPreviewLauncher.TryTogglePreviewAsync(previewPath);
+                args.Handled = true;
+                break;
             case Key.Left when inResults || (inSearch && SearchBox.Text.Length == 0):
             case Key.Right when inResults || (inSearch && SearchBox.Text.Length == 0):
-                if (_rows.Count > 0) SelectNeighbor(args.Key);
+                SelectNeighbor(args.Key);
                 args.Handled = true;
                 break;
             case Key.Up when inSearch || inResults:
             case Key.Down when inSearch || inResults:
-                if (_rows.Count > 0) SelectNeighbor(args.Key);
+                SelectNeighbor(args.Key);
                 args.Handled = true;
                 break;
             case Key.Home when inResults || (inSearch && SearchBox.Text.Length == 0):
-                if (_rows.Count > 0) SelectAndReveal(_rows[0]);
+                if (NavigableRows() is { Count: > 0 } homeRows) SelectAndReveal(homeRows[0]);
                 args.Handled = true;
                 break;
             case Key.End when inResults || (inSearch && SearchBox.Text.Length == 0):
-                if (_rows.Count > 0) SelectAndReveal(_rows[^1]);
+                if (NavigableRows() is { Count: > 0 } endRows) SelectAndReveal(endRows[^1]);
                 args.Handled = true;
                 break;
             case Key.PageUp when inSearch || inResults:
@@ -955,6 +1050,77 @@ public partial class LauncherPanelWindow : Window
             NavigateBackFolder();
             args.Handled = true;
         }
+    }
+
+    private void OnPanelSurfaceMouseLeftButtonDown(object sender, MouseButtonEventArgs args)
+    {
+        if (_closed || _dismissing || _draggingOut || args.Handled
+            || args.ButtonState != MouseButtonState.Pressed
+            || IsInsideNonDragControl(args.OriginalSource as DependencyObject))
+        {
+            return;
+        }
+
+        if (args.ClickCount == 2)
+        {
+            PositionPanel();
+            args.Handled = true;
+            return;
+        }
+
+        try
+        {
+            DragMove();
+            SyncMovedBounds();
+        }
+        catch (InvalidOperationException)
+        {
+        }
+    }
+
+    private void SyncMovedBounds()
+    {
+        if (_closed || _dismissing || _handle == 0 || !DockNativeMethods.GetWindowRect(_handle, out var rect))
+        {
+            return;
+        }
+
+        _panelPixelBounds = new PixelRect(rect.Left, rect.Top, rect.Right, rect.Bottom);
+        var centerX = (rect.Left + rect.Right) / 2;
+        var centerY = (rect.Top + rect.Bottom) / 2;
+        var movedMonitor = MonitorCatalog.GetAll().FirstOrDefault(candidate =>
+            centerX >= candidate.Bounds.Left && centerX < candidate.Bounds.Right
+            && centerY >= candidate.Bounds.Top && centerY < candidate.Bounds.Bottom);
+        if (movedMonitor is not null)
+        {
+            _activeMonitor = movedMonitor;
+        }
+
+        if (_preferences.BackdropMode == LauncherBackdropMode.WallpaperCanvas)
+        {
+            _ = LoadWallpaperBackdropAsync();
+        }
+    }
+
+    private static bool IsInsideNonDragControl(DependencyObject? source)
+    {
+        while (source is not null)
+        {
+            if (source is ButtonBase
+                or TextBoxBase
+                or Selector
+                or ScrollBar
+                or Thumb
+                or System.Windows.Controls.MenuItem
+                or System.Windows.Controls.ContextMenu)
+            {
+                return true;
+            }
+            source = source is Visual or System.Windows.Media.Media3D.Visual3D
+                ? VisualTreeHelper.GetParent(source)
+                : LogicalTreeHelper.GetParent(source);
+        }
+        return false;
     }
 
     private static ListBoxItem? FindItem(DependencyObject? source)
@@ -1022,15 +1188,38 @@ public partial class LauncherPanelWindow : Window
         }
         _suppressNextClick = true;
         _draggingOut = true;
+        var previousExStyle = _handle != 0 ? (long)NativeMethods.GetWindowLongPtr(_handle, NativeMethods.GwlExStyle) : 0L;
+        var draggedEffect = System.Windows.DragDropEffects.None;
         try
         {
-            var data = new System.Windows.DataObject(System.Windows.DataFormats.FileDrop, new[] { path });
-            DragDrop.DoDragDrop(ResultsList, data, System.Windows.DragDropEffects.Copy);
+            var data = BuildFileCopyDataObject(path);
+            // Make the panel click-through and invisible during drag so the underlying WeChat /
+            // browser drop target is unobstructed while keeping the WPF drag source alive.
+            Opacity = 0d;
+            _glass.SetClearMode(true);
+            if (_handle != 0)
+            {
+                NativeMethods.SetWindowLongPtr(_handle, NativeMethods.GwlExStyle, (nint)(previousExStyle | NativeMethods.WsExTransparent));
+            }
+            draggedEffect = DragDrop.DoDragDrop(ResultsList, data, System.Windows.DragDropEffects.Copy | System.Windows.DragDropEffects.Link);
         }
         catch (System.Runtime.InteropServices.ExternalException) { }
         finally
         {
+            if (_handle != 0)
+            {
+                NativeMethods.SetWindowLongPtr(_handle, NativeMethods.GwlExStyle, (nint)previousExStyle);
+            }
+            Opacity = 1d;
+            if (!_closed && !_dismissing)
+            {
+                _glass.SetClearMode(_appearance.UseClearGlass || _hasWallpaperBackdrop);
+            }
             _draggingOut = false;
+            if (!_isPinned && draggedEffect != System.Windows.DragDropEffects.None && !_closed && !_dismissing)
+            {
+                Dismiss(restoreForeground: false);
+            }
         }
     }
 
@@ -1159,11 +1348,30 @@ public partial class LauncherPanelWindow : Window
             open.Click += (_, _) => QueueOpen(row.Entry, locate: false);
             menu.Items.Add(open);
         }
-        if (LocalPath(row.Entry) is not null)
+        if (LocalPath(row.Entry) is { } localPath)
         {
             var locate = new MenuItem { Header = "打开所在位置" };
             locate.Click += (_, _) => QueueOpen(row.Entry, locate: true);
             menu.Items.Add(locate);
+
+            if (File.Exists(localPath) || Directory.Exists(localPath))
+            {
+                var copyFile = new MenuItem { Header = "复制文件", InputGestureText = "Ctrl+C" };
+                copyFile.Click += (_, _) => CopyRowFileToClipboard(row);
+                menu.Items.Add(copyFile);
+            }
+
+            var copyPath = new MenuItem { Header = "复制路径" };
+            copyPath.Click += (_, _) => CopyTextToClipboard(localPath, $"已复制路径：{row.Name}");
+            menu.Items.Add(copyPath);
+
+            if (Directory.Exists(localPath) && _saveOrganizer is not null)
+            {
+                var pinned = _preferences.IsFolderPinned(localPath);
+                var togglePinnedFolder = new MenuItem { Header = pinned ? "从常用位置移除" : "固定到常用位置" };
+                togglePinnedFolder.Click += (_, _) => _ = TogglePinnedFolderAsync(localPath);
+                menu.Items.Add(togglePinnedFolder);
+            }
         }
         if (_preferences.FavoriteMode == LauncherFavoriteMode.Independent && _saveOrganizer is not null)
         {
@@ -1311,8 +1519,16 @@ public partial class LauncherPanelWindow : Window
             if (path is not null && (locate || string.IsNullOrWhiteSpace(entry.Pinned?.AppUserModelId))
                 && !await CheckLocalTargetAsync(path)) return;
             if (!IsActivationCurrent(searchVersion)) return;
+            if (!locate && _saveOrganizer is not null && !string.IsNullOrWhiteSpace(entry.Candidate.Path))
+            {
+                _preferences.RecordOpen(entry.Candidate.Path);
+                _saveOrganizer();
+            }
             LaunchedTarget = true;
-            ClosePanel(restoreForeground: false);
+            if (!_isPinned)
+            {
+                ClosePanel(restoreForeground: false);
+            }
             _openTarget(entry, locate);
         }
         catch (OperationCanceledException) { }
@@ -1386,9 +1602,50 @@ public partial class LauncherPanelWindow : Window
 
     private void CloseOnDeactivation()
     {
-        if (_closed || _draggingOut || IsActive || _menu?.IsOpen == true || DockNativeMethods.GetForegroundWindow() == _handle) return;
+        if (_closed || _isPinned || _modalDialogOpen || _draggingOut || IsActive || _menu?.IsOpen == true || DockNativeMethods.GetForegroundWindow() == _handle) return;
         DismissedOnDeactivation = true;
         ClosePanel(restoreForeground: false);
+    }
+
+    private static System.Windows.DataObject BuildFileCopyDataObject(string path)
+    {
+        var data = new System.Windows.DataObject();
+        var list = new System.Collections.Specialized.StringCollection { path };
+        data.SetFileDropList(list);
+        data.SetData("Preferred DropEffect", new MemoryStream(BitConverter.GetBytes(1)));
+        return data;
+    }
+
+    private bool CopyRowFileToClipboard(PanelRow row)
+    {
+        if (LocalPath(row.Entry) is not { } path || (!File.Exists(path) && !Directory.Exists(path)))
+        {
+            return false;
+        }
+        try
+        {
+            System.Windows.Clipboard.SetDataObject(BuildFileCopyDataObject(path), true);
+            StatusText.Text = $"已复制文件：{row.Name}（可直接粘贴）";
+            return true;
+        }
+        catch (System.Runtime.InteropServices.ExternalException)
+        {
+            StatusText.Text = "剪贴板暂忙，请稍后重试";
+            return false;
+        }
+    }
+
+    private void CopyTextToClipboard(string text, string successMessage)
+    {
+        try
+        {
+            System.Windows.Clipboard.SetText(text);
+            StatusText.Text = successMessage;
+        }
+        catch (System.Runtime.InteropServices.ExternalException)
+        {
+            StatusText.Text = "剪贴板暂忙，请稍后重试";
+        }
     }
 
     private enum PanelFilter { All, Apps, Files, Groups }

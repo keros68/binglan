@@ -399,6 +399,12 @@ public partial class LauncherPanelWindow
         RecentPrivacyButton.Visibility = showRecentPrivacy ? Visibility.Visible : Visibility.Collapsed;
         RecentPrivacyButton.Content = _preferences.ShowRecentFiles ? "隐藏最近" : "显示最近";
 
+        var showAddPinnedFolder = _activeTab == LauncherMainTab.Files
+            && _folderStack.Count == 0
+            && _fileMode == FileBrowseMode.Overview
+            && _saveOrganizer is not null;
+        AddPinnedFolderButton.Visibility = showAddPinnedFolder ? Visibility.Visible : Visibility.Collapsed;
+
         var showLayout = _activeTab == LauncherMainTab.Groups
             || (_activeTab == LauncherMainTab.Files && _fileMode != FileBrowseMode.Recent);
         LayoutToggle.Visibility = showLayout ? Visibility.Visible : Visibility.Collapsed;
@@ -572,19 +578,24 @@ public partial class LauncherPanelWindow
         }, DispatcherPriority.Background);
     }
 
+    private List<PanelRow> NavigableRows() =>
+        ResultsList.Items.OfType<PanelRow>().ToList();
+
     private void SelectNeighbor(Key direction)
     {
+        var visible = NavigableRows();
+        if (visible.Count == 0) return;
         ResultsList.Tag = true;
         var current = ResultsList.SelectedItem as PanelRow;
         if (current is null)
         {
-            SelectAndReveal(_rows[0]);
+            SelectAndReveal(visible[0]);
             return;
         }
         if (direction is Key.Left or Key.Right)
         {
-            var index = _rows.IndexOf(current) + (direction == Key.Right ? 1 : -1);
-            SelectAndReveal(_rows[Math.Clamp(index, 0, _rows.Count - 1)]);
+            var index = visible.IndexOf(current) + (direction == Key.Right ? 1 : -1);
+            SelectAndReveal(visible[Math.Clamp(index, 0, visible.Count - 1)]);
             return;
         }
         var positions = TilePositions().ToArray();

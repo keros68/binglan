@@ -105,4 +105,7 @@ public sealed class SettingsMaintenance
     public Action<bool> SetFileBoxDeleteOriginals { get; init; } = _ => { };
     public Func<bool> IsHeaderToolsOnHover { get; init; } = () => false;
     public Action<bool> SetHeaderToolsOnHover { get; init; } = _ => { };
+    public BingLan.Core.Models.GlobalHotkeysState Hotkeys { get; init; } = new();
+    public Func<BingLan.Core.Models.GlobalHotkeyKind, string, bool> ProbeGlobalHotkey { get; init; } = (_, _) => true;
+    public Action ApplyGlobalHotkeys { get; init; } = () => { };
 }

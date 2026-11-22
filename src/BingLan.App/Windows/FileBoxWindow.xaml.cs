@@ -33,12 +33,23 @@ public partial class FileBoxWindow : WidgetWindowBase
     {
         Interval = FileBoxAutoCollapseRules.IdleDelay
     };
+    private readonly System.Windows.Threading.DispatcherTimer _dragExpandTimer = new()
+    {
+        Interval = TimeSpan.FromMilliseconds(220)
+    };
     private Guid? _selectionAnchor;
     private bool _initialIconLoadStarted;
     private int _modalDialogDepth;
     private bool _isTileOrFileDragActive;
     private bool _externalDragOver;
+    private bool _expandedForExternalDrag;
+    private bool _pinnedOpenForSession;
     private (int X, int Y)? _foldedTitlePressPoint;
+
+    internal event Action? DragOutStarted;
+    internal event Action? DragOutEnded;
+    internal event Action? ItemOpened;
+    internal event Action? PeekEscapeRequested;
 
     public FileBoxWindow(FileBoxState state)
     {
@@ -60,18 +71,31 @@ public partial class FileBoxWindow : WidgetWindowBase
         {
             SetCollapsed(true);
         }
+        RefreshPinOpenButton();
         _autoCollapseTimer.Tick += (_, _) => OnAutoCollapseTimerTick();
+        _dragExpandTimer.Tick += (_, _) => OnDragExpandTimerTick();
         HookAutoCollapseContextMenus();
         MouseEnter += (_, _) => RefreshAutoCollapseTimer();
         MouseLeave += (_, _) => RefreshAutoCollapseTimer();
-        DragEnter += (_, _) =>
+        DragEnter += (_, e) =>
         {
             _externalDragOver = true;
+            if (State.IsCollapsed && e.Data.GetDataPresent(System.Windows.DataFormats.FileDrop))
+            {
+                _dragExpandTimer.Stop();
+                _dragExpandTimer.Start();
+            }
             RefreshAutoCollapseTimer();
         };
         DragLeave += (_, _) =>
         {
             _externalDragOver = false;
+            _dragExpandTimer.Stop();
+            if (_expandedForExternalDrag && !IsCursorInsideWindow())
+            {
+                _expandedForExternalDrag = false;
+                SetCollapsed(true, animate: true);
+            }
             RefreshAutoCollapseTimer();
         };
         Loaded += FileBoxWindow_Loaded;
@@ -93,12 +117,62 @@ public partial class FileBoxWindow : WidgetWindowBase
     {
         if (State.AutoCollapse == enabled)
         {
+            RefreshPinOpenButton();
             RefreshAutoCollapseTimer();
             return;
         }
         State.AutoCollapse = enabled;
+        if (!enabled)
+        {
+            _pinnedOpenForSession = false;
+        }
+        RefreshPinOpenButton();
         RefreshAutoCollapseTimer();
         NotifyStateChanged();
+    }
+
+    private void PinOpenButton_Click(object sender, RoutedEventArgs e)
+    {
+        _pinnedOpenForSession = !_pinnedOpenForSession;
+        RefreshPinOpenButton();
+        RefreshAutoCollapseTimer();
+    }
+
+    private void RefreshPinOpenButton()
+    {
+        if (PinOpenButton is null)
+        {
+            return;
+        }
+        var show = State.AutoCollapse && !State.IsCollapsed;
+        PinOpenButton.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+        PinOpenButton.Content = _pinnedOpenForSession ? "\uE840" : "\uE718";
+        PinOpenButton.Opacity = _pinnedOpenForSession ? 1.0 : 0.72;
+        PinOpenButton.ToolTip = _pinnedOpenForSession
+            ? "已保持展开（点击恢复 5 秒自动收起）"
+            : "暂时保持展开（鼠标移开不自动收起）";
+    }
+
+    private void OnDragExpandTimerTick()
+    {
+        _dragExpandTimer.Stop();
+        if (!_externalDragOver || !State.IsCollapsed)
+        {
+            return;
+        }
+        _expandedForExternalDrag = true;
+        SetCollapsed(false, animate: true);
+    }
+
+    private bool IsCursorInsideWindow()
+    {
+        var handle = WindowHandle;
+        if (handle == 0 || !DockNativeMethods.GetCursorPos(out var pt)
+            || !DockNativeMethods.GetWindowRect(handle, out var rect))
+        {
+            return false;
+        }
+        return pt.X >= rect.Left && pt.X <= rect.Right && pt.Y >= rect.Top && pt.Y <= rect.Bottom;
     }
 
     internal void TriggerAutoCollapseTickForTesting() => OnAutoCollapseTimerTick();
@@ -106,6 +180,7 @@ public partial class FileBoxWindow : WidgetWindowBase
     protected override void OnClosed(EventArgs e)
     {
         _autoCollapseTimer.Stop();
+        _dragExpandTimer.Stop();
         _closeCts.Cancel();
         _closeCts.Dispose();
         base.OnClosed(e);
@@ -205,12 +280,17 @@ public partial class FileBoxWindow : WidgetWindowBase
         {
             State.ExpandedHeight = Height;
         }
+        if (collapsed)
+        {
+            _pinnedOpenForSession = false;
+        }
         State.IsCollapsed = collapsed;
         CollapseButton.Content = collapsed ? "\uE70D" : "\uE70E";
         CollapseButton.ToolTip = collapsed ? "展开分组盒" : "折叠成标题条";
         AddButton.Visibility = collapsed ? Visibility.Collapsed : Visibility.Visible;
         SortButton.Visibility = collapsed ? Visibility.Collapsed : Visibility.Visible;
         CollapsedSummaryText.Visibility = collapsed ? Visibility.Visible : Visibility.Collapsed;
+        RefreshPinOpenButton();
         RefreshCollapsedSummary();
 
         var bodyElements = FoldBodyElements();
@@ -405,13 +485,18 @@ public partial class FileBoxWindow : WidgetWindowBase
     private async void Window_Drop(object sender, System.Windows.DragEventArgs e)
     {
         _externalDragOver = false;
+        _dragExpandTimer.Stop();
+        var restoreCollapse = _expandedForExternalDrag;
+        _expandedForExternalDrag = false;
         RefreshAutoCollapseTimer();
-        if (e.Data.GetData(System.Windows.DataFormats.FileDrop) is not string[] paths)
+        if (e.Data.GetData(System.Windows.DataFormats.FileDrop) is string[] paths)
         {
-            return;
+            await AddMappingsWithStatusAsync(paths);
         }
-
-        await AddMappingsWithStatusAsync(paths);
+        if (restoreCollapse && !State.IsCollapsed)
+        {
+            SetCollapsed(true, animate: true);
+        }
     }
 
     private System.Windows.Point? _tileDragStart;
@@ -451,6 +536,7 @@ public partial class FileBoxWindow : WidgetWindowBase
         _singleClickFileTiles.Remove(button);
         _isTileOrFileDragActive = true;
         RefreshAutoCollapseTimer();
+        DragOutStarted?.Invoke();
         try
         {
             DragDrop.DoDragDrop(
@@ -464,6 +550,7 @@ public partial class FileBoxWindow : WidgetWindowBase
         {
             _isTileOrFileDragActive = false;
             RefreshAutoCollapseTimer();
+            DragOutEnded?.Invoke();
         }
     }
 
@@ -650,6 +737,7 @@ public partial class FileBoxWindow : WidgetWindowBase
         }
 
         Open(tile);
+        ItemOpened?.Invoke();
     }
 
     private void OpenFile_Click(object sender, RoutedEventArgs e)
@@ -657,6 +745,7 @@ public partial class FileBoxWindow : WidgetWindowBase
         if ((sender as FrameworkElement)?.DataContext is FileTile tile)
         {
             Open(tile);
+            ItemOpened?.Invoke();
         }
     }
 
@@ -1002,7 +1091,21 @@ public partial class FileBoxWindow : WidgetWindowBase
             {
                 ClearSelection();
                 e.Handled = true;
+                return;
             }
+            PeekEscapeRequested?.Invoke();
+            return;
+        }
+
+        if (e.Key == Key.Space
+            && Keyboard.Modifiers == ModifierKeys.None
+            && Keyboard.FocusedElement is FrameworkElement { DataContext: FileTile spaceTile } spaceFocus
+            && FileList.IsAncestorOf(spaceFocus)
+            && !spaceTile.IsShellEntry
+            && !spaceTile.IsMissing)
+        {
+            e.Handled = true;
+            _ = QuickPreviewLauncher.TryTogglePreviewAsync(spaceTile.Path);
             return;
         }
 
@@ -1721,7 +1824,8 @@ public partial class FileBoxWindow : WidgetWindowBase
             IsMouseOver,
             IsTitleEditing,
             _modalDialogDepth > 0 || _isTileOrFileDragActive || _externalDragOver || HasOpenContextMenu(),
-            IsDraggingOrResizing);
+            IsDraggingOrResizing,
+            _pinnedOpenForSession);
         if (shouldRun)
         {
             _autoCollapseTimer.Stop();
@@ -1742,7 +1846,8 @@ public partial class FileBoxWindow : WidgetWindowBase
                 IsMouseOver,
                 IsTitleEditing,
                 _modalDialogDepth > 0 || _isTileOrFileDragActive || _externalDragOver || HasOpenContextMenu(),
-                IsDraggingOrResizing))
+                IsDraggingOrResizing,
+                _pinnedOpenForSession))
         {
             return;
         }

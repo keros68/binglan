@@ -14,9 +14,11 @@ public static class FileBoxAutoCollapseRules
         bool isPointerOver,
         bool isTitleEditing,
         bool isInteractionOpen,
-        bool isDragging) =>
+        bool isDragging,
+        bool isPinnedOpen = false) =>
         autoCollapseEnabled
         && !isCollapsed
+        && !isPinnedOpen
         && !isPointerOver
         && !isTitleEditing
         && !isInteractionOpen

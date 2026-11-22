@@ -211,6 +211,7 @@ public partial class SettingsWindow : Window
         LoadUpdateSettings();
         RefreshCleanDesktopSettings();
         LoadFileBoxAutomation();
+        LoadGlobalHotkeys();
         LoadStyle();
         RefreshBackupList();
         SelectBarTab("Dock");
@@ -1936,7 +1937,7 @@ public partial class SettingsWindow : Window
     // being recorded, where the keys belong to the recording.
     private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
     {
-        if (e.Key == Key.F && Keyboard.Modifiers == ModifierKeys.Control && !_recordingSearchHotkey)
+        if (e.Key == Key.F && Keyboard.Modifiers == ModifierKeys.Control && !_recordingSearchHotkey && _recordingGlobalHotkey is null)
         {
             SettingsSearchBox.Focus();
             SettingsSearchBox.SelectAll();
@@ -3301,14 +3302,30 @@ public partial class SettingsWindow : Window
 
     private void LoadTopBarSearchHotkey()
     {
-        if (_topBarState is not { } state)
+        if (TopBarSearchHotkeyButton is null || TopBarSearchHotkeyHint is null)
         {
             return;
         }
+        var configured = _maintenance.Hotkeys.Launcher;
         TopBarSearchHotkeyHint.Text = string.Empty;
-        TopBarSearchHotkeyButton.Content = TopBarSearchRules.ParseHotkey(state.SearchHotkey) is { } binding
-            ? TopBarSearchRules.FormatHotkey(binding)
-            : state.SearchHotkey;
+        TopBarSearchHotkeyButton.Content = string.IsNullOrWhiteSpace(configured)
+            ? "未设置"
+            : TopBarSearchRules.ParseHotkey(configured) is { } binding
+                ? TopBarSearchRules.FormatHotkey(binding)
+                : configured;
+    }
+
+    private void TopBarSearchHotkeyClear_Click(object sender, RoutedEventArgs e)
+    {
+        _recordingSearchHotkey = false;
+        GlobalHotkeyRules.Set(_maintenance.Hotkeys, GlobalHotkeyKind.Launcher, string.Empty);
+        if (_topBarState is not null)
+        {
+            _topBarState.SearchHotkey = string.Empty;
+        }
+        LoadTopBarSearchHotkey();
+        _maintenance.ApplyGlobalHotkeys();
+        ApplyTopBarChange("已清空总览卡快捷键");
     }
 
     private void TopBarSearchHotkey_Click(object sender, RoutedEventArgs e)
@@ -3383,13 +3400,20 @@ public partial class SettingsWindow : Window
             TopBarSearchHotkeyHint.Text = "组合无效";
             return;
         }
+        if (GlobalHotkeyRules.FindInternalConflict(_maintenance.Hotkeys, GlobalHotkeyKind.Launcher, text) is { } conflict)
+        {
+            TopBarSearchHotkeyHint.Text = $"已用于「{GlobalHotkeyRules.DisplayName(conflict)}」";
+            return;
+        }
         if (_probeTopBarSearchHotkey?.Invoke(text) == false)
         {
             TopBarSearchHotkeyHint.Text = "该组合键已被其他程序占用";
             return;
         }
+        GlobalHotkeyRules.Set(_maintenance.Hotkeys, GlobalHotkeyKind.Launcher, text);
         state.SearchHotkey = text;
         StopSearchHotkeyRecording(state);
+        _maintenance.ApplyGlobalHotkeys();
         ApplyTopBarChange("已更新搜索热键");
     }
 

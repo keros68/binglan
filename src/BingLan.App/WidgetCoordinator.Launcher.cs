@@ -94,6 +94,7 @@ public sealed partial class WidgetCoordinator
         }
         _dock.Apply();
         _topBar.Apply();
+        SyncGlobalHotkeys();
         ScheduleSave();
         if (enabled) QueueLauncherCatalogWarmup();
     }
@@ -113,6 +114,9 @@ public sealed partial class WidgetCoordinator
             try
             {
                 await ReadLauncherAppsAsync();
+                var snapshot = await ReadLauncherSnapshotAsync();
+                if (!_state.LauncherEnabled || _isExiting || _exitRequested) return;
+                _ = PrewarmLauncherIconsAsync(snapshot);
             }
             catch (Exception exception) when (exception is not OutOfMemoryException)
             {
@@ -120,6 +124,34 @@ public sealed partial class WidgetCoordinator
             }
         }));
     }
+
+    private Task PrewarmLauncherIconsAsync(LauncherPanelSnapshot snapshot) =>
+        Task.Run(async () =>
+        {
+            // Warm favorites, recent files, desktop/file-box items, and the top A–Z apps
+            // quietly in the background so the very first Ctrl+Alt+F open renders icons
+            // immediately without a visible pop-in pass.
+            var azApps = snapshot.Entries
+                .Where(e => e.Candidate.Kind == TopBarSearchItemKind.App)
+                .OrderBy(e => e.Candidate.DisplayName, StringComparer.CurrentCultureIgnoreCase)
+                .Take(48);
+            var filesAndBoxes = snapshot.Entries
+                .Where(e => e.Candidate.Kind != TopBarSearchItemKind.App)
+                .Take(48);
+            var candidates = snapshot.Favorites
+                .Concat(snapshot.RecentEntries ?? [])
+                .Concat(filesAndBoxes)
+                .Concat(azApps)
+                .DistinctBy(e => e.Key, StringComparer.Ordinal)
+                .Take(128)
+                .ToArray();
+            foreach (var entry in candidates)
+            {
+                if (_isExiting || _exitRequested || !_state.LauncherEnabled) return;
+                LauncherPanelWindow.PrewarmIcon(entry);
+                await Task.Delay(3).ConfigureAwait(false);
+            }
+        });
 
     private Task<(DockPinnedApp Pin, string? Folder, string? Shortcut)[]> ReadLauncherAppsAsync()
     {
@@ -150,7 +182,6 @@ public sealed partial class WidgetCoordinator
                 {
                     _launcherApps = refresh;
                     _launcherAppsAt = DateTimeOffset.Now;
-                    LauncherIconCache.Clear();
                 }
             }, CancellationToken.None, TaskContinuationOptions.None, scheduler);
         }
@@ -269,6 +300,7 @@ public sealed partial class WidgetCoordinator
             .DistinctBy(member => member.Key).ToArray();
         var useEverything = _state.LauncherPreferences.UseEverything;
         var showRecentFiles = _state.LauncherPreferences.ShowRecentFiles;
+        var pinnedFolders = _state.LauncherPreferences.PinnedFolders.ToArray();
         var apps = await ReadLauncherAppsAsync();
         return await Task.Run(() =>
         {
@@ -306,7 +338,7 @@ public sealed partial class WidgetCoordinator
                 else if (saved.FallbackPath is { } path && (Path.IsPathFullyQualified(path) || FileMappingService.IsShellEntry(path)))
                     Add(path, saved.FallbackName, "已保存入口", ClassifyLauncherPath(path), isSavedFallback: true);
             }
-            var places = LauncherFileCatalog.BuildPlaces(fileBoxSummaries);
+            var places = LauncherFileCatalog.BuildPlaces(fileBoxSummaries, pinnedFolders);
             var recent = showRecentFiles ? LauncherFileCatalog.ReadRecentFiles() : [];
             return new LauncherPanelSnapshot(entries, favorites, useEverything, places, recent);
 

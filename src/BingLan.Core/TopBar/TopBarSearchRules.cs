@@ -96,8 +96,9 @@ public static class TopBarSearchRules
     public static IReadOnlyList<TopBarSearchCandidate> Search(
         IEnumerable<TopBarSearchCandidate> candidates,
         string query,
-        int limit = MaxResults) =>
-        SearchCore(candidates, query, allowFuzzy: true, limit);
+        int limit = MaxResults,
+        IReadOnlyDictionary<string, int>? openCounts = null) =>
+        SearchCore(candidates, query, allowFuzzy: true, limit, openCounts);
 
     /// <summary>
     /// Compacts long file paths from the middle so both the root/drive and the immediate
@@ -132,7 +133,8 @@ public static class TopBarSearchRules
         IEnumerable<TopBarSearchCandidate> candidates,
         string query,
         bool allowFuzzy,
-        int limit = MaxResults)
+        int limit = MaxResults,
+        IReadOnlyDictionary<string, int>? openCounts = null)
     {
         var tokens = query.Split(QuerySeparators, StringSplitOptions.RemoveEmptyEntries)
             .Select(token => token.Trim().ToLowerInvariant())
@@ -145,7 +147,7 @@ public static class TopBarSearchRules
 
         // The fallback may need a second pass, including for a one-shot enumerable.
         var source = candidates as IReadOnlyList<TopBarSearchCandidate> ?? candidates.ToArray();
-        var scored = new List<(int Score, TopBarSearchCandidate Candidate)>();
+        var scored = new List<(int Score, int Frequency, TopBarSearchCandidate Candidate)>();
         var maxPasses = allowFuzzy ? 2 : 1;
         for (var pass = 0; pass < maxPasses; pass++)
         {
@@ -173,7 +175,8 @@ public static class TopBarSearchRules
                     {
                         total += 2;
                     }
-                    scored.Add((total, candidate));
+                    var frequency = ResolveOpenCount(openCounts, candidate);
+                    scored.Add((total, frequency, candidate));
                 }
             }
             if (scored.Count > 0 || !tokens.Any(token => token.Length >= 4))
@@ -184,12 +187,29 @@ public static class TopBarSearchRules
 
         return scored
             .OrderByDescending(entry => entry.Score)
+            .ThenByDescending(entry => entry.Frequency)
             .ThenBy(entry => entry.Candidate.Kind)
             .ThenBy(entry => entry.Candidate.DisplayName, StringComparer.CurrentCultureIgnoreCase)
             .ThenBy(entry => entry.Candidate.Path, StringComparer.OrdinalIgnoreCase)
             .Take(limit)
             .Select(entry => entry.Candidate)
             .ToArray();
+    }
+
+    private static int ResolveOpenCount(IReadOnlyDictionary<string, int>? openCounts, TopBarSearchCandidate candidate)
+    {
+        if (openCounts is not { Count: > 0 })
+        {
+            return 0;
+        }
+        var count = 0;
+        if (!string.IsNullOrWhiteSpace(candidate.Path)
+            && openCounts.TryGetValue(candidate.Path, out var pathCount)
+            && pathCount > count)
+        {
+            count = pathCount;
+        }
+        return count;
     }
 
     private static CandidateKeys GetCandidateKeys(TopBarSearchCandidate candidate)

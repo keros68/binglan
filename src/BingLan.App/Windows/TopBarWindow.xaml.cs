@@ -167,7 +167,6 @@ public sealed partial class TopBarWindow : Window
     private bool? _appliedAcrylic;
     private DockGlassSurface? _capsuleGlass;
     private bool _searchHotkeyRegistered;
-    private string? _searchHotkeyRegisteredText;
 
     private bool IsSearchEntryEnabled =>
         TopBarRules.IsModuleOn(_state.Modules, TopBarModuleKind.Search) && _environment.IsLauncherEnabled;
@@ -255,7 +254,9 @@ public sealed partial class TopBarWindow : Window
         if (_searchButton is { } searchButton)
         {
             searchButton.Height = Math.Clamp(_state.Height - 10d, 18d, 30d);
-            searchButton.ToolTip = $"搜索应用、文件（{_state.SearchHotkey}）";
+            searchButton.ToolTip = string.IsNullOrWhiteSpace(_state.SearchHotkey)
+                ? "搜索应用、文件"
+                : $"搜索应用、文件（{_state.SearchHotkey}）";
         }
         ApplySurface();
         _autoHide = new DockAutoHideState();
@@ -1903,32 +1904,9 @@ public sealed partial class TopBarWindow : Window
     /// </summary>
     private void SyncSearchHotkey()
     {
-        if (!IsSearchEntryEnabled)
-        {
-            UnregisterSearchHotkey();
-            return;
-        }
-        var wanted = _state.SearchHotkey;
-        if (_searchHotkeyRegistered && wanted == _searchHotkeyRegisteredText)
-        {
-            return;
-        }
+        // Global hotkeys are now owned by GlobalHotkeyHost so they remain active even when
+        // the top bar is disabled. Ensure any stale registration on this window is cleared.
         UnregisterSearchHotkey();
-        if (_handle == 0 || TopBarSearchRules.ParseHotkey(wanted) is not { } binding)
-        {
-            return;
-        }
-        if (TopBarNativeMethods.RegisterHotKey(
-                _handle,
-                SearchHotkeyId,
-                binding.Modifiers | TopBarNativeMethods.ModNoRepeat,
-                binding.VirtualKey))
-        {
-            _searchHotkeyRegistered = true;
-            _searchHotkeyRegisteredText = wanted;
-        }
-        // A registration the system refuses (another app owns the combination) stays
-        // off; the box itself keeps working and the next settings change retries.
     }
 
     private void UnregisterSearchHotkey()
@@ -1938,7 +1916,6 @@ public sealed partial class TopBarWindow : Window
             TopBarNativeMethods.UnregisterHotKey(_handle, SearchHotkeyId);
         }
         _searchHotkeyRegistered = false;
-        _searchHotkeyRegisteredText = null;
     }
 
     /// <summary>

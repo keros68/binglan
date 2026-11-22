@@ -854,6 +854,17 @@ public sealed class LocalStateStore
             }
             state.SchemaVersion = 55;
         }
+        state.Hotkeys ??= new GlobalHotkeysState();
+        if (state.SchemaVersion < 56)
+        {
+            // Carry over any custom TopBar search hotkey to the standalone global hotkey host.
+            state.Hotkeys.Launcher = BingLan.Core.TopBar.TopBarSearchRules.ParseHotkey(state.TopBar.SearchHotkey) is { } migratedHotkey
+                ? BingLan.Core.TopBar.TopBarSearchRules.FormatHotkey(migratedHotkey)
+                : GlobalHotkeysState.DefaultLauncherHotkey;
+            state.Hotkeys.PeekFileBoxes = GlobalHotkeysState.DefaultPeekFileBoxesHotkey;
+            state.SchemaVersion = 56;
+        }
+        GlobalHotkeyRules.Normalize(state.Hotkeys);
         state.LauncherPreferences.Normalize();
         state.Updates ??= new UpdateState();
         state.QuickPlaces = QuickPlaceRules.Normalize(state.QuickPlaces);

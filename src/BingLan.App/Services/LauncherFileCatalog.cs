@@ -15,7 +15,8 @@ internal sealed record LauncherPlace(
     string? Path,
     string Glyph,
     bool IsFileBox,
-    IReadOnlyList<LauncherPanelEntry>? BoxEntries = null);
+    IReadOnlyList<LauncherPanelEntry>? BoxEntries = null,
+    bool IsPinnedCustom = false);
 
 internal sealed record LauncherDirectoryListing(
     IReadOnlyList<LauncherPanelEntry> Entries,
@@ -40,14 +41,42 @@ internal static class LauncherFileCatalog
     };
 
     internal static IReadOnlyList<LauncherPlace> BuildPlaces(
-        IReadOnlyList<(Guid Id, string Title, IReadOnlyList<(string Path, string? Title)> Items)> fileBoxes)
+        IReadOnlyList<(Guid Id, string Title, IReadOnlyList<(string Path, string? Title)> Items)> fileBoxes,
+        IReadOnlyList<string>? pinnedFolders = null)
     {
         var places = new List<LauncherPlace>();
+        var seenDirectories = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         AddSystemPlace("place:desktop", "桌面", Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), "\uE7F4");
         AddSystemPlace("place:downloads", "下载", KnownFolders.GetDownloadsPath(), "\uE896");
         AddSystemPlace("place:documents", "文档", Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "\uE8A5");
         AddSystemPlace("place:pictures", "图片", Environment.GetFolderPath(Environment.SpecialFolder.MyPictures), "\uEB9F");
+
+        if (pinnedFolders is { Count: > 0 })
+        {
+            foreach (var rawPath in pinnedFolders)
+            {
+                if (LauncherPreferencesState.NormalizeFolderPath(rawPath) is not { } normalized
+                    || !seenDirectories.Add(normalized)
+                    || !Directory.Exists(normalized))
+                {
+                    continue;
+                }
+                var folderName = Path.GetFileName(Path.TrimEndingDirectorySeparator(normalized));
+                if (string.IsNullOrWhiteSpace(folderName))
+                {
+                    folderName = normalized;
+                }
+                places.Add(new LauncherPlace(
+                    "pinned:" + normalized,
+                    folderName,
+                    "收藏 · " + TopBarSearchRules.FormatLocation(normalized, 28),
+                    normalized,
+                    "\uE728",
+                    IsFileBox: false,
+                    IsPinnedCustom: true));
+            }
+        }
 
         foreach (var (id, title, items) in fileBoxes)
         {
@@ -79,8 +108,12 @@ internal static class LauncherFileCatalog
 
         void AddSystemPlace(string id, string name, string? path, string glyph)
         {
-            if (string.IsNullOrWhiteSpace(path) || !Directory.Exists(path)) return;
-            places.Add(new LauncherPlace(id, name, TopBarSearchRules.FormatLocation(path, 32), path, glyph, IsFileBox: false));
+            if (LauncherPreferencesState.NormalizeFolderPath(path) is not { } normalized || !Directory.Exists(normalized))
+            {
+                return;
+            }
+            seenDirectories.Add(normalized);
+            places.Add(new LauncherPlace(id, name, TopBarSearchRules.FormatLocation(normalized, 32), normalized, glyph, IsFileBox: false));
         }
     }
 

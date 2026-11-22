@@ -149,6 +149,29 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         }
     }
 
+    internal void QuickAddAndFocus()
+    {
+        if (State.IsCollapsed)
+        {
+            SetCollapsed(false, animate: false);
+            NotifyStateChanged();
+        }
+        RaiseAboveDesktop(BingLan.App.Interop.DockNativeMethods.HwndTopmost, topmost: true);
+        if (WindowHandle is var handle && handle != 0)
+        {
+            BingLan.App.Interop.DockNativeMethods.SetForegroundWindow(handle);
+        }
+        Activate();
+        Add_Click(this, new RoutedEventArgs());
+        Deactivated += OnQuickAddDeactivated;
+
+        void OnQuickAddDeactivated(object? sender, EventArgs args)
+        {
+            Deactivated -= OnQuickAddDeactivated;
+            ReturnBelowOrdinaryWindows();
+        }
+    }
+
     private void Add_Click(object sender, RoutedEventArgs e)
     {
         if (State.WeeklyView)
