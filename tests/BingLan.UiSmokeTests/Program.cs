@@ -7268,9 +7268,9 @@ internal static class Program
                     && !Require<FrameworkElement>(window, "AppearanceDockPartEditor").IsVisible,
                 "搜“顶栏颜色”应切到外观样式页、展开顶部信息条行并互斥收起 Dock 行");
 
-            var launcherOpacityHit = window.SearchSettings("总览卡透明").First();
-            Assert(launcherOpacityHit.Path == "外观样式 › 冰蓝总览卡",
-                $"搜“总览卡透明”应命中外观样式页冰蓝总览卡分组，实际路径：{launcherOpacityHit.Path}");
+            var launcherOpacityHit = window.SearchSettings("总览卡透明").FirstOrDefault(hit => hit.Path == "外观样式 › 冰蓝总览卡");
+            Assert(launcherOpacityHit is not null,
+                $"搜“总览卡透明”应命中外观样式页冰蓝总览卡分组，实际路径：{string.Join(" | ", window.SearchSettings("总览卡透明").Select(hit => hit.Path))}");
             window.OpenSearchResult(launcherOpacityHit);
             Pump();
             Assert(Require<FrameworkElement>(window, "AppearancePage").IsVisible

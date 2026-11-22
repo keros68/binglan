@@ -722,7 +722,8 @@ internal static class TopBarWindowTests
             var entryRight = entry.PointToScreen(new Point(entry.ActualWidth, 0)).X;
             var leftEdge = leftModules.PointToScreen(new Point(leftModules.ActualWidth, 0)).X;
             var rightEdge = rightModules.PointToScreen(new Point(0, 0)).X;
-            Assert(entry.ActualWidth >= TopBarSearchRules.MinCenteredEntryWidth, "搜索入口不应窄于最小可用宽度");
+            Assert(entry.ActualWidth >= TopBarSearchRules.MinCenteredEntryWidth,
+                $"搜索入口不应窄于最小可用宽度：入口 {entry.ActualWidth}，栏 {bar.ActualWidth}，左模块 {leftModules.ActualWidth}，右模块 {rightModules.ActualWidth}");
             Assert(Math.Abs((entryLeft + entryRight) / 2d - (barLeft + barRight) / 2d) <= 1d,
                 $"搜索入口应位于顶栏正中：入口心 {(entryLeft + entryRight) / 2d}，栏心 {(barLeft + barRight) / 2d}");
             Assert(entryLeft >= leftEdge - 0.5 && entryRight <= rightEdge + 0.5,
