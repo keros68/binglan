@@ -73,7 +73,7 @@ internal static class LauncherPanelWindowTests
             typeof(LauncherPanelWindow).GetField("_snapshot", flags)!.SetValue(panel, snapshot);
             var filter = Enum.Parse(typeof(LauncherPanelWindow).GetNestedType("PanelFilter", BindingFlags.NonPublic)!, "All");
             var rows = typeof(LauncherPanelWindow).GetMethod("BuildRows", BindingFlags.Static | BindingFlags.NonPublic)!
-                .Invoke(null, [snapshot, Array.Empty<LauncherPanelEntry>(), "", filter, true]);
+                .Invoke(null, [snapshot, Array.Empty<LauncherPanelEntry>(), "", filter, true, LauncherFavoriteMode.FollowDock, new HashSet<string>(), false, null]);
             typeof(LauncherPanelWindow).GetMethod("Render", flags | BindingFlags.DeclaredOnly)!.Invoke(panel, [rows, false]);
             var surface = (FrameworkElement)panel.Content;
             void Layout(double width = 984)
@@ -261,7 +261,7 @@ internal static class LauncherPanelWindowTests
                 // Supply the same incremental rows as an index reply without relying on this machine's index.
                 var build = typeof(LauncherPanelWindow).GetMethod("BuildRows", BindingFlags.Static | BindingFlags.NonPublic)!;
                 var filter = Enum.Parse(typeof(LauncherPanelWindow).GetNestedType("PanelFilter", BindingFlags.NonPublic)!, "All");
-                var rows = build.Invoke(null, [snapshot, new[] { entry }, name, filter, true]);
+                var rows = build.Invoke(null, [snapshot, new[] { entry }, name, filter, true, LauncherFavoriteMode.FollowDock, new HashSet<string>(), true, null]);
                 typeof(LauncherPanelWindow).GetMethod("Render", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.DeclaredOnly)!
                     .Invoke(panel, [rows, false]);
                 SelectResult(panel, entry);

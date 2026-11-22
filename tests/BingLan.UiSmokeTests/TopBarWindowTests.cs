@@ -701,6 +701,11 @@ internal static class TopBarWindowTests
     {
         var state = BarState();
         state.VisibilityMode = TopBarVisibilityMode.SmartHide;
+        // Centring is what is under test, not how many modules fit a small screen.
+        state.Modules.Weather = false;
+        state.Modules.Performance = false;
+        state.Modules.Network = false;
+        state.Modules.Volume = false;
         using var sampler = new WindowsPerformanceSamplingService();
         var bar = new TopBarWindow(state, new DesktopStyleState(), new FakeEnvironment(), sampler);
         show(bar);

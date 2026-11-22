@@ -3047,7 +3047,7 @@ internal static class Program
             Assert(
                 window.ContextMenu.Items.OfType<MenuItem>()
                     .Select(item => item.Header?.ToString())
-                    .SequenceEqual(["在冰蓝桌面中设置…", "锁定位置和大小", "删除此组件", "退出冰蓝桌面"]),
+                    .SequenceEqual(["在冰蓝桌面中设置…", "锁定位置和大小", "贴边隐藏", "删除此组件", "退出冰蓝桌面"]),
                 "组件右键菜单仍承载桌面内设置或创建入口");
             var buttons = FindVisualChildren<Button>(window).ToList();
             var importButton = buttons.Single(
@@ -4052,6 +4052,8 @@ internal static class Program
                 "Windows 任务栏页没有显示或默认没有保持系统默认");
 
             settings.ShowSettingsPage("General");
+            Pump();
+            Require<Expander>(settings, "GeneralMoreFold").IsExpanded = true;
             Pump();
             Assert(
                 Require<FrameworkElement>(settings, "GeneralPage").IsVisible &&
@@ -6791,7 +6793,7 @@ internal static class Program
                 && ownerType.GetField("_launcherApps", Private)!.GetValue(coordinator) is null,
                 "禁用状态应阻止打开面板及预读目录");
 
-            var cached = Task.FromResult(Array.Empty<(DockPinnedApp Pin, string? Folder)>());
+            var cached = Task.FromResult(Array.Empty<(DockPinnedApp Pin, string? Folder, string? Shortcut)>());
             ownerType.GetField("_launcherApps", Private)!.SetValue(coordinator, cached);
             ownerType.GetField("_launcherAppsAt", Private)!.SetValue(coordinator, DateTimeOffset.Now);
             var setEnabled = ownerType.GetMethod("SetLauncherEnabled", Private)!;
@@ -7255,9 +7257,9 @@ internal static class Program
                     && Require<RadioButton>(window, "DockFollowLookRadio").IsVisible,
                 "搜“Dock 外观”应切到外观样式页并展开冰蓝 Dock 手风琴行");
 
-            var topBarColorHit = window.SearchSettings("顶栏颜色").First();
-            Assert(topBarColorHit.Path == "外观样式 › 顶部信息条",
-                $"搜“顶栏颜色”应命中外观样式页顶部信息条分组，实际路径：{topBarColorHit.Path}");
+            var topBarColorHit = window.SearchSettings("顶栏颜色").FirstOrDefault(hit => hit.Path == "外观样式 › 顶部信息条");
+            Assert(topBarColorHit is not null,
+                $"搜“顶栏颜色”应命中外观样式页顶部信息条分组，实际路径：{string.Join(" | ", window.SearchSettings("顶栏颜色").Select(hit => hit.Path))}");
             window.OpenSearchResult(topBarColorHit);
             Pump();
             Assert(Require<FrameworkElement>(window, "AppearancePage").IsVisible

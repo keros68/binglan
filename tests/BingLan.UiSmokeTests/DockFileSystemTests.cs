@@ -96,7 +96,7 @@ internal static class DockFileSystemTests
         {
             var executable = Environment.ProcessPath!;
             var appShortcut = Path.Combine(startMenu, "App.lnk");
-            var uninstallShortcut = Path.Combine(startMenu, "卸载App.lnk");
+            var uninstallShortcut = Path.Combine(startMenu, "Uninstall App.lnk");
             CreateShortcut(appShortcut, executable, "", "");
             CreateShortcut(uninstallShortcut, executable, "", "");
             var plainFile = Path.Combine(directory, "Plain.txt");
@@ -106,7 +106,7 @@ internal static class DockFileSystemTests
             {
                 new LauncherPanelEntry(new TopBarSearchCandidate(TopBarSearchItemKind.Folder, "GroupFolder", "GroupFolder", groupFolder), "Windows 索引"),
                 new LauncherPanelEntry(new TopBarSearchCandidate(TopBarSearchItemKind.File, "App.lnk", "App.lnk", appShortcut), "Windows 索引"),
-                new LauncherPanelEntry(new TopBarSearchCandidate(TopBarSearchItemKind.File, "卸载App.lnk", "卸载App.lnk", uninstallShortcut), "Windows 索引"),
+                new LauncherPanelEntry(new TopBarSearchCandidate(TopBarSearchItemKind.File, "Uninstall App.lnk", "Uninstall App.lnk", uninstallShortcut), "Windows 索引"),
                 new LauncherPanelEntry(new TopBarSearchCandidate(TopBarSearchItemKind.File, "Plain.txt", "Plain.txt", plainFile), "Windows 索引")
             };
 
