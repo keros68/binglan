@@ -5,7 +5,7 @@ namespace BingLan.Core.Models;
 
 public sealed class AppState
 {
-    public const int CurrentSchemaVersion = 54;
+    public const int CurrentSchemaVersion = 55;
 
     public int SchemaVersion { get; set; } = CurrentSchemaVersion;
 

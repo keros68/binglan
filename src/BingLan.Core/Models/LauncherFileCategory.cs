@@ -97,6 +97,15 @@ public static class LauncherFileCategoryRules
         return accessedLocal.ToString("MM-dd");
     }
 
+    public static string FormatFileSize(long bytes)
+    {
+        if (bytes < 0) return string.Empty;
+        if (bytes < 1024) return $"{bytes} B";
+        if (bytes < 1024L * 1024L) return $"{bytes / 1024d:0.#} KB";
+        if (bytes < 1024L * 1024L * 1024L) return $"{bytes / (1024d * 1024d):0.#} MB";
+        return $"{bytes / (1024d * 1024d * 1024d):0.##} GB";
+    }
+
     private static string SafeExtension(string path)
     {
         try { return Path.GetExtension(path); }

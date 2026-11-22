@@ -75,18 +75,9 @@ internal interface ITopBarEnvironment
     /// <summary>Brings one window of an app that asked for attention to the front.</summary>
     bool ActivateWindow(nint handle, uint processId = 0);
 
-    /// <summary>
-    /// The desktop files and Start-menu programs the search box offers. Potentially
-    /// slow: the caller runs it off the UI thread and refreshes per search session.
-    /// </summary>
-    IReadOnlyList<TopBarSearchCandidate> ReadSearchCandidates();
+    bool IsLauncherEnabled { get; }
 
-    /// <summary>Opens one search result with its default handler; failures stay quiet.</summary>
-    void OpenSearchTarget(TopBarSearchCandidate candidate);
-
-    void OpenSearchTargetLocation(TopBarSearchCandidate candidate);
-
-    void SearchLayoutChanged();
+    void ToggleLauncherPanel();
 
     void ExitApp();
 }
@@ -122,7 +113,6 @@ public sealed partial class TopBarWindow : Window
     private readonly bool _enableExperimentalCapsule;
     private TopBarDisplayMode DisplayMode => _enableExperimentalCapsule ? _state.DisplayMode : TopBarDisplayMode.FullWidth;
     private bool IsCapsule => DisplayMode == TopBarDisplayMode.Capsule;
-    private SearchPresentation EffectiveSearchPresentation => IsCapsule ? SearchPresentation.Icon : _state.SearchPresentation;
     private long _lastCountdownMinute = -1;
 
     private readonly TopBarState _state;
@@ -155,8 +145,6 @@ public sealed partial class TopBarWindow : Window
     private bool _closing;
     private bool _isChangingVisibilityByApp;
     private bool _trueFullScreenForeground;
-    private bool _desktopShown;
-    private bool _desktopTopmost;
     private bool _menuOpen;
     private NonActivatingPopupMenu? _barMenu;
     private int _tick;
@@ -171,60 +159,18 @@ public sealed partial class TopBarWindow : Window
     // ---------------------------------------------------------------- 搜索
 
     private const string GlyphSearch = "\uE721";
-    private const double SearchBoxWidth = 260d;
-    private const double SearchFlyoutWidth = 440d;
-    private const int SearchFlyoutVisibleRows = 8;
+    private const double SearchBoxWidth = TopBarSearchRules.DefaultCenteredEntryWidth;
     private const int SearchHotkeyId = 0x5E41;
-    private static readonly TimeSpan SearchDebounceInterval = TimeSpan.FromMilliseconds(220);
-    private static readonly string SearchSelectionBrushColor = "#7AB4ED";
-    private static readonly SolidColorBrush SearchRowSelectedBrush = CreateFrozenColorBrush(Color.FromArgb(70, 122, 180, 237));
 
-    private Border? _searchHost;
-    private TextBox? _searchBox;
-    private TextBlock? _searchPlaceholder;
-    private Popup? _searchFlyout;
-    private Border? _searchCard;
-    private Panel? _searchRows;
-    private TextBlock? _searchScope;
-    private string? _searchRenderedQuery;
-    private readonly DispatcherTimer _searchDebounce;
-    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, ImageSource?> _searchIconCache = new(StringComparer.OrdinalIgnoreCase);
-    private IReadOnlyList<TopBarSearchCandidate> _searchCandidates = [];
-    private bool _searchSourcesLoaded;
-    private List<TopBarSearchCandidate> _searchResults = [];
-    private readonly List<Border> _searchRowBorders = [];
-    private int _searchSelected;
-    private int _pressedSearchRowIndex = -1;
-    private DockNativeMethods.NativePoint _lastSearchMousePoint;
-    private int _searchGeneration;
-    private CancellationTokenSource? _searchCancellation;
-    private EverythingSearchClient? _everythingSearch;
-    private SearchWindow? _searchWindow;
-    // Keep at most one empty host after first use; no new host is created at startup.
-    private SearchWindow? _idleSearchWindow;
-    private bool _searchWindowHiddenForFullScreen;
+    private Button? _searchButton;
     private int _moduleMask = -1;
-    private SearchPresentation? _appliedSearchPresentation;
-    private Button? _searchToggleButton;
-    private System.Windows.Media.Brush _searchForeground = Brushes.White;
-    private bool _searchComposing;
-    private ContextMenu? _searchContextMenu;
-    private (List<TopBarSearchCandidate> Results, string Query, string? Scope)? _pendingSearchResults;
     private bool? _appliedAcrylic;
     private DockGlassSurface? _capsuleGlass;
-
-    private Window SearchInputWindow => _searchWindow is { } window ? window : this;
-    private nint SearchInputHandle => new WindowInteropHelper(SearchInputWindow).Handle;
-
-    /// <summary>Whether a search session holds the bar activatable and the keyboard.</summary>
-    private bool _searchActive;
-    private nint _searchPreviousForeground;
-    // The bar whose search session currently holds the foreground, for other windows
-    // (the dock) that must keep evaluating the window the session borrowed it from.
-    private static TopBarWindow? _searchSessionOwner;
-
     private bool _searchHotkeyRegistered;
     private string? _searchHotkeyRegisteredText;
+
+    private bool IsSearchEntryEnabled =>
+        TopBarRules.IsModuleOn(_state.Modules, TopBarModuleKind.Search) && _environment.IsLauncherEnabled;
 
     private const int HshellWindowDestroyed = 2;
     private const int HshellWindowActivated = 4;
@@ -261,11 +207,6 @@ public sealed partial class TopBarWindow : Window
         _minuteTimer = new DispatcherTimer(DispatcherPriority.Background, Dispatcher);
         _minuteTimer.Tick += (_, _) => OnMinuteTick();
         _sampler.Sampled += OnSampled;
-        _searchDebounce = new DispatcherTimer(
-            SearchDebounceInterval,
-            DispatcherPriority.Background,
-            (_, _) => OnSearchDebounceTick(),
-            Dispatcher);
         // A network address change is the one system fact with an event source; the
         // others ride the sampling or ambient tick.
         System.Net.NetworkInformation.NetworkChange.NetworkAddressChanged += OnNetworkAddressChanged;
@@ -298,18 +239,24 @@ public sealed partial class TopBarWindow : Window
         }
 
         var moduleMask = TopBarRules.ModuleOrder.Aggregate(0,
-            (mask, kind) => mask | (TopBarRules.IsModuleOn(_state.Modules, kind) ? 1 << (int)kind : 0));
+            (mask, kind) =>
+            {
+                var enabled = kind == TopBarModuleKind.Search
+                    ? IsSearchEntryEnabled
+                    : TopBarRules.IsModuleOn(_state.Modules, kind);
+                return mask | (enabled ? 1 << (int)kind : 0);
+            });
         if (_moduleMask != moduleMask || _appliedDisplayMode != DisplayMode)
         {
             BuildModules();
             _moduleMask = moduleMask;
             _appliedDisplayMode = DisplayMode;
         }
-        else if (_appliedSearchPresentation != EffectiveSearchPresentation && _searchHost is not null)
+        if (_searchButton is { } searchButton)
         {
-            ApplySearchPresentation();
+            searchButton.Height = Math.Clamp(_state.Height - 10d, 18d, 30d);
+            searchButton.ToolTip = $"搜索应用、文件（{_state.SearchHotkey}）";
         }
-        ApplySearchAppearance();
         ApplySurface();
         _autoHide = new DockAutoHideState();
         _nativeTaskbar = TaskbarEdgeGuard.GetNativeTaskbarLayout(_monitor.Bounds);
@@ -325,13 +272,9 @@ public sealed partial class TopBarWindow : Window
         _appBar?.Apply(_monitor, reserve,
             IsCapsule ? (_capsuleExpanded ? _capsuleExpandedHeight : CapsuleHeight) : _state.Height,
             IsCapsule ? (_capsuleExpanded ? CapsuleExpandedWidth : _capsuleCompactWidth) : null);
-        if (IsCapsule && _searchWindow is { IsVisible: true } searchWindow)
-        {
-            searchWindow.RecoverPlacement();
-        }
         // While a flyout is open the fast interval keeps its outside-click watch
         // prompt even in reserve mode.
-        _foregroundTimer.Interval = reserve && _todoFlyout is null && _searchFlyout is null
+        _foregroundTimer.Interval = reserve && _todoFlyout is null && _clockFlyout is null
             ? FullScreenCheckInterval
             : SmartHideCheckInterval;
         _foregroundTimer.Start();
@@ -398,53 +341,25 @@ public sealed partial class TopBarWindow : Window
         {
             yield return _handle;
         }
-
-        if (!_closing
-            && EffectiveSearchPresentation == SearchPresentation.Floating
-            && _searchWindow is { IsVisible: true } floating
-            && !_searchWindowHiddenForFullScreen
-            && floating.WindowHandle is var searchHandle
-            && searchHandle != 0)
-        {
-            yield return searchHandle;
-        }
     }
 
     internal void SetDesktopShown(bool shown, nint cardSlot, bool topmost)
     {
-        _desktopShown = shown;
-        _desktopTopmost = topmost;
-        if (_closing)
+        if (_closing || !shown)
         {
             return;
         }
 
-        if (shown)
+        if (IsVisible
+            && !_trueFullScreenForeground
+            && _appBar is not { IsFullScreenDetected: true }
+            && _handle != 0)
         {
-            if (IsVisible
-                && !_trueFullScreenForeground
-                && _appBar is not { IsFullScreenDetected: true }
-                && _handle != 0)
+            if (NativeMethods.IsIconic(_handle) || !NativeMethods.IsWindowVisible(_handle))
             {
-                if (NativeMethods.IsIconic(_handle) || !NativeMethods.IsWindowVisible(_handle))
-                {
-                    NativeMethods.ShowWindow(_handle, NativeMethods.SwShowNoActivate);
-                }
-                _appBar?.EnsureLayer();
+                NativeMethods.ShowWindow(_handle, NativeMethods.SwShowNoActivate);
             }
-
-            if (EffectiveSearchPresentation == SearchPresentation.Floating
-                && _searchWindow is { IsVisible: true } floating
-                && !_searchWindowHiddenForFullScreen)
-            {
-                floating.RaiseAboveDesktop(cardSlot, topmost);
-            }
-            return;
-        }
-
-        if (_searchWindow is { } window && !_searchActive)
-        {
-            window.ReturnBelowOrdinaryWindows();
+            _appBar?.EnsureLayer();
         }
     }
 
@@ -591,13 +506,6 @@ public sealed partial class TopBarWindow : Window
             _barMenu = null;
         }
         _environment.CloseTrayOverflow();
-        EndSearchSession();
-        _everythingSearch?.Dispose();
-        _searchCancellation?.Dispose();
-        _searchWindow?.Shutdown();
-        _searchWindow = null;
-        _idleSearchWindow?.Shutdown();
-        _idleSearchWindow = null;
         UnregisterSearchHotkey();
         CloseTodoFlyout(animate: false);
         CloseClockFlyout();
@@ -781,18 +689,7 @@ public sealed partial class TopBarWindow : Window
         RightModules.Children.Clear();
         CenterHost.Children.Clear();
         _modules.Clear();
-        EndSearchSession();
-        _searchWindow?.Shutdown();
-        _searchWindow = null;
-        _idleSearchWindow?.Shutdown();
-        _idleSearchWindow = null;
-        _searchHost = null;
-        _searchWindowHiddenForFullScreen = false;
-        _searchToggleButton = null;
-        _appliedSearchPresentation = null;
-        _searchBox = null;
-        _searchPlaceholder = null;
-        _searchFlyout = null;
+        _searchButton = null;
         CloseTodoFlyout(animate: false);
         CloseClockFlyout();
         CapsuleHeader.Children.Clear();
@@ -1077,19 +974,6 @@ public sealed partial class TopBarWindow : Window
     /// </summary>
     private void PollInputMethod()
     {
-        if (_searchActive && _searchBox?.IsKeyboardFocused == true)
-        {
-            // WPF's TSF state is authoritative for our own text store. The legacy
-            // IME window can keep reporting its last native mode after Shift.
-            var layout = TopBarNativeMethods.GetKeyboardLayout(0);
-            var input = InputMethod.Current;
-            var native = input.ImeState == InputMethodState.On
-                && (input.ImeConversionMode & ImeConversionModeValues.Native) != 0;
-            var label = TopBarModuleRules.DescribeInputMethod(layout, native ? 1 : 0);
-            ApplyInputMethodSnapshot((layout, label, _inputMethodToolTip, true));
-            return;
-        }
-
         if (Interlocked.CompareExchange(ref _imeReadInFlight, 1, 0) != 0)
         {
             return;
@@ -1122,14 +1006,6 @@ public sealed partial class TopBarWindow : Window
     private void ApplyInputMethodSnapshot((nint Layout, string Label, string FullName, bool ModeKnown) snapshot)
     {
         var (layout, label, fullName, modeKnown) = snapshot;
-        if (_searchActive && _searchBox?.IsKeyboardFocused == true)
-        {
-            var input = InputMethod.Current;
-            var native = input.ImeState == InputMethodState.On
-                && (input.ImeConversionMode & ImeConversionModeValues.Native) != 0;
-            label = TopBarModuleRules.DescribeInputMethod(layout, native ? 1 : 0);
-            modeKnown = true;
-        }
         if (layout != _lastInputLayout)
         {
             _lastInputLayout = layout;
@@ -1907,99 +1783,20 @@ public sealed partial class TopBarWindow : Window
     // ---------------------------------------------------------------- 搜索
 
     /// <summary>
-    /// The centre search box. A click or the global hotkey starts a search session:
-    /// the bar — normally never-activating, so it never steals focus from other apps —
-    /// briefly becomes activatable and foreground so the box can receive keyboard
-    /// input, and gives the foreground back when the session ends (second hotkey press,
-    /// Escape, a click elsewhere or opening a result). The session also clears the box
-    /// and closes the result flyout, so every session starts from a clean state.
+    /// The centre search entry button: clicking it or pressing the global search hotkey
+    /// opens the Ice Blue Overview Card and focuses its search box.
     /// </summary>
     private void AddSearchModule()
     {
-        if (!TopBarRules.IsModuleOn(_state.Modules, TopBarModuleKind.Search))
+        if (IsCapsule || !IsSearchEntryEnabled)
         {
             return;
         }
 
-        var box = new TextBox
+        var content = new StackPanel
         {
-            Background = Brushes.Transparent,
-            BorderThickness = new Thickness(0),
-            Foreground = Brushes.White,
-            CaretBrush = Brushes.White,
-            SelectionBrush = FrozenBrush(SearchSelectionBrushColor),
-            FontSize = 12,
-            Padding = new Thickness(0),
-            VerticalContentAlignment = VerticalAlignment.Center,
+            Orientation = System.Windows.Controls.Orientation.Horizontal,
             VerticalAlignment = VerticalAlignment.Center,
-            Cursor = Cursors.IBeam
-        };
-        // This non-activating surface borrows focus for each search session. Open the
-        // selected IME on focus instead of inheriting its closed state; Shift can
-        // still select Latin input while the box stays focused.
-        InputMethod.SetPreferredImeState(box, InputMethodState.On);
-        InputMethod.SetPreferredImeConversionMode(box, ImeConversionModeValues.Native);
-        AutomationProperties.SetName(box, "顶栏搜索框");
-        box.TextChanged += (_, _) =>
-        {
-            UpdateSearchPlaceholder();
-            _searchDebounce.Stop();
-            if (!_searchComposing) _searchDebounce.Start();
-        };
-        TextCompositionManager.AddPreviewTextInputStartHandler(box, (_, args) =>
-        {
-            if (args.TextComposition.CompositionText.Length > 0) SuspendSearchForComposition();
-        });
-        TextCompositionManager.AddPreviewTextInputUpdateHandler(box, (_, args) =>
-        {
-            if (args.TextComposition.CompositionText.Length > 0) SuspendSearchForComposition();
-            else ResumeSearchAfterComposition(box);
-        });
-        box.PreviewTextInput += (_, _) => ResumeSearchAfterComposition(box);
-        box.PreviewKeyDown += OnSearchBoxKeyDown;
-        box.ContextMenuOpening += OnSearchBoxContextMenuOpening;
-        box.LostKeyboardFocus += (_, _) =>
-        {
-            // Focusing any other module (or another app) ends the session; the popup's
-            // rows are not focusable, so clicking a result does not land here.
-            if (_searchActive)
-            {
-                EndSearchSessionAfterInput();
-            }
-        };
-        box.PreviewMouseLeftButtonDown += (_, _) =>
-        {
-            if (!_searchActive)
-            {
-                // Out of the mouse message itself: switching activation from inside
-                // WM_LBUTTONDOWN processing is the classic input-deadlock trap.
-                Dispatcher.BeginInvoke(BeginSearchSession, DispatcherPriority.Input);
-            }
-        };
-
-        var placeholder = new TextBlock
-        {
-            Text = "搜索文件与应用",
-            Foreground = new SolidColorBrush(Color.FromArgb(150, 255, 255, 255)),
-            FontSize = 12,
-            IsHitTestVisible = false,
-            VerticalAlignment = VerticalAlignment.Center
-        };
-        placeholder.Foreground.Freeze();
-
-        var host = new Border
-        {
-            Width = SearchBoxWidth,
-            MinWidth = 140,
-            Height = Math.Clamp(_state.Height - 10d, 18d, 30d),
-            CornerRadius = new CornerRadius(6),
-            Background = new SolidColorBrush(Color.FromArgb(38, 255, 255, 255)),
-            Padding = new Thickness(10, 0, 10, 0),
-            VerticalAlignment = VerticalAlignment.Center
-        };
-        host.Background.Freeze();
-        host.Child = new DockPanel
-        {
             Children =
             {
                 new TextBlock
@@ -2008,979 +1805,71 @@ public sealed partial class TopBarWindow : Window
                     FontFamily = StatusIconFont,
                     FontSize = 12,
                     Foreground = Brushes.White,
-                    Opacity = 0.7,
+                    Opacity = 0.72,
                     VerticalAlignment = VerticalAlignment.Center,
                     Margin = new Thickness(0, 0, 8, 1)
                 },
-                new Grid
+                new TextBlock
                 {
-                    VerticalAlignment = VerticalAlignment.Center,
-                    Children =
-                    {
-                        placeholder,
-                        box
-                    }
+                    Text = "搜索应用、文件…",
+                    FontSize = 12,
+                    Foreground = Brushes.White,
+                    Opacity = 0.72,
+                    TextTrimming = TextTrimming.CharacterEllipsis,
+                    VerticalAlignment = VerticalAlignment.Center
                 }
             }
         };
-        DockPanel.SetDock(
-            ((DockPanel)host.Child).Children[0],
-            System.Windows.Controls.Dock.Left);
 
-        _searchHost = host;
-        _searchBox = box;
-        _searchPlaceholder = placeholder;
-        ApplySearchPresentation();
-    }
+        var button = new Button
+        {
+            Style = (Style)Resources["SearchEntryButton"],
+            Width = SearchBoxWidth,
+            MinWidth = TopBarSearchRules.MinCenteredEntryWidth,
+            Height = Math.Clamp(_state.Height - 10d, 18d, 30d),
+            VerticalAlignment = VerticalAlignment.Center,
+            Focusable = true,
+            ToolTip = $"搜索应用、文件（{_state.SearchHotkey}）",
+            Content = content
+        };
+        AutomationProperties.SetName(button, "搜索入口");
+        button.Click += (_, _) => Dispatcher.BeginInvoke(TriggerSearch, DispatcherPriority.Input);
 
-    private void ApplySearchPresentation()
-    {
-        if (_searchHost is not { } host) return;
-        EndSearchSession();
-        CenterHost.Children.Remove(host);
-        if (_searchToggleButton is { } previousButton) CenterHost.Children.Remove(previousButton);
-        _searchToggleButton = null;
-        _searchWindowHiddenForFullScreen = false;
-        if (EffectiveSearchPresentation == SearchPresentation.TopBar)
-        {
-            var previousWindow = _searchWindow;
-            _searchWindow = null;
-            previousWindow?.DetachSearchContent();
-            previousWindow?.HideFromApp();
-            if (previousWindow is not null) _idleSearchWindow = previousWindow;
-            host.Width = SearchBoxWidth;
-            host.Height = Math.Clamp(_state.Height - 10d, 18d, 30d);
-            CenterHost.Children.Add(host);
-        }
-        else
-        {
-            if (_searchWindow is null)
-            {
-                if (_idleSearchWindow is { } idle)
-                {
-                    _idleSearchWindow = null;
-                    _searchWindow = idle;
-                    idle.AttachSearchContent(host);
-                }
-                else
-                {
-                    var created = new SearchWindow(_state, host, _environment.SearchLayoutChanged);
-                    _searchWindow = created;
-                    created.Deactivated += (_, _) =>
-                    {
-                        if (ReferenceEquals(_searchWindow, created) && _searchActive) EndSearchSessionAfterInput();
-                    };
-                    created.Dismissed += EndSearchSession;
-                    created.ShellRecovered += () => ShellRecovered?.Invoke();
-                }
-            }
-            var window = _searchWindow;
-            window.TransientPlacement = IsCapsule ? () => PositionCapsuleSearchWindow(window) : null;
-            if (EffectiveSearchPresentation == SearchPresentation.Floating)
-            {
-                window.Show();
-                if (_desktopShown)
-                {
-                    window.RaiseAboveDesktop(_desktopTopmost ? DockNativeMethods.HwndTopmost : DockNativeMethods.HwndTop,
-                        _desktopTopmost);
-                }
-                else if (!_searchActive)
-                {
-                    window.ReturnBelowOrdinaryWindows();
-                }
-            }
-            else
-            {
-                window.HideFromApp();
-                var button = new Button
-                {
-                    Content = new TextBlock { Text = GlyphSearch, FontFamily = StatusIconFont },
-                    Style = (Style)FindResource("ModuleButton"),
-                    Foreground = Brushes.White, ToolTip = "搜索文件与应用", MinWidth = 32, MinHeight = 24
-                };
-                AutomationProperties.SetName(button, "展开搜索");
-                button.Click += (_, _) => Dispatcher.BeginInvoke(BeginSearchSession, DispatcherPriority.Input);
-                _searchToggleButton = button;
-                CenterHost.Children.Add(button);
-            }
-        }
-        _appliedSearchPresentation = EffectiveSearchPresentation;
-        _modules[TopBarModuleKind.Search] = host;
+        _searchButton = button;
+        _modules[TopBarModuleKind.Search] = button;
+        CenterHost.Children.Add(button);
         UpdateSearchHostWidth();
-        UpdateSearchPlaceholder();
     }
 
     /// <summary>
-    /// Clamps the box to the room the side modules leave: full design width on a
-    /// normal bar, shrinking around the bar's centre on a narrow one. The 140 floor
-    /// keeps the box usable even when the modules meet in the middle.
+    /// Clamps the centered entry button to the symmetric clear room left by the wider
+    /// side module so it never overlaps either side; collapses the button only when even
+    /// the compact minimum width would collide (the global hotkey remains active).
     /// </summary>
     private void UpdateSearchHostWidth()
     {
-        if (EffectiveSearchPresentation != SearchPresentation.TopBar || _searchHost is not { } host)
+        if (IsCapsule || _searchButton is not { } button || Surface.ActualWidth <= 0)
         {
             return;
         }
 
-        var available = Surface.ActualWidth - LeftModules.ActualWidth - RightModules.ActualWidth;
-        host.Width = Math.Clamp(available - 16d, 140d, SearchBoxWidth);
-    }
-
-    private void UpdateSearchPlaceholder()
-    {
-        if (_searchPlaceholder is { } placeholder)
+        var width = TopBarSearchRules.ComputeCenteredEntryWidth(
+            Surface.ActualWidth,
+            LeftModules.ActualWidth,
+            RightModules.ActualWidth);
+        if (width <= 0d)
         {
-            placeholder.Visibility = string.IsNullOrEmpty(_searchBox?.Text)
-                ? Visibility.Visible
-                : Visibility.Collapsed;
-        }
-    }
-
-    private void SuspendSearchForComposition()
-    {
-        if (_searchComposing) return;
-        _searchComposing = true;
-        // Phonetic text belongs to the IME. Its candidate UI must not be covered
-        // by our results, nor should every composition update query file indexes.
-        CloseSearchFlyout();
-    }
-
-    private void ResumeSearchAfterComposition(TextBox box)
-    {
-        if (!_searchComposing) return;
-        _searchComposing = false;
-        Dispatcher.BeginInvoke(() =>
-        {
-            if (!_searchActive || _searchComposing || !ReferenceEquals(_searchBox, box)) return;
-            _searchDebounce.Stop();
-            _searchDebounce.Start();
-        }, DispatcherPriority.Input);
-    }
-
-    private DockGlass SearchGlass => _searchWindow is null ? DesktopStyleRules.TopBar(_style, _state)
-        : _state.SearchFollowCardLook ? DesktopStyleRules.Dock(_style)
-        : DesktopStyleRules.CustomDock(_state.SearchSurfaceColor, _state.SearchSurfaceOpacity);
-
-    // Reading and command surfaces need their own opaque paint: the input can be
-    // almost transparent, so its text colour cannot determine flyout contrast.
-    private DockGlass SearchFlyoutGlass
-    {
-        get
-        {
-            var color = (Color)ColorConverter.ConvertFromString(SearchGlass.Surface);
-            var light = (0.2126d * color.R + 0.7152d * color.G + 0.0722d * color.B) / 255d > 0.6d;
-            return light
-                ? new DockGlass("#F3F7FC", "#C6D5E5", "#20364D")
-                : new DockGlass("#202C3B", "#536477", "#F0F5FC");
-        }
-    }
-
-    private void ApplySearchAppearance()
-    {
-        if (_searchHost is not { } host || _searchBox is not { } box) return;
-        if (_searchWindow is null) host.Height = Math.Clamp(_state.Height - 10d, 18d, 30d);
-        var glass = SearchGlass;
-        _searchForeground = _searchWindow is null ? Brushes.White : FrozenBrush(glass.RunningDot);
-        box.Foreground = box.CaretBrush = _searchForeground;
-        if (_searchPlaceholder is { } placeholder)
-        {
-            placeholder.Foreground = _searchForeground;
-            placeholder.Opacity = 0.6d;
-        }
-        if (host.Child is DockPanel panel && panel.Children[0] is TextBlock glyph) glyph.Foreground = _searchForeground;
-        _searchWindow?.ApplyAppearance(glass);
-        if (_searchCard is { } card)
-        {
-            var flyoutGlass = SearchFlyoutGlass;
-            card.Background = FrozenBrush(flyoutGlass.Surface);
-            card.BorderBrush = FrozenBrush(flyoutGlass.Border);
-            card.CornerRadius = new CornerRadius(_searchWindow is null ? 10d : _state.SearchCornerRadius);
-            if (_searchRows is { } rows)
-            {
-                foreach (var text in rows.Children.OfType<TextBlock>())
-                    text.Foreground = FrozenBrush(flyoutGlass.RunningDot);
-                foreach (var row in _searchRowBorders)
-                {
-                    if (row.Child is DockPanel { Children: var children }
-                        && children.OfType<DockPanel>().FirstOrDefault() is { } texts)
-                        foreach (var text in texts.Children.OfType<TextBlock>())
-                            text.Foreground = FrozenBrush(flyoutGlass.RunningDot);
-                }
-            }
-        }
-    }
-
-    // One shot per edit: the timer itself repeats until stopped.
-    private void OnSearchDebounceTick()
-    {
-        _searchDebounce.Stop();
-        RunSearchNow();
-    }
-
-    /// <summary>Runs the pending search immediately instead of after the debounce.</summary>
-    internal void PumpSearch()
-    {
-        _searchDebounce.Stop();
-        RunSearchNow();
-    }
-
-    private async void RunSearchNow()
-    {
-        if (_closing || _searchComposing || _searchBox is not { } box)
-        {
+            button.Visibility = Visibility.Collapsed;
             return;
         }
 
-        var query = box.Text;
-        if (query.Trim().Length == 0)
-        {
-            // An empty query never opens the flyout; there is nothing to rank.
-            CloseSearchFlyout();
-            _searchResults = [];
-            return;
-        }
-
-        var candidates = _searchCandidates;
-        var generation = ++_searchGeneration;
-        _searchCancellation?.Cancel();
-        _searchCancellation?.Dispose();
-        _searchCancellation = new CancellationTokenSource();
-        var token = _searchCancellation.Token;
-        var useEverything = _state.UseEverything;
-        try
-        {
-            var basicResults = TopBarSearchRules.Search(candidates, query);
-            if (_closing || token.IsCancellationRequested || generation != _searchGeneration || _searchBox?.Text != query) return;
-            RenderSearchResults([.. basicResults], query, "正在查询文件索引…");
-            var files = EverythingSearchResult.Unavailable;
-            if (useEverything && HwndSource.FromHwnd(_handle) is { } source)
-            {
-                _everythingSearch ??= new EverythingSearchClient(source);
-                files = await _everythingSearch.SearchAsync(query, token);
-            }
-            var windows = files.Available ? WindowsIndexSearchResult.Unavailable
-                : await WindowsIndexSearchClient.SearchAsync(query, token);
-            // Keep stage-1 rows in their exact order and append deduplicated index matches below them.
-            var results = await Task.Run(
-                () => TopBarSearchRules.AppendSupplementalResults(
-                    basicResults,
-                    files.Candidates.Concat(windows.Candidates),
-                    query),
-                token);
-            // Keep the pressed result alive through MouseUp; opening it cancels this query.
-            while (Mouse.LeftButton == MouseButtonState.Pressed) await Task.Delay(30, token);
-            if (_closing || token.IsCancellationRequested || generation != _searchGeneration || _searchBox?.Text != query)
-            {
-                return;
-            }
-            RenderSearchResults([.. results], query, files.Available ? "桌面与应用 · Everything 文件搜索"
-                : windows.Available ? useEverything ? "Everything 不可用，已使用 Windows 索引" : "桌面与应用 · Windows 已索引文件"
-                : "文件索引不可用，已搜索桌面与应用");
-        }
-        catch (OperationCanceledException)
-        {
-            // A newer edit or a closed session owns the surface now.
-        }
+        button.Visibility = Visibility.Visible;
+        button.Width = width;
     }
 
-    private void RenderSearchResults(List<TopBarSearchCandidate> results, string query, string? scope = null)
+    internal void TriggerSearch()
     {
-        if (_searchContextMenu?.IsOpen == true)
-        {
-            // Keep the clicked row alive; only the latest bounded reply is retained.
-            _pendingSearchResults = (results, query, scope);
-            return;
-        }
-        if (_searchHost is null)
-        {
-            return;
-        }
-
-        DockNativeMethods.GetCursorPos(out _lastSearchMousePoint);
-        if (_searchFlyout?.IsOpen == true && _searchRows is { } existingRows && _searchRenderedQuery == query)
-        {
-            if (_searchResults.SequenceEqual(results))
-            {
-                if (_searchScope is { } footer) footer.Text = scope ?? string.Empty;
-                return;
-            }
-
-            // Stage-2 supplemental results preserve the leading stage-1 rows in place:
-            // append only the new rows without rebuilding existing rows or resetting selection.
-            if (_searchResults.Count > 0
-                && results.Count >= _searchResults.Count
-                && results.Take(_searchResults.Count).SequenceEqual(_searchResults))
-            {
-                var previousCount = _searchResults.Count;
-                _searchResults = results;
-                if (_searchScope is { } oldFooter)
-                {
-                    existingRows.Children.Remove(oldFooter);
-                }
-                for (var index = previousCount; index < results.Count; index++)
-                {
-                    var row = CreateSearchRow(results[index], index);
-                    _searchRowBorders.Add(row);
-                    existingRows.Children.Add(row);
-                }
-                _searchScope ??= new TextBlock
-                {
-                    Foreground = FrozenBrush(SearchFlyoutGlass.RunningDot), Opacity = 0.72, FontSize = 11,
-                    Margin = new Thickness(12, 6, 12, 2), IsHitTestVisible = false
-                };
-                _searchScope.Text = scope ?? string.Empty;
-                existingRows.Children.Add(_searchScope);
-                UpdateSearchSelection();
-                LoadSearchIcons(results);
-                return;
-            }
-        }
-
-        var preservedIndex = 0;
-        if (_searchRenderedQuery == query && (uint)_searchSelected < (uint)_searchResults.Count)
-        {
-            var selectedPath = _searchResults[_searchSelected].Path;
-            var matchIndex = results.FindIndex(item => string.Equals(item.Path, selectedPath, StringComparison.OrdinalIgnoreCase));
-            if (matchIndex >= 0)
-            {
-                preservedIndex = matchIndex;
-            }
-        }
-
-        _searchResults = results;
-        _searchRenderedQuery = query;
-        _searchSelected = preservedIndex;
-        _pressedSearchRowIndex = -1;
-        EnsureSearchFlyout();
-        // The popup's IsOpen can read false for a moment right after being set: the
-        // actual open completes on the next layout pass. The rows build regardless;
-        // the flyout shows them once it lands.
-        if (_searchRows is not { } rows)
-        {
-            return;
-        }
-
-        rows.Children.Clear();
-        _searchRowBorders.Clear();
-        if (results.Count == 0)
-        {
-            rows.Children.Add(new TextBlock
-            {
-                Text = $"没有与“{query}”匹配的结果",
-                Foreground = FrozenBrush(SearchFlyoutGlass.RunningDot),
-                Opacity = 0.72,
-                FontSize = 12,
-                Margin = new Thickness(12, 6, 12, 6)
-            });
-        }
-        else
-        {
-            for (var index = 0; index < results.Count; index++)
-            {
-                var row = CreateSearchRow(results[index], index);
-                _searchRowBorders.Add(row);
-                rows.Children.Add(row);
-            }
-            UpdateSearchSelection();
-            LoadSearchIcons(results);
-        }
-        _searchScope = new TextBlock
-            {
-                Text = scope ?? string.Empty, Foreground = FrozenBrush(SearchFlyoutGlass.RunningDot), Opacity = 0.72, FontSize = 11,
-                Margin = new Thickness(12, 6, 12, 2), IsHitTestVisible = false
-            };
-        rows.Children.Add(_searchScope);
-    }
-
-    private Border CreateSearchRow(TopBarSearchCandidate candidate, int index)
-    {
-        var icon = new Image
-        {
-            Width = 22,
-            Height = 22,
-            Margin = new Thickness(0, 0, 10, 0),
-            VerticalAlignment = VerticalAlignment.Center,
-            Source = _searchIconCache.GetValueOrDefault(candidate.Path)
-        };
-        RenderOptions.SetBitmapScalingMode(icon, BitmapScalingMode.HighQuality);
-        var name = new TextBlock
-        {
-            Text = candidate.DisplayName,
-            Foreground = FrozenBrush(SearchFlyoutGlass.RunningDot),
-            FontSize = 13,
-            TextTrimming = TextTrimming.CharacterEllipsis,
-            VerticalAlignment = VerticalAlignment.Center
-        };
-        var detail = new TextBlock
-        {
-            Text = $"{KindLabel(candidate.Kind)} · {TopBarSearchRules.FormatLocation(candidate.Path)}",
-            Foreground = FrozenBrush(SearchFlyoutGlass.RunningDot),
-            Opacity = 0.72d,
-            FontSize = 11,
-            TextTrimming = TextTrimming.CharacterEllipsis,
-            VerticalAlignment = VerticalAlignment.Center
-        };
-        var texts = new DockPanel { VerticalAlignment = VerticalAlignment.Center };
-        DockPanel.SetDock(name, System.Windows.Controls.Dock.Top);
-        texts.Children.Add(name);
-        texts.Children.Add(detail);
-
-        var row = new Border
-        {
-            Padding = new Thickness(12, 5, 12, 5),
-            Margin = new Thickness(4, 1, 4, 1),
-            CornerRadius = new CornerRadius(6),
-            Cursor = Cursors.Hand,
-            Tag = index,
-            Child = new DockPanel
-            {
-                Children =
-                {
-                    icon,
-                    texts
-                }
-            }
-        };
-        DockPanel.SetDock(icon, System.Windows.Controls.Dock.Left);
-        // Rows are not focusable: keyboard focus stays in the box, which drives the
-        // selection, and one click opens exactly one result. Hover only changes
-        // selection when the pointer has actually moved.
-        void OnRowHover()
-        {
-            if (_searchContextMenu?.IsOpen == true)
-            {
-                return;
-            }
-            DockNativeMethods.GetCursorPos(out var cursor);
-            if (cursor.X == _lastSearchMousePoint.X && cursor.Y == _lastSearchMousePoint.Y)
-            {
-                return;
-            }
-            _lastSearchMousePoint = cursor;
-            SelectSearchRow(index);
-        }
-        row.MouseEnter += (_, _) => OnRowHover();
-        row.MouseMove += (_, _) => OnRowHover();
-        row.MouseLeftButtonDown += (_, _) =>
-        {
-            _pressedSearchRowIndex = index;
-            SelectSearchRow(index);
-        };
-        row.MouseLeftButtonUp += (_, _) =>
-        {
-            var pressed = _pressedSearchRowIndex;
-            _pressedSearchRowIndex = -1;
-            if (pressed == index || pressed == -1)
-            {
-                OpenSearchResultAfterInput(candidate);
-            }
-        };
-        row.ContextMenuOpening += (_, args) => args.Handled = true;
-        row.MouseRightButtonDown += (_, args) =>
-        {
-            args.Handled = true;
-            SelectSearchRow(index);
-        };
-        row.MouseRightButtonUp += (_, args) =>
-        {
-            args.Handled = true;
-            SelectSearchRow(index);
-            var offsetX = Math.Clamp(args.GetPosition(row).X, 8d, Math.Max(8d, row.ActualWidth - 180d));
-            OpenSearchContextMenu(row, candidate, offsetX);
-        };
-        return row;
-    }
-
-    private void OpenSearchContextMenu(Border row, TopBarSearchCandidate candidate, double horizontalOffset = 8d)
-    {
-        _searchContextMenu?.SetCurrentValue(ContextMenu.IsOpenProperty, false);
-        var menu = CreateStyledSearchContextMenu(row, PlacementMode.Bottom, horizontalOffset, 2d);
-        // Allocate only for the invoked result, not for every row on every keystroke.
-        void Add(string title, string gestureText, Action action)
-        {
-            var item = CreateStyledSearchMenuItem(title, gestureText, () =>
-            {
-                EndSearchSession();
-                action();
-            });
-            menu.Items.Add(item);
-        }
-        Add("打开", "Enter", () => _environment.OpenSearchTarget(candidate));
-        Add("打开文件位置", "Ctrl+Enter", () => _environment.OpenSearchTargetLocation(candidate));
-        Add("复制路径", "Ctrl+Shift+C", () => TryCopyTextToClipboard(candidate.Path));
-        menu.Closed += (_, _) => Dispatcher.BeginInvoke(() =>
-        {
-            if (!ReferenceEquals(_searchContextMenu, menu)) return;
-            _searchContextMenu = null;
-            row.ContextMenu = null;
-            if (!_searchActive) return;
-            if (DockNativeMethods.GetForegroundWindow() != SearchInputHandle)
-            {
-                EndSearchSession();
-                return;
-            }
-            _searchBox?.Focus();
-            var pending = _pendingSearchResults;
-            _pendingSearchResults = null;
-            if (pending is { } reply && _searchBox?.Text == reply.Query)
-                RenderSearchResults(reply.Results, reply.Query, reply.Scope);
-        }, DispatcherPriority.Input);
-        row.ContextMenu = menu;
-        _searchContextMenu = menu;
-        menu.IsOpen = true;
-    }
-
-    private void OnSearchBoxContextMenuOpening(object sender, ContextMenuEventArgs args)
-    {
-        if (sender is not TextBox box)
-        {
-            return;
-        }
-        args.Handled = true;
-        _searchContextMenu?.SetCurrentValue(ContextMenu.IsOpenProperty, false);
-        var offsetX = args.CursorLeft >= 0 ? Math.Max(0d, args.CursorLeft) : 4d;
-        var menu = CreateStyledSearchContextMenu(box, PlacementMode.Bottom, offsetX, 4d);
-        var hasSelection = box.SelectionLength > 0;
-        var hasText = !string.IsNullOrEmpty(box.Text);
-        var canPaste = false;
-        try { canPaste = System.Windows.Clipboard.ContainsText(); }
-        catch (ExternalException) { }
-
-        menu.Items.Add(CreateStyledSearchMenuItem("剪切", "Ctrl+X", () => { box.Cut(); box.Focus(); }, hasSelection));
-        menu.Items.Add(CreateStyledSearchMenuItem("复制", "Ctrl+C", () => { box.Copy(); box.Focus(); }, hasSelection));
-        menu.Items.Add(CreateStyledSearchMenuItem("粘贴", "Ctrl+V", () => { box.Paste(); box.Focus(); }, canPaste));
-        menu.Items.Add(CreateStyledSearchMenuItem("全选", "Ctrl+A", () => { box.SelectAll(); box.Focus(); }, hasText));
-        menu.Closed += (_, _) => Dispatcher.BeginInvoke(() =>
-        {
-            if (!ReferenceEquals(_searchContextMenu, menu)) return;
-            _searchContextMenu = null;
-            box.ContextMenu = null;
-            if (!_searchActive) return;
-            if (DockNativeMethods.GetForegroundWindow() != SearchInputHandle)
-            {
-                EndSearchSession();
-                return;
-            }
-            box.Focus();
-        }, DispatcherPriority.Input);
-        box.ContextMenu = menu;
-        _searchContextMenu = menu;
-        menu.IsOpen = true;
-    }
-
-    private ContextMenu CreateStyledSearchContextMenu(
-        UIElement placementTarget,
-        PlacementMode placement,
-        double horizontalOffset,
-        double verticalOffset)
-    {
-        var glass = SearchFlyoutGlass;
-        var surfaceBrush = FrozenBrush(glass.Surface);
-        var borderBrush = FrozenBrush(glass.Border);
-
-        var borderFactory = new FrameworkElementFactory(typeof(Border));
-        borderFactory.SetValue(Border.BackgroundProperty, new TemplateBindingExtension(System.Windows.Controls.Control.BackgroundProperty));
-        borderFactory.SetValue(Border.BorderBrushProperty, new TemplateBindingExtension(System.Windows.Controls.Control.BorderBrushProperty));
-        borderFactory.SetValue(Border.BorderThicknessProperty, new Thickness(1));
-        borderFactory.SetValue(Border.CornerRadiusProperty, new CornerRadius(8));
-        borderFactory.SetValue(Border.PaddingProperty, new Thickness(4));
-        borderFactory.SetValue(UIElement.SnapsToDevicePixelsProperty, true);
-
-        var presenterFactory = new FrameworkElementFactory(typeof(ItemsPresenter));
-        presenterFactory.SetValue(UIElement.SnapsToDevicePixelsProperty, true);
-        borderFactory.AppendChild(presenterFactory);
-
-        return new ContextMenu
-        {
-            PlacementTarget = placementTarget,
-            Placement = placement,
-            HorizontalOffset = horizontalOffset,
-            VerticalOffset = verticalOffset,
-            Background = surfaceBrush,
-            BorderBrush = borderBrush,
-            Foreground = FrozenBrush(glass.RunningDot),
-            MinWidth = 244,
-            HasDropShadow = true,
-            Template = new ControlTemplate(typeof(ContextMenu))
-            {
-                VisualTree = borderFactory
-            }
-        };
-    }
-
-    private MenuItem CreateStyledSearchMenuItem(
-        string title,
-        string? gestureText,
-        Action action,
-        bool isEnabled = true)
-    {
-        var borderFactory = new FrameworkElementFactory(typeof(Border), "ItemBorder");
-        borderFactory.SetValue(Border.BackgroundProperty, Brushes.Transparent);
-        borderFactory.SetValue(Border.CornerRadiusProperty, new CornerRadius(5));
-        borderFactory.SetValue(Border.PaddingProperty, new Thickness(12, 7, 12, 7));
-        borderFactory.SetValue(FrameworkElement.MinHeightProperty, 34d);
-        borderFactory.SetValue(FrameworkElement.MarginProperty, new Thickness(0, 1, 0, 1));
-
-        var dockFactory = new FrameworkElementFactory(typeof(DockPanel));
-        if (!string.IsNullOrEmpty(gestureText))
-        {
-            var gestureFactory = new FrameworkElementFactory(typeof(TextBlock), "GestureText");
-            gestureFactory.SetValue(DockPanel.DockProperty, System.Windows.Controls.Dock.Right);
-            gestureFactory.SetValue(TextBlock.TextProperty, new TemplateBindingExtension(MenuItem.InputGestureTextProperty));
-            gestureFactory.SetValue(TextBlock.ForegroundProperty, new TemplateBindingExtension(System.Windows.Controls.Control.ForegroundProperty));
-            gestureFactory.SetValue(UIElement.OpacityProperty, 0.72d);
-            gestureFactory.SetValue(TextBlock.FontSizeProperty, 11d);
-            gestureFactory.SetValue(FrameworkElement.MarginProperty, new Thickness(18, 0, 0, 0));
-            gestureFactory.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center);
-            dockFactory.AppendChild(gestureFactory);
-        }
-
-        var headerFactory = new FrameworkElementFactory(typeof(ContentPresenter));
-        headerFactory.SetValue(ContentPresenter.ContentSourceProperty, "Header");
-        headerFactory.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center);
-        headerFactory.SetValue(ContentPresenter.RecognizesAccessKeyProperty, true);
-        dockFactory.AppendChild(headerFactory);
-        borderFactory.AppendChild(dockFactory);
-
-        var template = new ControlTemplate(typeof(MenuItem))
-        {
-            VisualTree = borderFactory
-        };
-        var highlightTrigger = new Trigger
-        {
-            Property = MenuItem.IsHighlightedProperty,
-            Value = true
-        };
-        highlightTrigger.Setters.Add(new Setter(Border.BackgroundProperty, SearchRowSelectedBrush, "ItemBorder"));
-        template.Triggers.Add(highlightTrigger);
-
-        var disabledTrigger = new Trigger
-        {
-            Property = UIElement.IsEnabledProperty,
-            Value = false
-        };
-        disabledTrigger.Setters.Add(new Setter(UIElement.OpacityProperty, 0.4d, "ItemBorder"));
-        template.Triggers.Add(disabledTrigger);
-
-        var item = new MenuItem
-        {
-            Header = title,
-            InputGestureText = gestureText ?? string.Empty,
-            Foreground = FrozenBrush(SearchFlyoutGlass.RunningDot),
-            FontSize = 13,
-            IsEnabled = isEnabled,
-            Cursor = isEnabled ? Cursors.Hand : Cursors.Arrow,
-            Template = template
-        };
-        item.Click += (_, _) => Dispatcher.BeginInvoke(action, DispatcherPriority.Input);
-        return item;
-    }
-
-    private static void TryCopyTextToClipboard(string text)
-    {
-        try
-        {
-            System.Windows.Clipboard.SetText(text);
-        }
-        catch (ExternalException)
-        {
-            // Another application may hold the clipboard.
-        }
-    }
-
-    private static string KindLabel(TopBarSearchItemKind kind) => kind switch
-    {
-        TopBarSearchItemKind.App => "应用",
-        TopBarSearchItemKind.Folder => "文件夹",
-        _ => "文件"
-    };
-
-    private void SelectSearchRow(int index)
-    {
-        if (index < 0 || index >= _searchResults.Count || index == _searchSelected)
-        {
-            return;
-        }
-        _searchSelected = index;
-        UpdateSearchSelection();
-    }
-
-    private void UpdateSearchSelection()
-    {
-        for (var index = 0; index < _searchRowBorders.Count; index++)
-        {
-            _searchRowBorders[index].Background = index == _searchSelected
-                ? SearchRowSelectedBrush
-                : Brushes.Transparent;
-        }
-        if ((uint)_searchSelected < (uint)_searchRowBorders.Count)
-        {
-            _searchRowBorders[_searchSelected].BringIntoView();
-        }
-    }
-
-    private void MoveSearchSelection(int delta)
-    {
-        if (_searchResults.Count == 0)
-        {
-            return;
-        }
-        var next = Math.Clamp(_searchSelected + delta, 0, _searchResults.Count - 1);
-        if (next == _searchSelected)
-        {
-            return;
-        }
-        _searchSelected = next;
-        DockNativeMethods.GetCursorPos(out _lastSearchMousePoint);
-        UpdateSearchSelection();
-    }
-
-    private void OnSearchBoxKeyDown(object sender, KeyEventArgs args)
-    {
-        // A Chinese IME reports every key it processes mid-composition — Return
-        // commits the raw letters, Escape cancels, the arrows page candidates — as
-        // Key.ImeProcessed, and the same physical keys arrive plain once no
-        // composition is running (verified against WeChat IME). Those keys belong
-        // to the IME: ending the session from inside one makes the foreground
-        // switch tear the composition down synchronously while re-entering WPF's
-        // text store, which fail-fasts the whole process.
-        if (args.Key == Key.ImeProcessed)
-        {
-            SuspendSearchForComposition();
-            return;
-        }
-
-        // Physical Enter reports Key.Return (Key.Enter is another value).
-        switch (args.Key)
-        {
-            case Key.Apps:
-            case Key.F10 when Keyboard.Modifiers == ModifierKeys.Shift:
-                if ((uint)_searchSelected < (uint)_searchRowBorders.Count)
-                    OpenSearchContextMenu(_searchRowBorders[_searchSelected], _searchResults[_searchSelected]);
-                args.Handled = true;
-                break;
-            case Key.C when Keyboard.Modifiers == (ModifierKeys.Control | ModifierKeys.Shift):
-                if ((uint)_searchSelected < (uint)_searchResults.Count)
-                {
-                    CopySearchPathAfterInput(_searchResults[_searchSelected]);
-                    args.Handled = true;
-                }
-                break;
-            case Key.Escape:
-                EndSearchSessionAfterInput();
-                args.Handled = true;
-                break;
-            case Key.Return:
-                // Snapshot the target now: like the row click, the deferred open must
-                // survive a teardown racing in before the dispatcher turn.
-                if ((uint)_searchSelected < (uint)_searchResults.Count)
-                {
-                    var selected = _searchResults[_searchSelected];
-                    if ((Keyboard.Modifiers & ModifierKeys.Control) != 0)
-                    {
-                        OpenSearchLocationAfterInput(selected);
-                    }
-                    else
-                    {
-                        OpenSearchResultAfterInput(selected);
-                    }
-                }
-                args.Handled = true;
-                break;
-            case Key.Down:
-                MoveSearchSelection(1);
-                args.Handled = true;
-                break;
-            case Key.Up:
-                MoveSearchSelection(-1);
-                args.Handled = true;
-                break;
-        }
-    }
-
-    /// <summary>Extracts shell icons off the UI thread for the rows just rendered.</summary>
-    private void LoadSearchIcons(IReadOnlyList<TopBarSearchCandidate> results)
-    {
-        var missing = results
-            .Select(candidate => candidate.Path)
-            .Where(path => !_searchIconCache.ContainsKey(path))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
-        if (missing.Count == 0)
-        {
-            return;
-        }
-        if (_searchIconCache.Count > 512)
-        {
-            var activePaths = new HashSet<string>(results.Select(item => item.Path), StringComparer.OrdinalIgnoreCase);
-            foreach (var key in _searchIconCache.Keys)
-            {
-                if (!activePaths.Contains(key))
-                {
-                    _searchIconCache.TryRemove(key, out _);
-                }
-            }
-        }
-        Task.Run(() =>
-        {
-            foreach (var path in missing)
-            {
-                if (_closing)
-                {
-                    return;
-                }
-                var icon = ShellIconProvider.GetIcon(path);
-                _searchIconCache[path] = icon;
-                Dispatcher.BeginInvoke(() =>
-                {
-                    if (_closing || _searchFlyout?.IsOpen != true)
-                    {
-                        return;
-                    }
-                    foreach (var row in _searchRowBorders)
-                    {
-                        if (row.Child is DockPanel panel
-                            && panel.Children.OfType<Image>().FirstOrDefault() is { } image
-                            && row.Tag is int index
-                            && index < _searchResults.Count
-                            && string.Equals(_searchResults[index].Path, path, StringComparison.OrdinalIgnoreCase))
-                        {
-                            image.Source = icon;
-                        }
-                    }
-                }, DispatcherPriority.Background);
-            }
-        });
-    }
-
-    private void EnsureSearchFlyout()
-    {
-        if (_searchFlyout is { } || _searchHost is null)
-        {
-            return;
-        }
-
-        var rows = new StackPanel();
-        var flyoutWidth = _searchWindow?.ActualWidth > 0 ? _searchWindow.ActualWidth : SearchFlyoutWidth;
-        var glass = SearchFlyoutGlass;
-        var card = new Border
-        {
-            VerticalAlignment = VerticalAlignment.Top,
-            Width = flyoutWidth,
-            Background = FrozenBrush(glass.Surface),
-            BorderBrush = FrozenBrush(glass.Border),
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(_searchWindow is null ? 10d : _state.SearchCornerRadius),
-            Padding = new Thickness(0, 6, 0, 6),
-            Child = new ScrollViewer
-            {
-                MaxHeight = 44d * SearchFlyoutVisibleRows,
-                // Keep keyboard focus in the search box throughout a result click.
-                Focusable = false,
-                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
-                Content = rows
-            }
-        };
-        card.PreviewMouseLeftButtonDown += (_, _) => _pressedSearchRowIndex = -2;
-        card.ContextMenuOpening += (_, args) => args.Handled = true;
-        card.MouseRightButtonDown += (_, args) => args.Handled = true;
-        card.MouseRightButtonUp += (_, args) => args.Handled = true;
-        var host = _searchHost;
-        var flyout = new Popup
-        {
-            PlacementTarget = host,
-            Placement = PlacementMode.Bottom,
-            // Centred on the box whatever width it clamped to, not on the design width.
-            HorizontalOffset = -(flyoutWidth - host.ActualWidth) / 2d,
-            VerticalOffset = 2,
-            StaysOpen = true,
-            AllowsTransparency = true,
-            // The visible card still fits its rows. A fixed, transparent backing
-            // avoids WPF's synchronous render flush on every result-count resize.
-            // This bound follows the eight-row viewport plus padding and border.
-            Child = new Grid
-            {
-                Width = flyoutWidth,
-                Height = 44d * SearchFlyoutVisibleRows + card.Padding.Top + card.Padding.Bottom
-                    + card.BorderThickness.Top + card.BorderThickness.Bottom,
-                Children = { card }
-            }
-        };
-        flyout.Opened += (_, _) => KeepFlyoutNonActivating(flyout);
-        flyout.Closed += (_, _) =>
-        {
-            if (ReferenceEquals(_searchFlyout, flyout))
-            {
-                _searchFlyout = null;
-            }
-        };
-        CenterHost.Children.Add(flyout);
-        _searchRows = rows;
-        _searchCard = card;
-        _searchFlyout = flyout;
-        flyout.IsOpen = true;
-    }
-
-    private void CloseSearchFlyout()
-    {
-        _pendingSearchResults = null;
-        _pressedSearchRowIndex = -1;
-        _searchContextMenu?.SetCurrentValue(ContextMenu.IsOpenProperty, false);
-        _searchContextMenu = null;
-        _searchCancellation?.Cancel();
-        _searchGeneration++;
-        _searchDebounce.Stop();
-        var flyout = _searchFlyout;
-        flyout?.SetCurrentValue(Popup.IsOpenProperty, false);
-        if (flyout is not null)
-        {
-            CenterHost.Children.Remove(flyout);
-        }
-        _searchFlyout = null;
-        _searchRows = null;
-        _searchCard = null;
-        _searchScope = null;
-        _searchRenderedQuery = null;
-        _searchResults = [];
-        _searchRowBorders.Clear();
-    }
-
-    /// <summary>
-    /// A WPF popup window activates on click: the click that picks a result would
-    /// deactivate the bar, which ends the session between the mouse's down and up and
-    /// closes the flyout under the cursor before the row ever sees the release — the
-    /// click lands nowhere. Making the popup's own window never-activating keeps the
-    /// bar active and the keyboard in the box for the whole click.
-    /// </summary>
-    private void KeepFlyoutNonActivating(Popup flyout)
-    {
-        // The popup's window comes to life during the open pass; style it after that.
-        Dispatcher.BeginInvoke(DispatcherPriority.Loaded, () =>
-        {
-            if (PresentationSource.FromVisual(flyout.Child) is not HwndSource source
-                || source.Handle == 0)
-            {
-                return;
-            }
-            var style = (long)NativeMethods.GetWindowLongPtr(source.Handle, NativeMethods.GwlExStyle);
-            NativeMethods.SetWindowLongPtr(
-                source.Handle,
-                NativeMethods.GwlExStyle,
-                (nint)(style | DockNativeMethods.WsExNoActivate));
-        });
-    }
-
-    // ---------------------------------------------------------------- 搜索会话
-
-    /// <summary>
-    /// Makes the bar activatable and takes the foreground so the box can receive text.
-    /// Called from a box click or the global hotkey; the previous foreground window is
-    /// remembered and gets the focus back when the session ends.
-    /// </summary>
-    internal void BeginSearchSession()
-    {
-        if (_closing || _searchHost is null)
+        if (_closing || !IsSearchEntryEnabled)
         {
             return;
         }
@@ -2988,225 +1877,13 @@ public sealed partial class TopBarWindow : Window
         {
             UpdateForForeground();
             if (_trueFullScreenForeground) return;
-            CloseTodoFlyout(animate: false);
         }
-
-        if (!IsVisible)
-        {
-            // A smart-hidden bar shows itself for the session; the interaction flag
-            // keeps the hide state machine from pulling it away mid-typing.
-            Show();
-            RenderModules();
-            RenderSystemModules();
-        }
-        if (_searchActive)
-        {
-            _searchBox?.Focus();
-            return;
-        }
-
-        _searchActive = true;
-        _pressedSearchRowIndex = -1;
-        DockNativeMethods.GetCursorPos(out _lastSearchMousePoint);
-        _searchSessionOwner = this;
-        _searchPreviousForeground = DockNativeMethods.GetForegroundWindow();
-        if (_searchWindow is { } searchWindow)
-        {
-            searchWindow.SetSessionActive(true, _desktopShown, _desktopTopmost);
-            searchWindow.Show();
-            searchWindow.RecoverPlacement();
-        }
-        SetSearchActivatable(true);
-        try
-        {
-            DockNativeMethods.SetForegroundWindow(SearchInputHandle);
-            SearchInputWindow.Activate();
-        }
-        catch (Exception exception) when (exception is InvalidOperationException)
-        {
-            // A failed foreground grab leaves a session without keyboard input; the
-            // next Escape or outside click still ends it cleanly.
-        }
-        if (_searchBox is { } box)
-        {
-            box.Focus();
-            // WPF can retain logical focus when this HWND becomes non-activating;
-            // reopening then raises no focus event to apply PreferredImeState.
-            if (box.IsKeyboardFocused)
-            {
-                InputMethod.Current.ImeState = InputMethodState.On;
-                InputMethod.Current.ImeConversionMode = ImeConversionModeValues.Native;
-            }
-            box.CaretIndex = box.Text.Length;
-        }
-        // The fast tick keeps the outside-watch prompt while the flyout can be open.
-        _foregroundTimer.Interval = SmartHideCheckInterval;
-        LoadSearchCandidates();
+        CloseTodoFlyout(animate: false);
+        CloseClockFlyout();
+        _environment.ToggleLauncherPanel();
     }
 
-    private void PositionCapsuleSearchWindow(SearchWindow searchWindow)
-    {
-        if (_appBar is not { } capsule || _monitor is not { } monitor || searchWindow.WindowHandle == 0)
-        {
-            return;
-        }
-        // Transient anchoring does not overwrite the user's floating-search placement.
-        var workArea = TaskbarEdgeGuard.AvoidNativeTaskbar(
-            DockAppBarController.GetLiveWorkingArea(monitor), monitor.Bounds);
-        var scale = monitor.Dpi / 96d;
-        var width = Math.Min(workArea.Width, (int)Math.Round(_state.SearchWindowWidth * scale));
-        var height = (int)Math.Round(searchWindow.Height * scale);
-        var left = Math.Clamp(capsule.Bounds.Left + (capsule.Bounds.Width - width) / 2,
-            workArea.Left, Math.Max(workArea.Left, workArea.Right - width));
-        var top = Math.Clamp(capsule.Bounds.Bottom + (int)Math.Round(4d * scale),
-            workArea.Top, Math.Max(workArea.Top, workArea.Bottom - height));
-        NativeMethods.SetWindowPos(searchWindow.WindowHandle, 0, left, top, width, height,
-            NativeMethods.SwpNoZOrder | NativeMethods.SwpNoActivate);
-    }
 
-    /// <summary>
-    /// Ends the search session one dispatcher turn later. Teardown returns the
-    /// borrowed foreground to the previous window; doing that synchronously inside
-    /// a key, focus or activation message makes a composing IME finish its
-    /// composition while re-entering the WPF text store, which fail-fasts the
-    /// process (observed with WeChat IME). Deferring puts the switch after the
-    /// message that caused it.
-    /// </summary>
-    private void EndSearchSessionAfterInput() =>
-        Dispatcher.BeginInvoke(() =>
-        {
-            if (_searchContextMenu?.IsOpen != true) EndSearchSession();
-        }, DispatcherPriority.Input);
-
-    /// <summary>
-    /// Opens one result one dispatcher turn later, for the same reason as
-    /// <see cref="EndSearchSessionAfterInput"/>. The candidate was captured at the
-    /// event, so a session teardown that runs first cannot lose it.
-    /// </summary>
-    private void OpenSearchResultAfterInput(TopBarSearchCandidate candidate) =>
-        Dispatcher.BeginInvoke(() =>
-        {
-            EndSearchSession();
-            _environment.OpenSearchTarget(candidate);
-        }, DispatcherPriority.Input);
-
-    private void OpenSearchLocationAfterInput(TopBarSearchCandidate candidate) =>
-        Dispatcher.BeginInvoke(() =>
-        {
-            EndSearchSession();
-            _environment.OpenSearchTargetLocation(candidate);
-        }, DispatcherPriority.Input);
-
-    private void CopySearchPathAfterInput(TopBarSearchCandidate candidate) =>
-        Dispatcher.BeginInvoke(() =>
-        {
-            EndSearchSession();
-            TryCopyTextToClipboard(candidate.Path);
-        }, DispatcherPriority.Input);
-
-    /// <summary>Clears the box, closes the flyout and returns the bar to never-activating.</summary>
-    internal void EndSearchSession()
-    {
-        _searchComposing = false;
-        if (!_searchActive)
-        {
-            if (_searchBox is { } box)
-            {
-                box.Text = string.Empty;
-            }
-            CloseSearchFlyout();
-            return;
-        }
-
-        _searchActive = false;
-        if (ReferenceEquals(_searchSessionOwner, this))
-        {
-            _searchSessionOwner = null;
-        }
-        CloseSearchFlyout();
-        if (_searchBox is { } searchBox)
-        {
-            searchBox.Text = string.Empty;
-        }
-        UpdateSearchPlaceholder();
-        SetSearchActivatable(false);
-        if (!_closing)
-        {
-            var previous = _searchPreviousForeground;
-            if (previous != 0 && previous != SearchInputHandle
-                && DockNativeMethods.GetForegroundWindow() == SearchInputHandle)
-            {
-                _ = DockNativeMethods.SetForegroundWindow(previous);
-            }
-        }
-        if (EffectiveSearchPresentation == SearchPresentation.Icon)
-        {
-            _searchWindow?.SetSessionActive(false, desktopShown: false);
-            _searchWindow?.HideFromApp();
-        }
-        else
-        {
-            _searchWindow?.SetSessionActive(false, _desktopShown, _desktopTopmost);
-        }
-        // Reserved bars return to the idle cadence after borrowing the fast input tick.
-        _foregroundTimer.Interval = _appBar?.IsReserved == true && _todoFlyout is null && _clockFlyout is null
-            ? FullScreenCheckInterval
-            : SmartHideCheckInterval;
-    }
-
-    /// <summary>The bar takes no activation except while a search session holds it.</summary>
-    protected override void OnDeactivated(EventArgs args)
-    {
-        base.OnDeactivated(args);
-        if (_searchActive && _searchWindow is null)
-        {
-            EndSearchSessionAfterInput();
-        }
-    }
-
-    private void SetSearchActivatable(bool activatable)
-    {
-        var inputHandle = SearchInputHandle;
-        if (inputHandle == 0)
-        {
-            return;
-        }
-        var style = (long)NativeMethods.GetWindowLongPtr(inputHandle, NativeMethods.GwlExStyle);
-        var wanted = activatable
-            ? style & ~DockNativeMethods.WsExNoActivate
-            : style | DockNativeMethods.WsExNoActivate;
-        if (wanted != style)
-        {
-            NativeMethods.SetWindowLongPtr(inputHandle, NativeMethods.GwlExStyle, (nint)wanted);
-        }
-    }
-
-    private void LoadSearchCandidates()
-    {
-        Task.Run(() =>
-        {
-            if (_closing)
-            {
-                return;
-            }
-            var candidates = _environment.ReadSearchCandidates();
-            Dispatcher.BeginInvoke(() =>
-            {
-                if (_closing)
-                {
-                    return;
-                }
-                _searchCandidates = candidates;
-                _searchSourcesLoaded = true;
-                // The first keystrokes may have run against an empty list; re-rank once
-                // the sources arrive.
-                if (_searchActive && !string.IsNullOrWhiteSpace(_searchBox?.Text))
-                {
-                    RunSearchNow();
-                }
-            });
-        });
-    }
 
     // ---------------------------------------------------------------- 搜索热键
 
@@ -3215,25 +1892,18 @@ public sealed partial class TopBarWindow : Window
         if (message == TopBarNativeMethods.WmHotkey && (int)wParam == SearchHotkeyId)
         {
             handled = true;
-            if (_searchActive)
-            {
-                EndSearchSessionAfterInput();
-            }
-            else
-            {
-                BeginSearchSession();
-            }
+            TriggerSearch();
         }
         return 0;
     }
 
     /// <summary>
     /// Matches the registration to the settings: the hotkey lives while the search
-    /// module is on, and a changed hotkey text re-registers in place.
+    /// module and overview card are both on, and a changed hotkey text re-registers in place.
     /// </summary>
     private void SyncSearchHotkey()
     {
-        if (!TopBarRules.IsModuleOn(_state.Modules, TopBarModuleKind.Search))
+        if (!IsSearchEntryEnabled)
         {
             UnregisterSearchHotkey();
             return;
@@ -3296,45 +1966,8 @@ public sealed partial class TopBarWindow : Window
         return free;
     }
 
-    /// <summary>The open search flyout, for tests; popups sit outside the visual tree.</summary>
-    internal Popup? SearchFlyout => _searchFlyout;
-
-    internal TextBox? SearchBox => _searchBox;
-
-    /// <summary>The box's host border, for tests reading its on-screen position.</summary>
-    internal Border? SearchHost => _searchHost;
-
-    /// <summary>Results of the last rendered search, in display order, for tests.</summary>
-    internal IReadOnlyList<TopBarSearchCandidate> SearchResults => _searchResults;
-
-    internal int SearchSelectedIndex => _searchSelected;
-
-    internal bool SearchSessionActive => _searchActive;
-
-    /// <summary>Test seam: the background candidate load has been published to the bar.
-    /// <see cref="ITopBarEnvironment.ReadSearchCandidates"/> returning does not yet mean
-    /// the bar can search against it.</summary>
-    internal bool SearchSourcesLoaded => _searchSourcesLoaded;
-
-    /// <summary>Test seam: an IME composition is suspending search updates.</summary>
-    internal bool SearchSuspendedForComposition => _searchComposing;
-    internal SearchWindow? FloatingSearchWindow => _searchWindow;
-
-    /// <summary>
-    /// While a search session holds the foreground, the bar holding it and the window
-    /// it was borrowed from; both zero when no session is active. Lets the dock keep
-    /// evaluating the foreground as it was before the box took it.
-    /// </summary>
-    internal static (nint Holder, nint Borrowed) SearchForeground
-    {
-        get
-        {
-            var owner = _searchSessionOwner;
-            return owner is null || !owner._searchActive || owner._closing
-                ? (0, 0)
-                : (owner.SearchInputHandle, owner._searchPreviousForeground);
-        }
-    }
+    /// <summary>The centered search entry button, for tests.</summary>
+    internal Button? SearchEntryButton => _searchButton;
 
     private static System.Windows.Media.SolidColorBrush FrozenBrush(string color) =>
         CreateFrozenColorBrush((Color)ColorConverter.ConvertFromString(color));
@@ -3475,9 +2108,9 @@ public sealed partial class TopBarWindow : Window
             return;
         }
 
-        // Online geocoding names like "绥化市-黑龙江省绥化市-中国…" read as a trail;
-        // the bar shows the city part, the tooltip keeps the full snapshot text.
-        var city = snapshot.City.Split('-')[0];
+        // Online geocoding names like "南岗区 · 黑龙江省·哈尔滨市 · 中国" or "绥化市-黑龙江省绥化市-中国"
+        // read as a trail; the bar shows the compact location only, and the tooltip keeps the full text.
+        var city = WeatherSnapshot.CompactLocation(snapshot.City);
         text.Text = snapshot.Status == WeatherStatus.NoCity
             ? "天气 未设置"
             : snapshot.TemperatureCelsius is { } temperature
@@ -3497,6 +2130,10 @@ public sealed partial class TopBarWindow : Window
     private static string DescribeWeather(WeatherSnapshot snapshot)
     {
         var lines = new List<string>();
+        if (!string.IsNullOrWhiteSpace(snapshot.City))
+        {
+            lines.Add(snapshot.City.Trim());
+        }
         if (snapshot.DailyHighCelsius is { } high && snapshot.DailyLowCelsius is { } low)
         {
             lines.Add($"最高 {Math.Round(high):0}° / 最低 {Math.Round(low):0}°");
@@ -3766,28 +2403,6 @@ public sealed partial class TopBarWindow : Window
         var zoomed = foreground && foregroundWindow != 0 && DockNativeMethods.IsZoomed(foregroundWindow);
         var trueFullScreen = DockVacateRules.IsTrueFullScreen(fullScreen, zoomed);
         _trueFullScreenForeground = trueFullScreen;
-        if (_searchWindow is { } floating && EffectiveSearchPresentation == SearchPresentation.Floating)
-        {
-            if (trueFullScreen && !_searchActive && floating.IsVisible)
-            {
-                floating.HideFromApp();
-                _searchWindowHiddenForFullScreen = true;
-            }
-            else if (!trueFullScreen && _searchWindowHiddenForFullScreen)
-            {
-                floating.Show();
-                _searchWindowHiddenForFullScreen = false;
-                if (_desktopShown)
-                {
-                    floating.RaiseAboveDesktop(_desktopTopmost ? DockNativeMethods.HwndTopmost : DockNativeMethods.HwndTop,
-                        _desktopTopmost);
-                }
-                else if (!_searchActive)
-                {
-                    floating.ReturnBelowOrdinaryWindows();
-                }
-            }
-        }
 
         if (_appBar.IsReserved)
         {
@@ -3824,7 +2439,7 @@ public sealed partial class TopBarWindow : Window
                 revealBounds,
                 IsCapsule ? bounds.Top - revealBounds.Top + revealDepth : revealDepth),
             PointerOverDock: pointerOverBar,
-            InteractionActive: _menuOpen || _searchActive || _capsuleExpanded
+            InteractionActive: _menuOpen || _capsuleExpanded
                 || _todoFlyout?.IsOpen == true || _clockFlyout?.IsOpen == true,
             // The immediate-collapse shortcut is the dock's; the bar keeps its debounce.
             OverlapIsMaximizedWindow: IsCapsule && zoomed);
@@ -3883,9 +2498,9 @@ public sealed partial class TopBarWindow : Window
     private void BuildContextMenu()
     {
         var menu = new ContextMenu();
-        var search = new MenuItem { Header = "搜索文件与应用" };
-        search.Click += (_, _) => Dispatcher.BeginInvoke(BeginSearchSession, DispatcherPriority.Input);
-        if (_state.Modules.Search) menu.Items.Add(search);
+        var search = new MenuItem { Header = "搜索应用、文件…" };
+        search.Click += (_, _) => Dispatcher.BeginInvoke(TriggerSearch, DispatcherPriority.Input);
+        if (IsSearchEntryEnabled) menu.Items.Add(search);
         var settings = new MenuItem { Header = "在冰蓝桌面中设置…" };
         settings.Click += (_, _) => _environment.OpenTopBarSettings();
         var exit = new MenuItem { Header = "退出冰蓝桌面" };
@@ -3920,8 +2535,8 @@ public sealed partial class TopBarWindow : Window
             : (Color)ColorConverter.ConvertFromString(DesktopStyleRules.TopBar(_style, _state).Surface);
         var darkSurface = (0.2126d * surfaceColor.R + 0.7152d * surfaceColor.G + 0.0722d * surfaceColor.B) / 255d <= 0.6d;
         var menu = new NonActivatingPopupMenu(Surface, PlacementMode.Mouse, darkSurface);
-        if (IsCapsule && _state.Modules.Search)
-            menu.AddItem("搜索文件与应用", () => Dispatcher.BeginInvoke(BeginSearchSession, DispatcherPriority.Input));
+        if (IsCapsule && IsSearchEntryEnabled)
+            menu.AddItem("搜索应用、文件…", () => Dispatcher.BeginInvoke(TriggerSearch, DispatcherPriority.Input));
         menu.AddItem("在冰蓝桌面中设置…", _environment.OpenTopBarSettings);
         menu.AddItem("退出冰蓝桌面", _environment.ExitApp);
         menu.Opened += (_, _) =>

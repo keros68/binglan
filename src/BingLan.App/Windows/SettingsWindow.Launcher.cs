@@ -34,6 +34,25 @@ public partial class SettingsWindow
                 LauncherRecentFilesCheckBox.IsChecked = _maintenance.IsLauncherShowRecentFiles();
                 LauncherRecentFilesCheckBox.IsEnabled = enabled;
             }
+            if (LauncherEverythingCheckBox is not null)
+            {
+                LauncherEverythingCheckBox.IsChecked = _maintenance.IsLauncherUseEverything();
+                LauncherEverythingCheckBox.IsEnabled = enabled;
+            }
+            if (LauncherFavoriteModeComboBox is not null)
+            {
+                LauncherFavoriteModeComboBox.SelectedIndex = (int)_maintenance.GetLauncherFavoriteMode();
+                LauncherFavoriteModeComboBox.IsEnabled = enabled;
+            }
+            if (LauncherBackdropModeComboBox is not null)
+            {
+                LauncherBackdropModeComboBox.SelectedIndex = (int)_maintenance.GetLauncherBackdropMode();
+                LauncherBackdropModeComboBox.IsEnabled = enabled;
+            }
+            if (TopBarSearchHotkeyButton is not null)
+            {
+                TopBarSearchHotkeyButton.IsEnabled = enabled && _topBarState is not null;
+            }
         }
         finally
         {
@@ -54,6 +73,42 @@ public partial class SettingsWindow
         if (_loadingLauncherEnabled) return;
 
         _maintenance.SetLauncherShowRecentFiles(LauncherRecentFilesCheckBox.IsChecked == true);
+        LoadLauncherEnabled();
+    }
+
+    private void LauncherEverything_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_loadingLauncherEnabled) return;
+
+        _maintenance.SetLauncherUseEverything(LauncherEverythingCheckBox.IsChecked == true);
+        LoadLauncherEnabled();
+    }
+
+    private void LauncherFavoriteMode_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_loadingLauncherEnabled || LauncherFavoriteModeComboBox is null) return;
+        var index = LauncherFavoriteModeComboBox.SelectedIndex;
+        var mode = index switch
+        {
+            1 => LauncherFavoriteMode.Independent,
+            2 => LauncherFavoriteMode.Off,
+            _ => LauncherFavoriteMode.FollowDock
+        };
+        _maintenance.SetLauncherFavoriteMode(mode);
+        LoadLauncherEnabled();
+    }
+
+    private void LauncherBackdropMode_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_loadingLauncherEnabled || LauncherBackdropModeComboBox is null) return;
+        var index = LauncherBackdropModeComboBox.SelectedIndex;
+        var mode = index switch
+        {
+            1 => LauncherBackdropMode.WallpaperCanvas,
+            2 => LauncherBackdropMode.ShowDesktop,
+            _ => LauncherBackdropMode.LiveWindow
+        };
+        _maintenance.SetLauncherBackdropMode(mode);
         LoadLauncherEnabled();
     }
 

@@ -816,6 +816,44 @@ public sealed class LocalStateStore
             state.LauncherAppCategoryOverrides.Remove(key);
         }
         state.LauncherPreferences ??= new LauncherPreferencesState();
+        state.TopBar ??= new TopBarState();
+        if (state.SchemaVersion < 55)
+        {
+            if (state.TopBar.ExtensionData is { } legacyTopBar)
+            {
+                var legacyEverythingKey = legacyTopBar.Keys.FirstOrDefault(key =>
+                    string.Equals(key, "UseEverything", StringComparison.OrdinalIgnoreCase));
+                if (legacyEverythingKey is not null
+                    && legacyTopBar[legacyEverythingKey].ValueKind == JsonValueKind.True)
+                {
+                    state.LauncherPreferences.UseEverything = true;
+                }
+
+                string[] retiredKeys =
+                [
+                    "UseEverything",
+                    "SearchPresentation",
+                    "SearchWindowWidth",
+                    "SearchWindowPlacement",
+                    "SearchFollowCardLook",
+                    "SearchSurfaceColor",
+                    "SearchSurfaceOpacity",
+                    "SearchCornerRadius"
+                ];
+                foreach (var existingKey in legacyTopBar.Keys.ToArray())
+                {
+                    if (retiredKeys.Any(retired => string.Equals(existingKey, retired, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        legacyTopBar.Remove(existingKey);
+                    }
+                }
+                if (legacyTopBar.Count == 0)
+                {
+                    state.TopBar.ExtensionData = null;
+                }
+            }
+            state.SchemaVersion = 55;
+        }
         state.LauncherPreferences.Normalize();
         state.Updates ??= new UpdateState();
         state.QuickPlaces = QuickPlaceRules.Normalize(state.QuickPlaces);

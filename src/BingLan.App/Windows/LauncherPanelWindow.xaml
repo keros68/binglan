@@ -5,9 +5,13 @@
         Title="冰蓝总览卡" Width="984" Height="620" WindowStyle="None"
         ResizeMode="NoResize" AllowsTransparency="True" Background="Transparent"
         ShowInTaskbar="False" WindowStartupLocation="Manual"
-        PreviewKeyDown="OnPanelKeyDown" Deactivated="OnPanelDeactivated">
+        FontFamily="{StaticResource UiFont}"
+        PreviewKeyDown="OnPanelKeyDown" PreviewMouseDown="OnPanelMouseDown" Deactivated="OnPanelDeactivated">
     <Window.Resources>
         <SolidColorBrush x:Key="LauncherLabelPlateBrush" Color="Transparent" />
+        <Style TargetType="TextBlock">
+            <Setter Property="Effect" Value="{DynamicResource LauncherTextShadowEffect}" />
+        </Style>
         <Style TargetType="ScrollBar" BasedOn="{StaticResource CardScrollBarStyle}" />
         <Style TargetType="Button">
             <Setter Property="Foreground" Value="{DynamicResource FloatingGlassInkBrush}" />
@@ -96,6 +100,24 @@
                 </Grid>
             </Button>
         </DataTemplate>
+        <DataTemplate x:Key="GroupNavigationItem">
+            <Button Style="{StaticResource CategoryStyle}" Click="OnCategoryClick"
+                    PreviewMouseRightButtonDown="OnGroupNavRightClick"
+                    AutomationProperties.Name="{Binding Name}" AutomationProperties.ItemStatus="{Binding SelectionStatus}">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="20" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="{Binding Glyph}" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="12.5"
+                               Foreground="{DynamicResource FloatingGlassMutedBrush}" VerticalAlignment="Center" />
+                    <TextBlock Grid.Column="1" Text="{Binding Name}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                    <TextBlock Grid.Column="2" Text="{Binding CountText}" FontSize="11" Margin="6,0,0,0"
+                               Foreground="{DynamicResource FloatingGlassMutedBrush}" VerticalAlignment="Center" />
+                </Grid>
+            </Button>
+        </DataTemplate>
         <DataTemplate x:Key="PlaceCardTemplate">
             <Button Margin="0,0,8,8" Padding="10,8" Width="216" HorizontalContentAlignment="Stretch"
                     Click="OnPlaceCardClick" AutomationProperties.Name="{Binding Name}">
@@ -126,6 +148,85 @@
                            Foreground="{DynamicResource FloatingGlassInkBrush}" AutomationProperties.HeadingLevel="Level2" />
             </Border>
         </ControlTemplate>
+        <Style x:Key="InlineIconButtonStyle" TargetType="Button">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Padding" Value="5,3" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Foreground" Value="{DynamicResource FloatingGlassMutedBrush}" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" Background="{TemplateBinding Background}" CornerRadius="5" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource FloatingGlassHoverBrush}" />
+                                <Setter Property="Foreground" Value="{DynamicResource FloatingGlassInkBrush}" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <DataTemplate x:Key="BreadcrumbSegmentTemplate">
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                <TextBlock Text="›" Margin="4,0,4,1" FontSize="13" VerticalAlignment="Center"
+                           Foreground="{DynamicResource FloatingGlassMutedBrush}">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding Depth}" Value="0">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
+                <Button Click="OnBreadcrumbClick" Cursor="Hand" Padding="5,2" BorderThickness="0"
+                        Background="Transparent" AutomationProperties.Name="{Binding Title}">
+                    <Button.Style>
+                        <Style TargetType="Button">
+                            <Setter Property="Template">
+                                <Setter.Value>
+                                    <ControlTemplate TargetType="Button">
+                                        <Border x:Name="CrumbBd" Background="{TemplateBinding Background}" CornerRadius="5" Padding="{TemplateBinding Padding}">
+                                            <ContentPresenter VerticalAlignment="Center" />
+                                        </Border>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsMouseOver" Value="True">
+                                                <Setter TargetName="CrumbBd" Property="Background" Value="{DynamicResource FloatingGlassHoverBrush}" />
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </Setter.Value>
+                            </Setter>
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsCurrent}" Value="True">
+                                    <Setter Property="IsHitTestVisible" Value="False" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Button.Style>
+                    <TextBlock Text="{Binding Title}" FontSize="15" TextTrimming="CharacterEllipsis" MaxWidth="180"
+                               Effect="{DynamicResource LauncherTextShadowEffect}">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Foreground" Value="{DynamicResource FloatingGlassMutedBrush}" />
+                                <Setter Property="FontWeight" Value="Normal" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsCurrent}" Value="True">
+                                        <Setter Property="Foreground" Value="{DynamicResource FloatingGlassInkBrush}" />
+                                        <Setter Property="FontWeight" Value="SemiBold" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </Button>
+            </StackPanel>
+        </DataTemplate>
         <DataTemplate x:Key="TileItemTemplate">
             <Grid>
                 <Grid.RowDefinitions><RowDefinition Height="44" /><RowDefinition Height="*" /></Grid.RowDefinitions>
@@ -142,8 +243,48 @@
                                LineStackingStrategy="BlockLineHeight" LineHeight="16" MaxHeight="32" />
                 </Border>
                 <TextBlock Text="&#xE735;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="9" Foreground="{DynamicResource FloatingGlassMutedBrush}" HorizontalAlignment="Right" VerticalAlignment="Top">
-                    <TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Visibility" Value="Collapsed" /><Style.Triggers><DataTrigger Binding="{Binding IsFavorite}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers></Style></TextBlock.Style>
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="Visibility" Value="Collapsed" />
+                            <Style.Triggers>
+                                <MultiDataTrigger>
+                                    <MultiDataTrigger.Conditions>
+                                        <Condition Binding="{Binding IsFavorite}" Value="True" />
+                                        <Condition Binding="{Binding CanToggleFavorite}" Value="False" />
+                                    </MultiDataTrigger.Conditions>
+                                    <Setter Property="Visibility" Value="Visible" />
+                                </MultiDataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
                 </TextBlock>
+                <Button HorizontalAlignment="Right" VerticalAlignment="Top" Padding="3,2"
+                        Click="OnToggleFavoriteClick" ToolTip="{Binding FavoriteToolTip}"
+                        AutomationProperties.Name="{Binding FavoriteToolTip}">
+                    <Button.Style>
+                        <Style TargetType="Button" BasedOn="{StaticResource InlineIconButtonStyle}">
+                            <Setter Property="Visibility" Value="Collapsed" />
+                            <Style.Triggers>
+                                <MultiDataTrigger>
+                                    <MultiDataTrigger.Conditions>
+                                        <Condition Binding="{Binding CanToggleFavorite}" Value="True" />
+                                        <Condition Binding="{Binding IsFavorite}" Value="True" />
+                                    </MultiDataTrigger.Conditions>
+                                    <Setter Property="Visibility" Value="Visible" />
+                                    <Setter Property="Foreground" Value="{DynamicResource FloatingGlassFocusBrush}" />
+                                </MultiDataTrigger>
+                                <MultiDataTrigger>
+                                    <MultiDataTrigger.Conditions>
+                                        <Condition Binding="{Binding CanToggleFavorite}" Value="True" />
+                                        <Condition Binding="{Binding IsMouseOver, RelativeSource={RelativeSource AncestorType=ListBoxItem}}" Value="True" />
+                                    </MultiDataTrigger.Conditions>
+                                    <Setter Property="Visibility" Value="Visible" />
+                                </MultiDataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Button.Style>
+                    <TextBlock Text="{Binding FavoriteGlyph}" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="10" />
+                </Button>
             </Grid>
         </DataTemplate>
         <DataTemplate x:Key="ListItemTemplate">
@@ -168,10 +309,69 @@
                                    Foreground="{DynamicResource FloatingGlassMutedBrush}" TextTrimming="CharacterEllipsis" />
                     </StackPanel>
                 </Border>
-                <Border Grid.Column="2" CornerRadius="6" Padding="7,2" VerticalAlignment="Center"
-                        Background="{DynamicResource FloatingGlassControlBrush}">
-                    <TextBlock Text="{Binding KindLabel}" FontSize="11" Foreground="{DynamicResource FloatingGlassMutedBrush}" />
-                </Border>
+                <Grid Grid.Column="2" VerticalAlignment="Center">
+                    <Border CornerRadius="6" Padding="7,2" VerticalAlignment="Center"
+                            Background="{DynamicResource FloatingGlassControlBrush}">
+                        <Border.Style>
+                            <Style TargetType="Border">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsMouseOver, RelativeSource={RelativeSource AncestorType=ListBoxItem}}" Value="True">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Border.Style>
+                        <TextBlock Text="{Binding KindLabel}" FontSize="11" Foreground="{DynamicResource FloatingGlassMutedBrush}" />
+                    </Border>
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                        <StackPanel.Style>
+                            <Style TargetType="StackPanel">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsMouseOver, RelativeSource={RelativeSource AncestorType=ListBoxItem}}" Value="True">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </StackPanel.Style>
+                        <Button Style="{StaticResource InlineIconButtonStyle}" Click="OnToggleFavoriteClick"
+                                ToolTip="{Binding FavoriteToolTip}" AutomationProperties.Name="{Binding FavoriteToolTip}">
+                            <Button.Visibility>
+                                <Binding Path="CanToggleFavorite">
+                                    <Binding.Converter><BooleanToVisibilityConverter /></Binding.Converter>
+                                </Binding>
+                            </Button.Visibility>
+                            <TextBlock Text="{Binding FavoriteGlyph}" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="12" />
+                        </Button>
+                        <Button Style="{StaticResource InlineIconButtonStyle}" Click="OnQuickLocateClick"
+                                ToolTip="打开所在位置" AutomationProperties.Name="打开所在位置">
+                            <Button.Visibility>
+                                <Binding Path="HasLocalPath">
+                                    <Binding.Converter><BooleanToVisibilityConverter /></Binding.Converter>
+                                </Binding>
+                            </Button.Visibility>
+                            <TextBlock Text="&#xE838;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="12" />
+                        </Button>
+                        <Button Style="{StaticResource InlineIconButtonStyle}" Click="OnQuickCopyPathClick"
+                                ToolTip="复制路径" AutomationProperties.Name="复制路径">
+                            <Button.Visibility>
+                                <Binding Path="HasLocalPath">
+                                    <Binding.Converter><BooleanToVisibilityConverter /></Binding.Converter>
+                                </Binding>
+                            </Button.Visibility>
+                            <TextBlock Text="&#xE8C8;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="12" />
+                        </Button>
+                        <Button Style="{StaticResource InlineIconButtonStyle}" Click="OnQuickGroupClick"
+                                ToolTip="加入我的分组" AutomationProperties.Name="加入我的分组">
+                            <Button.Visibility>
+                                <Binding Path="CanManageGroups">
+                                    <Binding.Converter><BooleanToVisibilityConverter /></Binding.Converter>
+                                </Binding>
+                            </Button.Visibility>
+                            <TextBlock Text="&#xE710;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="12" />
+                        </Button>
+                    </StackPanel>
+                </Grid>
             </Grid>
         </DataTemplate>
         <Style x:Key="SourceFilterStyle" TargetType="ComboBox">
@@ -269,14 +469,25 @@
         </Style>
     </Window.Resources>
     <Border x:Name="PanelSurface" CornerRadius="24" Background="{DynamicResource FloatingGlassSurfaceBrush}"
-            BorderBrush="{DynamicResource FloatingGlassBorderBrush}" BorderThickness="1" Padding="26,20,26,18">
+            BorderBrush="{DynamicResource FloatingGlassBorderBrush}" BorderThickness="1" Padding="0">
         <Grid>
-            <Grid.RowDefinitions>
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="*" />
-                <RowDefinition Height="Auto" />
-            </Grid.RowDefinitions>
+            <Border x:Name="WallpaperBackdropHost" Visibility="Collapsed" IsHitTestVisible="False"
+                    CornerRadius="{Binding CornerRadius, ElementName=PanelSurface}" ClipToBounds="True">
+                <Border.Clip>
+                    <RectangleGeometry x:Name="WallpaperBackdropClip" />
+                </Border.Clip>
+                <Grid>
+                    <Image x:Name="WallpaperBackdropImage" Stretch="Fill" Margin="-18" />
+                    <Border x:Name="WallpaperTintOverlay" />
+                </Grid>
+            </Border>
+            <Grid x:Name="PanelContentGrid" Margin="26,20,26,18">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
 
             <!-- 顶栏：搜索框 + 一级三主入口 + 材质快切 + 关闭 -->
             <Grid>
@@ -294,6 +505,7 @@
                             <TextBlock x:Name="SearchPlaceholder" Text="搜索应用、文件和文件夹" Foreground="{DynamicResource FloatingGlassMutedBrush}" IsHitTestVisible="False" VerticalAlignment="Center" />
                             <TextBox x:Name="SearchBox" FontSize="14.5" Foreground="{DynamicResource FloatingGlassInkBrush}"
                                      CaretBrush="{DynamicResource FloatingGlassInkBrush}" Background="Transparent" BorderThickness="0" Padding="0"
+                                     Effect="{DynamicResource LauncherTextShadowEffect}"
                                      AutomationProperties.Name="搜索应用、文件和文件夹" TextChanged="OnSearchTextChanged" />
                         </Grid>
                     </Grid>
@@ -303,6 +515,10 @@
                         Background="{DynamicResource FloatingGlassNavigationBrush}"
                         BorderBrush="{DynamicResource FloatingGlassControlBorderBrush}" BorderThickness="1">
                     <StackPanel Orientation="Horizontal">
+                        <Button x:Name="TabAllButton" Style="{StaticResource MainTabButtonStyle}" Click="OnTabAllClick"
+                                Visibility="Collapsed" Margin="0,0,2,0" AutomationProperties.Name="全部" ToolTip="全部结果">
+                            <TextBlock Text="全部" VerticalAlignment="Center" />
+                        </Button>
                         <Button x:Name="TabAppsButton" Style="{StaticResource MainTabButtonStyle}" Click="OnTabAppsClick"
                                 AutomationProperties.Name="应用" ToolTip="应用（Ctrl+1）">
                             <StackPanel Orientation="Horizontal">
@@ -331,25 +547,24 @@
                 <Button Grid.Column="3" Content="&#xE8BB;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="13" Margin="6,0,0,0" Padding="12,8" Background="{DynamicResource LauncherLabelPlateBrush}" BorderThickness="0" Click="OnCloseClick" AutomationProperties.Name="关闭冰蓝总览卡" />
             </Grid>
 
-            <!-- 搜索工具与分组编辑器 -->
+            <!-- 分组编辑器与删除确认 -->
             <StackPanel Grid.Row="1">
-                <WrapPanel x:Name="SearchTools" Margin="0,11,0,3" Visibility="Collapsed">
-                    <Button x:Name="AllFilter" Content="全部" Click="OnAllClick" Margin="0,0,6,0" Padding="13,5" />
-                    <Button x:Name="AppsFilter" Content="应用" Click="OnAppsClick" Margin="0,0,6,0" Padding="13,5" />
-                    <Button x:Name="FilesFilter" Content="文件" Click="OnFilesClick" Padding="13,5" />
-                    <Border x:Name="SearchScope" Visibility="Collapsed" Margin="10,0,0,0" Padding="5,2" VerticalAlignment="Center"
-                            CornerRadius="5" Background="{DynamicResource FloatingGlassControlBrush}">
-                        <CheckBox x:Name="SearchCurrentCategory" Content="仅搜当前分组" Click="OnSearchScopeClick"
-                                  Foreground="{DynamicResource FloatingGlassInkBrush}" VerticalAlignment="Center" />
-                    </Border>
-                </WrapPanel>
                 <Border x:Name="GroupEditor" Visibility="Collapsed" Margin="3,6,0,0" Padding="6"
                         CornerRadius="8" Background="{DynamicResource FloatingGlassLabelBrush}">
                     <DockPanel LastChildFill="True">
                         <Button DockPanel.Dock="Right" Content="取消" Padding="9,5" Margin="6,0,0,0" Click="OnCancelGroupClick" />
                         <Button x:Name="SaveGroupButton" DockPanel.Dock="Right" Content="创建" Padding="9,5" Margin="6,0,0,0" Click="OnSaveGroupClick" />
                         <TextBox x:Name="GroupNameEditor" MaxLength="32" VerticalContentAlignment="Center"
-                                 AutomationProperties.Name="新分组名称" />
+                                 AutomationProperties.Name="分组名称" />
+                    </DockPanel>
+                </Border>
+                <Border x:Name="GroupDeleteConfirm" Visibility="Collapsed" Margin="3,6,0,0" Padding="8,6"
+                        CornerRadius="8" Background="{DynamicResource FloatingGlassLabelBrush}">
+                    <DockPanel LastChildFill="True">
+                        <Button x:Name="CancelDeleteGroupButton" DockPanel.Dock="Right" Content="取消" Padding="9,5" Margin="6,0,0,0" Click="OnCancelDeleteGroupClick" />
+                        <Button x:Name="ConfirmDeleteGroupButton" DockPanel.Dock="Right" Content="确认删除" Padding="9,5" Margin="6,0,0,0" Click="OnConfirmDeleteGroupClick" />
+                        <TextBlock x:Name="GroupDeletePrompt" VerticalAlignment="Center" FontSize="12.5"
+                                   Foreground="{DynamicResource FloatingGlassInkBrush}" TextWrapping="Wrap" />
                     </DockPanel>
                 </Border>
             </StackPanel>
@@ -406,7 +621,7 @@
                             <!-- 我的分组导航 -->
                             <StackPanel x:Name="GroupsNavPanel" Visibility="Collapsed">
                                 <TextBlock Text="我的分组" FontSize="11" Margin="9,2,0,4" Foreground="{DynamicResource FloatingGlassMutedBrush}" />
-                                <ItemsControl x:Name="CategoriesList" ItemTemplate="{StaticResource NavigationItem}" AutomationProperties.Name="我的分组" />
+                                <ItemsControl x:Name="CategoriesList" ItemTemplate="{StaticResource GroupNavigationItem}" AutomationProperties.Name="我的分组" />
                                 <Border Margin="8,6,8,6" Height="1" Background="{DynamicResource FloatingGlassControlBorderBrush}" />
                                 <Button x:Name="NewGroupButton" AutomationProperties.Name="新建分组"
                                         Style="{StaticResource CategoryStyle}" Click="OnNewGroupClick">
@@ -442,9 +657,26 @@
                                 </StackPanel>
                             </Border>
 
+                            <Border x:Name="FileSortToggle" Visibility="Collapsed" Padding="2" CornerRadius="8"
+                                    Background="{DynamicResource FloatingGlassNavigationBrush}"
+                                    BorderBrush="{DynamicResource FloatingGlassControlBorderBrush}" BorderThickness="1"
+                                    Margin="0,0,6,0">
+                                <StackPanel Orientation="Horizontal">
+                                    <Button x:Name="FileSortByNameButton" Content="名称" Style="{StaticResource CompactToggleStyle}" Click="OnFileSortByNameClick" AutomationProperties.Name="文件按名称排序" />
+                                    <Button x:Name="FileSortByModifiedButton" Content="最近修改" Style="{StaticResource CompactToggleStyle}" Click="OnFileSortByModifiedClick" AutomationProperties.Name="文件按最近修改排序" />
+                                </StackPanel>
+                            </Border>
+
                             <Button x:Name="RecentPrivacyButton" Visibility="Collapsed" Content="隐藏最近"
                                     Padding="10,4" FontSize="12" Margin="0,0,6,0" Click="OnToggleRecentPrivacyClick"
                                     AutomationProperties.Name="切换显示最近使用文件" />
+
+                            <Button x:Name="RenameGroupButton" Visibility="Collapsed" Content="重命名"
+                                    Padding="10,4" FontSize="12" Margin="0,0,6,0" Click="OnRenameGroupClick"
+                                    AutomationProperties.Name="重命名当前分组" />
+                            <Button x:Name="DeleteGroupButton" Visibility="Collapsed" Content="删除分组"
+                                    Padding="10,4" FontSize="12" Margin="0,0,6,0" Click="OnDeleteGroupClick"
+                                    AutomationProperties.Name="删除当前分组" />
 
                             <Border x:Name="LayoutToggle" Visibility="Collapsed" Padding="2" CornerRadius="8"
                                     Background="{DynamicResource FloatingGlassNavigationBrush}"
@@ -473,9 +705,16 @@
 
                         <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                             <Button x:Name="BackFolderButton" Visibility="Collapsed" Padding="8,4" Margin="0,0,8,0"
-                                    Click="OnBackFolderClick" ToolTip="返回上一级（Alt+Left）" AutomationProperties.Name="返回上一级文件夹">
+                                    Click="OnBackFolderClick" ToolTip="返回上一级（Backspace / Alt+Left）" AutomationProperties.Name="返回上一级文件夹">
                                 <TextBlock Text="&#xE72B;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="12" />
                             </Button>
+                            <ItemsControl x:Name="BreadcrumbBar" Visibility="Collapsed" VerticalAlignment="Center"
+                                          ItemTemplate="{StaticResource BreadcrumbSegmentTemplate}"
+                                          AutomationProperties.Name="文件夹路径导航">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate><StackPanel Orientation="Horizontal" /></ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                            </ItemsControl>
                             <Border Background="{DynamicResource FloatingGlassHeadingBrush}" CornerRadius="4" Padding="4,1"
                                     VerticalAlignment="Center" Visibility="{Binding Visibility, ElementName=SectionTitle}">
                                 <TextBlock x:Name="SectionTitle" FontSize="15.5" FontWeight="SemiBold"
@@ -511,6 +750,7 @@
                              VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
                              ItemTemplate="{StaticResource TileItemTemplate}"
                              AutomationProperties.Name="冰蓝总览卡项目" ScrollViewer.ScrollChanged="OnResultScrollChanged"
+                             PreviewMouseLeftButtonDown="OnResultMouseDown" PreviewMouseMove="OnResultMouseMove"
                              PreviewMouseLeftButtonUp="OnResultMouseUp" PreviewMouseRightButtonDown="OnResultRightClick">
                         <ListBox.Template>
                             <ControlTemplate TargetType="ListBox">
@@ -528,9 +768,9 @@
                 </Grid>
             </Grid>
 
-            <!-- 底部状态与来源筛选 -->
+            <!-- 底部状态、搜索范围与来源筛选 -->
             <Grid Grid.Row="3" Margin="4,10,0,0">
-                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                 <Border HorizontalAlignment="Left" VerticalAlignment="Center" Margin="0,0,12,0" Padding="6,3"
                         CornerRadius="5" Background="{DynamicResource FloatingGlassLabelBrush}">
                     <Border.Style>
@@ -545,9 +785,15 @@
                     <TextBlock x:Name="StatusText" Text="正在载入…" Foreground="{DynamicResource FloatingGlassMutedBrush}"
                                FontSize="11" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" />
                 </Border>
-                <ComboBox x:Name="SourceFilter" Grid.Column="1" Style="{StaticResource SourceFilterStyle}"
+                <Border x:Name="SearchScope" Grid.Column="1" Visibility="Collapsed" Margin="0,0,8,0" Padding="6,3"
+                        VerticalAlignment="Center" CornerRadius="6" Background="{DynamicResource FloatingGlassControlBrush}">
+                    <CheckBox x:Name="SearchCurrentCategory" Content="仅搜当前分组" Click="OnSearchScopeClick"
+                              Foreground="{DynamicResource FloatingGlassInkBrush}" VerticalAlignment="Center" />
+                </Border>
+                <ComboBox x:Name="SourceFilter" Grid.Column="2" Style="{StaticResource SourceFilterStyle}"
                           Height="28" MinWidth="70" MaxWidth="188" Tag="筛选"
                           AutomationProperties.Name="按入口来源筛选" SelectionChanged="OnSourceFilterChanged" />
+            </Grid>
             </Grid>
         </Grid>
     </Border>

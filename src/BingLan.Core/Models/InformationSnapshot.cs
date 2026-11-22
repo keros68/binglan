@@ -25,4 +25,42 @@ public sealed record WeatherSnapshot(
     string Condition,
     bool FromCache,
     DateTimeOffset? UpdatedAt,
-    string? ErrorMessage);
+    string? ErrorMessage)
+{
+    private static readonly char[] HierarchySeparators = ['·', '•', ',', '，', '/'];
+
+    /// <summary>
+    /// Extracts the most specific location name (e.g. "南岗区" from "南岗区 · 黑龙江省·哈尔滨市 · 中国")
+    /// for compact surfaces such as the top bar and weather header, while tooltips keep the full string.
+    /// </summary>
+    public static string CompactLocation(string? city)
+    {
+        if (string.IsNullOrWhiteSpace(city))
+        {
+            return string.Empty;
+        }
+
+        var trimmed = city.Trim();
+        var separatorIndex = trimmed.IndexOfAny(HierarchySeparators);
+        if (separatorIndex > 0)
+        {
+            var head = trimmed[..separatorIndex].Trim();
+            if (head.Length > 0)
+            {
+                return head;
+            }
+        }
+
+        var dashIndex = trimmed.IndexOf('-');
+        if (dashIndex > 0)
+        {
+            var head = trimmed[..dashIndex].Trim();
+            if (head.Length > 0)
+            {
+                return head;
+            }
+        }
+
+        return trimmed;
+    }
+}

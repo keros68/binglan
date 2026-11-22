@@ -145,10 +145,17 @@ internal static class LauncherFileCatalog
                 var kind = isDirectory ? TopBarSearchItemKind.Folder : TopBarSearchItemKind.File;
                 var displayName = isDirectory ? fileName : FileMappingService.GetDisplayName(fullTarget);
                 var accessedLocal = new DateTimeOffset(shortcut.LastWriteTimeUtc, TimeSpan.Zero).ToLocalTime();
+                long? fileSize = null;
+                if (!isDirectory)
+                {
+                    try { fileSize = new FileInfo(fullTarget).Length; }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+                }
                 results.Add(new LauncherPanelEntry(
                     new TopBarSearchCandidate(kind, displayName, fileName, fullTarget),
                     "最近使用",
-                    LastAccessedLocal: accessedLocal));
+                    LastAccessedLocal: accessedLocal,
+                    FileSizeBytes: fileSize));
             }
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -221,7 +228,8 @@ internal static class LauncherFileCatalog
                         new TopBarSearchCandidate(TopBarSearchItemKind.File,
                             FileMappingService.GetDisplayName(file.FullName), file.Name, file.FullName),
                         source,
-                        LastAccessedLocal: modified));
+                        LastAccessedLocal: modified,
+                        FileSizeBytes: file.Length));
                 }
             }
 

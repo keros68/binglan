@@ -15,6 +15,8 @@ internal static class LauncherIdentityTests
         TestStripBenignArguments();
         TestFindLaunchVariantFamilies();
         TestReadabilityMatrix();
+        TestAppearancePreservesIceBlueStyle();
+        TestFavoritePreferencesAndFileSize();
         TestPinCopy();
     }
 
@@ -151,6 +153,62 @@ internal static class LauncherIdentityTests
         var iceBlue = LauncherReadabilityRules.Resolve("#D8F3FF", 0.12d);
         Check(iceBlue.DarkInk && iceBlue.SurfaceOpacity is >= 0.55d and <= 0.70d,
             $"#D8F3FF @ 0.12 应使用深色文字且不透明度落在 [0.55, 0.70]，实际 {iceBlue.SurfaceOpacity:F2}");
+    }
+
+    private static void TestAppearancePreservesIceBlueStyle()
+    {
+        var appearance = new LauncherAppearanceState { FollowCardLook = true };
+        var lightIceStyle = new DesktopStyleState
+        {
+            Glass = GlassMode.Light,
+            TextInk = TextInk.White,
+            GlassDensity = 0.05d
+        };
+        var (iceGlass, iceReadability) = appearance.ResolveReadableGlass(lightIceStyle);
+        Check(iceReadability.DarkInk && iceGlass.Surface.EndsWith("D8F3FF", StringComparison.OrdinalIgnoreCase),
+            $"浅色冰蓝风格下总览卡应保持冰蓝底色而非切为深色，实际 Surface={iceGlass.Surface}, DarkInk={iceReadability.DarkInk}");
+        Check(iceReadability.SurfaceOpacity is >= 0.55d and <= 0.70d,
+            $"冰蓝磨砂不透明度应保证纯黑背景也达到 4.5:1 对比度，实际 {iceReadability.SurfaceOpacity:F2}");
+
+        var darkStyle = new DesktopStyleState { Glass = GlassMode.Dark };
+        var (darkGlass, darkReadability) = appearance.ResolveReadableGlass(darkStyle);
+        Check(!darkReadability.DarkInk && darkGlass.Surface.EndsWith("18222F", StringComparison.OrdinalIgnoreCase),
+            "仅在桌面整体为深色玻璃模式时总览卡才使用深色底与白字");
+    }
+
+    private static void TestFavoritePreferencesAndFileSize()
+    {
+        var prefs = new LauncherPreferencesState
+        {
+            FavoriteMode = (LauncherFavoriteMode)99,
+            BackdropMode = (LauncherBackdropMode)77,
+            FavoriteKeys = ["  ", "app:one", "app:one", "app:two"]
+        };
+        prefs.Normalize();
+        Check(prefs.FavoriteMode == LauncherFavoriteMode.FollowDock, "无效星标模式应归一化为跟随 Dock");
+        Check(prefs.BackdropMode == LauncherBackdropMode.LiveWindow, "无效背景模式应归一化为实时透视");
+        Check(prefs.FavoriteKeys.SequenceEqual(["app:one", "app:two"]), "独立收藏键应去空去重");
+        Check(prefs.IsIndependentFavorite(["other", "app:two"]), "多键命中其一应视为已收藏");
+        Check(!prefs.ToggleFavoriteKey("app:one"), "再次切换已有收藏键应移除并返回 false");
+        Check(!prefs.IsIndependentFavorite(["app:one"]), "移除后不应再命中收藏");
+        Check(prefs.ToggleFavoriteKey("app:three"), "切换新收藏键应加入并返回 true");
+        Check(prefs.IsIndependentFavorite(["app:three"]), "加入后应命中收藏");
+
+        // UniformToFill wallpaper crop: 1920x1080 wallpaper on 1920x1080 monitor -> 1:1 crop.
+        var exactCrop = LauncherBackdropRules.ComputeWallpaperCrop(1920, 1080, 0, 0, 1920, 1080, 460, 220, 1000, 640);
+        Check(exactCrop == new WallpaperCropRect(460, 220, 1000, 640),
+            $"同分辨率壁纸裁切应 1:1 对应面板坐标，实际 {exactCrop}");
+        // Negative-coordinate secondary monitor with 3840x2160 wallpaper on 1920x1080 screen -> 2x coordinates.
+        var hiDpiCrop = LauncherBackdropRules.ComputeWallpaperCrop(3840, 2160, -1920, 0, 1920, 1080, -1420, 200, 920, 600);
+        Check(hiDpiCrop == new WallpaperCropRect(1000, 400, 1840, 1200),
+            $"负坐标副屏 4K 壁纸裁切应按比例换算，实际 {hiDpiCrop}");
+        Check(LauncherBackdropRules.ComputeWallpaperCrop(0, 1080, 0, 0, 1920, 1080, 0, 0, 500, 400) is null,
+            "无效图像尺寸应返回 null");
+
+        Check(LauncherFileCategoryRules.FormatFileSize(0) == "0 B", "0 字节格式");
+        Check(LauncherFileCategoryRules.FormatFileSize(1536) == "1.5 KB", "KB 格式");
+        Check(LauncherFileCategoryRules.FormatFileSize(2 * 1024 * 1024) == "2 MB", "MB 格式");
+        Check(LauncherFileCategoryRules.FormatFileSize((long)(1.25 * 1024 * 1024 * 1024)) == "1.25 GB", "GB 格式");
     }
 
     private static void TestPinCopy()

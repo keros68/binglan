@@ -880,7 +880,7 @@ public partial class InformationWidgetWindow : WidgetWindowBase
         WeatherDetailsPanel.Visibility = Visibility.Visible;
 
         // "黑河 · 黑龙江 · 中国" reads as just "黑河"; the full place is in the tooltip.
-        WeatherCityText.Text = snapshot.City.Split(" · ")[0];
+        WeatherCityText.Text = WeatherSnapshot.CompactLocation(snapshot.City);
         WeatherCityText.ToolTip = snapshot.City;
         WeatherTempText.Text = snapshot.TemperatureCelsius is { } temperature
             ? $"{temperature:0.#}°"

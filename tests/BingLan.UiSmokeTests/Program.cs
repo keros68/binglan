@@ -250,7 +250,6 @@ internal static class Program
         Run("界面卡顿写入本地日志：卡住时的任务与恢复时长", () => UiDiagnosticsTests.Run(Pump, PumpUntil), failures);
         Run("Dock 最大化状态钩子的过滤与即时通知", () => MaximizeStateWatcherTests.Run(ShowAndPump, Pump, PumpUntil), failures);
         Run("顶端信息条的窗口样式、模块与点击深链", () => TopBarWindowTests.Run(ShowAndPump, Pump), failures);
-        Run("搜索菜单对比度、右键与键盘操作", () => TopBarWindowTests.SearchResultContextMenuStaysOpen(ShowAndPump, Pump), failures);
         Run("启动面板浏览、搜索、启动参数与失效文件", () => LauncherPanelWindowTests.Run(ShowAndPump, Pump, PumpUntil), failures);
         Run("主题导入对话框显示名称与预览图", TestThemeImportDialogShowsNameAndPreview, failures);
         Run("三种材质与 0/12/32 圆角真实窗口无白边或锯齿", TestMaterialCornerEdgesNoWhiteHalo, failures);
@@ -1337,21 +1336,32 @@ internal static class Program
 
             navigation.SelectedIndex = 3;
             Pump();
-            AssertAccessibleControls(window, "设置-顶栏底栏页");
+            AssertAccessibleControls(window, "设置-冰蓝总览卡页");
+            navigation.SelectedIndex = 4;
+            Pump();
+            AssertAccessibleControls(window, "设置-顶栏与底栏页");
             AssertTabOrderContains(
                 window,
                 [
-                    navigation.ItemContainerGenerator.ContainerFromIndex(3) as ListBoxItem ??
-                        throw new InvalidOperationException("顶栏底栏导航项没有生成"),
+                    navigation.ItemContainerGenerator.ContainerFromIndex(4) as ListBoxItem ??
+                        throw new InvalidOperationException("顶栏与底栏导航项没有生成"),
                     Require<Button>(window, "ScreenMapDockButton"),
                     Require<Button>(window, "ScreenMapTaskbarButton"),
-                    FoldHeader(Require<Expander>(window, "DockSection")),
-                    Require<CheckBox>(window, "DockEnabledCheckBox"),
-                    FoldHeader(Require<Expander>(window, "TaskbarSection")),
+                    Require<RadioButton>(window, "BarsTabDockRadio"),
+                    Require<RadioButton>(window, "BarsTabTaskbarRadio"),
+                    Require<CheckBox>(window, "DockEnabledCheckBox")
+                ],
+                "设置-顶栏与底栏页");
+            Require<RadioButton>(window, "BarsTabTaskbarRadio").IsChecked = true;
+            Pump();
+            AssertTabOrderContains(
+                window,
+                [
+                    Require<RadioButton>(window, "BarsTabTaskbarRadio"),
                     Require<RadioButton>(window, "TaskbarDefaultRadio")
                 ],
-                "设置-顶栏底栏页");
-            navigation.SelectedIndex = 4;
+                "设置-顶栏与底栏任务栏标签");
+            navigation.SelectedIndex = 5;
             Pump();
             AssertAccessibleControls(window, "设置-通用设置页");
             ReportDpi(window, "设置窗口");
@@ -4002,21 +4012,30 @@ internal static class Program
             navigation.SelectedIndex = 3;
             Pump();
             Assert(
+                Require<FrameworkElement>(settings, "LauncherPage").IsVisible,
+                "冰蓝总览卡页没有显示");
+            navigation.SelectedIndex = 4;
+            Pump();
+            Assert(
                 Require<FrameworkElement>(settings, "DockPage").IsVisible,
-                "顶栏底栏页没有显示 Dock 分区");
+                "顶栏与底栏页默认没有显示 Dock 标签");
             Assert(
                 Require<CheckBox>(settings, "DockEnabledCheckBox").IsChecked == false,
                 "冰蓝 Dock 默认应保持关闭");
+            Require<RadioButton>(settings, "BarsTabTopBarRadio").IsChecked = true;
+            Pump();
             Assert(
                 Require<FrameworkElement>(settings, "TopBarPage").IsVisible &&
                 Require<CheckBox>(settings, "TopBarEnabledCheckBox").IsChecked == false,
-                "顶端信息条分区没有显示或默认没有保持关闭");
+                "顶端信息条标签没有显示或默认没有保持关闭");
+            Require<RadioButton>(settings, "BarsTabTaskbarRadio").IsChecked = true;
+            Pump();
             Assert(
                 Require<FrameworkElement>(settings, "TaskbarPage").IsVisible &&
                 Require<RadioButton>(settings, "TaskbarDefaultRadio").IsChecked == true,
-                "任务栏分区没有显示或默认没有保持系统默认");
+                "任务栏标签没有显示或默认没有保持系统默认");
 
-            navigation.SelectedIndex = 4;
+            navigation.SelectedIndex = 5;
             Pump();
             Assert(
                 Require<FrameworkElement>(settings, "GeneralPage").IsVisible &&
@@ -4037,8 +4056,9 @@ internal static class Program
                     {
                         "Appearance" => 1,
                         "Components" => 2,
-                        "Bars" or "Dock" => 3,
-                        "General" => 4,
+                        "Launcher" => 3,
+                        "Bars" or "Dock" => 4,
+                        "General" => 5,
                         _ => 0
                     };
                 Pump();
@@ -5295,67 +5315,6 @@ internal static class Program
                     return true;
                 }, 0);
                 Assert(cardBelowApp, "非全屏软件窗口应排在桌面组件上方");
-
-                // Floating SearchWindow must also stay below ordinary non-fullscreen windows
-                // when idle and after a search session ends, rather than sitting at HWND_NOTOPMOST.
-                var floatingSearch = new SearchWindow(
-                    new TopBarState { SearchPresentation = SearchPresentation.Floating },
-                    new System.Windows.Controls.Border(),
-                    static () => { });
-                ShowAndPump(floatingSearch);
-                try
-                {
-                    var searchHandle = floatingSearch.WindowHandle;
-                    Assert(searchHandle != 0, "独立搜索框句柄应已创建");
-                    floatingSearch.RaiseAboveDesktop(BingLan.App.Interop.DockNativeMethods.HwndTopmost);
-                    PumpUntil(() => (GetWindowLongPtr(searchHandle, GwlExStyle) & WsExTopmost) != 0,
-                        "显示桌面期间独立搜索框应进入置顶带");
-                    floatingSearch.ReturnBelowOrdinaryWindows();
-                    PumpUntil(() => (GetWindowLongPtr(searchHandle, GwlExStyle) & WsExTopmost) == 0,
-                        "退出显示桌面后独立搜索框应离开置顶带");
-                    var sawAppBeforeSearch = false;
-                    var searchBelowApp = false;
-                    BingLan.App.Interop.NativeMethods.EnumWindows((candidate, _) =>
-                    {
-                        if (candidate == appHandle)
-                        {
-                            sawAppBeforeSearch = true;
-                        }
-                        else if (candidate == searchHandle)
-                        {
-                            searchBelowApp = sawAppBeforeSearch;
-                            return false;
-                        }
-                        return true;
-                    }, 0);
-                    Assert(searchBelowApp, "退出显示桌面后待机独立搜索框应回落到非全屏软件下方");
-
-                    floatingSearch.SetSessionActive(true, desktopShown: false);
-                    Pump();
-                    floatingSearch.SetSessionActive(false, desktopShown: false);
-                    Pump();
-                    sawAppBeforeSearch = false;
-                    searchBelowApp = false;
-                    BingLan.App.Interop.NativeMethods.EnumWindows((candidate, _) =>
-                    {
-                        if (candidate == appHandle)
-                        {
-                            sawAppBeforeSearch = true;
-                        }
-                        else if (candidate == searchHandle)
-                        {
-                            searchBelowApp = sawAppBeforeSearch;
-                            return false;
-                        }
-                        return true;
-                    }, 0);
-                    Assert(searchBelowApp, "结束搜索会话后独立搜索框应回到非全屏软件下方");
-                }
-                finally
-                {
-                    floatingSearch.Shutdown();
-                    Pump();
-                }
             }
             finally
             {
@@ -6777,28 +6736,33 @@ internal static class Program
             maintenance: new SettingsMaintenance
             {
                 IsLauncherEnabled = () => enabled,
-                SetLauncherEnabled = value => { enabled = value; changes++; }
+                SetLauncherEnabled = value => { enabled = value; changes++; },
+                IsLauncherUseEverything = () => false,
+                SetLauncherUseEverything = _ => { }
             });
         ShowAndPump(window);
         try
         {
             Assert(changes == 0 && !enabled, "设置装载不应写入总开关");
-            var result = window.SearchSettings("启用冰蓝总览卡").Single(entry => entry.Name == "冰蓝总览卡");
+            var result = window.SearchSettings("启用冰蓝总览卡").Single(entry => entry.Name == "启用冰蓝总览卡");
             window.OpenSearchResult(result);
             Pump();
             var toggle = Require<CheckBox>(window, "LauncherEnabledCheckBox");
             Assert(toggle.IsVisible && toggle.IsEnabled && toggle.IsChecked == false
-                && Require<FrameworkElement>(window, "BarsPage").IsVisible,
-                "Dock 关闭时仍应可在顶栏底栏页找到独立总开关");
+                && Require<FrameworkElement>(window, "LauncherPage").IsVisible
+                && !Require<CheckBox>(window, "LauncherEverythingCheckBox").IsEnabled,
+                "Dock 关闭时仍应可在冰蓝总览卡页找到独立总开关，关闭时禁用扩展索引选项");
             toggle.IsChecked = true;
             Pump();
-            Assert(enabled && changes == 1 && !dock.IsEnabled && !dock.ShowLauncherButton,
-                "开启启动面板不应改写 Dock 开关或入口偏好");
+            Assert(enabled && changes == 1 && !dock.IsEnabled && !dock.ShowLauncherButton
+                && Require<CheckBox>(window, "LauncherEverythingCheckBox").IsEnabled,
+                "开启启动面板不应改写 Dock 开关或入口偏好，并应启用扩展索引选项");
             toggle.IsChecked = false;
             Pump();
             Assert(!enabled && changes == 2 && !dock.ShowLauncherButton
-                && !Require<CheckBox>(window, "DockLauncherButtonCheckBox").IsEnabled,
-                "关闭启动面板应立即写入并禁用独立入口设置");
+                && !Require<CheckBox>(window, "DockLauncherButtonCheckBox").IsEnabled
+                && !Require<CheckBox>(window, "LauncherEverythingCheckBox").IsEnabled,
+                "关闭启动面板应立即写入并禁用独立入口与扩展索引设置");
         }
         finally
         {
@@ -6916,7 +6880,7 @@ internal static class Program
                      ("Appearance", "Appearance", null), ("Cards", "Appearance", null),
                      ("Overall", "Scheme", null), ("CleanDesktop", "Scheme", "CleanDesktop"),
                      ("About", "General", null), ("Privacy", "General", "Privacy"), ("Backup", "General", "Backup"),
-                     ("Components", "Components", null)
+                     ("Components", "Components", null), ("Launcher", "Launcher", null)
                  })
         {
             Assert(SettingsWindow.ResolveSettingsLink(link) == (page, section), $"旧入口 {link} 应打开 {page}/{section}");
@@ -6928,14 +6892,16 @@ internal static class Program
         {
             foreach (var (link, sectionName) in new[] { ("Dock", "DockSection"), ("TopBar", "TopBarSection"), ("Taskbar", "TaskbarSection") })
             {
-                Require<Expander>(window, sectionName).IsExpanded = false;
                 window.ShowSettingsPage("Scheme");
                 Pump();
                 window.ShowSettingsPage(link);
                 Pump();
-                Assert(Require<FrameworkElement>(window, "BarsPage").IsVisible && Require<Expander>(window, sectionName).IsExpanded,
-                    $"旧入口 {link} 应打开顶栏底栏页并展开对应分区");
+                Assert(Require<FrameworkElement>(window, "BarsPage").IsVisible && Require<FrameworkElement>(window, sectionName).IsVisible,
+                    $"旧入口 {link} 应打开顶栏与底栏页并切换到对应标签");
             }
+            window.ShowSettingsPage("Launcher");
+            Pump();
+            Assert(Require<FrameworkElement>(window, "LauncherPage").IsVisible, "总览卡入口应打开冰蓝总览卡页");
             window.ShowSettingsPage("Layout");
             Pump();
             Assert(Require<FrameworkElement>(window, "AppearancePage").IsVisible
@@ -7014,10 +6980,9 @@ internal static class Program
                     && Require<FrameworkElement>(window, "SchemeDockCustomTag").Visibility == Visibility.Collapsed,
                 "恢复方案默认后应关闭最大化让出并恢复始终显示摘要");
 
-            Require<Expander>(window, "TaskbarSection").IsExpanded = false;
             ClickButton(Require<Button>(window, "SchemeTaskbarAdjustButton"));
-            Assert(Require<FrameworkElement>(window, "BarsPage").IsVisible && Require<Expander>(window, "TaskbarSection").IsExpanded,
-                "“调整 →”应跳到顶栏底栏页并展开任务栏分区");
+            Assert(Require<FrameworkElement>(window, "BarsPage").IsVisible && Require<FrameworkElement>(window, "TaskbarSection").IsVisible,
+                "“调整 →”应跳到顶栏与底栏页并切换到任务栏标签");
             Assert(Require<Button>(window, "ScreenMapTaskbarButton").Opacity < 1
                     && Require<FrameworkElement>(window, "TaskbarPopupPanel").IsVisible,
                 "任务栏自动隐藏时示意图变淡，并显示两项弹出方式");
@@ -7027,9 +6992,8 @@ internal static class Program
                     && Require<FrameworkElement>(window, "TaskbarPopupPanel").Visibility == Visibility.Collapsed,
                 "任务栏不自动隐藏时不显示弹出方式");
 
-            Require<Expander>(window, "DockSection").IsExpanded = false;
             ClickButton(Require<Button>(window, "ScreenMapDockButton"));
-            Assert(Require<Expander>(window, "DockSection").IsExpanded, "点击示意图上的 Dock 应展开 Dock 分区");
+            Assert(Require<FrameworkElement>(window, "DockSection").IsVisible, "点击示意图上的 Dock 应切换到 Dock 标签");
             dock.IsEnabled = false;
             window.RefreshDockSettings();
             Pump();
@@ -7083,13 +7047,24 @@ internal static class Program
                     && Require<CheckBox>(window, "FileBoxDeleteOriginalsCheckBox").IsVisible,
                 "分组盒设置应选中一个分组盒后显示");
 
-            Require<Expander>(window, "TopBarSection").IsExpanded = false;
             window.OpenSearchResult(window.SearchSettings("热键").First());
             Pump();
-            Assert(Require<FrameworkElement>(window, "BarsPage").IsVisible
-                    && Require<Expander>(window, "TopBarSection").IsExpanded
+            Assert(Require<FrameworkElement>(window, "LauncherPage").IsVisible
                     && Require<Button>(window, "TopBarSearchHotkeyButton").IsVisible,
-                "跳到搜索热键应展开顶端信息条分区");
+                "跳到搜索热键应切到冰蓝总览卡页并显示热键录制按钮");
+
+            window.OpenSearchResult(window.SearchSettings("电量").First());
+            Pump();
+            Assert(Require<FrameworkElement>(window, "BarsPage").IsVisible
+                    && Require<FrameworkElement>(window, "TopBarSection").IsVisible,
+                "搜索未激活标签页中的顶栏模块应自动切到顶端信息条标签");
+
+            window.OpenSearchResult(window.SearchSettings("图标大小").First());
+            Pump();
+            Assert(Require<FrameworkElement>(window, "BarsPage").IsVisible
+                    && Require<FrameworkElement>(window, "DockSection").IsVisible
+                    && Require<Expander>(window, "DockAdvancedFold").IsExpanded,
+                "搜索折叠区内的 Dock 设置应切到 Dock 标签并自动展开高级折叠");
 
             var searchBox = Require<TextBox>(window, "SettingsSearchBox");
             searchBox.Text = "布局预设";
@@ -7165,19 +7140,21 @@ internal static class Program
                 "跟随全局外观的卡片收起独立外观");
 
             var dockRow = overrides.Items.OfType<SettingsRow>().Single(row => row.Header == "冰蓝 Dock");
+            ClickButton(((StackPanel)dockRow.Content).Children.OfType<Button>().Single(button => Equals(button.Content, "查看")));
+            Assert(Require<FrameworkElement>(window, "BarsPage").IsVisible
+                    && Require<FrameworkElement>(window, "DockSection").IsVisible
+                    && Require<Expander>(window, "DockAdvancedFold").IsExpanded
+                    && Require<RadioButton>(window, "DockFollowLookRadio").IsVisible,
+                "未跟随列表点击查看 Dock 外观应跳到顶栏与底栏页的 Dock 标签并展开高级折叠");
+
+            window.ShowSettingsPage("Appearance");
+            Pump();
+            dockRow = overrides.Items.OfType<SettingsRow>().Single(row => row.Header == "冰蓝 Dock");
             ClickButton(((StackPanel)dockRow.Content).Children.OfType<Button>().Single(button => Equals(button.Content, "恢复跟随")));
             Assert(dock.FollowCardLook && !Headers().Contains("冰蓝 Dock") && Require<RadioButton>(window, "DockFollowLookRadio").IsChecked == true,
                 "Dock 恢复跟随后应离开列表");
             Assert(overrides.Items.OfType<TextBlock>().Any(text => text.Text.Contains("都跟随全局外观", StringComparison.Ordinal)),
                 "全部跟随时显示一句说明");
-
-            window.ShowSettingsPage("Dock");
-            Pump();
-            ClickButton((Button)Require<SettingsRow>(window, "DockLookSummaryRow").Content);
-            Assert(Require<FrameworkElement>(window, "AppearancePage").IsVisible
-                    && Require<Expander>(window, "AppearanceBarsLookFold").IsExpanded
-                    && Require<RadioButton>(window, "DockFollowLookRadio").IsVisible,
-                "Dock 分区的外观一行应跳到外观样式页里的 Dock 外观");
 
             // 桌面组件页展示统一配色引导并可一键跳往外观样式页。
             window.ShowComponentSettings(DesktopComponentKind.TimeDate);

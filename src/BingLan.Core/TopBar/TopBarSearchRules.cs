@@ -32,6 +32,33 @@ public static class TopBarSearchRules
     /// <summary>Results beyond this many matches add scroll without adding signal.</summary>
     public const int MaxResults = 24;
 
+    /// <summary>Preferred and minimum widths (in DIP) for the centered top-bar search entry button.</summary>
+    public const double DefaultCenteredEntryWidth = 260d;
+    public const double MinCenteredEntryWidth = 48d;
+    public const double CenteredEntryMargin = 16d;
+
+    /// <summary>
+    /// Computes the centered search entry width from the symmetric clear room left by the
+    /// wider side module, preventing overlap on narrow or asymmetric top bars. Returns 0 when
+    /// even the minimum width would collide so the bar can temporarily collapse the button
+    /// while keeping the global hotkey active.
+    /// </summary>
+    public static double ComputeCenteredEntryWidth(
+        double surfaceWidth,
+        double leftWidth,
+        double rightWidth,
+        double preferredWidth = DefaultCenteredEntryWidth,
+        double minWidth = MinCenteredEntryWidth,
+        double margin = CenteredEntryMargin)
+    {
+        if (surfaceWidth <= 0d)
+        {
+            return preferredWidth;
+        }
+        var symmetricRoom = surfaceWidth - 2d * Math.Max(Math.Max(0d, leftWidth), Math.Max(0d, rightWidth)) - margin;
+        return symmetricRoom < minWidth ? 0d : Math.Min(preferredWidth, symmetricRoom);
+    }
+
     // Win32 RegisterHotKey modifier flags; the letters are what the settings file stores.
     public const uint ModifierAlt = 0x0001;
     public const uint ModifierControl = 0x0002;
@@ -71,51 +98,6 @@ public static class TopBarSearchRules
         string query,
         int limit = MaxResults) =>
         SearchCore(candidates, query, allowFuzzy: true, limit);
-
-    /// <summary>
-    /// Keeps already-rendered stage-1 results in their exact order and appends ranked,
-    /// deduplicated stage-2 index matches below them up to <see cref="MaxResults"/>.
-    /// </summary>
-    public static IReadOnlyList<TopBarSearchCandidate> AppendSupplementalResults(
-        IReadOnlyList<TopBarSearchCandidate> primaryResults,
-        IEnumerable<TopBarSearchCandidate> supplementalCandidates,
-        string query)
-    {
-        if (primaryResults.Count >= MaxResults)
-        {
-            return primaryResults;
-        }
-
-        var seenPaths = new HashSet<string>(primaryResults.Select(item => item.Path), StringComparer.OrdinalIgnoreCase);
-        var novelCandidates = new List<TopBarSearchCandidate>();
-        foreach (var candidate in supplementalCandidates)
-        {
-            if (seenPaths.Add(candidate.Path))
-            {
-                novelCandidates.Add(candidate);
-            }
-        }
-
-        if (novelCandidates.Count == 0)
-        {
-            return primaryResults;
-        }
-
-        var appended = SearchCore(novelCandidates, query, allowFuzzy: primaryResults.Count == 0);
-        if (appended.Count == 0)
-        {
-            return primaryResults;
-        }
-
-        var merged = new List<TopBarSearchCandidate>(Math.Min(MaxResults, primaryResults.Count + appended.Count));
-        merged.AddRange(primaryResults);
-        var remaining = MaxResults - merged.Count;
-        for (var index = 0; index < appended.Count && index < remaining; index++)
-        {
-            merged.Add(appended[index]);
-        }
-        return merged;
-    }
 
     /// <summary>
     /// Compacts long file paths from the middle so both the root/drive and the immediate

@@ -50,6 +50,14 @@ public partial class LauncherPanelWindow
 
     private void OnBackFolderClick(object sender, RoutedEventArgs args) => NavigateBackFolder();
 
+    private void OnBreadcrumbClick(object sender, RoutedEventArgs args)
+    {
+        if ((sender as FrameworkElement)?.DataContext is BreadcrumbSegment segment && !segment.IsCurrent)
+        {
+            NavigateToBreadcrumbDepth(segment.Depth);
+        }
+    }
+
     private void OnToggleRecentPrivacyClick(object sender, RoutedEventArgs args)
     {
         _preferences.ShowRecentFiles = !_preferences.ShowRecentFiles;
@@ -130,6 +138,69 @@ public partial class LauncherPanelWindow
         Render(_unfilteredRows, preserveSelection: false);
     }
 
+    private void NavigateToBreadcrumbDepth(int targetDepth)
+    {
+        while (_folderStack.Count > targetDepth)
+        {
+            _folderStack.Pop();
+        }
+        if (_folderStack.Count > 0)
+        {
+            _ = LoadDirectoryRowsAsync(_folderStack.Peek().Path);
+            return;
+        }
+        if (_fileMode == FileBrowseMode.Place && _selectedPlaceId is { } placeId)
+        {
+            var place = (_snapshot?.Places ?? []).FirstOrDefault(p => p.Id == placeId);
+            if (place is { IsFileBox: false, Path: { Length: > 0 } dirPath })
+            {
+                _ = LoadDirectoryRowsAsync(dirPath);
+                return;
+            }
+        }
+        CancelDirectoryLoad();
+        Render(_unfilteredRows, preserveSelection: false);
+    }
+
+    private IReadOnlyList<BreadcrumbSegment> BuildFileBreadcrumbs()
+    {
+        if (_activeTab != LauncherMainTab.Files || _folderStack.Count == 0)
+        {
+            return [];
+        }
+        var rootTitle = _fileMode switch
+        {
+            FileBrowseMode.Place when _selectedPlaceId is { } id =>
+                (_snapshot?.Places ?? []).FirstOrDefault(p => p.Id == id)?.Name ?? "文件",
+            FileBrowseMode.FileType when _selectedFileType is { } kind =>
+                LauncherFileCategoryRules.DisplayName(kind),
+            FileBrowseMode.Recent => "最近使用",
+            _ => "文件总览"
+        };
+        var segments = new List<BreadcrumbSegment>(_folderStack.Count + 1)
+        {
+            new(0, rootTitle, IsCurrent: false)
+        };
+        var stackBottomUp = _folderStack.Reverse().ToArray();
+        for (var i = 0; i < stackBottomUp.Length; i++)
+        {
+            segments.Add(new BreadcrumbSegment(i + 1, stackBottomUp[i].Title, IsCurrent: i == stackBottomUp.Length - 1));
+        }
+        return segments;
+    }
+
+    private string? CurrentDirectoryDisplayName()
+    {
+        if (_activeTab != LauncherMainTab.Files) return null;
+        if (_folderStack.Count > 0) return _folderStack.Peek().Title;
+        if (_fileMode == FileBrowseMode.Place && _selectedPlaceId is { } id)
+        {
+            var place = (_snapshot?.Places ?? []).FirstOrDefault(p => p.Id == id);
+            return place is { IsFileBox: false, Path: { Length: > 0 } } ? place.Name : null;
+        }
+        return null;
+    }
+
     private void CancelDirectoryLoad()
     {
         _directoryCts?.Cancel();
@@ -156,8 +227,15 @@ public partial class LauncherPanelWindow
             _loadingDirectory = false;
             _directoryTruncated = listing.Truncated;
             _directoryError = listing.Error;
+            var canManageGroups = _saveOrganizer is not null;
             _directoryRows = listing.Entries
-                .Select(entry => new PanelRow(entry, isFavorite: false, [entry.Source], startMenuFolder: null))
+                .Select(entry =>
+                {
+                    var row = new PanelRow(entry, isFavorite: false, isDockPinned: false, [entry.Source],
+                        startMenuFolder: null, canManageGroups: canManageGroups);
+                    row.RefreshFavorite(_preferences, canManageGroups);
+                    return row;
+                })
                 .ToArray();
             Render(_unfilteredRows, preserveSelection: false);
         }
@@ -216,7 +294,7 @@ public partial class LauncherPanelWindow
     {
         if (_folderStack.Count > 0)
         {
-            return _directoryRows.ToList();
+            return SortFileRows(_directoryRows);
         }
         if (_fileMode == FileBrowseMode.Recent)
         {
@@ -228,22 +306,40 @@ public partial class LauncherPanelWindow
             if (place is null) return [];
             if (place.IsFileBox)
             {
-                return (place.BoxEntries ?? [])
-                    .Select(entry => new PanelRow(entry, isFavorite: false, [entry.Source], startMenuFolder: null))
-                    .ToList();
+                var canManageGroups = _saveOrganizer is not null;
+                var boxRows = (place.BoxEntries ?? [])
+                    .Select(entry =>
+                    {
+                        var row = new PanelRow(entry, isFavorite: false, isDockPinned: false, [entry.Source],
+                            startMenuFolder: null, canManageGroups: canManageGroups);
+                        row.RefreshFavorite(_preferences, canManageGroups);
+                        return row;
+                    });
+                return SortFileRows(boxRows);
             }
-            return _directoryRows.ToList();
+            return SortFileRows(_directoryRows);
         }
 
         var files = available.Where(row => row.Entry.Candidate.Kind != TopBarSearchItemKind.App
             && (_preferences.ShowRecentFiles || !IsRecentOnly(row))).ToList();
         if (_fileMode == FileBrowseMode.FileType && _selectedFileType is { } kind)
         {
-            return files.Where(row => row.FileCategory == kind)
-                .OrderBy(row => row.Name, StringComparer.CurrentCultureIgnoreCase).ToList();
+            return SortFileRows(files.Where(row => row.FileCategory == kind));
         }
         return files;
     }
+
+    private List<PanelRow> SortFileRows(IEnumerable<PanelRow> source) =>
+        _preferences.FilesSortByModified
+            ? source
+                .OrderByDescending(row => row.Entry.Candidate.Kind == TopBarSearchItemKind.Folder)
+                .ThenByDescending(row => row.Entry.LastAccessedLocal ?? DateTimeOffset.MinValue)
+                .ThenBy(row => row.Name, StringComparer.CurrentCultureIgnoreCase)
+                .ToList()
+            : source
+                .OrderByDescending(row => row.Entry.Candidate.Kind == TopBarSearchItemKind.Folder)
+                .ThenBy(row => row.Name, StringComparer.CurrentCultureIgnoreCase)
+                .ToList();
 
     private IReadOnlyList<object> BuildFilesDisplayItems()
     {
@@ -285,10 +381,19 @@ public partial class LauncherPanelWindow
         return remaining;
     }
 
-    private List<PanelRow> BuildRecentRows() =>
-        (_snapshot?.RecentEntries ?? [])
-            .Select(entry => new PanelRow(entry, isFavorite: false, [entry.Source], startMenuFolder: null))
+    private List<PanelRow> BuildRecentRows()
+    {
+        var canManageGroups = _saveOrganizer is not null;
+        return (_snapshot?.RecentEntries ?? [])
+            .Select(entry =>
+            {
+                var row = new PanelRow(entry, isFavorite: false, isDockPinned: false, [entry.Source],
+                    startMenuFolder: null, canManageGroups: canManageGroups);
+                row.RefreshFavorite(_preferences, canManageGroups);
+                return row;
+            })
             .ToList();
+    }
 
     private static bool IsRecentOnly(PanelRow row) =>
         row.Sources.Count == 1 && string.Equals(row.Sources[0], "最近使用", StringComparison.OrdinalIgnoreCase);
@@ -298,15 +403,18 @@ public partial class LauncherPanelWindow
         if (_folderStack.Count > 0)
         {
             var breadcrumb = string.Join(" › ", _folderStack.Reverse().Select(x => x.Title));
-            return (breadcrumb, _loadingDirectory ? "正在读取…" : $"{_rows.Count} 项 · 面板内只读浏览");
+            var subtitle = _loadingDirectory
+                ? "正在读取…"
+                : (_directoryTruncated ? "面板内只读浏览" : $"{_rows.Count} 项 · 面板内只读浏览");
+            return (breadcrumb, subtitle);
         }
         if (_fileMode == FileBrowseMode.Recent)
         {
-            return ("最近使用", _preferences.ShowRecentFiles ? $"{_rows.Count} 项 · 来自 Windows 最近记录" : "已隐藏");
+            return ("最近使用", _preferences.ShowRecentFiles ? "来自 Windows 最近记录" : "已隐藏");
         }
         if (_fileMode == FileBrowseMode.FileType && _selectedFileType is { } kind)
         {
-            return (LauncherFileCategoryRules.DisplayName(kind), $"{_rows.Count} 项");
+            return (LauncherFileCategoryRules.DisplayName(kind), string.Empty);
         }
         if (_fileMode == FileBrowseMode.Place && _selectedPlaceId is { } id)
         {
@@ -314,8 +422,10 @@ public partial class LauncherPanelWindow
             if (place is not null)
             {
                 var subtitle = place.IsFileBox
-                    ? $"桌面分组盒 · {_rows.Count} 项"
-                    : (_loadingDirectory ? "正在读取…" : $"{place.Path} · {_rows.Count} 项");
+                    ? "桌面分组盒"
+                    : (_loadingDirectory
+                        ? "正在读取…"
+                        : (_directoryTruncated ? (place.Path ?? string.Empty) : $"{place.Path} · {_rows.Count} 项"));
                 return (place.Name, subtitle);
             }
         }

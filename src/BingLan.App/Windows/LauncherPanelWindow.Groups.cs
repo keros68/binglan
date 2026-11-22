@@ -1,5 +1,9 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
+using System.Windows.Input;
+using System.Windows.Threading;
+using BingLan.App.Interop;
 using BingLan.Core.Models;
 using BingLan.Core.Services;
 using BingLan.Core.TopBar;
@@ -12,6 +16,8 @@ public partial class LauncherPanelWindow
     private string? _searchSource;
     private bool _changingSourceFilter;
     private LauncherPanelEntry? _pendingGroupMember;
+    private Guid? _editingGroupId;
+    private Guid? _deletingGroupId;
     private readonly Dictionary<string, LauncherPanelEntry> _groupEntries = new(StringComparer.Ordinal);
 
     private void ResetSearchScope()
@@ -60,6 +66,10 @@ public partial class LauncherPanelWindow
         SourceFilter.Visibility = showSourceFilter ? Visibility.Visible : Visibility.Collapsed;
 
         var typed = available.Where(row => MatchesFilter(row.Entry, _filter)).ToList();
+        if (!_queryWasEmpty && _filter == PanelFilter.Groups)
+        {
+            typed = typed.Where(row => row.Keys.Any(savedKeys.Contains)).ToList();
+        }
         if (showSourceFilter)
         {
             var source = UpdateSourceChoices(typed);
@@ -72,8 +82,30 @@ public partial class LauncherPanelWindow
         }
 
         var activeGroup = groups.FirstOrDefault(group => group.Id.ToString("N") == _category);
+        var activeDirName = !_queryWasEmpty && _directoryRows.Count > 0 && _filter is PanelFilter.All or PanelFilter.Files
+            ? CurrentDirectoryDisplayName()
+            : null;
+        if (activeDirName is not null)
+        {
+            SearchScope.Visibility = Visibility.Visible;
+            SearchCurrentCategory.Content = $"仅搜「{activeDirName}」";
+            if (SearchCurrentCategory.IsChecked == true)
+            {
+                var dirQuery = SearchBox.Text.Trim();
+                var byCandidate = _directoryRows.ToLookup(row => row.Entry.Candidate);
+                _rows = TopBarSearchRules.Search(byCandidate.Select(group => group.Key), dirQuery, int.MaxValue)
+                    .SelectMany(candidate => byCandidate[candidate])
+                    .ToList();
+                return activeDirName;
+            }
+            _rows = typed;
+            return null;
+        }
+
         var selectedName = activeGroup?.Name ?? (_purpose is { } category ? LauncherAppCategoryRules.DisplayName(category) : null);
-        SearchScope.Visibility = !_queryWasEmpty && selectedName is not null ? Visibility.Visible : Visibility.Collapsed;
+        var showScope = !_queryWasEmpty && (activeGroup is not null
+            || (_purpose is not null && _filter is PanelFilter.All or PanelFilter.Apps));
+        SearchScope.Visibility = showScope ? Visibility.Visible : Visibility.Collapsed;
         SearchCurrentCategory.Content = selectedName is null ? "仅搜当前分组" : $"仅搜「{selectedName}」";
         if (selectedName is null)
         {
@@ -89,7 +121,7 @@ public partial class LauncherPanelWindow
         bool InCategory(PanelRow row) => memberKeys is not null
             ? row.Keys.Any(memberKeys.Contains)
             : (row.Entry.Candidate.Kind == TopBarSearchItemKind.App && PurposeOf(row) == _purpose);
-        var restrict = _queryWasEmpty || SearchCurrentCategory.IsChecked == true;
+        var restrict = _queryWasEmpty || (showScope && SearchCurrentCategory.IsChecked == true);
         _rows = restrict ? typed.Where(InCategory).ToList() : typed.OrderByDescending(InCategory).ToList();
         return restrict ? selectedName : null;
     }
@@ -135,27 +167,114 @@ public partial class LauncherPanelWindow
 
     private void OnNewGroupClick(object sender, RoutedEventArgs args) => BeginGroupEditing(null);
     private void OnCancelGroupClick(object sender, RoutedEventArgs args) => EndGroupEditing();
-    private void OnSaveGroupClick(object sender, RoutedEventArgs args) => SaveNewGroup();
+    private void OnSaveGroupClick(object sender, RoutedEventArgs args) => SaveGroupEdit();
+    private void OnCancelDeleteGroupClick(object sender, RoutedEventArgs args) => CancelGroupDelete();
+    private void OnConfirmDeleteGroupClick(object sender, RoutedEventArgs args) => ConfirmGroupDelete();
 
-    private void BeginGroupEditing(LauncherPanelEntry? entry)
+    private void OnRenameGroupClick(object sender, RoutedEventArgs args)
     {
-        if (_closed || _dismissing) return;
-        _pendingGroupMember = entry;
-        GroupNameEditor.Clear();
+        if (_readGroups().FirstOrDefault(group => group.Id.ToString("N") == _category) is { } current)
+        {
+            BeginGroupEditing(null, current);
+        }
+    }
+
+    private void OnDeleteGroupClick(object sender, RoutedEventArgs args)
+    {
+        if (_readGroups().FirstOrDefault(group => group.Id.ToString("N") == _category) is { } current)
+        {
+            BeginGroupDelete(current);
+        }
+    }
+
+    private void OnGroupNavRightClick(object sender, MouseButtonEventArgs args)
+    {
+        if (_closed || _dismissing || _saveOrganizer is null) return;
+        if ((sender as FrameworkElement)?.DataContext is not CategoryChip { Key: { Length: > 0 } key }) return;
+        var group = _readGroups().FirstOrDefault(candidate => candidate.Id.ToString("N") == key);
+        if (group is null) return;
+
+        _menu?.SetCurrentValue(ContextMenu.IsOpenProperty, false);
+        var menu = new ContextMenu();
+        var rename = new MenuItem { Header = "重命名分组" };
+        rename.Click += (_, _) => Dispatcher.BeginInvoke(() => BeginGroupEditing(null, group));
+        var delete = new MenuItem { Header = "删除分组" };
+        delete.Click += (_, _) => Dispatcher.BeginInvoke(() => BeginGroupDelete(group));
+        menu.Items.Add(rename);
+        menu.Items.Add(delete);
+        menu.PreviewKeyDown += (_, keyArgs) =>
+        {
+            if (keyArgs.Key != Key.Escape) return;
+            menu.IsOpen = false;
+            keyArgs.Handled = true;
+        };
+        menu.Closed += (_, _) =>
+        {
+            if (ReferenceEquals(_menu, menu)) _menu = null;
+            Dispatcher.BeginInvoke(() =>
+            {
+                if (_closed || _dismissing) return;
+                if (IsActive || DockNativeMethods.GetForegroundWindow() == _handle)
+                {
+                    if (GroupEditor.Visibility == Visibility.Visible) GroupNameEditor.Focus();
+                    else if (GroupDeleteConfirm.Visibility == Visibility.Visible) ConfirmDeleteGroupButton.Focus();
+                    else SearchBox.Focus();
+                }
+                else CloseOnDeactivation();
+            }, DispatcherPriority.ContextIdle);
+        };
+        menu.PlacementTarget = sender as UIElement ?? CategoriesList;
+        menu.Placement = PlacementMode.Bottom;
+        _menu = menu;
+        menu.IsOpen = true;
+        args.Handled = true;
+    }
+
+    private void BeginGroupEditing(LauncherPanelEntry? entry, LauncherGroupState? existingGroup = null)
+    {
+        if (_closed || _dismissing || _saveOrganizer is null) return;
+        CancelGroupDelete(focusSearch: false);
+        _pendingGroupMember = existingGroup is null ? entry : null;
+        _editingGroupId = existingGroup?.Id;
+        SaveGroupButton.Content = existingGroup is null ? "创建" : "保存";
+        if (existingGroup is null)
+        {
+            GroupNameEditor.Clear();
+        }
+        else
+        {
+            GroupNameEditor.Text = existingGroup.Name;
+            GroupNameEditor.SelectAll();
+        }
         GroupEditor.Visibility = Visibility.Visible;
         GroupNameEditor.Focus();
     }
 
-    private void EndGroupEditing()
+    private void EndGroupEditing(bool focusSearch = true)
     {
         _pendingGroupMember = null;
+        _editingGroupId = null;
         GroupEditor.Visibility = Visibility.Collapsed;
-        SearchBox.Focus();
+        if (focusSearch) SearchBox.Focus();
     }
 
-    private void SaveNewGroup()
+    private void SaveGroupEdit()
     {
         if (_saveOrganizer is null) return;
+        if (_editingGroupId is { } groupId)
+        {
+            if (!LauncherGroupRules.TryRename(_readGroups(), groupId, GroupNameEditor.Text, out var renamed) || renamed is null)
+            {
+                StatusText.Text = "请输入 1–32 个字符。分组名称不能重复或使用「全部」「常用」「未分组」";
+                GroupNameEditor.Focus();
+                return;
+            }
+            EndGroupEditing();
+            _saveOrganizer();
+            Render(_unfilteredRows, preserveSelection: true);
+            StatusText.Text = $"已重命名为「{renamed.Name}」";
+            return;
+        }
         if (!LauncherGroupRules.TryCreate(_readGroups(), GroupNameEditor.Text, out var group) || group is null)
         {
             StatusText.Text = "请输入 1–32 个字符。分组名称不能重复或使用「全部」「常用」「未分组」";
@@ -174,6 +293,58 @@ public partial class LauncherPanelWindow
         }
         else Render(_unfilteredRows, preserveSelection: true);
         StatusText.Text = $"已创建「{group.Name}」";
+    }
+
+    private void BeginGroupDelete(LauncherGroupState group)
+    {
+        if (_closed || _dismissing || _saveOrganizer is null) return;
+        EndGroupEditing(focusSearch: false);
+        _deletingGroupId = group.Id;
+        GroupDeletePrompt.Text = $"删除分组「{group.Name}」？（仅移除分组，不影响原文件和应用）";
+        GroupDeleteConfirm.Visibility = Visibility.Visible;
+        ConfirmDeleteGroupButton.Focus();
+    }
+
+    private void CancelGroupDelete(bool focusSearch = true)
+    {
+        _deletingGroupId = null;
+        GroupDeleteConfirm.Visibility = Visibility.Collapsed;
+        if (focusSearch) SearchBox.Focus();
+    }
+
+    private void ConfirmGroupDelete()
+    {
+        if (_saveOrganizer is null || _deletingGroupId is not { } groupId)
+        {
+            CancelGroupDelete();
+            return;
+        }
+        var groups = _readGroups();
+        if (!LauncherGroupRules.TryDelete(groups, groupId, out var removed) || removed is null)
+        {
+            CancelGroupDelete();
+            return;
+        }
+        var remainingKeys = groups.SelectMany(group => group.Members).Select(member => member.Key)
+            .ToHashSet(StringComparer.Ordinal);
+        foreach (var member in removed.Members)
+        {
+            if (!remainingKeys.Contains(member.Key))
+            {
+                _groupEntries.Remove(member.Key);
+            }
+        }
+        _deletingGroupId = null;
+        GroupDeleteConfirm.Visibility = Visibility.Collapsed;
+        if (_category == removed.Id.ToString("N"))
+        {
+            _category = null;
+            EnsureGroupSelected();
+        }
+        _saveOrganizer();
+        Render(_unfilteredRows, preserveSelection: false);
+        StatusText.Text = $"已删除分组「{removed.Name}」";
+        SearchBox.Focus();
     }
 
     private void AddOrganizerMenu(ContextMenu menu, PanelRow row)

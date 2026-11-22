@@ -49,15 +49,14 @@ public sealed partial class WidgetCoordinator
             : null;
         monitor ??= monitors.FirstOrDefault();
         var foreground = DockNativeMethods.GetForegroundWindow();
-        var (searchHolder, searchBorrowed) = TopBarWindow.SearchForeground;
-        if (foreground == searchHolder && searchBorrowed != 0)
-        {
-            foreground = searchBorrowed;
-        }
         if (monitor is null || FullScreenWatcher.IsFullScreen(foreground, monitor.MonitorHandle, excludeMaximized: true))
         {
             return;
         }
+
+        var minimizedWindows = _state.LauncherPreferences.BackdropMode == LauncherBackdropMode.ShowDesktop
+            ? LauncherDesktopBackdropService.MinimizeOtherWindows()
+            : Array.Empty<nint>();
 
         var panel = new LauncherPanelWindow(
             ReadLauncherSnapshotAsync, OpenLauncherTarget, ReadLauncherFileBoxes,
@@ -73,6 +72,10 @@ public sealed partial class WidgetCoordinator
             }
             _launcherPanel = null;
             _launcherLostFocusAt = panel.DismissedOnDeactivation ? Environment.TickCount64 : null;
+            if (minimizedWindows.Count > 0 && !panel.LaunchedTarget)
+            {
+                LauncherDesktopBackdropService.RestoreWindows(minimizedWindows, foreground);
+            }
         };
         panel.Show();
     }
@@ -90,6 +93,7 @@ public sealed partial class WidgetCoordinator
             _launcherMenuItem.Visible = enabled;
         }
         _dock.Apply();
+        _topBar.Apply();
         ScheduleSave();
         if (enabled) QueueLauncherCatalogWarmup();
     }
@@ -166,11 +170,11 @@ public sealed partial class WidgetCoordinator
 
     private nint ResolveLauncherForeground(nint current)
     {
-        if (_launcherPanel is { } panel
-            && new WindowInteropHelper(panel).Handle == current
-            && DockNativeMethods.IsWindow(panel.PreviousForeground))
+        if (_launcherPanel is { } panel)
         {
-            return panel.PreviousForeground;
+            var panelHandle = new WindowInteropHelper(panel).Handle;
+            var borrowed = DockNativeMethods.IsWindow(panel.PreviousForeground) ? panel.PreviousForeground : 0;
+            return DockForegroundRules.EffectiveForeground(current, panelHandle, borrowed);
         }
         return current;
     }
@@ -263,7 +267,7 @@ public sealed partial class WidgetCoordinator
         var savedEntries = _state.LauncherGroups.SelectMany(group => group.Members)
             .Where(member => member.FallbackPath is not null || member.FallbackPin is not null)
             .DistinctBy(member => member.Key).ToArray();
-        var useEverything = _state.TopBar.UseEverything;
+        var useEverything = _state.LauncherPreferences.UseEverything;
         var showRecentFiles = _state.LauncherPreferences.ShowRecentFiles;
         var apps = await ReadLauncherAppsAsync();
         return await Task.Run(() =>

@@ -59,6 +59,14 @@ public sealed class SettingsMaintenance
     public Action<bool> SetLauncherEnabled { get; init; } = _ => { };
     public Func<bool> IsLauncherShowRecentFiles { get; init; } = () => true;
     public Action<bool> SetLauncherShowRecentFiles { get; init; } = _ => { };
+    public Func<bool> IsLauncherUseEverything { get; init; } = () => false;
+    public Action<bool> SetLauncherUseEverything { get; init; } = _ => { };
+    public Func<BingLan.Core.Models.LauncherFavoriteMode> GetLauncherFavoriteMode { get; init; } =
+        () => BingLan.Core.Models.LauncherFavoriteMode.FollowDock;
+    public Action<BingLan.Core.Models.LauncherFavoriteMode> SetLauncherFavoriteMode { get; init; } = _ => { };
+    public Func<BingLan.Core.Models.LauncherBackdropMode> GetLauncherBackdropMode { get; init; } =
+        () => BingLan.Core.Models.LauncherBackdropMode.LiveWindow;
+    public Action<BingLan.Core.Models.LauncherBackdropMode> SetLauncherBackdropMode { get; init; } = _ => { };
     /// <summary>Creates a card of the given kind and returns its window, or null.</summary>
     public Func<NewWidgetKind, WidgetWindowBase?> AddWidget { get; init; } = _ => null;
     public Action ExitApp { get; init; } = () => { };

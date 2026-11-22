@@ -87,17 +87,18 @@
                 <Setter Property="Background" Value="#E8FFFFFF"/>
             </Style>
 
-            <!-- 屏幕示意图上的可点区域：悬停或键盘焦点时显示白色描边。 -->
+            <!-- 屏幕示意图上的可点区域：选中、悬停或键盘焦点时显示白色描边。 -->
             <Style x:Key="ScreenMapButtonStyle" TargetType="Button">
                 <Setter Property="Foreground" Value="{DynamicResource SettingsMapTextBrush}"/>
-                <Setter Property="FontSize" Value="12.5"/>
+                <Setter Property="BorderBrush" Value="Transparent"/>
+                <Setter Property="FontSize" Value="12"/>
                 <Setter Property="Cursor" Value="Hand"/>
                 <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
                 <Setter Property="Template">
                     <Setter.Value>
                         <ControlTemplate TargetType="Button">
-                            <Border x:Name="MapSurface" Padding="12,7" Background="{TemplateBinding Background}"
-                                    BorderBrush="Transparent" BorderThickness="2"
+                            <Border x:Name="MapSurface" Padding="10,4" Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="2"
                                     CornerRadius="{Binding Tag, RelativeSource={RelativeSource TemplatedParent}}">
                                 <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                             </Border>
@@ -254,12 +255,20 @@
                             <TextBlock VerticalAlignment="Center" Text="桌面组件"/>
                         </StackPanel>
                     </ListBoxItem>
-                    <ListBoxItem Tag="Bars" AutomationProperties.Name="顶栏底栏">
+                    <ListBoxItem Tag="Launcher" AutomationProperties.Name="冰蓝总览卡">
+                        <StackPanel Orientation="Horizontal">
+                            <Border Style="{StaticResource NavigationTileStyle}">
+                                <TextBlock Style="{StaticResource NavigationGlyphStyle}" Text="&#xE80A;"/>
+                            </Border>
+                            <TextBlock VerticalAlignment="Center" Text="冰蓝总览卡"/>
+                        </StackPanel>
+                    </ListBoxItem>
+                    <ListBoxItem Tag="Bars" AutomationProperties.Name="顶栏与底栏">
                         <StackPanel Orientation="Horizontal">
                             <Border Style="{StaticResource NavigationTileStyle}">
                                 <TextBlock Style="{StaticResource NavigationGlyphStyle}" Text="&#xE7C4;"/>
                             </Border>
-                            <TextBlock VerticalAlignment="Center" Text="顶栏底栏"/>
+                            <TextBlock VerticalAlignment="Center" Text="顶栏与底栏"/>
                         </StackPanel>
                     </ListBoxItem>
                     <ListBoxItem Tag="General" AutomationProperties.Name="通用设置">
@@ -471,7 +480,7 @@
                 <StackPanel Style="{StaticResource PageStackStyle}">
                     <TextBlock Style="{StaticResource PageTitleStyle}" Text="外观样式"/>
                     <TextBlock Style="{StaticResource PageSubtitleStyle}"
-                               Text="所有卡片、Dock 和顶端信息条默认跟随这里的设置；也可以在“桌面组件”里为单张卡片设置独立外观。"/>
+                               Text="所有桌面卡片、冰蓝总览卡、Dock 和顶端信息条默认跟随这里的共享外观；也可以在各自页面里单独调整颜色和浓度。"/>
 
                     <TextBlock Style="{StaticResource SectionHeaderStyle}" Text="材质与颜色"/>
                     <local:SettingsGroup>
@@ -671,182 +680,6 @@
 
                     <TextBlock Style="{StaticResource SectionHeaderStyle}" Text="未跟随全局的部分"/>
                     <local:SettingsGroup x:Name="AppearanceOverridesGroup" local:SettingsSearch.Exclude="True"/>
-
-                    <Expander x:Name="AppearanceBarsLookFold"
-                              Margin="0,24,0,4"
-                              Style="{StaticResource SettingsFoldStyle}"
-                              AutomationProperties.Name="Dock、冰蓝总览卡与顶端信息条外观">
-                        <Expander.Header>
-                            <StackPanel>
-                                <TextBlock Style="{StaticResource FoldTitleStyle}" Text="Dock、冰蓝总览卡与顶端信息条外观"/>
-                                <TextBlock Style="{StaticResource CaptionStyle}" Text="默认跟随上面的全局外观，也可以单独设置颜色和浓度"/>
-                            </StackPanel>
-                        </Expander.Header>
-                        <StackPanel>
-                            <local:SettingsRow x:Name="DockLookSettingsRow" Header="Dock 外观">
-                                <Border Style="{StaticResource SegmentHostStyle}">
-                                    <StackPanel Orientation="Horizontal">
-                                        <RadioButton x:Name="DockFollowLookRadio"
-                                                     GroupName="DockLook"
-                                                     Style="{StaticResource SegmentRadioStyle}"
-                                                     Content="跟随卡片外观"
-                                                     Checked="DockLook_Changed"/>
-                                        <RadioButton x:Name="DockCustomLookRadio"
-                                                     GroupName="DockLook"
-                                                     Style="{StaticResource SegmentRadioStyle}"
-                                                     Content="自定义"
-                                                     Checked="DockLook_Changed"/>
-                                    </StackPanel>
-                                </Border>
-                            </local:SettingsRow>
-                            <StackPanel x:Name="DockCustomLookPanel">
-                                <local:SettingsRow Style="{StaticResource NestedSettingsRowStyle}" Header="Dock 配色">
-                                    <WrapPanel x:Name="DockPaletteSwatches"/>
-                                </local:SettingsRow>
-                                <local:SettingsRow Style="{StaticResource NestedSettingsRowStyle}" Header="Dock 颜色">
-                                    <StackPanel Orientation="Horizontal">
-                                        <Border x:Name="DockColorPreview"
-                                                VerticalAlignment="Center"
-                                                Width="30"
-                                                Height="30"
-                                                CornerRadius="6"
-                                                BorderThickness="1"
-                                                BorderBrush="{DynamicResource SettingsControlBorderBrush}"/>
-                                        <TextBox x:Name="DockColorEditor"
-                                                 Width="110"
-                                                 Margin="8,0,0,0"
-                                                 AutomationProperties.Name="Dock 颜色"
-                                                 LostFocus="DockColorEditor_Commit"
-                                                 KeyDown="DockColorEditor_KeyDown"/>
-                                        <Button Margin="8,0,0,0" Content="选择颜色…" AutomationProperties.Name="选择 Dock 颜色" Click="DockChooseColor_Click"/>
-                                    </StackPanel>
-                                </local:SettingsRow>
-                                <local:SettingsRow Style="{StaticResource NestedSettingsRowStyle}" Header="Dock 玻璃浓度">
-                                    <StackPanel Orientation="Horizontal">
-                                        <Slider x:Name="DockOpacitySlider"
-                                                Width="200"
-                                                Minimum="0.05"
-                                                Maximum="0.96"
-                                                SmallChange="0.02"
-                                                LargeChange="0.1"
-                                                AutomationProperties.Name="Dock 玻璃浓度"
-                                                ValueChanged="DockOpacity_Changed"/>
-                                        <TextBlock x:Name="DockOpacityText" Style="{StaticResource ValueTextStyle}"/>
-                                    </StackPanel>
-                                </local:SettingsRow>
-                            </StackPanel>
-                            <local:SettingsRow x:Name="LauncherLookSettingsRow" Header="冰蓝总览卡外观"
-                                               local:SettingsSearch.Keywords="冰蓝总览卡 透明玻璃 颜色 圆角">
-                                <Border Style="{StaticResource SegmentHostStyle}">
-                                    <StackPanel Orientation="Horizontal">
-                                        <RadioButton x:Name="LauncherFollowLookRadio"
-                                                     GroupName="LauncherLook"
-                                                     Style="{StaticResource SegmentRadioStyle}"
-                                                     Content="跟随卡片外观"
-                                                     Checked="LauncherLook_Changed"/>
-                                        <RadioButton x:Name="LauncherCustomLookRadio"
-                                                     GroupName="LauncherLook"
-                                                     Style="{StaticResource SegmentRadioStyle}"
-                                                     Content="自定义"
-                                                     Checked="LauncherLook_Changed"/>
-                                    </StackPanel>
-                                </Border>
-                            </local:SettingsRow>
-                            <StackPanel x:Name="LauncherCustomLookPanel">
-                                <local:SettingsRow Style="{StaticResource NestedSettingsRowStyle}" Header="冰蓝总览卡配色">
-                                    <WrapPanel x:Name="LauncherPaletteSwatches"/>
-                                </local:SettingsRow>
-                                <local:SettingsRow Style="{StaticResource NestedSettingsRowStyle}" Header="冰蓝总览卡底色">
-                                    <StackPanel Orientation="Horizontal">
-                                        <Border x:Name="LauncherColorPreview" Width="30" Height="30" CornerRadius="6"
-                                                VerticalAlignment="Center" BorderThickness="1"
-                                                BorderBrush="{DynamicResource SettingsControlBorderBrush}"/>
-                                        <TextBox x:Name="LauncherColorEditor" Width="110" Margin="8,0,0,0"
-                                                 AutomationProperties.Name="冰蓝总览卡底色"
-                                                 LostFocus="LauncherColorEditor_Commit"
-                                                 KeyDown="LauncherColorEditor_KeyDown"/>
-                                        <Button Margin="8,0,0,0" Content="选择颜色…" AutomationProperties.Name="选择冰蓝总览卡底色"
-                                                Click="LauncherChooseColor_Click"/>
-                                    </StackPanel>
-                                </local:SettingsRow>
-                                <local:SettingsRow Style="{StaticResource NestedSettingsRowStyle}" Header="冰蓝总览卡玻璃浓度">
-                                    <StackPanel Orientation="Horizontal">
-                                        <Slider x:Name="LauncherOpacitySlider" Width="200" Minimum="0.12" Maximum="1"
-                                                SmallChange="0.02" LargeChange="0.1" AutomationProperties.Name="冰蓝总览卡玻璃浓度"
-                                                ValueChanged="LauncherOpacity_Changed"/>
-                                        <TextBlock x:Name="LauncherOpacityText" Style="{StaticResource ValueTextStyle}"/>
-                                    </StackPanel>
-                                </local:SettingsRow>
-                                <local:SettingsRow Style="{StaticResource NestedSettingsRowStyle}" Header="冰蓝总览卡圆角">
-                                    <StackPanel Orientation="Horizontal">
-                                        <Slider x:Name="LauncherCornerRadiusSlider" Width="200" Minimum="0" Maximum="32"
-                                                IsSnapToTickEnabled="True" TickFrequency="1" SmallChange="1" LargeChange="4"
-                                                AutomationProperties.Name="冰蓝总览卡圆角" ValueChanged="LauncherCornerRadius_Changed"/>
-                                        <TextBlock x:Name="LauncherCornerRadiusText" Style="{StaticResource ValueTextStyle}"/>
-                                    </StackPanel>
-                                </local:SettingsRow>
-                            </StackPanel>
-                            <StackPanel x:Name="TopBarLookPanel">
-                                <local:SettingsRow Header="顶端信息条磨砂玻璃"
-                                                   Description="深色表面下对壁纸做真实模糊（接近 macOS 菜单栏质感）；关闭后用半透明纯色。浅色材质不受影响">
-                                    <CheckBox x:Name="TopBarFrostedCheckBox"
-                                              AutomationProperties.Name="磨砂玻璃"
-                                              Style="{StaticResource ToggleSwitchStyle}"
-                                              Checked="TopBarSetting_Changed"
-                                              Unchecked="TopBarSetting_Changed"/>
-                                </local:SettingsRow>
-                                <local:SettingsRow x:Name="TopBarLookSettingsRow" Header="顶端信息条外观">
-                                    <Border Style="{StaticResource SegmentHostStyle}">
-                                        <StackPanel Orientation="Horizontal">
-                                            <RadioButton x:Name="TopBarFollowLookRadio"
-                                                         GroupName="TopBarLook"
-                                                         Style="{StaticResource SegmentRadioStyle}"
-                                                         Content="跟随卡片外观"
-                                                         Checked="TopBarLook_Changed"/>
-                                            <RadioButton x:Name="TopBarCustomLookRadio"
-                                                         GroupName="TopBarLook"
-                                                         Style="{StaticResource SegmentRadioStyle}"
-                                                         Content="自定义"
-                                                         Checked="TopBarLook_Changed"/>
-                                        </StackPanel>
-                                    </Border>
-                                </local:SettingsRow>
-                                <StackPanel x:Name="TopBarCustomLookPanel">
-                                    <local:SettingsRow Style="{StaticResource NestedSettingsRowStyle}" Header="顶端信息条颜色">
-                                        <StackPanel Orientation="Horizontal">
-                                            <Border x:Name="TopBarColorPreview"
-                                                    VerticalAlignment="Center"
-                                                    Width="30"
-                                                    Height="30"
-                                                    CornerRadius="6"
-                                                    BorderThickness="1"
-                                                    BorderBrush="{DynamicResource SettingsControlBorderBrush}"/>
-                                            <TextBox x:Name="TopBarColorEditor"
-                                                     Width="110"
-                                                     Margin="8,0,0,0"
-                                                     AutomationProperties.Name="顶端信息条颜色"
-                                                     LostFocus="TopBarColorEditor_Commit"
-                                                     KeyDown="TopBarColorEditor_KeyDown"/>
-                                            <Button Margin="8,0,0,0" Content="选择颜色…" AutomationProperties.Name="选择顶端信息条颜色" Click="TopBarChooseColor_Click"/>
-                                        </StackPanel>
-                                    </local:SettingsRow>
-                                    <local:SettingsRow Style="{StaticResource NestedSettingsRowStyle}" Header="顶端信息条不透明度">
-                                        <StackPanel Orientation="Horizontal">
-                                            <Slider x:Name="TopBarOpacitySlider"
-                                                    Width="200"
-                                                    Minimum="0"
-                                                    Maximum="1"
-                                                    SmallChange="0.02"
-                                                    LargeChange="0.1"
-                                                    AutomationProperties.Name="顶端信息条不透明度"
-                                                    ValueChanged="TopBarOpacity_Changed"/>
-                                            <TextBlock x:Name="TopBarOpacityText" Style="{StaticResource ValueTextStyle}"/>
-                                        </StackPanel>
-                                    </local:SettingsRow>
-                                </StackPanel>
-                            </StackPanel>
-                        </StackPanel>
-                    </Expander>
 
                     <Expander x:Name="AppearanceLayoutFold"
                               Margin="0,12,0,4"
@@ -1760,18 +1593,173 @@
                 </Grid>
             </Grid>
 
-            <!-- 顶栏底栏 -->
+            <!-- 冰蓝总览卡 -->
+            <ScrollViewer x:Name="LauncherPage" Style="{StaticResource PageScrollStyle}" Visibility="Collapsed">
+                <StackPanel Style="{StaticResource PageStackStyle}">
+                    <TextBlock Style="{StaticResource PageTitleStyle}" Text="冰蓝总览卡"/>
+                    <TextBlock Style="{StaticResource PageSubtitleStyle}"
+                               Text="集中启动应用、浏览文件和我的分组。可从 Dock 入口、顶端信息条搜索、托盘菜单或全局热键随时呼出。"/>
+
+                    <TextBlock Style="{StaticResource SectionHeaderStyle}" Text="基本与呼出"/>
+                    <local:SettingsGroup>
+                        <local:SettingsRow x:Name="LauncherEnabledRow" Header="启用冰蓝总览卡"
+                                           Description="关闭后从冰蓝托盘、Dock 和顶端信息条隐藏总览卡入口，并注销全局热键"
+                                           local:SettingsSearch.Keywords="冰蓝总览卡 启用冰蓝总览卡 关闭冰蓝总览卡 启动面板 应用启动">
+                            <CheckBox x:Name="LauncherEnabledCheckBox"
+                                      AutomationProperties.Name="启用冰蓝总览卡"
+                                      Style="{StaticResource ToggleSwitchStyle}"
+                                      Checked="LauncherEnabled_Changed"
+                                      Unchecked="LauncherEnabled_Changed"/>
+                        </local:SettingsRow>
+                        <local:SettingsRow x:Name="LauncherSearchHotkeyRow" Header="搜索热键"
+                                           Description="打开或收起冰蓝总览卡搜索的全局组合键，需至少一个修饰键（Ctrl/Alt/Shift/Win）；关闭搜索模块或冰蓝总览卡后热键同时注销"
+                                           local:SettingsSearch.Keywords="快捷键 组合键 全局热键 唤出">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock x:Name="TopBarSearchHotkeyHint"
+                                           MaxWidth="180"
+                                           VerticalAlignment="Center"
+                                           Margin="0,0,10,0"
+                                           Foreground="{DynamicResource IceMutedInkBrush}"
+                                           FontSize="11"
+                                           TextWrapping="Wrap"/>
+                                <Button x:Name="TopBarSearchHotkeyButton"
+                                        MinWidth="150"
+                                        Padding="14,5"
+                                        FontFamily="Consolas, Cascadia Mono, Segoe UI"
+                                        AutomationProperties.Name="搜索热键录制"
+                                        Click="TopBarSearchHotkey_Click"
+                                        PreviewKeyDown="TopBarSearchHotkey_PreviewKeyDown"
+                                        LostKeyboardFocus="TopBarSearchHotkey_LostKeyboardFocus"/>
+                            </StackPanel>
+                        </local:SettingsRow>
+                        <local:SettingsRow x:Name="LauncherBackdropModeRow" Header="总览卡背景方式"
+                                           Description="实时透视直接叠加当前窗口；静态壁纸底衬在总览卡内裁切展示当前系统壁纸（不收起窗口）；弹出时切到桌面会自动收起其他窗口以呈现动态壁纸（按 Esc 还原）"
+                                           local:SettingsSearch.Keywords="冰蓝总览卡 背景 壁纸 动态壁纸 切到桌面 收起窗口">
+                            <ComboBox x:Name="LauncherBackdropModeComboBox"
+                                      Width="240"
+                                      AutomationProperties.Name="冰蓝总览卡背景方式"
+                                      SelectionChanged="LauncherBackdropMode_Changed">
+                                <ComboBoxItem Content="实时透视（默认）"/>
+                                <ComboBoxItem Content="静态壁纸底衬（不收起窗口）"/>
+                                <ComboBoxItem Content="弹出时切到桌面（适合动态壁纸）"/>
+                            </ComboBox>
+                        </local:SettingsRow>
+                    </local:SettingsGroup>
+
+                    <TextBlock Style="{StaticResource SectionHeaderStyle}" Text="内容与搜索"/>
+                    <local:SettingsGroup>
+                        <local:SettingsRow x:Name="LauncherFavoriteModeRow" Header="总览卡常用星标来源"
+                                           Description="选择总览卡「常用」分段与星标的来源：可跟随 Dock 固定列表、在总览卡内独立自选收藏，或隐藏常用与星标"
+                                           local:SettingsSearch.Keywords="冰蓝总览卡 星标 常用 收藏 Dock 固定">
+                            <ComboBox x:Name="LauncherFavoriteModeComboBox"
+                                      Width="210"
+                                      AutomationProperties.Name="冰蓝总览卡常用星标来源"
+                                      SelectionChanged="LauncherFavoriteMode_Changed">
+                                <ComboBoxItem Content="跟随 Dock 固定"/>
+                                <ComboBoxItem Content="独立收藏（总览卡内自选）"/>
+                                <ComboBoxItem Content="不显示常用与星标"/>
+                            </ComboBox>
+                        </local:SettingsRow>
+                        <local:SettingsRow x:Name="LauncherRecentFilesRow" Header="总览卡显示最近使用文件"
+                                           Description="在冰蓝总览卡的「文件」页只读显示 Windows 最近使用记录，可随时在总览卡或此处关闭"
+                                           local:SettingsSearch.Keywords="冰蓝总览卡 最近使用 最近文件 隐私">
+                            <CheckBox x:Name="LauncherRecentFilesCheckBox"
+                                      AutomationProperties.Name="冰蓝总览卡显示最近使用文件"
+                                      Style="{StaticResource ToggleSwitchStyle}"
+                                      Checked="LauncherRecentFiles_Changed"
+                                      Unchecked="LauncherRecentFiles_Changed"/>
+                        </local:SettingsRow>
+                        <local:SettingsRow x:Name="LauncherEverythingRow" Header="使用 Everything 搜索文件"
+                                           Description="默认使用 Windows 已有文件索引；开启后在冰蓝总览卡优先查询已安装并运行的完整版 Everything，不可用时自动回退，不修改索引范围，不搜索文件正文"
+                                           local:SettingsSearch.Keywords="冰蓝总览卡 Everything 文件搜索来源 文件索引">
+                            <CheckBox x:Name="LauncherEverythingCheckBox"
+                                      AutomationProperties.Name="冰蓝总览卡使用 Everything 搜索文件"
+                                      Style="{StaticResource ToggleSwitchStyle}"
+                                      Checked="LauncherEverything_Changed"
+                                      Unchecked="LauncherEverything_Changed"/>
+                        </local:SettingsRow>
+                    </local:SettingsGroup>
+
+                    <Expander x:Name="LauncherLookSection"
+                              Margin="0,20,0,4"
+                              IsExpanded="False"
+                              Style="{StaticResource SettingsFoldStyle}"
+                              AutomationProperties.Name="外观与材质">
+                        <Expander.Header>
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource FoldTitleStyle}" Text="外观与材质"/>
+                                <TextBlock Style="{StaticResource CaptionStyle}" Text="默认跟随全局外观，也可以单独设置底色、玻璃浓度与圆角"/>
+                            </StackPanel>
+                        </Expander.Header>
+                        <StackPanel>
+                            <local:SettingsRow x:Name="LauncherLookSettingsRow" Header="冰蓝总览卡外观"
+                                               local:SettingsSearch.Keywords="冰蓝总览卡 透明玻璃 颜色 圆角">
+                                <Border Style="{StaticResource SegmentHostStyle}">
+                                    <StackPanel Orientation="Horizontal">
+                                        <RadioButton x:Name="LauncherFollowLookRadio"
+                                                     GroupName="LauncherLook"
+                                                     Style="{StaticResource SegmentRadioStyle}"
+                                                     Content="跟随卡片外观"
+                                                     Checked="LauncherLook_Changed"/>
+                                        <RadioButton x:Name="LauncherCustomLookRadio"
+                                                     GroupName="LauncherLook"
+                                                     Style="{StaticResource SegmentRadioStyle}"
+                                                     Content="自定义"
+                                                     Checked="LauncherLook_Changed"/>
+                                    </StackPanel>
+                                </Border>
+                            </local:SettingsRow>
+                            <StackPanel x:Name="LauncherCustomLookPanel">
+                                <local:SettingsRow Style="{StaticResource NestedSettingsRowStyle}" Header="冰蓝总览卡配色">
+                                    <WrapPanel x:Name="LauncherPaletteSwatches"/>
+                                </local:SettingsRow>
+                                <local:SettingsRow Style="{StaticResource NestedSettingsRowStyle}" Header="冰蓝总览卡底色">
+                                    <StackPanel Orientation="Horizontal">
+                                        <Border x:Name="LauncherColorPreview" Width="30" Height="30" CornerRadius="6"
+                                                VerticalAlignment="Center" BorderThickness="1"
+                                                BorderBrush="{DynamicResource SettingsControlBorderBrush}"/>
+                                        <TextBox x:Name="LauncherColorEditor" Width="110" Margin="8,0,0,0"
+                                                 AutomationProperties.Name="冰蓝总览卡底色"
+                                                 LostFocus="LauncherColorEditor_Commit"
+                                                 KeyDown="LauncherColorEditor_KeyDown"/>
+                                        <Button Margin="8,0,0,0" Content="选择颜色…" AutomationProperties.Name="选择冰蓝总览卡底色"
+                                                Click="LauncherChooseColor_Click"/>
+                                    </StackPanel>
+                                </local:SettingsRow>
+                                <local:SettingsRow Style="{StaticResource NestedSettingsRowStyle}" Header="冰蓝总览卡玻璃浓度">
+                                    <StackPanel Orientation="Horizontal">
+                                        <Slider x:Name="LauncherOpacitySlider" Width="200" Minimum="0.12" Maximum="1"
+                                                SmallChange="0.02" LargeChange="0.1" AutomationProperties.Name="冰蓝总览卡玻璃浓度"
+                                                ValueChanged="LauncherOpacity_Changed"/>
+                                        <TextBlock x:Name="LauncherOpacityText" Style="{StaticResource ValueTextStyle}"/>
+                                    </StackPanel>
+                                </local:SettingsRow>
+                                <local:SettingsRow Style="{StaticResource NestedSettingsRowStyle}" Header="冰蓝总览卡圆角">
+                                    <StackPanel Orientation="Horizontal">
+                                        <Slider x:Name="LauncherCornerRadiusSlider" Width="200" Minimum="0" Maximum="32"
+                                                IsSnapToTickEnabled="True" TickFrequency="1" SmallChange="1" LargeChange="4"
+                                                AutomationProperties.Name="冰蓝总览卡圆角" ValueChanged="LauncherCornerRadius_Changed"/>
+                                        <TextBlock x:Name="LauncherCornerRadiusText" Style="{StaticResource ValueTextStyle}"/>
+                                    </StackPanel>
+                                </local:SettingsRow>
+                            </StackPanel>
+                        </StackPanel>
+                    </Expander>
+                </StackPanel>
+            </ScrollViewer>
+
+            <!-- 顶栏与底栏 -->
             <ScrollViewer x:Name="BarsPage" Style="{StaticResource PageScrollStyle}" Visibility="Collapsed">
                 <StackPanel Style="{StaticResource PageStackStyle}">
-                    <TextBlock Style="{StaticResource PageTitleStyle}" Text="顶栏底栏"/>
+                    <TextBlock Style="{StaticResource PageTitleStyle}" Text="顶栏与底栏"/>
                     <TextBlock Style="{StaticResource PageSubtitleStyle}"
-                               Text="屏幕顶部和底部的三条栏。点下图中的位置，直接跳到对应设置。"/>
+                               Text="屏幕顶部和底部的三条栏，每次只看其中一条。点击示意图或下方标签切换。"/>
 
                     <Border x:Name="BarsScreenMap"
-                            Height="210"
-                            Margin="0,18,0,0"
+                            Height="136"
+                            Margin="0,12,0,0"
                             Background="{DynamicResource SettingsMapWallpaperBrush}"
-                            CornerRadius="14"
+                            CornerRadius="12"
                             ClipToBounds="True">
                         <Grid>
                             <Grid.RowDefinitions>
@@ -1783,8 +1771,8 @@
                             <Button x:Name="ScreenMapTopBarButton"
                                     Style="{StaticResource ScreenMapButtonStyle}"
                                     Background="{DynamicResource SettingsMapBarBrush}"
-                                    Tag="14,14,0,0"
-                                    AutomationProperties.Name="跳到顶端信息条设置"
+                                    Tag="12,12,0,0"
+                                    AutomationProperties.Name="切换到顶端信息条设置"
                                     Click="ScreenMap_Click"
                                     CommandParameter="TopBar">
                                 <TextBlock>
@@ -1795,20 +1783,20 @@
                             <TextBlock Grid.Row="1"
                                        HorizontalAlignment="Center"
                                        VerticalAlignment="Center"
-                                       FontSize="12"
+                                       FontSize="11.5"
                                        Foreground="{DynamicResource SettingsMapDeskTextBrush}"
                                        Text="桌面"/>
                             <Button x:Name="ScreenMapDockButton"
                                     Grid.Row="2"
-                                    Margin="0,0,0,8"
+                                    Margin="0,0,0,5"
                                     HorizontalAlignment="Center"
                                     Style="{StaticResource ScreenMapButtonStyle}"
                                     Background="{DynamicResource SettingsMapDockBrush}"
-                                    Tag="12"
-                                    AutomationProperties.Name="跳到冰蓝 Dock 设置"
+                                    Tag="11"
+                                    AutomationProperties.Name="切换到冰蓝 Dock 设置"
                                     Click="ScreenMap_Click"
                                     CommandParameter="Dock">
-                                <TextBlock Margin="10,1">
+                                <TextBlock Margin="8,0">
                                     <Run Text="冰蓝 Dock"/>
                                     <Run Text="  常用应用" FontSize="11" Foreground="{DynamicResource SettingsMapDeskTextBrush}"/>
                                 </TextBlock>
@@ -1817,8 +1805,8 @@
                                     Grid.Row="3"
                                     Style="{StaticResource ScreenMapButtonStyle}"
                                     Background="{DynamicResource SettingsMapTaskbarBrush}"
-                                    Tag="0,0,14,14"
-                                    AutomationProperties.Name="跳到 Windows 任务栏设置"
+                                    Tag="0,0,12,12"
+                                    AutomationProperties.Name="切换到 Windows 任务栏设置"
                                     Click="ScreenMap_Click"
                                     CommandParameter="Taskbar">
                                 <TextBlock>
@@ -1828,7 +1816,7 @@
                             </Button>
                         </Grid>
                     </Border>
-                    <StackPanel Margin="2,12,0,0" Orientation="Horizontal">
+                    <StackPanel Margin="2,10,0,0" Orientation="Horizontal">
                         <TextBlock Margin="0,1,8,0"
                                    VerticalAlignment="Top"
                                    FontFamily="{StaticResource SettingsIconFont}"
@@ -1838,7 +1826,7 @@
                         <TextBlock x:Name="BarsRelationText" Style="{StaticResource CaptionStyle}" FontSize="13"/>
                     </StackPanel>
 
-                    <Grid Margin="0,16,0,8">
+                    <Grid Margin="0,10,0,12">
                         <TextBlock x:Name="BarsModeNoteText"
                                    Margin="0,0,170,0"
                                    VerticalAlignment="Center"
@@ -1850,538 +1838,594 @@
                                 Click="RestoreDesktopMode_Click"/>
                     </Grid>
 
-                    <local:SettingsRow x:Name="LauncherEnabledRow" Header="冰蓝总览卡"
-                                       Description="关闭后从冰蓝托盘和 Dock 隐藏冰蓝总览卡入口"
-                                       local:SettingsSearch.Keywords="启用冰蓝总览卡 关闭冰蓝总览卡 启动面板 应用启动">
-                        <CheckBox x:Name="LauncherEnabledCheckBox"
-                                  AutomationProperties.Name="启用冰蓝总览卡"
-                                  Style="{StaticResource ToggleSwitchStyle}"
-                                  Checked="LauncherEnabled_Changed"
-                                  Unchecked="LauncherEnabled_Changed"/>
-                    </local:SettingsRow>
-                    <local:SettingsRow x:Name="LauncherRecentFilesRow" Header="总览卡显示最近使用文件"
-                                       Description="在冰蓝总览卡的「文件」页只读显示 Windows 最近使用记录，可随时在总览卡或此处关闭"
-                                       local:SettingsSearch.Keywords="冰蓝总览卡 最近使用 最近文件 隐私">
-                        <CheckBox x:Name="LauncherRecentFilesCheckBox"
-                                  AutomationProperties.Name="冰蓝总览卡显示最近使用文件"
-                                  Style="{StaticResource ToggleSwitchStyle}"
-                                  Checked="LauncherRecentFiles_Changed"
-                                  Unchecked="LauncherRecentFiles_Changed"/>
-                    </local:SettingsRow>
+                    <!-- 三栏页内切换标签 -->
+                    <Border Style="{StaticResource SegmentHostStyle}"
+                            HorizontalAlignment="Left"
+                            Margin="0,0,0,14"
+                            local:SettingsSearch.Exclude="True">
+                        <StackPanel Orientation="Horizontal">
+                            <RadioButton x:Name="BarsTabDockRadio"
+                                         GroupName="BarsTab"
+                                         Style="{StaticResource SegmentRadioStyle}"
+                                         Tag="Dock"
+                                         IsChecked="True"
+                                         Content="冰蓝 Dock"
+                                         AutomationProperties.Name="切换到冰蓝 Dock 设置"
+                                         Checked="BarsTab_Checked"/>
+                            <RadioButton x:Name="BarsTabTopBarRadio"
+                                         GroupName="BarsTab"
+                                         Style="{StaticResource SegmentRadioStyle}"
+                                         Tag="TopBar"
+                                         Content="顶端信息条"
+                                         AutomationProperties.Name="切换到顶端信息条设置"
+                                         Checked="BarsTab_Checked"/>
+                            <RadioButton x:Name="BarsTabTaskbarRadio"
+                                         GroupName="BarsTab"
+                                         Style="{StaticResource SegmentRadioStyle}"
+                                         Tag="Taskbar"
+                                         Content="Windows 任务栏"
+                                         AutomationProperties.Name="切换到 Windows 任务栏设置"
+                                         Checked="BarsTab_Checked"/>
+                        </StackPanel>
+                    </Border>
 
-                    <Expander x:Name="DockSection"
-                              Margin="0,4,0,4"
-                              IsExpanded="True"
-                              Style="{StaticResource SettingsFoldStyle}"
-                              AutomationProperties.Name="冰蓝 Dock">
-                        <Expander.Header>
-                            <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="Auto"/>
-                                </Grid.ColumnDefinitions>
-                                <StackPanel>
-                                    <TextBlock Style="{StaticResource FoldTitleStyle}" Text="冰蓝 Dock"/>
-                                    <TextBlock Style="{StaticResource CaptionStyle}" Text="屏幕底部居中显示固定的应用和正在运行的应用"/>
-                                </StackPanel>
-                                <CheckBox x:Name="DockEnabledCheckBox"
-                                          Grid.Column="1"
-                                          Margin="16,0,0,0"
-                                          AutomationProperties.Name="显示冰蓝 Dock"
-                                          Style="{StaticResource ToggleSwitchStyle}"
-                                          Checked="DockSetting_Changed"
-                                          Unchecked="DockSetting_Changed"/>
-                            </Grid>
-                        </Expander.Header>
+                    <!-- Tab 1: 冰蓝 Dock -->
+                    <StackPanel x:Name="DockSection"
+                                local:SettingsSearch.Scope="Bar:Dock"
+                                local:SettingsSearch.Title="冰蓝 Dock">
                         <StackPanel x:Name="DockPage">
-                            <StackPanel x:Name="DockOptionsPanel">
-                                <local:SettingsRow Header="显示器" local:SettingsSearch.Keywords="屏幕 多显示器">
-                                    <ComboBox x:Name="DockMonitorComboBox"
-                                              Width="280"
-                                              AutomationProperties.Name="Dock 所在显示器"
-                                              SelectionChanged="DockSetting_Changed"/>
+                            <local:SettingsGroup>
+                                <local:SettingsRow Header="显示冰蓝 Dock"
+                                                   Description="屏幕底部居中显示固定的应用和正在运行的应用"
+                                                   local:SettingsSearch.Keywords="Dock 开关 启动">
+                                    <CheckBox x:Name="DockEnabledCheckBox"
+                                              AutomationProperties.Name="显示冰蓝 Dock"
+                                              Style="{StaticResource ToggleSwitchStyle}"
+                                              Checked="DockSetting_Changed"
+                                              Unchecked="DockSetting_Changed"/>
                                 </local:SettingsRow>
-                                <local:SettingsRow Header="显示方式"
-                                                   Description="始终显示时最大化的窗口停在 Dock 上方，全屏应用运行时 Dock 退到后面；智能隐藏时窗口移到 Dock 位置后隐藏，按唤出方式重新显示"
-                                                   local:SettingsSearch.Keywords="自动隐藏 保留底部">
-                                    <Border Style="{StaticResource SegmentHostStyle}">
+                                <StackPanel x:Name="DockOptionsPanel">
+                                    <local:SettingsRow Header="显示器" local:SettingsSearch.Keywords="屏幕 多显示器">
+                                        <ComboBox x:Name="DockMonitorComboBox"
+                                                  Width="280"
+                                                  AutomationProperties.Name="Dock 所在显示器"
+                                                  SelectionChanged="DockSetting_Changed"/>
+                                    </local:SettingsRow>
+                                    <local:SettingsRow Header="显示方式"
+                                                       Description="始终显示时最大化的窗口停在 Dock 上方，全屏应用运行时 Dock 退到后面；智能隐藏时窗口移到 Dock 位置后隐藏，按唤出方式重新显示"
+                                                       local:SettingsSearch.Keywords="自动隐藏 保留底部">
+                                        <Border Style="{StaticResource SegmentHostStyle}">
+                                            <StackPanel Orientation="Horizontal">
+                                                <RadioButton x:Name="DockReserveRadio"
+                                                             GroupName="DockVisibility"
+                                                             Style="{StaticResource SegmentRadioStyle}"
+                                                             Content="始终显示，保留底部空间"
+                                                             AutomationProperties.Name="始终显示，并保留屏幕底部空间"
+                                                             Checked="DockSetting_Changed"/>
+                                                <RadioButton x:Name="DockSmartHideRadio"
+                                                             GroupName="DockVisibility"
+                                                             Style="{StaticResource SegmentRadioStyle}"
+                                                             Content="智能隐藏"
+                                                             AutomationProperties.Name="智能隐藏"
+                                                             Checked="DockSetting_Changed"/>
+                                            </StackPanel>
+                                        </Border>
+                                    </local:SettingsRow>
+                                    <local:SettingsRow Header="显示 Windows 开始菜单入口"
+                                                       Description="点击打开 Windows 开始菜单"
+                                                       local:SettingsSearch.Keywords="开始菜单">
+                                        <CheckBox x:Name="DockStartMenuButtonCheckBox"
+                                                  AutomationProperties.Name="显示 Windows 开始菜单入口"
+                                                  Style="{StaticResource ToggleSwitchStyle}"
+                                                  Checked="DockSetting_Changed"
+                                                  Unchecked="DockSetting_Changed"/>
+                                    </local:SettingsRow>
+                                    <local:SettingsRow Header="显示冰蓝总览卡入口"
+                                                       Description="冰蓝总览卡启用时，关闭此项仍可从冰蓝托盘打开"
+                                                       local:SettingsSearch.Keywords="冰蓝总览卡 应用启动">
+                                        <CheckBox x:Name="DockLauncherButtonCheckBox"
+                                                  AutomationProperties.Name="显示冰蓝总览卡入口"
+                                                  Style="{StaticResource ToggleSwitchStyle}"
+                                                  Checked="DockSetting_Changed"
+                                                  Unchecked="DockSetting_Changed"/>
+                                    </local:SettingsRow>
+                                    <local:SettingsRow Header="显示“显示桌面”按钮"
+                                                       Description="点击收起窗口并显示桌面，再点一次恢复窗口"
+                                                       local:SettingsSearch.Keywords="显示桌面 回到桌面 Win+D">
+                                        <CheckBox x:Name="DockShowDesktopButtonCheckBox"
+                                                  AutomationProperties.Name="显示“显示桌面”按钮"
+                                                  Style="{StaticResource ToggleSwitchStyle}"
+                                                  Checked="DockSetting_Changed"
+                                                  Unchecked="DockSetting_Changed"/>
+                                    </local:SettingsRow>
+                                    <local:SettingsRow Header="固定的应用"
+                                                       Description="也可以把程序或快捷方式拖到 Dock 上，或在 Dock 中右键正在运行的应用选择“固定到 Dock”；拖动图标可调整顺序"
+                                                       local:SettingsSearch.Keywords="固定 Pin 添加应用">
                                         <StackPanel Orientation="Horizontal">
-                                            <RadioButton x:Name="DockReserveRadio"
-                                                         GroupName="DockVisibility"
-                                                         Style="{StaticResource SegmentRadioStyle}"
-                                                         Content="始终显示，保留底部空间"
-                                                         AutomationProperties.Name="始终显示，并保留屏幕底部空间"
-                                                         Checked="DockSetting_Changed"/>
-                                            <RadioButton x:Name="DockSmartHideRadio"
-                                                         GroupName="DockVisibility"
-                                                         Style="{StaticResource SegmentRadioStyle}"
-                                                         Content="智能隐藏"
-                                                         AutomationProperties.Name="智能隐藏"
-                                                         Checked="DockSetting_Changed"/>
+                                            <Button Style="{StaticResource AccentButtonStyle}" Content="添加应用…" Click="AddDockApp_Click"/>
+                                            <Button Margin="8,0,0,0" Content="导入任务栏应用" Click="ImportTaskbarPins_Click"/>
+                                        </StackPanel>
+                                    </local:SettingsRow>
+                                    <Border Style="{StaticResource SettingsBlockStyle}" Background="{DynamicResource SettingsSurfaceHoverBrush}" Padding="34,10,18,12">
+                                        <StackPanel>
+                                            <ListBox x:Name="DockPinnedList"
+                                                     MinHeight="84"
+                                                     MaxHeight="220"
+                                                     AutomationProperties.Name="固定的应用">
+                                                <ListBox.ItemTemplate>
+                                                    <DataTemplate>
+                                                        <StackPanel>
+                                                            <TextBlock Text="{Binding DisplayName}"/>
+                                                            <TextBlock Margin="0,2,0,0"
+                                                                       FontSize="12"
+                                                                       TextTrimming="CharacterEllipsis"
+                                                                       Foreground="{DynamicResource IceMutedInkBrush}"
+                                                                       Text="{Binding Detail}"/>
+                                                        </StackPanel>
+                                                    </DataTemplate>
+                                                </ListBox.ItemTemplate>
+                                            </ListBox>
+                                            <TextBlock x:Name="DockPinnedEmptyText"
+                                                       Margin="0,8,0,0"
+                                                       Style="{StaticResource CaptionStyle}"
+                                                       Text="还没有固定的应用。"/>
+                                            <WrapPanel Margin="0,10,0,0">
+                                                <Button Content="上移" Click="MoveDockAppUp_Click"/>
+                                                <Button Margin="8,0,0,0" Content="下移" Click="MoveDockAppDown_Click"/>
+                                                <Button Margin="8,0,0,0" Content="取消固定" Click="UnpinDockApp_Click"/>
+                                            </WrapPanel>
                                         </StackPanel>
                                     </Border>
-                                </local:SettingsRow>
-                                <local:SettingsRow x:Name="DockMaximizeReleaseRow"
-                                                   Style="{StaticResource NestedSettingsRowStyle}"
-                                                   Header="最大化窗口时临时隐藏并释放底部空间"
-                                                   Description="开启后，最大化窗口时 Dock 会临时隐藏并释放底部空间，鼠标移到屏幕底边或把手可临时唤出；希望最大化时也始终显示 Dock 请关闭此项"
-                                                   local:SettingsSearch.Keywords="让出底部空间 释放底部空间 临时隐藏">
-                                    <CheckBox x:Name="DockMaximizeReleaseCheckBox"
-                                              AutomationProperties.Name="最大化窗口时临时隐藏并释放底部空间"
-                                              Style="{StaticResource ToggleSwitchStyle}"
-                                              Checked="DockSetting_Changed"
-                                              Unchecked="DockSetting_Changed"/>
-                                </local:SettingsRow>
-                                <local:SettingsRow Style="{StaticResource NestedSettingsRowStyle}"
-                                                   Header="唤出方式"
-                                                   Description="Dock 隐藏后如何重新显示。原生任务栏一直显示时，鼠标停在任务栏上不会唤出 Dock：默认用把手唤出；选“只用屏幕底边”则不显示把手，把鼠标推到屏幕最底边唤出">
-                                    <ComboBox x:Name="DockRevealModeComboBox"
-                                              Width="220"
-                                              AutomationProperties.Name="Dock 唤出方式"
-                                              SelectionChanged="DockSetting_Changed">
-                                        <ComboBoxItem Content="屏幕底边和把手" Tag="EdgeAndHandle"/>
-                                        <ComboBoxItem Content="只用把手" Tag="HandleOnly"/>
-                                        <ComboBoxItem Content="只用屏幕底边（不显示把手）" Tag="EdgeOnly"/>
-                                    </ComboBox>
-                                </local:SettingsRow>
-                                <local:SettingsRow Header="显示 Windows 开始菜单入口"
-                                                   Description="点击打开 Windows 开始菜单"
-                                                   local:SettingsSearch.Keywords="开始菜单">
-                                    <CheckBox x:Name="DockStartMenuButtonCheckBox"
-                                              AutomationProperties.Name="显示 Windows 开始菜单入口"
-                                              Style="{StaticResource ToggleSwitchStyle}"
-                                              Checked="DockSetting_Changed"
-                                              Unchecked="DockSetting_Changed"/>
-                                </local:SettingsRow>
-                                <local:SettingsRow Header="显示冰蓝总览卡入口"
-                                                   Description="冰蓝总览卡启用时，关闭此项仍可从冰蓝托盘打开"
-                                                   local:SettingsSearch.Keywords="冰蓝总览卡 应用启动">
-                                    <CheckBox x:Name="DockLauncherButtonCheckBox"
-                                              AutomationProperties.Name="显示冰蓝总览卡入口"
-                                              Style="{StaticResource ToggleSwitchStyle}"
-                                              Checked="DockSetting_Changed"
-                                              Unchecked="DockSetting_Changed"/>
-                                </local:SettingsRow>
-                                <local:SettingsRow Header="显示“显示桌面”按钮"
-                                                   Description="点击收起窗口并显示桌面，再点一次恢复窗口"
-                                                   local:SettingsSearch.Keywords="显示桌面 回到桌面 Win+D">
-                                    <CheckBox x:Name="DockShowDesktopButtonCheckBox"
-                                              AutomationProperties.Name="显示“显示桌面”按钮"
-                                              Style="{StaticResource ToggleSwitchStyle}"
-                                              Checked="DockSetting_Changed"
-                                              Unchecked="DockSetting_Changed"/>
-                                </local:SettingsRow>
-                                <local:SettingsRow Header="距底部高度" Description="Dock 底边到屏幕底边的距离；任务栏常显时从任务栏上沿算起">
-                                    <StackPanel Orientation="Horizontal">
-                                        <Slider x:Name="DockBottomGapSlider"
-                                                Width="200"
-                                                Minimum="0"
-                                                Maximum="64"
-                                                TickFrequency="4"
-                                                IsSnapToTickEnabled="True"
-                                                AutomationProperties.Name="Dock 距底部高度"
-                                                ValueChanged="DockBottomGap_Changed"/>
-                                        <TextBlock x:Name="DockBottomGapText" Style="{StaticResource ValueTextStyle}"/>
-                                    </StackPanel>
-                                </local:SettingsRow>
-                                <local:SettingsRow Header="图标大小" local:SettingsSearch.Keywords="Dock 大小">
-                                    <StackPanel Orientation="Horizontal">
-                                        <Slider x:Name="DockIconSizeSlider"
-                                                Width="200"
-                                                Minimum="32"
-                                                Maximum="64"
-                                                TickFrequency="4"
-                                                IsSnapToTickEnabled="True"
-                                                AutomationProperties.Name="Dock 图标大小"
-                                                ValueChanged="DockIconSize_Changed"/>
-                                        <TextBlock x:Name="DockIconSizeText" Style="{StaticResource ValueTextStyle}"/>
-                                    </StackPanel>
-                                </local:SettingsRow>
-                                <local:SettingsRow Header="自动缩小图标" Description="应用较多放不下时自动缩小图标（最小 28），都放不下时可在 Dock 上滚动查看">
-                                    <CheckBox x:Name="DockAutoIconSizeCheckBox"
-                                              IsChecked="True"
-                                              AutomationProperties.Name="Dock 自动缩小图标"
-                                              Style="{StaticResource ToggleSwitchStyle}"
-                                              Checked="DockAutoIconSize_Changed"
-                                              Unchecked="DockAutoIconSize_Changed"/>
-                                </local:SettingsRow>
-                                <local:SettingsRow Header="动效" Description="图标放大和弹出的动画" local:SettingsSearch.Keywords="动画">
-                                    <ComboBox x:Name="MotionSelector"
-                                              Width="160"
-                                              AutomationProperties.Name="Dock 动效"
-                                              SelectionChanged="StyleSelector_SelectionChanged">
-                                        <ComboBoxItem Content="标准" Tag="Standard"/>
-                                        <ComboBoxItem Content="减弱" Tag="Reduced"/>
-                                        <ComboBoxItem Content="关闭" Tag="Off"/>
-                                    </ComboBox>
-                                </local:SettingsRow>
-                                <local:SettingsRow x:Name="DockLookSummaryRow" Header="外观" local:SettingsSearch.Keywords="Dock 颜色 配色">
-                                    <Button Style="{StaticResource GhostButtonStyle}"
-                                            Content="在外观样式页调整 →"
-                                            Tag="Dock"
-                                            AutomationProperties.Name="在外观样式页调整 Dock 外观"
-                                            Click="BarsLookJump_Click"/>
-                                </local:SettingsRow>
-                                <local:SettingsRow Header="固定的应用"
-                                                   Description="也可以把程序或快捷方式拖到 Dock 上，或在 Dock 中右键正在运行的应用选择“固定到 Dock”；拖动图标可调整顺序"
-                                                   local:SettingsSearch.Keywords="固定 Pin 添加应用">
-                                    <StackPanel Orientation="Horizontal">
-                                        <Button Style="{StaticResource AccentButtonStyle}" Content="添加应用…" Click="AddDockApp_Click"/>
-                                        <Button Margin="8,0,0,0" Content="导入任务栏应用" Click="ImportTaskbarPins_Click"/>
-                                    </StackPanel>
-                                </local:SettingsRow>
-                                <Border Style="{StaticResource SettingsBlockStyle}" Background="{DynamicResource SettingsSurfaceHoverBrush}" Padding="34,10,18,12">
-                                    <StackPanel>
-                                        <ListBox x:Name="DockPinnedList"
-                                                 MinHeight="96"
-                                                 MaxHeight="300"
-                                                 AutomationProperties.Name="固定的应用">
-                                            <ListBox.ItemTemplate>
-                                                <DataTemplate>
-                                                    <StackPanel>
-                                                        <TextBlock Text="{Binding DisplayName}"/>
-                                                        <TextBlock Margin="0,2,0,0"
-                                                                   FontSize="12"
-                                                                   TextTrimming="CharacterEllipsis"
-                                                                   Foreground="{DynamicResource IceMutedInkBrush}"
-                                                                   Text="{Binding Detail}"/>
-                                                    </StackPanel>
-                                                </DataTemplate>
-                                            </ListBox.ItemTemplate>
-                                        </ListBox>
-                                        <TextBlock x:Name="DockPinnedEmptyText"
-                                                   Margin="0,8,0,0"
-                                                   Style="{StaticResource CaptionStyle}"
-                                                   Text="还没有固定的应用。"/>
-                                        <WrapPanel Margin="0,10,0,0">
-                                            <Button Content="上移" Click="MoveDockAppUp_Click"/>
-                                            <Button Margin="8,0,0,0" Content="下移" Click="MoveDockAppDown_Click"/>
-                                            <Button Margin="8,0,0,0" Content="取消固定" Click="UnpinDockApp_Click"/>
-                                        </WrapPanel>
-                                    </StackPanel>
-                                </Border>
-                                <local:SettingsRow Header="不在 Dock 中显示的应用"
-                                                   Description="在 Dock 中右键正在运行的应用，选择“不在 Dock 中显示此应用”。适合悬浮条、小工具这类不在任务栏显示的窗口"
-                                                   local:SettingsSearch.Keywords="隐藏应用">
-                                    <Button Content="恢复显示" Click="UnhideDockApp_Click"/>
-                                </local:SettingsRow>
-                                <Border Style="{StaticResource SettingsBlockStyle}" Background="{DynamicResource SettingsSurfaceHoverBrush}" Padding="34,10,18,12">
-                                    <StackPanel>
-                                        <ListBox x:Name="DockHiddenList"
-                                                 MinHeight="64"
-                                                 MaxHeight="200"
-                                                 AutomationProperties.Name="不在 Dock 中显示的应用">
-                                            <ListBox.ItemTemplate>
-                                                <DataTemplate>
-                                                    <StackPanel>
-                                                        <TextBlock Text="{Binding DisplayName}"/>
-                                                        <TextBlock Margin="0,2,0,0"
-                                                                   FontSize="12"
-                                                                   TextTrimming="CharacterEllipsis"
-                                                                   Foreground="{DynamicResource IceMutedInkBrush}"
-                                                                   Text="{Binding Detail}"/>
-                                                    </StackPanel>
-                                                </DataTemplate>
-                                            </ListBox.ItemTemplate>
-                                        </ListBox>
-                                        <TextBlock x:Name="DockHiddenEmptyText"
-                                                   Margin="0,8,0,0"
-                                                   Style="{StaticResource CaptionStyle}"
-                                                   Text="没有隐藏的应用。"/>
-                                    </StackPanel>
-                                </Border>
-                            </StackPanel>
-                            <TextBlock x:Name="DockStatusText"
-                                       Margin="18,0,18,12"
-                                       AutomationProperties.LiveSetting="Polite"
-                                       Style="{StaticResource CaptionStyle}"/>
-                        </StackPanel>
-                    </Expander>
-
-                    <Expander x:Name="TopBarSection"
-                              Margin="0,12,0,4"
-                              IsExpanded="True"
-                              Style="{StaticResource SettingsFoldStyle}"
-                              AutomationProperties.Name="顶端信息条">
-                        <Expander.Header>
-                            <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="Auto"/>
-                                </Grid.ColumnDefinitions>
-                                <StackPanel>
-                                    <TextBlock Style="{StaticResource FoldTitleStyle}" Text="顶端信息条"/>
-                                    <TextBlock Style="{StaticResource CaptionStyle}" Text="所选显示器顶边的满宽信息条：时间、待办、天气、性能和系统状态，点击模块进入对应设置"/>
                                 </StackPanel>
-                                <CheckBox x:Name="TopBarEnabledCheckBox"
-                                          Grid.Column="1"
-                                          Margin="16,0,0,0"
-                                          AutomationProperties.Name="显示顶端信息条"
-                                          Style="{StaticResource ToggleSwitchStyle}"
-                                          Checked="TopBarSetting_Changed"
-                                          Unchecked="TopBarSetting_Changed"/>
-                            </Grid>
-                        </Expander.Header>
-                        <StackPanel x:Name="TopBarPage">
-                            <StackPanel x:Name="TopBarOptionsPanel">
-                                <local:SettingsRow Header="显示器" local:SettingsSearch.Keywords="屏幕 多显示器">
-                                    <ComboBox x:Name="TopBarMonitorComboBox"
-                                              Width="280"
-                                              AutomationProperties.Name="顶端信息条所在显示器"
-                                              SelectionChanged="TopBarSetting_Changed"/>
-                                </local:SettingsRow>
-                                <local:SettingsRow Header="显示方式"
-                                                   Description="始终显示时预留顶部空间，全屏应用优先显示。顶边被 Windows 任务栏占用时改为智能隐藏，并让开任务栏的唤出区域"
-                                                   local:SettingsSearch.Keywords="自动隐藏 预留顶部">
-                                    <Border Style="{StaticResource SegmentHostStyle}">
-                                        <StackPanel Orientation="Horizontal">
-                                            <RadioButton x:Name="TopBarReserveRadio"
-                                                         GroupName="TopBarVisibility"
-                                                         Style="{StaticResource SegmentRadioStyle}"
-                                                         Content="始终显示，预留顶部空间"
-                                                         AutomationProperties.Name="始终显示，并预留屏幕顶部空间"
-                                                         Checked="TopBarSetting_Changed"/>
-                                            <RadioButton x:Name="TopBarSmartHideRadio"
-                                                         GroupName="TopBarVisibility"
-                                                         Style="{StaticResource SegmentRadioStyle}"
-                                                         Content="智能隐藏"
-                                                         AutomationProperties.Name="智能隐藏"
-                                                         Checked="TopBarSetting_Changed"/>
-                                        </StackPanel>
-                                    </Border>
-                                </local:SettingsRow>
-                                <local:SettingsRow Style="{StaticResource NestedSettingsRowStyle}" Header="高度">
-                                    <StackPanel Orientation="Horizontal">
-                                        <Slider x:Name="TopBarHeightSlider"
-                                                Width="200"
-                                                Minimum="24"
-                                                Maximum="48"
-                                                IsSnapToTickEnabled="True"
-                                                TickFrequency="1"
-                                                SmallChange="1"
-                                                LargeChange="4"
-                                                AutomationProperties.Name="顶端信息条高度"
-                                                ValueChanged="TopBarHeight_Changed"/>
-                                        <TextBlock x:Name="TopBarHeightText" Style="{StaticResource ValueTextStyle}"/>
+                            </local:SettingsGroup>
+
+                            <Expander x:Name="DockAdvancedFold"
+                                      Margin="0,14,0,4"
+                                      IsExpanded="False"
+                                      Style="{StaticResource SettingsFoldStyle}"
+                                      AutomationProperties.Name="尺寸、外观与高级">
+                                <Expander.Header>
+                                    <StackPanel>
+                                        <TextBlock Style="{StaticResource FoldTitleStyle}" Text="尺寸、外观与高级"/>
+                                        <TextBlock Style="{StaticResource CaptionStyle}" Text="图标大小、距底高度、唤出与最大化行为、独立外观及隐藏应用"/>
                                     </StackPanel>
-                                </local:SettingsRow>
-                                <local:SettingsRow Header="模块"/>
-                                <Border Padding="20,4,8,8" Background="{DynamicResource SettingsSurfaceHoverBrush}">
-                                    <UniformGrid x:Name="TopBarModulesPanel" Columns="5" SizeChanged="TopBarModules_SizeChanged">
-                                        <CheckBox x:Name="TopBarClockCheckBox" Content="时钟与日期" Margin="0,8,12,8"
-                                                  AutomationProperties.Name="时钟与日期模块" Checked="TopBarSetting_Changed" Unchecked="TopBarSetting_Changed"/>
-                                        <CheckBox x:Name="TopBarTodoSummaryCheckBox" Content="待办概要" Margin="0,8,12,8"
-                                                  AutomationProperties.Name="待办概要模块" Checked="TopBarSetting_Changed" Unchecked="TopBarSetting_Changed"/>
-                                        <CheckBox x:Name="TopBarWeatherCheckBox" Content="天气" Margin="0,8,12,8"
-                                                  AutomationProperties.Name="天气模块" Checked="TopBarSetting_Changed" Unchecked="TopBarSetting_Changed"/>
-                                        <CheckBox x:Name="TopBarPerformanceCheckBox" Content="性能" Margin="0,8,12,8"
-                                                  AutomationProperties.Name="性能模块" Checked="TopBarSetting_Changed" Unchecked="TopBarSetting_Changed"/>
-                                        <CheckBox x:Name="TopBarAttentionCheckBox" Content="消息提示" Margin="0,8,12,8"
-                                                  AutomationProperties.Name="消息提示模块" Checked="TopBarSetting_Changed" Unchecked="TopBarSetting_Changed"/>
-                                        <CheckBox x:Name="TopBarInputMethodCheckBox" Content="输入法" Margin="0,8,12,8"
-                                                  AutomationProperties.Name="输入法模块" Checked="TopBarSetting_Changed" Unchecked="TopBarSetting_Changed"/>
-                                        <CheckBox x:Name="TopBarVolumeCheckBox" Content="音量" Margin="0,8,12,8"
-                                                  AutomationProperties.Name="音量模块" Checked="TopBarSetting_Changed" Unchecked="TopBarSetting_Changed"/>
-                                        <CheckBox x:Name="TopBarNetworkCheckBox" Content="网络" Margin="0,8,12,8"
-                                                  AutomationProperties.Name="网络模块" Checked="TopBarSetting_Changed" Unchecked="TopBarSetting_Changed"/>
-                                        <CheckBox x:Name="TopBarBatteryCheckBox" Content="电量" Margin="0,8,12,8"
-                                                  AutomationProperties.Name="电量模块" Checked="TopBarSetting_Changed" Unchecked="TopBarSetting_Changed"/>
-                                        <CheckBox x:Name="TopBarSearchCheckBox" Content="搜索" Margin="0,8,12,8"
-                                                  AutomationProperties.Name="搜索模块" Checked="TopBarSetting_Changed" Unchecked="TopBarSetting_Changed"/>
-                                        <CheckBox x:Name="TopBarTrayOverflowCheckBox" Content="系统托盘" Margin="0,8,12,8"
-                                                  AutomationProperties.Name="系统托盘模块" Checked="TopBarSetting_Changed" Unchecked="TopBarSetting_Changed"/>
-                                    </UniformGrid>
-                                </Border>
-                                <local:SettingsRow Header="文件搜索来源"
-                                                   Description="默认使用 Windows 已有文件索引；可选使用已安装并运行的完整版 Everything。不可用时自动回退，不修改索引范围，不搜索文件正文"
-                                                   local:SettingsSearch.Keywords="Everything 文件索引">
-                                    <CheckBox x:Name="TopBarEverythingCheckBox" Content="使用 Everything"
-                                              AutomationProperties.Name="使用 Everything 搜索文件"
-                                              Checked="TopBarSetting_Changed" Unchecked="TopBarSetting_Changed"/>
-                                </local:SettingsRow>
-                                <local:SettingsRow Header="搜索入口"
-                                                   Description="独立搜索框可拖动和调宽。使用胶囊时，从右键菜单或热键打开搜索；切回整条后恢复此设置">
-                                    <ComboBox x:Name="SearchPresentationComboBox" MinWidth="160"
-                                              AutomationProperties.Name="搜索入口显示方式" SelectionChanged="SearchPresentation_Changed">
-                                        <ComboBoxItem Content="顶栏居中"/>
-                                        <ComboBoxItem Content="独立搜索框"/>
-                                        <ComboBoxItem Content="顶栏图标"/>
-                                    </ComboBox>
-                                </local:SettingsRow>
-                                <local:SettingsRow Header="搜索热键"
-                                                   Description="聚焦或收起顶栏搜索的全局组合键，需至少一个修饰键（Ctrl/Alt/Shift/Win）；关闭搜索模块后热键同时注销"
-                                                   local:SettingsSearch.Keywords="快捷键 组合键">
-                                    <StackPanel Orientation="Horizontal">
-                                        <TextBlock x:Name="TopBarSearchHotkeyHint"
-                                                   MaxWidth="180"
-                                                   VerticalAlignment="Center"
-                                                   Margin="0,0,10,0"
-                                                   Foreground="{DynamicResource IceMutedInkBrush}"
-                                                   FontSize="11"
-                                                   TextWrapping="Wrap"/>
-                                        <Button x:Name="TopBarSearchHotkeyButton"
-                                                MinWidth="150"
-                                                Padding="14,5"
-                                                FontFamily="Consolas, Cascadia Mono, Segoe UI"
-                                                AutomationProperties.Name="搜索热键录制"
-                                                Click="TopBarSearchHotkey_Click"
-                                                PreviewKeyDown="TopBarSearchHotkey_PreviewKeyDown"
-                                                LostKeyboardFocus="TopBarSearchHotkey_LostKeyboardFocus"/>
-                                    </StackPanel>
-                                </local:SettingsRow>
-                                <StackPanel x:Name="SearchAppearancePanel">
-                                    <local:SettingsRow Header="独立搜索框配色"
-                                                       Description="用于独立搜索框、图标展开后的搜索框及结果列表">
-                                        <StackPanel Orientation="Horizontal">
-                                            <ComboBox x:Name="SearchLookComboBox" MinWidth="150" AutomationProperties.Name="搜索框配色" SelectionChanged="SearchLook_Changed">
-                                                <ComboBoxItem Content="深色"/><ComboBoxItem Content="浅色"/>
-                                                <ComboBoxItem Content="跟随卡片"/><ComboBoxItem Content="自定义"/>
+                                </Expander.Header>
+                                <StackPanel>
+                                    <StackPanel x:Name="DockAdvancedBehaviorPanel">
+                                        <local:SettingsRow Header="图标大小" local:SettingsSearch.Keywords="Dock 大小">
+                                            <StackPanel Orientation="Horizontal">
+                                                <Slider x:Name="DockIconSizeSlider"
+                                                        Width="200"
+                                                        Minimum="32"
+                                                        Maximum="64"
+                                                        TickFrequency="4"
+                                                        IsSnapToTickEnabled="True"
+                                                        AutomationProperties.Name="Dock 图标大小"
+                                                        ValueChanged="DockIconSize_Changed"/>
+                                                <TextBlock x:Name="DockIconSizeText" Style="{StaticResource ValueTextStyle}"/>
+                                            </StackPanel>
+                                        </local:SettingsRow>
+                                        <local:SettingsRow Header="自动缩小图标" Description="应用较多放不下时自动缩小图标（最小 28），都放不下时可在 Dock 上滚动查看">
+                                            <CheckBox x:Name="DockAutoIconSizeCheckBox"
+                                                      IsChecked="True"
+                                                      AutomationProperties.Name="Dock 自动缩小图标"
+                                                      Style="{StaticResource ToggleSwitchStyle}"
+                                                      Checked="DockAutoIconSize_Changed"
+                                                      Unchecked="DockAutoIconSize_Changed"/>
+                                        </local:SettingsRow>
+                                        <local:SettingsRow Header="距底部高度" Description="Dock 底边到屏幕底边的距离；任务栏常显时从任务栏上沿算起">
+                                            <StackPanel Orientation="Horizontal">
+                                                <Slider x:Name="DockBottomGapSlider"
+                                                        Width="200"
+                                                        Minimum="0"
+                                                        Maximum="64"
+                                                        TickFrequency="4"
+                                                        IsSnapToTickEnabled="True"
+                                                        AutomationProperties.Name="Dock 距底部高度"
+                                                        ValueChanged="DockBottomGap_Changed"/>
+                                                <TextBlock x:Name="DockBottomGapText" Style="{StaticResource ValueTextStyle}"/>
+                                            </StackPanel>
+                                        </local:SettingsRow>
+                                        <local:SettingsRow Header="动效" Description="图标放大和弹出的动画" local:SettingsSearch.Keywords="动画">
+                                            <ComboBox x:Name="MotionSelector"
+                                                      Width="160"
+                                                      AutomationProperties.Name="Dock 动效"
+                                                      SelectionChanged="StyleSelector_SelectionChanged">
+                                                <ComboBoxItem Content="标准" Tag="Standard"/>
+                                                <ComboBoxItem Content="减弱" Tag="Reduced"/>
+                                                <ComboBoxItem Content="关闭" Tag="Off"/>
                                             </ComboBox>
-                                            <Button Content="恢复默认" Margin="8,0,0,0" Click="SearchLook_Reset"/>
-                                        </StackPanel>
+                                        </local:SettingsRow>
+                                        <local:SettingsRow x:Name="DockMaximizeReleaseRow"
+                                                           Header="最大化窗口时临时隐藏并释放底部空间"
+                                                           Description="开启后，最大化窗口时 Dock 会临时隐藏并释放底部空间，鼠标移到屏幕底边或把手可临时唤出；希望最大化时也始终显示 Dock 请关闭此项"
+                                                           local:SettingsSearch.Keywords="让出底部空间 释放底部空间 临时隐藏">
+                                            <CheckBox x:Name="DockMaximizeReleaseCheckBox"
+                                                      AutomationProperties.Name="最大化窗口时临时隐藏并释放底部空间"
+                                                      Style="{StaticResource ToggleSwitchStyle}"
+                                                      Checked="DockSetting_Changed"
+                                                      Unchecked="DockSetting_Changed"/>
+                                        </local:SettingsRow>
+                                        <local:SettingsRow Header="唤出方式"
+                                                           Description="Dock 隐藏后如何重新显示。原生任务栏一直显示时，鼠标停在任务栏上不会唤出 Dock：默认用把手唤出；选“只用屏幕底边”则不显示把手，把鼠标推到屏幕最底边唤出">
+                                            <ComboBox x:Name="DockRevealModeComboBox"
+                                                      Width="220"
+                                                      AutomationProperties.Name="Dock 唤出方式"
+                                                      SelectionChanged="DockSetting_Changed">
+                                                <ComboBoxItem Content="屏幕底边和把手" Tag="EdgeAndHandle"/>
+                                                <ComboBoxItem Content="只用把手" Tag="HandleOnly"/>
+                                                <ComboBoxItem Content="只用屏幕底边（不显示把手）" Tag="EdgeOnly"/>
+                                            </ComboBox>
+                                        </local:SettingsRow>
+                                    </StackPanel>
+                                    <local:SettingsRow x:Name="DockLookSettingsRow" Header="Dock 外观" local:SettingsSearch.Keywords="Dock 颜色 配色 玻璃浓度">
+                                        <Border Style="{StaticResource SegmentHostStyle}">
+                                            <StackPanel Orientation="Horizontal">
+                                                <RadioButton x:Name="DockFollowLookRadio"
+                                                             GroupName="DockLook"
+                                                             Style="{StaticResource SegmentRadioStyle}"
+                                                             Content="跟随卡片外观"
+                                                             Checked="DockLook_Changed"/>
+                                                <RadioButton x:Name="DockCustomLookRadio"
+                                                             GroupName="DockLook"
+                                                             Style="{StaticResource SegmentRadioStyle}"
+                                                             Content="自定义"
+                                                             Checked="DockLook_Changed"/>
+                                            </StackPanel>
+                                        </Border>
                                     </local:SettingsRow>
-                                    <local:SettingsRow Style="{StaticResource NestedSettingsRowStyle}" Header="搜索框底色" Description="文字颜色根据底色自动调整">
-                                        <StackPanel Orientation="Horizontal">
-                                            <Border x:Name="SearchColorPreview" Width="28" Height="28" CornerRadius="6" Margin="0,0,10,0" VerticalAlignment="Center"/>
-                                            <Button Content="选择颜色…" AutomationProperties.Name="选择搜索框底色" Click="SearchLook_Color"/>
-                                        </StackPanel>
+                                    <StackPanel x:Name="DockCustomLookPanel">
+                                        <local:SettingsRow Style="{StaticResource NestedSettingsRowStyle}" Header="Dock 配色">
+                                            <WrapPanel x:Name="DockPaletteSwatches"/>
+                                        </local:SettingsRow>
+                                        <local:SettingsRow Style="{StaticResource NestedSettingsRowStyle}" Header="Dock 颜色">
+                                            <StackPanel Orientation="Horizontal">
+                                                <Border x:Name="DockColorPreview"
+                                                        VerticalAlignment="Center"
+                                                        Width="30"
+                                                        Height="30"
+                                                        CornerRadius="6"
+                                                        BorderThickness="1"
+                                                        BorderBrush="{DynamicResource SettingsControlBorderBrush}"/>
+                                                <TextBox x:Name="DockColorEditor"
+                                                         Width="110"
+                                                         Margin="8,0,0,0"
+                                                         AutomationProperties.Name="Dock 颜色"
+                                                         LostFocus="DockColorEditor_Commit"
+                                                         KeyDown="DockColorEditor_KeyDown"/>
+                                                <Button Margin="8,0,0,0" Content="选择颜色…" AutomationProperties.Name="选择 Dock 颜色" Click="DockChooseColor_Click"/>
+                                            </StackPanel>
+                                        </local:SettingsRow>
+                                        <local:SettingsRow Style="{StaticResource NestedSettingsRowStyle}" Header="Dock 玻璃浓度">
+                                            <StackPanel Orientation="Horizontal">
+                                                <Slider x:Name="DockOpacitySlider"
+                                                        Width="200"
+                                                        Minimum="0.05"
+                                                        Maximum="0.96"
+                                                        SmallChange="0.02"
+                                                        LargeChange="0.1"
+                                                        AutomationProperties.Name="Dock 玻璃浓度"
+                                                        ValueChanged="DockOpacity_Changed"/>
+                                                <TextBlock x:Name="DockOpacityText" Style="{StaticResource ValueTextStyle}"/>
+                                            </StackPanel>
+                                        </local:SettingsRow>
+                                    </StackPanel>
+                                    <local:SettingsRow Header="不在 Dock 中显示的应用"
+                                                       Description="在 Dock 中右键正在运行的应用，选择“不在 Dock 中显示此应用”。适合悬浮条、小工具这类不在任务栏显示的窗口"
+                                                       local:SettingsSearch.Keywords="隐藏应用">
+                                        <Button Content="恢复显示" Click="UnhideDockApp_Click"/>
                                     </local:SettingsRow>
-                                    <local:SettingsRow Style="{StaticResource NestedSettingsRowStyle}" Header="搜索框不透明度">
-                                        <StackPanel Orientation="Horizontal">
-                                            <Slider x:Name="SearchOpacitySlider" Width="200" VerticalAlignment="Center" Minimum="0.05" Maximum="1" SmallChange="0.05" AutomationProperties.Name="搜索框不透明度" ValueChanged="SearchLook_ValueChanged"/>
-                                            <TextBlock x:Name="SearchOpacityText" Style="{StaticResource ValueTextStyle}"/>
+                                    <Border Style="{StaticResource SettingsBlockStyle}" Background="{DynamicResource SettingsSurfaceHoverBrush}" Padding="34,10,18,12">
+                                        <StackPanel>
+                                            <ListBox x:Name="DockHiddenList"
+                                                     MinHeight="64"
+                                                     MaxHeight="200"
+                                                     AutomationProperties.Name="不在 Dock 中显示的应用">
+                                                <ListBox.ItemTemplate>
+                                                    <DataTemplate>
+                                                        <StackPanel>
+                                                            <TextBlock Text="{Binding DisplayName}"/>
+                                                            <TextBlock Margin="0,2,0,0"
+                                                                       FontSize="12"
+                                                                       TextTrimming="CharacterEllipsis"
+                                                                       Foreground="{DynamicResource IceMutedInkBrush}"
+                                                                       Text="{Binding Detail}"/>
+                                                        </StackPanel>
+                                                    </DataTemplate>
+                                                </ListBox.ItemTemplate>
+                                            </ListBox>
+                                            <TextBlock x:Name="DockHiddenEmptyText"
+                                                       Margin="0,8,0,0"
+                                                       Style="{StaticResource CaptionStyle}"
+                                                       Text="没有隐藏的应用。"/>
                                         </StackPanel>
-                                    </local:SettingsRow>
-                                    <local:SettingsRow Style="{StaticResource NestedSettingsRowStyle}" Header="搜索框圆角">
-                                        <StackPanel Orientation="Horizontal">
-                                            <Slider x:Name="SearchCornerSlider" Width="200" VerticalAlignment="Center" Minimum="0" Maximum="24" SmallChange="1" TickFrequency="1" IsSnapToTickEnabled="True" AutomationProperties.Name="搜索框圆角" ValueChanged="SearchLook_ValueChanged"/>
-                                            <TextBlock x:Name="SearchCornerText" Style="{StaticResource ValueTextStyle}"/>
-                                        </StackPanel>
-                                    </local:SettingsRow>
+                                    </Border>
                                 </StackPanel>
-                            </StackPanel>
-                            <local:SettingsRow x:Name="TopBarLookSummaryRow" Header="外观" local:SettingsSearch.Keywords="信息条 颜色 磨砂">
-                                <Button Style="{StaticResource GhostButtonStyle}"
-                                        Content="在外观样式页调整 →"
-                                        Tag="TopBar"
-                                        AutomationProperties.Name="在外观样式页调整顶端信息条外观"
-                                        Click="BarsLookJump_Click"/>
-                            </local:SettingsRow>
-                            <TextBlock x:Name="TopBarStatusText"
-                                       Margin="18,0,18,12"
+                            </Expander>
+                            <TextBlock x:Name="DockStatusText"
+                                       Margin="6,6,6,0"
                                        AutomationProperties.LiveSetting="Polite"
                                        Style="{StaticResource CaptionStyle}"/>
                         </StackPanel>
-                    </Expander>
+                    </StackPanel>
 
-                    <Expander x:Name="TaskbarSection"
-                              Margin="0,12,0,4"
-                              IsExpanded="True"
-                              Style="{StaticResource SettingsFoldStyle}"
-                              AutomationProperties.Name="Windows 任务栏">
-                        <Expander.Header>
-                            <StackPanel>
-                                <TextBlock Style="{StaticResource FoldTitleStyle}" Text="Windows 任务栏"/>
-                                <TextBlock Style="{StaticResource CaptionStyle}" Text="只改外观和显示方式，退出冰蓝桌面时恢复系统默认"/>
-                            </StackPanel>
-                        </Expander.Header>
-                        <StackPanel x:Name="TaskbarPage">
-                            <Border Padding="18,14,18,12">
-                                <StackPanel>
-                                    <UniformGrid Columns="4">
-                                        <RadioButton x:Name="TaskbarDefaultRadio"
-                                                     Margin="0,0,6,0"
-                                                     GroupName="TaskbarMode"
-                                                     Style="{StaticResource ChoiceCardStyle}"
-                                                     Tag="SystemDefault"
-                                                     AutomationProperties.Name="保持系统默认"
-                                                     Checked="TaskbarMode_Checked"
-                                                     local:SettingsSearch.Keywords="任务栏样式 默认">
-                                            <StackPanel Margin="2,0,24,0">
-                                                <TextBlock FontWeight="Medium" Text="系统默认"/>
-                                                <TextBlock Margin="0,2,0,0" Style="{StaticResource CaptionStyle}" Text="不做任何调整"/>
+                    <!-- Tab 2: 顶端信息条 -->
+                    <StackPanel x:Name="TopBarSection"
+                                Visibility="Collapsed"
+                                local:SettingsSearch.Scope="Bar:TopBar"
+                                local:SettingsSearch.Title="顶端信息条">
+                        <StackPanel x:Name="TopBarPage">
+                            <local:SettingsGroup>
+                                <local:SettingsRow Header="显示顶端信息条"
+                                                   Description="所选显示器顶边的满宽信息条：时间、待办、天气、性能和系统状态，点击模块进入对应设置"
+                                                   local:SettingsSearch.Keywords="顶栏 信息条 开关">
+                                    <CheckBox x:Name="TopBarEnabledCheckBox"
+                                              AutomationProperties.Name="显示顶端信息条"
+                                              Style="{StaticResource ToggleSwitchStyle}"
+                                              Checked="TopBarSetting_Changed"
+                                              Unchecked="TopBarSetting_Changed"/>
+                                </local:SettingsRow>
+                                <StackPanel x:Name="TopBarOptionsPanel">
+                                    <local:SettingsRow Header="显示器" local:SettingsSearch.Keywords="屏幕 多显示器">
+                                        <ComboBox x:Name="TopBarMonitorComboBox"
+                                                  Width="280"
+                                                  AutomationProperties.Name="顶端信息条所在显示器"
+                                                  SelectionChanged="TopBarSetting_Changed"/>
+                                    </local:SettingsRow>
+                                    <local:SettingsRow Header="显示方式"
+                                                       Description="始终显示时预留顶部空间，全屏应用优先显示。顶边被 Windows 任务栏占用时改为智能隐藏，并让开任务栏的唤出区域"
+                                                       local:SettingsSearch.Keywords="自动隐藏 预留顶部">
+                                        <Border Style="{StaticResource SegmentHostStyle}">
+                                            <StackPanel Orientation="Horizontal">
+                                                <RadioButton x:Name="TopBarReserveRadio"
+                                                             GroupName="TopBarVisibility"
+                                                             Style="{StaticResource SegmentRadioStyle}"
+                                                             Content="始终显示，预留顶部空间"
+                                                             AutomationProperties.Name="始终显示，并预留屏幕顶部空间"
+                                                             Checked="TopBarSetting_Changed"/>
+                                                <RadioButton x:Name="TopBarSmartHideRadio"
+                                                             GroupName="TopBarVisibility"
+                                                             Style="{StaticResource SegmentRadioStyle}"
+                                                             Content="智能隐藏"
+                                                             AutomationProperties.Name="智能隐藏"
+                                                             Checked="TopBarSetting_Changed"/>
                                             </StackPanel>
-                                        </RadioButton>
-                                        <RadioButton x:Name="TaskbarTransparentRadio"
-                                                     Margin="3,0"
-                                                     GroupName="TaskbarMode"
-                                                     Style="{StaticResource ChoiceCardStyle}"
-                                                     Tag="Transparent"
-                                                     AutomationProperties.Name="透明"
-                                                     Checked="TaskbarMode_Checked"
-                                                     local:SettingsSearch.Keywords="任务栏样式 透明任务栏">
-                                            <StackPanel Margin="2,0,24,0">
-                                                <TextBlock FontWeight="Medium" Text="透明"/>
-                                                <TextBlock Margin="0,2,0,0" Style="{StaticResource CaptionStyle}" Text="露出后方背景；Windows 透明效果关闭时自动开启，退出还原"/>
-                                            </StackPanel>
-                                        </RadioButton>
-                                        <RadioButton x:Name="TaskbarBlurRadio"
-                                                     Margin="3,0"
-                                                     GroupName="TaskbarMode"
-                                                     Style="{StaticResource ChoiceCardStyle}"
-                                                     Tag="Blur"
-                                                     AutomationProperties.Name="模糊"
-                                                     Checked="TaskbarMode_Checked"
-                                                     local:SettingsSearch.Keywords="任务栏样式 毛玻璃">
-                                            <StackPanel Margin="2,0,24,0">
-                                                <TextBlock FontWeight="Medium" Text="模糊"/>
-                                                <TextBlock Margin="0,2,0,0" Style="{StaticResource CaptionStyle}" Text="系统模糊材质，效果随 Windows 版本变化"/>
-                                            </StackPanel>
-                                        </RadioButton>
-                                        <RadioButton x:Name="TaskbarSmartHideRadio"
-                                                     Margin="6,0,0,0"
-                                                     GroupName="TaskbarMode"
-                                                     Style="{StaticResource ChoiceCardStyle}"
-                                                     Tag="SmartHide"
-                                                     AutomationProperties.Name="自动隐藏"
-                                                     Checked="TaskbarMode_Checked"
-                                                     local:SettingsSearch.Keywords="任务栏样式 隐藏任务栏">
-                                            <StackPanel Margin="2,0,24,0">
-                                                <TextBlock FontWeight="Medium" Text="自动隐藏"/>
-                                                <TextBlock Margin="0,2,0,0" Style="{StaticResource CaptionStyle}" Text="由冰蓝桌面接管；切走或退出时恢复到进入前的状态"/>
-                                            </StackPanel>
-                                        </RadioButton>
-                                    </UniformGrid>
-                                    <TextBlock x:Name="TaskbarStatusText"
-                                               Margin="2,10,0,0"
-                                               AutomationProperties.LiveSetting="Polite"
-                                               Style="{StaticResource CaptionStyle}"/>
-                                    <TextBlock x:Name="TaskbarPositionText" Margin="2,4,0,0"
-                                               Visibility="Collapsed" Style="{StaticResource CaptionStyle}"/>
-                                    <!-- Windows 自动隐藏开着、而不是冰蓝桌面设置的：说明来源并给出出路。 -->
-                                    <StackPanel x:Name="WindowsAutoHidePanel" Margin="2,10,0,0" Visibility="Collapsed">
-                                        <TextBlock TextWrapping="Wrap"
-                                                   Style="{StaticResource CaptionStyle}"
-                                                   Text="Windows 当前开启了“自动隐藏任务栏”，这不是冰蓝桌面设置的，所以选“系统默认”不会改动它。"/>
-                                        <WrapPanel Margin="0,8,0,0">
-                                            <Button Content="改为始终显示" Click="ShowTaskbarAlways_Click"/>
-                                        </WrapPanel>
-                                    </StackPanel>
-                                    <Button Margin="2,10,0,0" HorizontalAlignment="Left"
-                                            Content="打开 Windows 任务栏设置" Click="OpenWindowsTaskbarSettings_Click"/>
+                                        </Border>
+                                    </local:SettingsRow>
+                                    <local:SettingsRow Header="模块"
+                                                       Description="勾选要在顶端信息条显示的内容；全局搜索热键可在“冰蓝总览卡”页设置"/>
+                                    <Border Padding="20,4,8,8" Background="{DynamicResource SettingsSurfaceHoverBrush}">
+                                        <UniformGrid x:Name="TopBarModulesPanel" Columns="5" SizeChanged="TopBarModules_SizeChanged">
+                                            <CheckBox x:Name="TopBarClockCheckBox" Content="时钟与日期" Margin="0,8,12,8"
+                                                      AutomationProperties.Name="时钟与日期模块" Checked="TopBarSetting_Changed" Unchecked="TopBarSetting_Changed"/>
+                                            <CheckBox x:Name="TopBarTodoSummaryCheckBox" Content="待办概要" Margin="0,8,12,8"
+                                                      AutomationProperties.Name="待办概要模块" Checked="TopBarSetting_Changed" Unchecked="TopBarSetting_Changed"/>
+                                            <CheckBox x:Name="TopBarWeatherCheckBox" Content="天气" Margin="0,8,12,8"
+                                                      AutomationProperties.Name="天气模块" Checked="TopBarSetting_Changed" Unchecked="TopBarSetting_Changed"/>
+                                            <CheckBox x:Name="TopBarPerformanceCheckBox" Content="性能" Margin="0,8,12,8"
+                                                      AutomationProperties.Name="性能模块" Checked="TopBarSetting_Changed" Unchecked="TopBarSetting_Changed"/>
+                                            <CheckBox x:Name="TopBarAttentionCheckBox" Content="消息提示" Margin="0,8,12,8"
+                                                      AutomationProperties.Name="消息提示模块" Checked="TopBarSetting_Changed" Unchecked="TopBarSetting_Changed"/>
+                                            <CheckBox x:Name="TopBarInputMethodCheckBox" Content="输入法" Margin="0,8,12,8"
+                                                      AutomationProperties.Name="输入法模块" Checked="TopBarSetting_Changed" Unchecked="TopBarSetting_Changed"/>
+                                            <CheckBox x:Name="TopBarVolumeCheckBox" Content="音量" Margin="0,8,12,8"
+                                                      AutomationProperties.Name="音量模块" Checked="TopBarSetting_Changed" Unchecked="TopBarSetting_Changed"/>
+                                            <CheckBox x:Name="TopBarNetworkCheckBox" Content="网络" Margin="0,8,12,8"
+                                                      AutomationProperties.Name="网络模块" Checked="TopBarSetting_Changed" Unchecked="TopBarSetting_Changed"/>
+                                            <CheckBox x:Name="TopBarBatteryCheckBox" Content="电量" Margin="0,8,12,8"
+                                                      AutomationProperties.Name="电量模块" Checked="TopBarSetting_Changed" Unchecked="TopBarSetting_Changed"/>
+                                            <CheckBox x:Name="TopBarSearchCheckBox" Content="搜索" Margin="0,8,12,8"
+                                                      AutomationProperties.Name="搜索模块" Checked="TopBarSetting_Changed" Unchecked="TopBarSetting_Changed"/>
+                                            <CheckBox x:Name="TopBarTrayOverflowCheckBox" Content="系统托盘" Margin="0,8,12,8"
+                                                      AutomationProperties.Name="系统托盘模块" Checked="TopBarSetting_Changed" Unchecked="TopBarSetting_Changed"/>
+                                        </UniformGrid>
+                                    </Border>
                                 </StackPanel>
-                            </Border>
-                            <!-- 只在选“自动隐藏”时显示：两项都只影响任务栏弹出。 -->
-                            <StackPanel x:Name="TaskbarPopupPanel" Visibility="Collapsed">
-                                <local:SettingsRow Header="鼠标仅从底部两角唤出"
-                                                   Description="仅对底部自动隐藏的任务栏生效；鼠标移到底边左右两端时弹出。打开系统面板时 Windows 仍可能显示任务栏，全屏时暂停"
-                                                   local:SettingsSearch.Keywords="弹出方式">
-                                    <CheckBox x:Name="RevealOnlyAtCornersCheckBox"
-                                              AutomationProperties.Name="鼠标仅从底部两角唤出任务栏"
-                                              Style="{StaticResource ToggleSwitchStyle}"
-                                              Click="RevealOnlyAtCorners_Click"/>
-                                </local:SettingsRow>
-                                <local:SettingsRow Header="有新消息时不弹出任务栏"
-                                                   Description="关闭 Windows 的任务栏应用闪烁，新消息只在 Dock 图标上显示橙色标记"
-                                                   local:SettingsSearch.Keywords="弹出方式 闪烁">
-                                    <CheckBox x:Name="QuietTaskbarFlashCheckBox"
-                                              AutomationProperties.Name="有新消息时不弹出 Windows 任务栏"
-                                              Style="{StaticResource ToggleSwitchStyle}"
-                                              Click="QuietTaskbarFlash_Click"/>
-                                </local:SettingsRow>
-                            </StackPanel>
+                            </local:SettingsGroup>
+
+                            <Expander x:Name="TopBarAdvancedFold"
+                                      Margin="0,14,0,4"
+                                      IsExpanded="False"
+                                      Style="{StaticResource SettingsFoldStyle}"
+                                      AutomationProperties.Name="高度与外观">
+                                <Expander.Header>
+                                    <StackPanel>
+                                        <TextBlock Style="{StaticResource FoldTitleStyle}" Text="高度与外观"/>
+                                        <TextBlock Style="{StaticResource CaptionStyle}" Text="信息条高度、磨砂玻璃及独立颜色和不透明度"/>
+                                    </StackPanel>
+                                </Expander.Header>
+                                <StackPanel>
+                                    <StackPanel x:Name="TopBarAdvancedBehaviorPanel">
+                                        <local:SettingsRow Header="高度" local:SettingsSearch.Keywords="顶端信息条高度 顶栏高度">
+                                            <StackPanel Orientation="Horizontal">
+                                                <Slider x:Name="TopBarHeightSlider"
+                                                        Width="200"
+                                                        Minimum="24"
+                                                        Maximum="48"
+                                                        IsSnapToTickEnabled="True"
+                                                        TickFrequency="1"
+                                                        SmallChange="1"
+                                                        LargeChange="4"
+                                                        AutomationProperties.Name="顶端信息条高度"
+                                                        ValueChanged="TopBarHeight_Changed"/>
+                                                <TextBlock x:Name="TopBarHeightText" Style="{StaticResource ValueTextStyle}"/>
+                                            </StackPanel>
+                                        </local:SettingsRow>
+                                    </StackPanel>
+                                    <StackPanel x:Name="TopBarLookPanel">
+                                        <local:SettingsRow Header="顶端信息条磨砂玻璃"
+                                                           Description="深色表面下对壁纸做真实模糊（接近 macOS 菜单栏质感）；关闭后用半透明纯色。浅色材质不受影响">
+                                            <CheckBox x:Name="TopBarFrostedCheckBox"
+                                                      AutomationProperties.Name="磨砂玻璃"
+                                                      Style="{StaticResource ToggleSwitchStyle}"
+                                                      Checked="TopBarSetting_Changed"
+                                                      Unchecked="TopBarSetting_Changed"/>
+                                        </local:SettingsRow>
+                                        <local:SettingsRow x:Name="TopBarLookSettingsRow" Header="顶端信息条外观" local:SettingsSearch.Keywords="信息条 颜色 不透明度">
+                                            <Border Style="{StaticResource SegmentHostStyle}">
+                                                <StackPanel Orientation="Horizontal">
+                                                    <RadioButton x:Name="TopBarFollowLookRadio"
+                                                                 GroupName="TopBarLook"
+                                                                 Style="{StaticResource SegmentRadioStyle}"
+                                                                 Content="跟随卡片外观"
+                                                                 Checked="TopBarLook_Changed"/>
+                                                    <RadioButton x:Name="TopBarCustomLookRadio"
+                                                                 GroupName="TopBarLook"
+                                                                 Style="{StaticResource SegmentRadioStyle}"
+                                                                 Content="自定义"
+                                                                 Checked="TopBarLook_Changed"/>
+                                                </StackPanel>
+                                            </Border>
+                                        </local:SettingsRow>
+                                        <StackPanel x:Name="TopBarCustomLookPanel">
+                                            <local:SettingsRow Style="{StaticResource NestedSettingsRowStyle}" Header="顶端信息条颜色">
+                                                <StackPanel Orientation="Horizontal">
+                                                    <Border x:Name="TopBarColorPreview"
+                                                            VerticalAlignment="Center"
+                                                            Width="30"
+                                                            Height="30"
+                                                            CornerRadius="6"
+                                                            BorderThickness="1"
+                                                            BorderBrush="{DynamicResource SettingsControlBorderBrush}"/>
+                                                    <TextBox x:Name="TopBarColorEditor"
+                                                             Width="110"
+                                                             Margin="8,0,0,0"
+                                                             AutomationProperties.Name="顶端信息条颜色"
+                                                             LostFocus="TopBarColorEditor_Commit"
+                                                             KeyDown="TopBarColorEditor_KeyDown"/>
+                                                    <Button Margin="8,0,0,0" Content="选择颜色…" AutomationProperties.Name="选择顶端信息条颜色" Click="TopBarChooseColor_Click"/>
+                                                </StackPanel>
+                                            </local:SettingsRow>
+                                            <local:SettingsRow Style="{StaticResource NestedSettingsRowStyle}" Header="顶端信息条不透明度">
+                                                <StackPanel Orientation="Horizontal">
+                                                    <Slider x:Name="TopBarOpacitySlider"
+                                                            Width="200"
+                                                            Minimum="0"
+                                                            Maximum="1"
+                                                            SmallChange="0.02"
+                                                            LargeChange="0.1"
+                                                            AutomationProperties.Name="顶端信息条不透明度"
+                                                            ValueChanged="TopBarOpacity_Changed"/>
+                                                    <TextBlock x:Name="TopBarOpacityText" Style="{StaticResource ValueTextStyle}"/>
+                                                </StackPanel>
+                                            </local:SettingsRow>
+                                        </StackPanel>
+                                    </StackPanel>
+                                </StackPanel>
+                            </Expander>
+                            <TextBlock x:Name="TopBarStatusText"
+                                       Margin="6,6,6,0"
+                                       AutomationProperties.LiveSetting="Polite"
+                                       Style="{StaticResource CaptionStyle}"/>
                         </StackPanel>
-                    </Expander>
+                    </StackPanel>
+
+                    <!-- Tab 3: Windows 任务栏 -->
+                    <StackPanel x:Name="TaskbarSection"
+                                Visibility="Collapsed"
+                                local:SettingsSearch.Scope="Bar:Taskbar"
+                                local:SettingsSearch.Title="Windows 任务栏">
+                        <StackPanel x:Name="TaskbarPage">
+                            <local:SettingsGroup>
+                                <Border Padding="18,14,18,12">
+                                    <StackPanel>
+                                        <TextBlock Margin="0,0,0,10" Style="{StaticResource CaptionStyle}"
+                                                   Text="只改外观和显示方式，退出冰蓝桌面时自动恢复系统默认。"/>
+                                        <UniformGrid Columns="4">
+                                            <RadioButton x:Name="TaskbarDefaultRadio"
+                                                         Margin="0,0,6,0"
+                                                         GroupName="TaskbarMode"
+                                                         Style="{StaticResource ChoiceCardStyle}"
+                                                         Tag="SystemDefault"
+                                                         AutomationProperties.Name="保持系统默认"
+                                                         Checked="TaskbarMode_Checked"
+                                                         local:SettingsSearch.Keywords="任务栏样式 默认">
+                                                <StackPanel Margin="2,0,24,0">
+                                                    <TextBlock FontWeight="Medium" Text="系统默认"/>
+                                                    <TextBlock Margin="0,2,0,0" Style="{StaticResource CaptionStyle}" Text="不做任何调整"/>
+                                                </StackPanel>
+                                            </RadioButton>
+                                            <RadioButton x:Name="TaskbarTransparentRadio"
+                                                         Margin="3,0"
+                                                         GroupName="TaskbarMode"
+                                                         Style="{StaticResource ChoiceCardStyle}"
+                                                         Tag="Transparent"
+                                                         AutomationProperties.Name="透明"
+                                                         Checked="TaskbarMode_Checked"
+                                                         local:SettingsSearch.Keywords="任务栏样式 透明任务栏">
+                                                <StackPanel Margin="2,0,24,0">
+                                                    <TextBlock FontWeight="Medium" Text="透明"/>
+                                                    <TextBlock Margin="0,2,0,0" Style="{StaticResource CaptionStyle}" Text="露出后方背景；Windows 透明效果关闭时自动开启，退出还原"/>
+                                                </StackPanel>
+                                            </RadioButton>
+                                            <RadioButton x:Name="TaskbarBlurRadio"
+                                                         Margin="3,0"
+                                                         GroupName="TaskbarMode"
+                                                         Style="{StaticResource ChoiceCardStyle}"
+                                                         Tag="Blur"
+                                                         AutomationProperties.Name="模糊"
+                                                         Checked="TaskbarMode_Checked"
+                                                         local:SettingsSearch.Keywords="任务栏样式 毛玻璃">
+                                                <StackPanel Margin="2,0,24,0">
+                                                    <TextBlock FontWeight="Medium" Text="模糊"/>
+                                                    <TextBlock Margin="0,2,0,0" Style="{StaticResource CaptionStyle}" Text="系统模糊材质，效果随 Windows 版本变化"/>
+                                                </StackPanel>
+                                            </RadioButton>
+                                            <RadioButton x:Name="TaskbarSmartHideRadio"
+                                                         Margin="6,0,0,0"
+                                                         GroupName="TaskbarMode"
+                                                         Style="{StaticResource ChoiceCardStyle}"
+                                                         Tag="SmartHide"
+                                                         AutomationProperties.Name="自动隐藏"
+                                                         Checked="TaskbarMode_Checked"
+                                                         local:SettingsSearch.Keywords="任务栏样式 隐藏任务栏">
+                                                <StackPanel Margin="2,0,24,0">
+                                                    <TextBlock FontWeight="Medium" Text="自动隐藏"/>
+                                                    <TextBlock Margin="0,2,0,0" Style="{StaticResource CaptionStyle}" Text="由冰蓝桌面接管；切走或退出时恢复到进入前的状态"/>
+                                                </StackPanel>
+                                            </RadioButton>
+                                        </UniformGrid>
+                                        <TextBlock x:Name="TaskbarStatusText"
+                                                   Margin="2,10,0,0"
+                                                   AutomationProperties.LiveSetting="Polite"
+                                                   Style="{StaticResource CaptionStyle}"/>
+                                        <TextBlock x:Name="TaskbarPositionText" Margin="2,4,0,0"
+                                                   Visibility="Collapsed" Style="{StaticResource CaptionStyle}"/>
+                                        <!-- Windows 自动隐藏开着、而不是冰蓝桌面设置的：说明来源并给出出路。 -->
+                                        <StackPanel x:Name="WindowsAutoHidePanel" Margin="2,10,0,0" Visibility="Collapsed">
+                                            <TextBlock TextWrapping="Wrap"
+                                                       Style="{StaticResource CaptionStyle}"
+                                                       Text="Windows 当前开启了“自动隐藏任务栏”，这不是冰蓝桌面设置的，所以选“系统默认”不会改动它。"/>
+                                            <WrapPanel Margin="0,8,0,0">
+                                                <Button Content="改为始终显示" Click="ShowTaskbarAlways_Click"/>
+                                            </WrapPanel>
+                                        </StackPanel>
+                                        <Button Margin="2,10,0,0" HorizontalAlignment="Left"
+                                                Content="打开 Windows 任务栏设置" Click="OpenWindowsTaskbarSettings_Click"/>
+                                    </StackPanel>
+                                </Border>
+                                <!-- 只在选“自动隐藏”时显示：两项都只影响任务栏弹出。 -->
+                                <StackPanel x:Name="TaskbarPopupPanel" Visibility="Collapsed">
+                                    <local:SettingsRow Header="鼠标仅从底部两角唤出"
+                                                       Description="仅对底部自动隐藏的任务栏生效；鼠标移到底边左右两端时弹出。打开系统面板时 Windows 仍可能显示任务栏，全屏时暂停"
+                                                       local:SettingsSearch.Keywords="弹出方式">
+                                        <CheckBox x:Name="RevealOnlyAtCornersCheckBox"
+                                                  AutomationProperties.Name="鼠标仅从底部两角唤出任务栏"
+                                                  Style="{StaticResource ToggleSwitchStyle}"
+                                                  Click="RevealOnlyAtCorners_Click"/>
+                                    </local:SettingsRow>
+                                    <local:SettingsRow Header="有新消息时不弹出任务栏"
+                                                       Description="关闭 Windows 的任务栏应用闪烁，新消息只在 Dock 图标上显示橙色标记"
+                                                       local:SettingsSearch.Keywords="弹出方式 闪烁">
+                                        <CheckBox x:Name="QuietTaskbarFlashCheckBox"
+                                                  AutomationProperties.Name="有新消息时不弹出 Windows 任务栏"
+                                                  Style="{StaticResource ToggleSwitchStyle}"
+                                                  Click="QuietTaskbarFlash_Click"/>
+                                    </local:SettingsRow>
+                                </StackPanel>
+                            </local:SettingsGroup>
+                        </StackPanel>
+                    </StackPanel>
                 </StackPanel>
             </ScrollViewer>
 

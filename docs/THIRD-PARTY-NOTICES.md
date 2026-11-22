@@ -10,3 +10,8 @@
 Windows Composition 由操作系统自身提供；应用不读取或上传背景像素。
 
 内置字体的许可证原文位于程序目录的“字体许可”文件夹。
+
+## 内置开源字体
+
+- **Google Sans**（v76，Regular / Medium / Bold 静态字重，约 6.0 MB）：用于应用界面拉丁字母、数字与常见符号（中文由系统 `Microsoft YaHei UI` 兜底）；来源 Google Fonts（`https://fonts.google.com/specimen/Google+Sans`），许可 SIL Open Font License 1.1（`LICENSE-GoogleSans.txt`）。
+- **得意黑 / Jost / Quicksand / Abril Fatface**：用于桌面卡片可选标题与时钟字体，均采用 SIL Open Font License 1.1。

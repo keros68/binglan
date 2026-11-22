@@ -17,6 +17,8 @@ internal static class InstalledFontCatalog
     // SIL Open Font License 1.1; the licence texts ship next to the program.
     private static readonly (string Name, string Family, FontWeight Weight)[] Bundled =
     [
+        ("Google Sans", "Google Sans", FontWeights.Normal),
+        ("Google Sans 中粗", "Google Sans", FontWeights.Medium),
         ("得意黑", "得意黑", FontWeights.Normal),
         ("Jost 极细", "Jost*", FontWeights.ExtraLight),
         ("Jost 细", "Jost*", FontWeights.Light),

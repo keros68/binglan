@@ -72,7 +72,6 @@ public partial class SettingsWindow : Window
     private bool _loadingStyle;
     private bool _loadingTopBar;
     private bool _loadingTopBarLook;
-    private bool _loadingSearchAppearance;
     private bool _topBarApplyQueued;
     private bool _presetPreviewQueued;
     private bool _isClosed;
@@ -197,7 +196,8 @@ public partial class SettingsWindow : Window
             // Tests and older call sites construct the window without a top bar; every
             // place that shows or changes it stays out of sight.
             TopBarSection.Visibility = Visibility.Collapsed;
-            TopBarLookPanel.Visibility = Visibility.Collapsed;
+            BarsTabTopBarRadio.Visibility = Visibility.Collapsed;
+            LauncherSearchHotkeyRow.Visibility = Visibility.Collapsed;
             ScreenMapTopBarButton.Visibility = Visibility.Collapsed;
             SchemeTopBarRow.Visibility = Visibility.Collapsed;
         }
@@ -213,6 +213,7 @@ public partial class SettingsWindow : Window
         LoadFileBoxAutomation();
         LoadStyle();
         RefreshBackupList();
+        SelectBarTab("Dock");
         ShowPage("Scheme");
         Closing += (_, _) => CommitPendingChanges();
         Closed += (_, _) => { _isClosed = true; CancelSearch(); };
@@ -1711,6 +1712,7 @@ public partial class SettingsWindow : Window
         "Appearance" or "Cards" => ("Appearance", null),
         "Layout" or "Theme" => ("Appearance", "Layout"),
         "Components" => ("Components", null),
+        "Launcher" => ("Launcher", null),
         "Bars" => ("Bars", null),
         "Dock" or "TopBar" or "Taskbar" => ("Bars", link),
         "General" or "About" or "Update" => ("General", null),
@@ -1720,8 +1722,8 @@ public partial class SettingsWindow : Window
 
     private void ShowPage(string page)
     {
-        if (SchemePage is null || AppearancePage is null || ComponentsPage is null || BarsPage is null ||
-            GeneralPage is null)
+        if (SchemePage is null || AppearancePage is null || ComponentsPage is null || LauncherPage is null ||
+            BarsPage is null || GeneralPage is null)
         {
             return;
         }
@@ -1730,6 +1732,7 @@ public partial class SettingsWindow : Window
         SchemePage.Visibility = page == "Scheme" ? Visibility.Visible : Visibility.Collapsed;
         AppearancePage.Visibility = page == "Appearance" ? Visibility.Visible : Visibility.Collapsed;
         ComponentsPage.Visibility = page == "Components" ? Visibility.Visible : Visibility.Collapsed;
+        LauncherPage.Visibility = page == "Launcher" ? Visibility.Visible : Visibility.Collapsed;
         BarsPage.Visibility = page == "Bars" ? Visibility.Visible : Visibility.Collapsed;
         GeneralPage.Visibility = page == "General" ? Visibility.Visible : Visibility.Collapsed;
         if (page == "Appearance")
@@ -1760,7 +1763,8 @@ public partial class SettingsWindow : Window
         (SchemePage, "Scheme", "桌面方案"),
         (AppearancePage, "Appearance", "外观样式"),
         (ComponentsPage, "Components", "桌面组件"),
-        (BarsPage, "Bars", "顶栏底栏"),
+        (LauncherPage, "Launcher", "冰蓝总览卡"),
+        (BarsPage, "Bars", "顶栏与底栏"),
         (GeneralPage, "General", "通用设置")
     ];
 
@@ -1775,10 +1779,25 @@ public partial class SettingsWindow : Window
         SettingsSearch.Find(SearchIndex, query.Trim(), IsSearchEntryAvailable);
 
     // A row that is hidden right now (a feature this computer lacks, an option of
-    // another mode) is left out; component rows need a matching card to select.
-    private bool IsSearchEntryAvailable(SettingsSearchEntry entry) => entry.Scope is { } scope
-        ? DesktopComponentList.Items.OfType<DesktopComponentSettingsEntry>().Any(item => MatchesSearchScope(item, scope))
-        : SettingsSearch.IsShown(entry.Target, entry.Page);
+    // another mode) is left out; component rows need a matching card to select, and
+    // tabbed bar panels check visibility within their own tab container.
+    private bool IsSearchEntryAvailable(SettingsSearchEntry entry)
+    {
+        if (entry.Scope is { } scope)
+        {
+            if (scope.StartsWith("Bar:", StringComparison.Ordinal))
+            {
+                var bar = scope["Bar:".Length..];
+                if (bar == "TopBar" && _topBarState is null)
+                {
+                    return false;
+                }
+                return SettingsSearch.IsShown(entry.Target, BarTabPanel(bar));
+            }
+            return DesktopComponentList.Items.OfType<DesktopComponentSettingsEntry>().Any(item => MatchesSearchScope(item, scope));
+        }
+        return SettingsSearch.IsShown(entry.Target, entry.Page);
+    }
 
     private static bool MatchesSearchScope(DesktopComponentSettingsEntry item, string scope) => scope switch
     {
@@ -1790,8 +1809,8 @@ public partial class SettingsWindow : Window
     };
 
     /// <summary>
-    /// Goes to a setting: switches page, selects a card the setting belongs to, opens
-    /// the folds around it, then scrolls it into the middle, tints it and focuses it.
+    /// Goes to a setting: switches page, selects a tab or card the setting belongs to,
+    /// opens the folds around it, then scrolls it into the middle, tints it and focuses it.
     /// </summary>
     internal void OpenSearchResult(SettingsSearchEntry entry)
     {
@@ -1800,7 +1819,14 @@ public partial class SettingsWindow : Window
         SelectNavigationPage(tag);
         if (entry.Scope is { } scope)
         {
-            SelectSearchScope(scope, entry.Target);
+            if (scope.StartsWith("Bar:", StringComparison.Ordinal))
+            {
+                SelectBarTab(scope["Bar:".Length..]);
+            }
+            else
+            {
+                SelectSearchScope(scope, entry.Target);
+            }
         }
         foreach (var fold in entry.Folds)
         {
@@ -2833,6 +2859,7 @@ public partial class SettingsWindow : Window
         {
             DockEnabledCheckBox.IsChecked = _dockState.IsEnabled;
             DockOptionsPanel.IsEnabled = _dockState.IsEnabled;
+            DockAdvancedBehaviorPanel.IsEnabled = _dockState.IsEnabled;
             DockReserveRadio.IsChecked =
                 _dockState.VisibilityMode == DockVisibilityMode.ReserveWorkArea;
             DockSmartHideRadio.IsChecked =
@@ -2921,6 +2948,7 @@ public partial class SettingsWindow : Window
 
         _dockState.IsEnabled = DockEnabledCheckBox.IsChecked == true;
         DockOptionsPanel.IsEnabled = _dockState.IsEnabled;
+        DockAdvancedBehaviorPanel.IsEnabled = _dockState.IsEnabled;
         var previousVisibility = _dockState.VisibilityMode;
         _dockState.VisibilityMode = DockSmartHideRadio.IsChecked == true
             ? DockVisibilityMode.SmartHide
@@ -3000,11 +3028,6 @@ public partial class SettingsWindow : Window
         {
             return;
         }
-
-        var frosted = _topBarState?.FrostedGlass != false;
-        DockLookSummaryRow.Description = _dockState.FollowCardLook ? "跟随全局外观" : "已独立设置颜色与玻璃浓度";
-        TopBarLookSummaryRow.Description = (_topBarState?.FollowCardLook != false ? "跟随全局外观" : "已独立设置颜色与不透明度")
-            + (frosted ? string.Empty : "；磨砂玻璃已关闭");
 
         AppearanceOverridesGroup.Items.Clear();
         if (!_dockState.FollowCardLook)
@@ -3181,6 +3204,7 @@ public partial class SettingsWindow : Window
         {
             TopBarEnabledCheckBox.IsChecked = state.IsEnabled;
             TopBarOptionsPanel.IsEnabled = state.IsEnabled;
+            TopBarAdvancedBehaviorPanel.IsEnabled = state.IsEnabled;
             TopBarFrostedCheckBox.IsChecked = state.FrostedGlass;
             TopBarReserveRadio.IsChecked = state.VisibilityMode == TopBarVisibilityMode.ReserveTopEdge;
             TopBarSmartHideRadio.IsChecked = state.VisibilityMode == TopBarVisibilityMode.SmartHide;
@@ -3201,9 +3225,6 @@ public partial class SettingsWindow : Window
             TopBarTrayOverflowCheckBox.IsChecked = state.Modules.TrayOverflow;
             TopBarTrayOverflowCheckBox.Visibility = OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000)
                 ? Visibility.Visible : Visibility.Collapsed;
-            TopBarEverythingCheckBox.IsChecked = state.UseEverything;
-            SearchPresentationComboBox.SelectedIndex = (int)state.SearchPresentation;
-            LoadSearchAppearance();
             LoadTopBarSearchHotkey();
 
             TopBarMonitorComboBox.Items.Clear();
@@ -3239,6 +3260,7 @@ public partial class SettingsWindow : Window
 
         state.IsEnabled = TopBarEnabledCheckBox.IsChecked == true;
         TopBarOptionsPanel.IsEnabled = state.IsEnabled;
+        TopBarAdvancedBehaviorPanel.IsEnabled = state.IsEnabled;
         state.FrostedGlass = TopBarFrostedCheckBox.IsChecked == true;
         state.VisibilityMode = TopBarSmartHideRadio.IsChecked == true
             ? TopBarVisibilityMode.SmartHide
@@ -3254,7 +3276,6 @@ public partial class SettingsWindow : Window
         state.Modules.Battery = TopBarBatteryCheckBox.IsChecked == true;
         state.Modules.Search = TopBarSearchCheckBox.IsChecked == true;
         state.Modules.TrayOverflow = TopBarTrayOverflowCheckBox.IsChecked == true;
-        state.UseEverything = TopBarEverythingCheckBox.IsChecked == true;
         if (TopBarMonitorComboBox.SelectedItem is ComboBoxItem { Tag: string deviceName })
         {
             state.MonitorDeviceName = deviceName;
@@ -3265,89 +3286,10 @@ public partial class SettingsWindow : Window
 
     // ---------------------------------------------------------------- 顶栏搜索热键
 
-    private void SearchPresentation_Changed(object sender, SelectionChangedEventArgs e)
-    {
-        if (_loadingTopBar || _topBarState is not { } state
-            || SearchPresentationComboBox.SelectedIndex < 0)
-        {
-            return;
-        }
-        state.SearchPresentation = (SearchPresentation)SearchPresentationComboBox.SelectedIndex;
-        LoadSearchAppearance();
-        ApplyTopBarChange("已应用搜索入口");
-    }
-
     private void TopBarModules_SizeChanged(object sender, SizeChangedEventArgs e)
     {
         if (sender is System.Windows.Controls.Primitives.UniformGrid grid)
             grid.Columns = Math.Clamp((int)(grid.ActualWidth / 150d), 2, 5);
-    }
-
-    private void LoadSearchAppearance()
-    {
-        if (_topBarState is not { } state || SearchLookComboBox is null) return;
-        _loadingSearchAppearance = true;
-        try
-        {
-            SearchAppearancePanel.IsEnabled = state.SearchPresentation != SearchPresentation.TopBar;
-            SearchLookComboBox.SelectedIndex = state.SearchFollowCardLook ? 2
-                : state.SearchSurfaceColor == TopBarState.DefaultSurfaceColor ? 0
-                : state.SearchSurfaceColor == "#F3F6FC" ? 1 : 3;
-            SearchOpacitySlider.Value = state.SearchSurfaceOpacity;
-            SearchCornerSlider.Value = state.SearchCornerRadius;
-            SearchOpacitySlider.IsEnabled = SearchColorPreview.IsEnabled = !state.SearchFollowCardLook;
-            SearchOpacityText.Text = $"{state.SearchSurfaceOpacity * 100:0}%";
-            SearchCornerText.Text = $"{state.SearchCornerRadius:0} DIP";
-            var brush = new System.Windows.Media.SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(state.SearchSurfaceColor));
-            brush.Freeze();
-            SearchColorPreview.Background = brush;
-        }
-        finally { _loadingSearchAppearance = false; }
-    }
-
-    private void SearchLook_Changed(object sender, SelectionChangedEventArgs e)
-    {
-        if (_loadingSearchAppearance || _loadingTopBar || _topBarState is not { } state || SearchLookComboBox.SelectedIndex < 0) return;
-        state.SearchFollowCardLook = SearchLookComboBox.SelectedIndex == 2;
-        if (SearchLookComboBox.SelectedIndex is 0 or 1)
-        {
-            state.SearchSurfaceColor = SearchLookComboBox.SelectedIndex == 0 ? TopBarState.DefaultSurfaceColor : "#F3F6FC";
-            state.SearchSurfaceOpacity = 0.94d;
-        }
-        LoadSearchAppearance();
-        ApplyTopBarChange("已调整搜索框配色");
-    }
-
-    private void SearchLook_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
-    {
-        if (_loadingSearchAppearance || _loadingTopBar || _topBarState is not { } state || SearchCornerSlider is null) return;
-        state.SearchSurfaceOpacity = SearchOpacitySlider.Value;
-        state.SearchCornerRadius = SearchCornerSlider.Value;
-        SearchOpacityText.Text = $"{state.SearchSurfaceOpacity * 100:0}%";
-        SearchCornerText.Text = $"{state.SearchCornerRadius:0} DIP";
-        ApplyTopBarChange("已调整搜索框外观");
-    }
-
-    private void SearchLook_Reset(object sender, RoutedEventArgs e)
-    {
-        if (_topBarState is not { } state) return;
-        state.SearchFollowCardLook = false;
-        state.SearchSurfaceColor = TopBarState.DefaultSurfaceColor;
-        state.SearchSurfaceOpacity = 0.94d;
-        state.SearchCornerRadius = 10d;
-        LoadSearchAppearance();
-        ApplyTopBarChange("已恢复搜索框默认外观");
-    }
-
-    private void SearchLook_Color(object sender, RoutedEventArgs e)
-    {
-        if (_topBarState is not { } state) return;
-        var current = (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(state.SearchSurfaceColor);
-        if (!NativeColorDialog.TryPickColor(this, current, out var chosen)) return;
-        state.SearchFollowCardLook = false;
-        state.SearchSurfaceColor = chosen;
-        LoadSearchAppearance();
-        ApplyTopBarChange("已调整搜索框底色");
     }
 
     /// <summary>
@@ -3827,19 +3769,67 @@ public partial class SettingsWindow : Window
         }
     }
 
-    private Expander BarSection(string name) => name switch
+    private string _activeBarTab = "Dock";
+
+    private FrameworkElement BarTabPanel(string name) => name switch
     {
-        "Dock" => DockSection,
         "TopBar" when _topBarState is not null => TopBarSection,
-        _ => TaskbarSection
+        "Taskbar" => TaskbarSection,
+        _ => DockSection
     };
 
-    // Opens one of the three bars on its page and brings its header into view.
+    private void SelectBarTab(string bar)
+    {
+        if (bar == "TopBar" && _topBarState is null)
+        {
+            bar = "Dock";
+        }
+        _activeBarTab = bar is "TopBar" or "Taskbar" ? bar : "Dock";
+        if (DockSection is null || TopBarSection is null || TaskbarSection is null)
+        {
+            return;
+        }
+
+        DockSection.Visibility = _activeBarTab == "Dock" ? Visibility.Visible : Visibility.Collapsed;
+        TopBarSection.Visibility = _activeBarTab == "TopBar" && _topBarState is not null
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        TaskbarSection.Visibility = _activeBarTab == "Taskbar" ? Visibility.Visible : Visibility.Collapsed;
+
+        BarsTabDockRadio.IsChecked = _activeBarTab == "Dock";
+        BarsTabTopBarRadio.IsChecked = _activeBarTab == "TopBar";
+        BarsTabTaskbarRadio.IsChecked = _activeBarTab == "Taskbar";
+
+        SetScreenMapActive(ScreenMapDockButton, _activeBarTab == "Dock");
+        SetScreenMapActive(ScreenMapTopBarButton, _activeBarTab == "TopBar");
+        SetScreenMapActive(ScreenMapTaskbarButton, _activeBarTab == "Taskbar");
+
+        static void SetScreenMapActive(Button button, bool active)
+        {
+            if (active)
+            {
+                button.SetResourceReference(Control.BorderBrushProperty, "SettingsMapTextBrush");
+            }
+            else
+            {
+                button.BorderBrush = System.Windows.Media.Brushes.Transparent;
+            }
+        }
+    }
+
+    private void BarsTab_Checked(object sender, RoutedEventArgs e)
+    {
+        if (sender is RadioButton { Tag: string bar } && bar != _activeBarTab)
+        {
+            SelectBarTab(bar);
+        }
+    }
+
+    // Switches to one of the three bars on the Bars page and scrolls to its top.
     private void RevealBarSection(string name)
     {
-        var section = BarSection(name);
-        section.IsExpanded = true;
-        RevealElement(section);
+        SelectBarTab(name);
+        BarsPage.ScrollToTop();
     }
 
     private void BarsJump_Click(object sender, RoutedEventArgs e)
@@ -3854,29 +3844,30 @@ public partial class SettingsWindow : Window
     {
         if (sender is Button { CommandParameter: string bar })
         {
-            RevealBarSection(bar);
-        }
-    }
-
-    // The Dock and top bar look settings sit with the shared look on the appearance page.
-    private void BarsLookJump_Click(object sender, RoutedEventArgs e)
-    {
-        if (sender is FrameworkElement { Tag: string bar })
-        {
-            ShowBarsLook(bar);
+            SelectBarTab(bar);
         }
     }
 
     private void ShowBarsLook(string bar)
     {
-        SelectNavigationPage("Appearance");
-        AppearanceBarsLookFold.IsExpanded = true;
-        RevealElement(bar switch
+        switch (bar)
         {
-            "Launcher" => LauncherLookSettingsRow,
-            "TopBar" => TopBarLookSettingsRow,
-            _ => DockLookSettingsRow
-        });
+            case "Launcher":
+                SelectNavigationPage("Launcher");
+                LauncherLookSection.IsExpanded = true;
+                RevealElement(LauncherLookSettingsRow);
+                break;
+            case "TopBar" when _topBarState is not null:
+                SelectNavigationPage("TopBar");
+                TopBarAdvancedFold.IsExpanded = true;
+                RevealElement(TopBarLookSettingsRow);
+                break;
+            default:
+                SelectNavigationPage("Dock");
+                DockAdvancedFold.IsExpanded = true;
+                RevealElement(DockLookSettingsRow);
+                break;
+        }
     }
 
     /// <summary>

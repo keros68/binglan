@@ -4,7 +4,7 @@
              xmlns:sys="clr-namespace:System;assembly=System.Runtime"
              ShutdownMode="OnExplicitShutdown">
     <Application.Resources>
-        <FontFamily x:Key="UiFont">Microsoft YaHei UI, Segoe UI</FontFamily>
+        <FontFamily x:Key="UiFont">pack://application:,,,/BingLan;component/Assets/Fonts/#Google Sans, Microsoft YaHei UI, Segoe UI</FontFamily>
 
         <!-- 桌面卡片统一字阶（6 档 + 展示级） -->
         <sys:Double x:Key="CardFont.Caption">11</sys:Double>

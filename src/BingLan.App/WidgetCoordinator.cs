@@ -1437,6 +1437,24 @@ public sealed partial class WidgetCoordinator : IDisposable
                     ScheduleSave();
                     _launcherPanel?.RefreshRecentPreference();
                 },
+                IsLauncherUseEverything = () => _state.LauncherPreferences.UseEverything,
+                SetLauncherUseEverything = enabled =>
+                {
+                    _state.LauncherPreferences.UseEverything = enabled;
+                    ScheduleSave();
+                },
+                GetLauncherFavoriteMode = () => _state.LauncherPreferences.FavoriteMode,
+                SetLauncherFavoriteMode = mode =>
+                {
+                    _state.LauncherPreferences.FavoriteMode = mode;
+                    ScheduleSave();
+                },
+                GetLauncherBackdropMode = () => _state.LauncherPreferences.BackdropMode,
+                SetLauncherBackdropMode = mode =>
+                {
+                    _state.LauncherPreferences.BackdropMode = mode;
+                    ScheduleSave();
+                },
                 ApplyLauncherAppearance = () =>
                 {
                     _launcherPanel?.ApplyAppearance();
@@ -2822,70 +2840,9 @@ public sealed partial class WidgetCoordinator : IDisposable
             owner.ScheduleSave();
         }
 
-        // The Start-menu scan resolves every shortcut, so its result is cached across
-        // search sessions and only refreshed when it has gone stale.
-        private IReadOnlyList<DockPinnedApp>? _startMenuCache;
-        private DateTimeOffset _startMenuCacheAt;
-        private static readonly TimeSpan StartMenuCacheInterval = TimeSpan.FromMinutes(10);
+        public bool IsLauncherEnabled => owner._state.LauncherEnabled;
 
-        public IReadOnlyList<TopBarSearchCandidate> ReadSearchCandidates()
-        {
-            var candidates = new List<TopBarSearchCandidate>();
-            var seen = new HashSet<(TopBarSearchItemKind, string)>();
-
-            // Desktop entries come first so a desktop shortcut wins the dedup against
-            // its Start-menu twin: the user put it on the desktop themselves.
-            foreach (var path in WidgetCoordinator.CollectImportableDesktopEntries())
-            {
-                var fileName = Path.GetFileName(path);
-                var kind = Directory.Exists(path)
-                    ? TopBarSearchItemKind.Folder
-                    : FileMappingService.IsLauncherName(fileName)
-                        ? TopBarSearchItemKind.App
-                        : TopBarSearchItemKind.File;
-                AddCandidate(kind, FileMappingService.GetDisplayName(path), fileName, path);
-            }
-
-            var now = DateTimeOffset.Now;
-            if (_startMenuCache is null || now - _startMenuCacheAt > StartMenuCacheInterval)
-            {
-                _startMenuCache = DockShortcuts.ReadStartMenuApps();
-                _startMenuCacheAt = now;
-            }
-            foreach (var app in _startMenuCache)
-            {
-                if (app.ExecutablePath is { } executable)
-                {
-                    AddCandidate(
-                        TopBarSearchItemKind.App,
-                        app.DisplayName,
-                        Path.GetFileName(executable),
-                        executable);
-                }
-            }
-            return candidates;
-
-            void AddCandidate(
-                TopBarSearchItemKind kind,
-                string displayName,
-                string fileName,
-                string path)
-            {
-                if (seen.Add((kind, displayName.Trim().ToLowerInvariant())))
-                {
-                    candidates.Add(new TopBarSearchCandidate(kind, displayName, fileName, path));
-                }
-            }
-        }
-
-        // A broken or removed target fails quietly; the search keeps working.
-        public void OpenSearchTarget(TopBarSearchCandidate candidate) =>
-            _ = ShellLauncher.StartAsync(new ProcessStartInfo(candidate.Path) { UseShellExecute = true });
-
-        public void OpenSearchTargetLocation(TopBarSearchCandidate candidate) =>
-            _ = Task.Run(() => WindowCommandService.OpenFileLocation(candidate.Path));
-
-        public void SearchLayoutChanged() => owner.ScheduleSave();
+        public void ToggleLauncherPanel() => owner.ToggleLauncherPanel();
 
         public void OpenTopBarSettings() => owner.OpenSettings("TopBar");
 

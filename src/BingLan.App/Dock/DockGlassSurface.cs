@@ -30,6 +30,7 @@ internal sealed class DockGlassSurface : IDisposable
     private readonly Border _surface;
     private readonly string _fillKey;
     private readonly string _strokeKey;
+    private readonly bool _fullTintOpacity;
     private HwndSource? _source;
     private DockCompositionBackdrop? _backdrop;
     private bool _failed;
@@ -41,12 +42,14 @@ internal sealed class DockGlassSurface : IDisposable
     private (Rect Rect, double RadiusX, double RadiusY, double Opacity, Color Fill, Color Stroke)? _lastVisual;
     private bool _transparency = ReadTransparency();
 
-    internal DockGlassSurface(Window window, Border surface, string fillKey, string strokeKey, string? glassFillKey = null)
+    internal DockGlassSurface(Window window, Border surface, string fillKey, string strokeKey, string? glassFillKey = null,
+        bool fullTintOpacity = false)
     {
         _window = window;
         _surface = surface;
         _fillKey = fillKey;
         _strokeKey = strokeKey;
+        _fullTintOpacity = fullTintOpacity;
         surface.SetValue(ControllerProperty, this);
         surface.SetResourceReference(FillProperty, fillKey);
         if (glassFillKey is not null)
@@ -223,7 +226,8 @@ internal sealed class DockGlassSurface : IDisposable
                 Opacity: _surface.Opacity * _window.Opacity, Fill: glassFill.Color, Stroke: stroke?.Color ?? Colors.Transparent);
             if (_lastVisual != visual)
             {
-                _backdrop.Update(visual.Rect, visual.RadiusX, visual.RadiusY, visual.Opacity, visual.Fill, visual.Stroke);
+                _backdrop.Update(visual.Rect, visual.RadiusX, visual.RadiusY, visual.Opacity, visual.Fill, visual.Stroke,
+                    _fullTintOpacity ? 1.0d : 0.24d);
                 _lastVisual = visual;
             }
             // Alpha 1 retains native layered-window hit testing over the whole surface.

@@ -301,6 +301,9 @@ internal static class SettingsWindowTests
     {
         var topBar = new TopBarState();
         var applies = 0;
+        var useEverything = false;
+        var favoriteMode = LauncherFavoriteMode.FollowDock;
+        var backdropMode = LauncherBackdropMode.LiveWindow;
         var window = new SettingsWindow(
             new CityLookupService(new CitySearchService(new StubHttpMessageHandler()), CityLibrary.Empty),
             new InformationWidgetState(),
@@ -308,7 +311,15 @@ internal static class SettingsWindowTests
             (_, _) => { },
             _ => { },
             _ => { },
-            maintenance: null,
+            maintenance: new SettingsMaintenance
+            {
+                IsLauncherUseEverything = () => useEverything,
+                SetLauncherUseEverything = value => useEverything = value,
+                GetLauncherFavoriteMode = () => favoriteMode,
+                SetLauncherFavoriteMode = mode => favoriteMode = mode,
+                GetLauncherBackdropMode = () => backdropMode,
+                SetLauncherBackdropMode = mode => backdropMode = mode
+            },
             topBarState: topBar,
             applyTopBar: () => applies++);
         ShowAndPump(window);
@@ -318,19 +329,23 @@ internal static class SettingsWindowTests
             var tags = navigation.Items.OfType<ListBoxItem>()
                 .Select(item => item.Tag as string)
                 .ToList();
-            Assert(tags.SequenceEqual(["Scheme", "Appearance", "Components", "Bars", "General"]),
-                "导航应为桌面方案、外观样式、桌面组件、顶栏底栏、通用设置");
+            Assert(tags.SequenceEqual(["Scheme", "Appearance", "Components", "Launcher", "Bars", "General"]),
+                "导航应为桌面方案、外观样式、桌面组件、冰蓝总览卡、顶栏与底栏、通用设置");
 
             navigation.SelectedItem = navigation.Items
                 .OfType<ListBoxItem>()
                 .First(item => (item.Tag as string) == "Bars");
             Pump();
-            Assert(Require<FrameworkElement>(window, "TopBarPage").IsVisible, "顶栏底栏页显示顶端信息条分区");
-            var sections = new[] { "DockSection", "TopBarSection", "TaskbarSection" }
-                .Select(name => Require<FrameworkElement>(window, name).TranslatePoint(new Point(), window).Y)
-                .ToArray();
-            Assert(sections[0] < sections[1] && sections[1] < sections[2],
-                "顶端信息条分区应排在 Dock 与任务栏之间");
+            Assert(Require<FrameworkElement>(window, "DockPage").IsVisible
+                && !Require<FrameworkElement>(window, "TopBarPage").IsVisible
+                && !Require<FrameworkElement>(window, "TaskbarPage").IsVisible,
+                "顶栏与底栏页默认只显示当前标签（冰蓝 Dock）");
+
+            Require<RadioButton>(window, "BarsTabTopBarRadio").IsChecked = true;
+            Pump();
+            Assert(Require<FrameworkElement>(window, "TopBarPage").IsVisible
+                && !Require<FrameworkElement>(window, "DockPage").IsVisible,
+                "切换到顶端信息条标签后只显示顶端信息条设置");
 
             var enabled = Require<CheckBox>(window, "TopBarEnabledCheckBox");
             Assert(enabled.IsChecked == false, "顶端信息条默认关闭");
@@ -357,6 +372,11 @@ internal static class SettingsWindowTests
             Pump();
             Assert(topBar.VisibilityMode == TopBarVisibilityMode.SmartHide, "显示方式应写入状态");
 
+            var topBarAdvanced = Require<Expander>(window, "TopBarAdvancedFold");
+            Assert(!topBarAdvanced.IsExpanded, "顶端信息条高度与外观默认收起");
+            topBarAdvanced.IsExpanded = true;
+            Pump();
+
             var height = Require<Slider>(window, "TopBarHeightSlider");
             height.Value = 40;
             Pump();
@@ -370,25 +390,7 @@ internal static class SettingsWindowTests
             Require<RadioButton>(window, "TopBarCustomLookRadio").IsChecked = true;
             Pump();
             Assert(!topBar.FollowCardLook, "自定义外观应写入状态");
-            var everything = Require<CheckBox>(window, "TopBarEverythingCheckBox");
-            Assert(everything.IsChecked == false, "Everything 搜索默认关闭");
-            everything.IsChecked = true;
-            Pump();
-            Assert(topBar.UseEverything, "Everything 选项应写入本机设置");
-            Require<ComboBox>(window, "SearchPresentationComboBox").SelectedIndex = 1;
-            Pump();
-            Assert(topBar.SearchPresentation == SearchPresentation.Floating, "独立搜索入口应写入状态");
-            var look = Require<ComboBox>(window, "SearchLookComboBox");
-            look.SelectedIndex = 1;
-            Require<Slider>(window, "SearchOpacitySlider").Value = 0.7;
-            Require<Slider>(window, "SearchCornerSlider").Value = 16;
-            Pump();
-            Assert(topBar.SearchSurfaceColor == "#F3F6FC" && topBar.SearchSurfaceOpacity == 0.7 && topBar.SearchCornerRadius == 16,
-                "搜索框外观选项应写入实际独立设置");
-            look.SelectedIndex = 2;
-            Pump();
-            Assert(topBar.SearchFollowCardLook && !Require<Slider>(window, "SearchOpacitySlider").IsEnabled,
-                "跟随卡片时应使用共享材质，并停用自定义透明度");
+
             var moduleGrid = Require<System.Windows.Controls.Primitives.UniformGrid>(window, "TopBarModulesPanel");
             foreach (var width in new[] { 900d, 1168d, 1600d })
             {
@@ -404,6 +406,38 @@ internal static class SettingsWindowTests
                 Assert(Math.Abs(first.X - nextRow.X) < 1 && nextRow.Y > first.Y,
                     "模块换行后的列起点必须对齐");
             }
+
+            navigation.SelectedItem = navigation.Items
+                .OfType<ListBoxItem>()
+                .First(item => (item.Tag as string) == "Launcher");
+            Pump();
+            Assert(Require<FrameworkElement>(window, "LauncherPage").IsVisible, "冰蓝总览卡应有独立设置页");
+            var everything = Require<CheckBox>(window, "LauncherEverythingCheckBox");
+            Assert(everything.IsChecked == false, "Everything 搜索默认关闭");
+            everything.IsChecked = true;
+            Pump();
+            Assert(useEverything, "总览卡 Everything 选项应写入本机设置");
+            var favCombo = Require<ComboBox>(window, "LauncherFavoriteModeComboBox");
+            Assert(favCombo.SelectedIndex == 0, "总览卡常用星标默认跟随 Dock");
+            favCombo.SelectedIndex = 1;
+            Pump();
+            Assert(favoriteMode == LauncherFavoriteMode.Independent, "总览卡星标偏好应支持切换为独立收藏");
+            favCombo.SelectedIndex = 2;
+            Pump();
+            Assert(favoriteMode == LauncherFavoriteMode.Off, "总览卡星标偏好应支持关闭");
+            var backdropCombo = Require<ComboBox>(window, "LauncherBackdropModeComboBox");
+            Assert(backdropCombo.SelectedIndex == 0, "总览卡背景方式默认实时透视");
+            backdropCombo.SelectedIndex = 1;
+            Pump();
+            Assert(backdropMode == LauncherBackdropMode.WallpaperCanvas, "总览卡背景方式应支持静态壁纸底衬");
+            backdropCombo.SelectedIndex = 2;
+            Pump();
+            Assert(backdropMode == LauncherBackdropMode.ShowDesktop, "总览卡背景方式应支持弹出时切到桌面");
+            var launcherLook = Require<Expander>(window, "LauncherLookSection");
+            Assert(!launcherLook.IsExpanded, "冰蓝总览卡外观与材质默认收起");
+            launcherLook.IsExpanded = true;
+            Pump();
+            Assert(Require<RadioButton>(window, "LauncherFollowLookRadio").IsVisible, "展开后应显示冰蓝总览卡外观设置");
         }
         finally
         {

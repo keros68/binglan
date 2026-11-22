@@ -44,6 +44,7 @@ internal static class LauncherPanelWindowTests
             PurposeCategoriesAndOverrides(ShowFromUser, pump, until);
             ContinuousGridAndIcons(ShowFromUser, pump, until);
             SendToFileBox(ShowFromUser, pump, until);
+            FavoriteModesAndFileBrowseEnhancements(ShowFromUser, pump, until);
             MissingAndValidTargets(ShowFromUser, pump, until);
             ClosedLoadCannotRepopulate(ShowFromUser, pump, until);
         }
@@ -388,7 +389,23 @@ internal static class LauncherPanelWindowTests
             search.Text = "";
             until(() => panel.VisibleEntries.Count == 1 && panel.VisibleEntries[0] == work,
                 "清空查询应回到当前分组");
+            Assert(Require<TextBlock>(panel, "StatusText").Text == string.Empty, "浏览自建分组时状态栏不应重复数量摘要");
 
+            search.Text = work.Candidate.DisplayName;
+            until(() => panel.VisibleEntries.Count == 1 && Require<Button>(panel, "TabGroupsButton").IsVisible,
+                "搜索自建分组中的应用应显示全部搜索结果");
+            Click(panel, "TabGroupsButton");
+            until(() => SearchRowsCurrent(panel) && panel.VisibleEntries.Count == 1
+                && panel.VisibleEntries[0].Key == work.Key,
+                "搜索态点击我的分组标签应保留自建分组中的应用结果");
+            search.Text = game.Candidate.DisplayName;
+            until(() => SearchRowsCurrent(panel) && panel.VisibleEntries.Count == 0,
+                "搜索态我的分组标签不应包含未分组的应用");
+            search.Text = "";
+            until(() => panel.VisibleEntries.Count == 1 && panel.VisibleEntries[0] == work,
+                "清空查询应回到测试项目分组");
+
+            SelectEntry(work);
             Press(panel, Key.Apps);
             pump();
             var menu = OpenMenu(panel);
@@ -410,6 +427,33 @@ internal static class LauncherPanelWindowTests
             Assert(groups.Single(group => group.Name == "测试常用").Members.Count == 1,
                 "移出当前分组应保留其他分组关联");
             menu.IsOpen = false;
+
+            SelectCategory(panel, "测试常用");
+            until(() => panel.VisibleEntries.Count == 1 && Require<Button>(panel, "RenameGroupButton").IsVisible
+                && Require<Button>(panel, "DeleteGroupButton").IsVisible, "选中自建分组后应显示重命名和删除按钮");
+            Click(panel, "RenameGroupButton");
+            until(() => Require<FrameworkElement>(panel, "GroupEditor").IsVisible, "点击重命名应显示内联编辑栏");
+            var saveGroup = Require<Button>(panel, "SaveGroupButton");
+            saveGroup.Focus();
+            until(() => saveGroup.IsKeyboardFocused, "重命名编辑栏按钮应可聚焦");
+            Press(panel, Key.Escape);
+            until(() => !Require<FrameworkElement>(panel, "GroupEditor").IsVisible,
+                "焦点位于分组编辑栏按钮时按 Esc 应关闭编辑栏");
+            Assert(panel.IsVisible, "关闭分组编辑栏不应关掉总览卡");
+            Click(panel, "RenameGroupButton");
+            until(() => Require<FrameworkElement>(panel, "GroupEditor").IsVisible, "再次点击重命名应显示内联编辑栏");
+            Require<TextBox>(panel, "GroupNameEditor").Text = "测试常用2";
+            Click(panel, "SaveGroupButton");
+            until(() => groups.Any(group => group.Name == "测试常用2")
+                && Require<TextBlock>(panel, "StatusText").Text == "已重命名为「测试常用2」",
+                "内联重命名应更新分组名并反馈结果");
+
+            Click(panel, "DeleteGroupButton");
+            until(() => Require<FrameworkElement>(panel, "GroupDeleteConfirm").IsVisible, "点击删除分组应显示内联确认条");
+            Click(panel, "ConfirmDeleteGroupButton");
+            until(() => groups.All(group => group.Name != "测试常用2")
+                && Require<TextBlock>(panel, "StatusText").Text == "已删除分组「测试常用2」",
+                "确认删除分组应移除分组并反馈结果");
         }
         finally { panel.Close(); }
 
@@ -457,7 +501,13 @@ internal static class LauncherPanelWindowTests
             Assert(panel.VisibleEntries[0].Pinned?.Arguments == "--profile work"
                 && panel.VisibleEntries[1].Pinned?.Arguments == "--profile Work", "常用项目应保留 Dock 顺序和完整参数");
             var list = Require<ListBox>(panel, "ResultsList");
-            Assert(SelectedEntry(list)?.Key == first.Key, "初次结果应选择首个入口");
+            Assert(SelectedEntry(list) is null && Equals(list.Tag, false), "浏览模式初始不应默认选中项目");
+            Press(panel, Key.Return);
+            pump();
+            Assert(opened.Count == 0, "浏览模式未选中项目时按回车不应启动");
+            Press(panel, Key.Down);
+            until(() => SelectedEntry(list)?.Key == first.Key && Equals(list.Tag, true),
+                "按下方向键应选中首个入口并开启键盘选中框线");
             var sources = Require<ComboBox>(panel, "SourceFilter");
             sources.SelectedItem = sources.Items.Cast<object>().Single(item => OptionName(item) == "开始菜单");
             until(() => panel.VisibleEntries.Count == 1, "合并后的常用入口应保留开始菜单来源");
@@ -465,17 +515,30 @@ internal static class LauncherPanelWindowTests
                 "按其他来源筛选时应保留固定项的启动参数");
             sources.SelectedIndex = 0;
             until(() => panel.VisibleEntries.Count == 2, "清除来源筛选应恢复全部应用");
-            Click(panel, "FilesFilter");
+            Click(panel, "TabFilesButton");
             until(() => panel.VisibleEntries.Count == 1, "文件页只显示文件，常用应用应遵守类型筛选");
             Assert(panel.VisibleEntries.Single().Candidate.Kind == TopBarSearchItemKind.File,
                 "固定文件应保留在文件页");
             var search = Require<TextBox>(panel, "SearchBox");
             search.Text = name;
-            until(() => Require<Button>(panel, "AllFilter").IsVisible && panel.VisibleEntries.Count == 3,
-                "输入查询应默认跨应用和文件搜索并隐藏重复常用项目");
+            until(() => Require<Button>(panel, "TabAllButton").IsVisible && panel.VisibleEntries.Count == 3,
+                "输入查询应默认跨应用和文件搜索并展示全部标签");
             Assert(SelectedEntry(list)?.Key == first.Key, "新查询应选择首个匹配入口");
-            Click(panel, "AppsFilter");
-            until(() => panel.VisibleEntries.Count == 2, "应用筛选应保留不同启动参数");
+            Click(panel, "TabAppsButton");
+            until(() => panel.VisibleEntries.Count == 2 && search.Text == name,
+                "搜索态切换顶部应用标签应保留关键词并只保留应用结果");
+            Click(panel, "TabFilesButton");
+            until(() => panel.VisibleEntries.Count == 1 && search.Text == name,
+                "搜索态切换顶部文件标签应保留关键词并只保留文件结果");
+            Click(panel, "TabAllButton");
+            until(() => panel.VisibleEntries.Count == 3, "切回全部标签应恢复全部搜索结果");
+            search.Focus();
+            until(() => search.IsKeyboardFocused, "搜索框有输入时应保持可聚焦");
+            Assert(!Press(panel, Key.Right) && !Press(panel, Key.Left)
+                && !Press(panel, Key.Home) && !Press(panel, Key.End),
+                "搜索框有文字时左右方向键与 Home/End 不得被面板拦截，应留给光标编辑");
+            pump();
+            Assert(SelectedEntry(list)?.Key == first.Key, "搜索框有文字时左右方向键不得改选结果项");
             Press(panel, Key.Apps);
             pump();
             var menu = (ContextMenu?)typeof(LauncherPanelWindow).GetField("_menu", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(panel);
@@ -485,7 +548,8 @@ internal static class LauncherPanelWindowTests
             pump();
             Assert(panel.IsVisible && !menu.IsOpen, "菜单内 Escape 应只关闭菜单");
             search.Text = "";
-            until(() => panel.VisibleEntries.Count == 1 && !Require<Button>(panel, "AllFilter").IsVisible, "清空查询应恢复文件浏览");
+            until(() => panel.VisibleEntries.Count == 1 && !Require<Button>(panel, "TabAllButton").IsVisible,
+                "清空查询应恢复文件浏览并隐藏搜索专用全部标签");
             Assert(opened.Count == 0, "筛选和右键菜单不能启动项目");
         }
         finally { panel.Close(); }
@@ -527,7 +591,7 @@ internal static class LauncherPanelWindowTests
             until(() => panel.VisibleEntries.Count == 5, "概览应包含常用与正常应用，并收起辅助入口");
             Assert(panel.VisibleEntries.Count(entry => entry.Key == office.Key) == 1, "概览中的常用应用应只出现一次");
             Assert(Require<ScrollViewer>(panel, "BrowseNavigation").IsVisible, "浏览时应显示用途导航");
-            Assert(!Require<FrameworkElement>(panel, "SearchTools").IsVisible, "空查询应收起搜索类型工具");
+            Assert(!Require<Button>(panel, "TabAllButton").IsVisible, "空查询应收起顶部全部标签");
 
             // 仅 1 项的自动类别应折叠进「其他」，满 3 项的「效率办公」保持独立
             SelectPurpose(panel, "效率办公");
@@ -541,10 +605,11 @@ internal static class LauncherPanelWindowTests
             search.Text = office.Candidate.DisplayName;
             until(() => panel.VisibleEntries.Any(entry => entry.Key == office.Key), "用途内搜索应默认跨类别");
             Assert(!Require<ScrollViewer>(panel, "BrowseNavigation").IsVisible
-                && Require<FrameworkElement>(panel, "SearchTools").IsVisible, "搜索时应收起导航并显示搜索类型");
+                && Require<Button>(panel, "TabAllButton").IsVisible, "搜索时应收起导航并在顶部显示全部标签");
             search.Text = "";
-            until(() => panel.VisibleEntries.Count == 2 && panel.VisibleEntries.Any(e => e.Key == sparseDesign.Key),
-                "清空搜索应恢复用途分类");
+            until(() => panel.VisibleEntries.Count == 2 && panel.VisibleEntries.Any(e => e.Key == sparseDesign.Key)
+                && !Require<Button>(panel, "TabAllButton").IsVisible,
+                "清空搜索应恢复用途分类并收起顶部全部标签");
 
             SelectCategory(panel, mixed.Name);
             until(() => panel.VisibleEntries.Count == 2, "自建分组应同时显示应用和文件");
@@ -614,7 +679,7 @@ internal static class LauncherPanelWindowTests
             }).ToArray();
             panel = Create(() => Task.FromResult(new LauncherPanelSnapshot(entries, [], false)), (_, _) => throw new InvalidOperationException("滚动不得启动文件"));
             show(panel);
-            Click(panel, "FilesFilter");
+            Click(panel, "TabFilesButton");
             until(() => panel.VisibleEntries.Count == entryCount, "连续网格应保留所有筛选结果");
             var list = Require<ListBox>(panel, "ResultsList");
             var grid = FindVisual<LauncherGridPanel>(list) ?? throw new InvalidOperationException("启动面板应使用连续图标网格");
@@ -630,6 +695,7 @@ internal static class LauncherPanelWindowTests
             AssertBounded();
             Assert(list.ItemContainerGenerator.ContainerFromIndex(entryCount - 1) is null,
                 "未滚动到的末项不应生成 WPF 控件");
+            Assert(SelectedEntry(list) is null && Equals(list.Tag, false), "连续网格浏览初始不应选中项目");
             VerifyTileHover(panel, list, until);
             Press(panel, Key.Down);
             Assert(list.SelectedIndex == columns, "向下选择应按实际网格列数移动");
@@ -647,6 +713,25 @@ internal static class LauncherPanelWindowTests
             pump();
             Assert(scroll.VerticalOffset > beforePage && list.SelectedIndex > offscreen,
                 "PageDown 应按像素滚动并选择新视口的项目");
+            Press(panel, Key.End);
+            until(() => list.SelectedIndex == entryCount - 1, "End 键应跳至末尾项目");
+            Press(panel, Key.Home);
+            until(() => list.SelectedIndex == 0, "Home 键应回到首个项目");
+            var search = Require<TextBox>(panel, "SearchBox");
+            search.Focus();
+            until(() => search.IsKeyboardFocused, "搜索框应可聚焦");
+            Assert(Press(panel, Key.Right), "搜索框为空时右键应由网格导航拦截");
+            until(() => list.SelectedIndex == 1, "搜索框为空时右键应横向移动到下一网格项");
+            Assert(Press(panel, Key.Left), "搜索框为空时左键应由网格导航拦截");
+            until(() => list.SelectedIndex == 0, "搜索框为空时左键应横向回到首个网格项");
+            var material = Require<Button>(panel, "MaterialButton");
+            material.Focus();
+            until(() => material.IsKeyboardFocused, "材质切换按钮应可接收焦点");
+            Assert(!Press(panel, Key.Down) && !Press(panel, Key.Right)
+                && !Press(panel, Key.Home) && !Press(panel, Key.End),
+                "焦点不在搜索框或结果列表时方向键与 Home/End 不得被拦截");
+            pump();
+            Assert(list.SelectedIndex == 0, "焦点不在搜索框或结果列表时方向键不得改选项目");
             AssertBounded();
             scroll.ScrollToEnd();
             pump();
@@ -687,7 +772,7 @@ internal static class LauncherPanelWindowTests
         {
             MoveTo(search);
             until(() => !selected.IsMouseOver && !adjacent.IsMouseOver, "鼠标应移出图标区");
-            Assert(selected.IsSelected && IsClear(selectedTile) && IsClear(adjacentTile), "默认选中项和普通项都不应有底纹");
+            Assert(!selected.IsSelected && IsClear(selectedTile) && IsClear(adjacentTile), "浏览模式初始项目不应选中或显示底纹");
 
             MoveTo(adjacent);
             until(() => adjacent.IsMouseOver, "鼠标应移到相邻项目");
@@ -696,13 +781,13 @@ internal static class LauncherPanelWindowTests
 
             MoveTo(search);
             until(() => !adjacent.IsMouseOver, "鼠标应离开相邻项目");
-            list.Tag = true;
+            Press(panel, Key.Down);
+            until(() => selected.IsSelected && Equals(list.Tag, true), "浏览模式按向下键应选中首个项目");
             Assert(IsClear(selectedTile) && IsClear(adjacentTile) && selectedTile.BorderBrush is SolidColorBrush { Color.A: > 0 },
                 "移出项目后应移除底纹，键盘选中项仅保留描边");
         }
         finally
         {
-            list.Tag = false;
             TopBarWindowTests.MoveMouseTo(originalCursor.X, originalCursor.Y);
         }
 
@@ -737,8 +822,10 @@ internal static class LauncherPanelWindowTests
         try
         {
             show(panel);
-            Click(panel, "FilesFilter");
+            Click(panel, "TabFilesButton");
             until(() => panel.VisibleEntries.Count == 1, "发送测试文件未载入");
+            Press(panel, Key.Down);
+            until(() => SelectedEntry(Require<ListBox>(panel, "ResultsList"))?.Key == entry.Key, "按方向键选中发送测试文件");
             for (var attempt = 1; attempt <= 2; attempt++)
             {
                 Press(panel, Key.Apps);
@@ -787,8 +874,10 @@ internal static class LauncherPanelWindowTests
         try
         {
             show(panel);
-            Click(panel, "FilesFilter");
+            Click(panel, "TabFilesButton");
             until(() => panel.VisibleEntries.Count == 1, "文件列表未载入");
+            Press(panel, Key.Down);
+            until(() => SelectedEntry(Require<ListBox>(panel, "ResultsList"))?.Key == entry.Key, "按方向键选中失效文件");
             Press(panel, Key.Return);
             until(() => Require<TextBlock>(panel, "StatusText").Text.Contains("不存在"), "失效文件应显示反馈");
             Assert(panel.IsVisible && launches == 0, "失效文件不得收起面板或调用启动器");
@@ -805,8 +894,10 @@ internal static class LauncherPanelWindowTests
                 launches++;
             });
             show(valid);
-            Click(valid, "FilesFilter");
+            Click(valid, "TabFilesButton");
             until(() => valid.VisibleEntries.Count == 1, "有效文件列表未载入");
+            Press(valid, Key.Down);
+            until(() => SelectedEntry(Require<ListBox>(valid, "ResultsList"))?.Key == entry.Key, "按方向键选中有效文件");
             Press(valid, Key.Return);
             until(() => launches == 1, "有效文件应调用启动器");
             Assert(closedBeforeOpen, "启动目标前必须关闭面板");
@@ -831,6 +922,100 @@ internal static class LauncherPanelWindowTests
         until(() => completion.Task.IsCompleted, "延迟候选未完成");
         pump();
         Assert(!panel.IsVisible && panel.VisibleEntries.Count == 0, "关闭后异步候选不得回填窗口");
+    }
+
+    private static void FavoriteModesAndFileBrowseEnhancements(Action<Window> show, Action pump, Action<Func<bool>, string> until)
+    {
+        var rootDir = Path.Combine(Path.GetTempPath(), "BingLan-file-ux-" + Guid.NewGuid().ToString("N"));
+        var subDir = Path.Combine(rootDir, "子目录A");
+        Directory.CreateDirectory(subDir);
+        var olderFile = Path.Combine(subDir, "alpha-old.txt");
+        var newerFile = Path.Combine(subDir, "zeta-new.txt");
+        File.WriteAllText(olderFile, "old");
+        File.WriteAllText(newerFile, "newer content");
+        File.SetLastWriteTimeUtc(olderFile, DateTime.UtcNow.AddDays(-2));
+        File.SetLastWriteTimeUtc(newerFile, DateTime.UtcNow);
+
+        var appA = new LauncherPanelEntry(
+            new TopBarSearchCandidate(TopBarSearchItemKind.App, "AlphaApp", "alpha.exe", Path.Combine(rootDir, "alpha.exe")),
+            "开始菜单");
+        var appB = new LauncherPanelEntry(
+            new TopBarSearchCandidate(TopBarSearchItemKind.App, "BetaApp", "beta.exe", Path.Combine(rootDir, "beta.exe")),
+            "开始菜单");
+        var place = new BingLan.App.Services.LauncherPlace("place:test", "测试目录", rootDir, rootDir, "\uE8B7", IsFileBox: false);
+        var preferences = new LauncherPreferencesState { FavoriteMode = LauncherFavoriteMode.Independent };
+        var saves = 0;
+        var dockPins = 0;
+        var snapshot = new LauncherPanelSnapshot([appA, appB], [appA], false, Places: [place]);
+        var panel = new LauncherPanelWindow(
+            () => Task.FromResult(snapshot),
+            (_, _) => throw new InvalidOperationException("浏览测试不得打开目标"),
+            () => [],
+            (_, _) => Task.FromResult("完成"),
+            0,
+            MonitorCatalog.GetAll().First(),
+            pinToDock: _ => { dockPins++; return "已固定"; },
+            readGroups: () => new List<LauncherGroupState>(),
+            saveOrganizer: () => saves++,
+            preferences: preferences);
+        try
+        {
+            show(panel);
+            until(() => panel.VisibleEntries.Count == 2, "独立星标模式应载入全部应用");
+            SelectResult(panel, appB);
+            Press(panel, Key.Apps);
+            pump();
+            var menu = OpenMenu(panel);
+            menu.Items.OfType<MenuItem>().Single(item => Equals(item.Header, "加入常用"))
+                .RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+            menu.IsOpen = false;
+            until(() => preferences.IsIndependentFavorite([appB.Key]) && dockPins == 0 && saves > 0,
+                "独立星标收藏应写入本机偏好且不改动 Dock 固定");
+
+            // 切换到文件页 → 进入测试目录 → 钻入子目录A → 排序、目录内搜索、Backspace 返回
+            Click(panel, "TabFilesButton");
+            until(() => Require<ItemsControl>(panel, "FilePlacesBar").IsVisible, "文件总览应展示常用位置卡片");
+            var placeButton = Visuals<Button>(Require<ItemsControl>(panel, "FilePlacesBar"))
+                .Single(btn => System.Windows.Automation.AutomationProperties.GetName(btn) == "测试目录");
+            placeButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            until(() => panel.VisibleEntries.Any(entry => entry.Candidate.DisplayName == "子目录A"),
+                "点击常用位置应读取目录内容");
+            var list = Require<ListBox>(panel, "ResultsList");
+            SelectResult(panel, panel.VisibleEntries.Single(entry => entry.Candidate.DisplayName == "子目录A"));
+            Press(panel, Key.Return);
+            until(() => panel.VisibleEntries.Count == 2 && Require<ItemsControl>(panel, "BreadcrumbBar").IsVisible,
+                "钻入子目录后应显示可点击面包屑");
+            Assert(panel.VisibleEntries[0].Candidate.DisplayName == "alpha-old",
+                "默认按名称排序时 alpha-old 应排在 zeta-new 前");
+            Click(panel, "FileSortByModifiedButton");
+            until(() => panel.VisibleEntries[0].Candidate.DisplayName == "zeta-new",
+                "切换为最近修改排序后最新文件应排在前面");
+
+            // 目录内筛选
+            var search = Require<TextBox>(panel, "SearchBox");
+            search.Text = "zeta";
+            until(() => Require<Border>(panel, "SearchScope").IsVisible, "目录内输入搜索词应提供仅搜当前目录选项");
+            var scopeCheck = Require<CheckBox>(panel, "SearchCurrentCategory");
+            scopeCheck.IsChecked = true;
+            scopeCheck.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            until(() => panel.VisibleEntries.Count == 1 && panel.VisibleEntries[0].Candidate.DisplayName == "zeta-new",
+                "勾选仅搜当前目录应只返回当前目录匹配文件");
+            search.Text = "";
+            until(() => panel.VisibleEntries.Count == 2, "清空搜索应恢复当前目录列表");
+
+            // Backspace 在空搜索框下应返回上级目录
+            search.Focus();
+            until(() => search.IsKeyboardFocused, "搜索框应可聚焦");
+            Assert(Press(panel, Key.Back), "空搜索框下 Backspace 应触发返回上一级目录");
+            until(() => panel.VisibleEntries.Any(entry => entry.Candidate.DisplayName == "子目录A")
+                && !Require<ItemsControl>(panel, "BreadcrumbBar").IsVisible,
+                "Backspace 应返回到测试目录并收起子目录面包屑");
+        }
+        finally
+        {
+            panel.Close();
+            if (Directory.Exists(rootDir)) Directory.Delete(rootDir, recursive: true);
+        }
     }
 
     private static LauncherPanelWindow Create(Func<Task<LauncherPanelSnapshot>> snapshot, Action<LauncherPanelEntry, bool> open) =>
@@ -887,8 +1072,16 @@ internal static class LauncherPanelWindowTests
 
     private static void Click(Window window, string name) => Require<Button>(window, name).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
 
-    private static void Press(FrameworkElement element, Key key) => element.RaiseEvent(new KeyEventArgs(
-        Keyboard.PrimaryDevice, PresentationSource.FromVisual(element)!, 0, key) { RoutedEvent = UIElement.PreviewKeyDownEvent });
+    private static bool Press(FrameworkElement element, Key key)
+    {
+        var args = new KeyEventArgs(
+            Keyboard.PrimaryDevice, PresentationSource.FromVisual(element)!, 0, key)
+        {
+            RoutedEvent = UIElement.PreviewKeyDownEvent
+        };
+        element.RaiseEvent(args);
+        return args.Handled;
+    }
 
     private static void Assert(bool condition, string message)
     {

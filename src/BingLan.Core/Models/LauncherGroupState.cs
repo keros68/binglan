@@ -31,6 +31,42 @@ public static class LauncherGroupRules
         return true;
     }
 
+    public static bool TryRename(IList<LauncherGroupState> groups, Guid groupId, string name, out LauncherGroupState? group)
+    {
+        group = groups.FirstOrDefault(candidate => candidate.Id == groupId);
+        if (group is null)
+        {
+            return false;
+        }
+
+        var normalized = NormalizeName(name);
+        if (normalized is null || groups.Any(candidate =>
+                candidate.Id != groupId
+                && string.Equals(candidate.Name, normalized, StringComparison.OrdinalIgnoreCase)))
+        {
+            return false;
+        }
+
+        group.Name = normalized;
+        return true;
+    }
+
+    public static bool TryDelete(IList<LauncherGroupState> groups, Guid groupId, out LauncherGroupState? removed)
+    {
+        for (var index = 0; index < groups.Count; index++)
+        {
+            if (groups[index].Id == groupId)
+            {
+                removed = groups[index];
+                groups.RemoveAt(index);
+                return true;
+            }
+        }
+
+        removed = null;
+        return false;
+    }
+
     public static bool TryAdd(LauncherGroupState group, LauncherGroupMember member)
     {
         if (string.IsNullOrWhiteSpace(member.Key)

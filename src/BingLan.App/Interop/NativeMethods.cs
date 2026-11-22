@@ -153,8 +153,10 @@ internal static class NativeMethods
 
     private const uint GwHwndPrev = 3;
 
+    internal const uint GwOwner = 4;
+
     [DllImport("user32.dll")]
-    private static extern nint GetWindow(nint window, uint command);
+    internal static extern nint GetWindow(nint window, uint command);
 
     internal static nint GetNormalWindowAbove(nint window)
     {
@@ -259,6 +261,20 @@ internal static class NativeMethods
         int attribute,
         out int value,
         int valueSize);
+
+    internal const uint SpiGetDeskWallpaper = 0x0073;
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool SystemParametersInfoW(
+        uint action,
+        uint param,
+        System.Text.StringBuilder value,
+        uint winIni);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool ShowWindowAsync(nint hWnd, int nCmdShow);
 
     /// <summary>
     /// Whether DWM cloaks the window (suspended UWP hosts and similar stay

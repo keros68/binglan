@@ -10,13 +10,6 @@ public enum TopBarVisibilityMode
     SmartHide
 }
 
-public enum SearchPresentation
-{
-    TopBar,
-    Floating,
-    Icon
-}
-
 public enum TopBarDisplayMode
 {
     FullWidth,
@@ -107,20 +100,6 @@ public sealed class TopBarState
     /// never exported with a theme. Invalid or missing text falls back to the default.</summary>
     public string SearchHotkey { get; set; } = DefaultSearchHotkey;
 
-    /// <summary>Optional local Everything query source; no index is maintained here.</summary>
-    public bool UseEverything { get; set; }
-
-    public SearchPresentation SearchPresentation { get; set; }
-
-    public double SearchWindowWidth { get; set; } = 420d;
-
-    public WindowPlacement SearchWindowPlacement { get; set; } = new();
-
-    public bool SearchFollowCardLook { get; set; }
-    public string SearchSurfaceColor { get; set; } = DefaultSurfaceColor;
-    public double SearchSurfaceOpacity { get; set; } = 0.94d;
-    public double SearchCornerRadius { get; set; } = 10d;
-
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? ExtensionData { get; set; }
 }
@@ -168,25 +147,6 @@ public static class TopBarRules
     {
         ArgumentNullException.ThrowIfNull(state);
         state.Modules ??= new TopBarModuleSwitches();
-        state.SearchSurfaceColor = WidgetAppearanceRules.CoerceColorOrDefault(state.SearchSurfaceColor, TopBarState.DefaultSurfaceColor);
-        state.SearchSurfaceOpacity = double.IsFinite(state.SearchSurfaceOpacity) ? Math.Clamp(state.SearchSurfaceOpacity, 0.05d, 1d) : 0.94d;
-        state.SearchCornerRadius = double.IsFinite(state.SearchCornerRadius) ? Math.Clamp(state.SearchCornerRadius, 0d, 24d) : 10d;
-        state.SearchWindowPlacement ??= new WindowPlacement();
-        if (!double.IsFinite(state.SearchWindowPlacement.Left))
-        {
-            state.SearchWindowPlacement.Left = 92;
-        }
-        if (!double.IsFinite(state.SearchWindowPlacement.Top))
-        {
-            state.SearchWindowPlacement.Top = 92;
-        }
-        if (!Enum.IsDefined(state.SearchPresentation))
-        {
-            state.SearchPresentation = SearchPresentation.TopBar;
-        }
-        state.SearchWindowWidth = double.IsFinite(state.SearchWindowWidth)
-            ? Math.Clamp(state.SearchWindowWidth, 240d, 800d)
-            : 420d;
         if (double.IsNaN(state.Height) || double.IsInfinity(state.Height))
         {
             state.Height = TopBarState.DefaultHeightDip;

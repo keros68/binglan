@@ -1704,6 +1704,27 @@ static void TestLauncherGroupsPersistence()
         Assert(repaired.Count == 2 && repaired[0].Id != Guid.Empty
             && repaired[0].Members.Count == 2 && repaired[1].Members.Count == 0,
             "规范化应修复空标识、合并重名组并清理重复及空成员键");
+
+        var targetGroup = restored.LauncherGroups[1];
+        Assert(!LauncherGroupRules.TryRename(restored.LauncherGroups, targetGroup.Id, "全部", out _),
+            "重命名不能使用保留名称");
+        Assert(!LauncherGroupRules.TryRename(restored.LauncherGroups, targetGroup.Id, restored.LauncherGroups[0].Name, out _),
+            "重命名不能与其他分组重复");
+        Assert(LauncherGroupRules.TryRename(restored.LauncherGroups, targetGroup.Id, " 文档资料 ", out var renamed)
+            && renamed?.Name == "文档资料",
+            "有效名称应完成重命名并保留成员");
+        store.Save(restored);
+        var afterRename = store.Load();
+        Assert(afterRename.LauncherGroups[1].Name == "文档资料" && afterRename.LauncherGroups[1].Members.Count == 2,
+            "重命名后的分组名称与成员应持久保留");
+
+        Assert(!LauncherGroupRules.TryDelete(restored.LauncherGroups, Guid.NewGuid(), out _),
+            "删除不存在的分组应返回失败");
+        Assert(LauncherGroupRules.TryDelete(restored.LauncherGroups, targetGroup.Id, out var deleted)
+            && deleted?.Id == targetGroup.Id && restored.LauncherGroups.Count == 1,
+            "删除分组应仅移除指定组");
+        store.Save(restored);
+        Assert(store.Load().LauncherGroups.Count == 1, "删除分组应持久保留");
     }
     finally
     {

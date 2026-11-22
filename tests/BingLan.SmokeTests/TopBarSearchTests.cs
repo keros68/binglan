@@ -22,8 +22,39 @@ public static class TopBarSearchTests
         TestPinyinInitials();
         TestMatchingAndRanking();
         TestHotkeyParsing();
+        TestCenteredEntryWidth();
+        TestCompactWeatherLocation();
         TestSearchPersistenceAndMigration();
         TestThemeCarriesSearchSwitch();
+    }
+
+    private static void TestCompactWeatherLocation()
+    {
+        Assert(WeatherSnapshot.CompactLocation("南岗区 · 黑龙江省·哈尔滨市 · 中国") == "南岗区",
+            "在线地理编码层级名称应精简为最细定位");
+        Assert(WeatherSnapshot.CompactLocation("黑河 · 黑龙江 · 中国") == "黑河",
+            "标准中点分隔地址应只保留首段定位");
+        Assert(WeatherSnapshot.CompactLocation("绥化市-黑龙江省绥化市-中国") == "绥化市",
+            "连字符分隔地址应只保留首段定位");
+        Assert(WeatherSnapshot.CompactLocation("北京, 北京市, 中国") == "北京",
+            "逗号分隔地址应只保留首段定位");
+        Assert(WeatherSnapshot.CompactLocation("Saint-Denis · Réunion · France") == "Saint-Denis",
+            "中点分隔优先于连字符，避免截断带连字符的外文地名");
+        Assert(WeatherSnapshot.CompactLocation("  北京  ") == "北京",
+            "单段城市名应去除首尾空白原样返回");
+        Assert(WeatherSnapshot.CompactLocation("") == string.Empty, "空定位名应返回空串");
+    }
+
+    private static void TestCenteredEntryWidth()
+    {
+        Assert(TopBarSearchRules.ComputeCenteredEntryWidth(1920, 220, 300) == TopBarSearchRules.DefaultCenteredEntryWidth,
+            "宽顶栏下居中搜索入口应保持默认宽度");
+        Assert(TopBarSearchRules.ComputeCenteredEntryWidth(700, 300, 180) == 84d,
+            "左右模块不对称时应按较宽一侧的对称净空收缩，避免覆盖侧栏模块");
+        Assert(TopBarSearchRules.ComputeCenteredEntryWidth(640, 300, 180) == 0d,
+            "对称净空小于最小宽度时应返回 0 以便临时隐藏入口而非压盖模块");
+        Assert(TopBarSearchRules.ComputeCenteredEntryWidth(0, 0, 0) == TopBarSearchRules.DefaultCenteredEntryWidth,
+            "尚未完成布局时应保持默认宽度");
     }
 
     private static void TestPinyinInitials()
@@ -140,18 +171,6 @@ public static class TopBarSearchTests
         Assert(TopBarSearchRules.Search(many, "记事本").Count == TopBarSearchRules.MaxResults,
             "结果条数封顶");
 
-        // Stage-2 supplemental results preserve stage-1 ordering, deduplicate paths, and append below.
-        var stage1 = new[] { report };
-        var indexedHigherScore = new TopBarSearchCandidate(
-            TopBarSearchItemKind.App, "报告助手", "报告助手.exe", @"D:\Apps\报告助手.exe");
-        var duplicateReport = new TopBarSearchCandidate(
-            TopBarSearchItemKind.File, "季度报告", "季度报告.docx", @"c:\users\a\desktop\季度报告.docx");
-        var merged = TopBarSearchRules.AppendSupplementalResults(
-            stage1,
-            new[] { duplicateReport, indexedHigherScore },
-            "报告");
-        Assert(merged.Count == 2 && merged[0].Path == report.Path && merged[1].Path == indexedHigherScore.Path,
-            "二阶段索引补充结果应保持首阶段结果原位并去重追加在下方");
 
         // Long paths compact middle segments while keeping root and parent directory visible.
         var longPath = @"C:\ProgramData\Microsoft\Windows\Start Menu\Programs\WeChat\微信.lnk";
@@ -193,22 +212,12 @@ public static class TopBarSearchTests
             var state = store.Load();
             state.TopBar.IsEnabled = true;
             state.TopBar.SearchHotkey = "Alt+Q";
-            state.TopBar.UseEverything = true;
-            state.TopBar.SearchPresentation = SearchPresentation.Floating;
-            state.TopBar.SearchWindowWidth = 560;
-            state.TopBar.SearchSurfaceColor = "#F3F6FC";
-            state.TopBar.SearchSurfaceOpacity = 0.7;
-            state.TopBar.SearchCornerRadius = 16;
-            state.TopBar.SearchWindowPlacement.Left = 180;
+            state.LauncherPreferences.UseEverything = true;
             store.Save(state);
 
             var reloaded = store.Load();
-            Assert(reloaded.TopBar.SearchSurfaceColor == "#F3F6FC" && reloaded.TopBar.SearchSurfaceOpacity == 0.7
-                && reloaded.TopBar.SearchCornerRadius == 16, "独立搜索框外观应持久化");
             Assert(reloaded.TopBar.SearchHotkey == "Alt+Q", "热键持久化往返一致");
-            Assert(reloaded.TopBar.UseEverything && reloaded.TopBar.SearchPresentation == SearchPresentation.Floating
-                && reloaded.TopBar.SearchWindowWidth == 560 && reloaded.TopBar.SearchWindowPlacement.Left == 180,
-                "搜索来源、入口和布局应持久保存");
+            Assert(reloaded.LauncherPreferences.UseEverything, "Everything 偏好应保存在冰蓝总览卡配置中");
             Assert(TopBarRules.IsModuleOn(reloaded.TopBar.Modules, TopBarModuleKind.Search),
                 "搜索模块默认开启");
             reloaded.TopBar.SearchHotkey = "乱写";
@@ -224,6 +233,7 @@ public static class TopBarSearchTests
                 ["IsEnabled"] = true,
                 ["Modules"] = new Dictionary<string, object?> { ["Clock"] = false }
             });
+            v28.AsObject().Remove("LauncherPreferences");
             File.WriteAllText(
                 Path.Combine(directory, "widgets.json"),
                 v28.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
@@ -233,41 +243,66 @@ public static class TopBarSearchTests
             Assert(!migrated.TopBar.Modules.Clock, "迁移保留原有模块开关");
             Assert(migrated.TopBar.SearchHotkey == TopBarState.DefaultSearchHotkey,
                 "迁移后热键取默认值");
-            Assert(!migrated.TopBar.UseEverything && migrated.TopBar.SearchPresentation == SearchPresentation.TopBar,
-                "旧配置应保留顶栏居中并默认关闭 Everything");
-            migrated.TopBar.SearchWindowWidth = double.PositiveInfinity;
-            migrated.TopBar.SearchPresentation = (SearchPresentation)99;
-            TopBarRules.Normalize(migrated.TopBar);
-            Assert(migrated.TopBar.SearchWindowWidth == 420 && migrated.TopBar.SearchPresentation == SearchPresentation.TopBar,
-                "损坏的搜索宽度与显示方式应恢复默认");
-            var v29 = JsonSerializer.SerializeToNode(state)!;
-            v29["SchemaVersion"] = 29;
-            var oldTopBar = v29["TopBar"]!.AsObject();
-            foreach (var field in new[] { "UseEverything", "SearchPresentation", "SearchWindowWidth", "SearchWindowPlacement" })
-            {
-                oldTopBar.Remove(field);
-            }
-            File.WriteAllText(Path.Combine(directory, "widgets.json"), v29.ToJsonString());
+            Assert(!migrated.LauncherPreferences.UseEverything,
+                "旧配置应默认关闭 Everything");
+
+            // A v54 file stored search source and floating box layout under TopBar; v55 migrates UseEverything
+            // to LauncherPreferences, keeps hotkey & module switch, and drops retired TopBar search fields.
+            var v54 = JsonSerializer.SerializeToNode(state)!;
+            v54["SchemaVersion"] = 54;
+            var oldTopBar = v54["TopBar"]!.AsObject();
+            oldTopBar["SearchHotkey"] = "Alt+Q";
+            oldTopBar["UseEverything"] = true;
+            oldTopBar["SearchPresentation"] = 1;
+            oldTopBar["SearchWindowWidth"] = 560;
+            oldTopBar["SearchWindowPlacement"] = JsonSerializer.SerializeToNode(new Dictionary<string, object?> { ["Left"] = 180 });
+            oldTopBar["SearchFollowCardLook"] = false;
+            oldTopBar["SearchSurfaceColor"] = "#F3F6FC";
+            oldTopBar["SearchSurfaceOpacity"] = 0.7;
+            oldTopBar["SearchCornerRadius"] = 16;
+            v54["LauncherPreferences"]!.AsObject().Remove("UseEverything");
+            File.WriteAllText(Path.Combine(directory, "widgets.json"), v54.ToJsonString());
             var upgraded = store.Load();
-            Assert(upgraded.SchemaVersion == AppState.CurrentSchemaVersion && upgraded.TopBar.SearchHotkey == "Alt+Q"
-                && !upgraded.TopBar.UseEverything && upgraded.TopBar.SearchWindowWidth == 420,
-                "v29 升级应保留原热键，并使用可选搜索来源和布局的默认值");
-            var v30 = JsonSerializer.SerializeToNode(state)!;
-            v30["SchemaVersion"] = 30;
-            foreach (var field in new[] { "SearchFollowCardLook", "SearchSurfaceColor", "SearchSurfaceOpacity", "SearchCornerRadius" })
-                v30["TopBar"]!.AsObject().Remove(field);
-            File.WriteAllText(Path.Combine(directory, "widgets.json"), v30.ToJsonString());
-            var withAppearance = store.Load();
-            Assert(withAppearance.SchemaVersion == AppState.CurrentSchemaVersion && withAppearance.TopBar.SearchWindowWidth == 560
-                && withAppearance.TopBar.SearchSurfaceColor == TopBarState.DefaultSurfaceColor
-                && withAppearance.TopBar.SearchCornerRadius == 10, "v30 应保留布局并迁移搜索外观默认值");
-            withAppearance.TopBar.SearchSurfaceColor = "invalid";
-            withAppearance.TopBar.SearchSurfaceOpacity = double.NaN;
-            withAppearance.TopBar.SearchCornerRadius = double.PositiveInfinity;
-            TopBarRules.Normalize(withAppearance.TopBar);
-            Assert(withAppearance.TopBar.SearchSurfaceColor == TopBarState.DefaultSurfaceColor
-                && withAppearance.TopBar.SearchSurfaceOpacity == 0.94 && withAppearance.TopBar.SearchCornerRadius == 10,
-                "损坏的搜索外观应恢复安全默认值");
+            Assert(upgraded.SchemaVersion == AppState.CurrentSchemaVersion, "v54 迁移到当前版本");
+            Assert(upgraded.LauncherPreferences.UseEverything, "v55 应将原顶栏 Everything 设置迁移到总览卡");
+            Assert(upgraded.TopBar.SearchHotkey == "Alt+Q" && upgraded.TopBar.Modules.Search,
+                "v55 应保留原搜索热键与搜索入口开关");
+            var retiredKeys = new[]
+            {
+                "UseEverything", "SearchPresentation", "SearchWindowWidth", "SearchWindowPlacement",
+                "SearchFollowCardLook", "SearchSurfaceColor", "SearchSurfaceOpacity", "SearchCornerRadius"
+            };
+            Assert(upgraded.TopBar.ExtensionData is null
+                || retiredKeys.All(key => !upgraded.TopBar.ExtensionData.ContainsKey(key)),
+                "v55 迁移后应清理顶栏已退役搜索字段");
+
+            // Also verify legacy Icon presentation with Modules.Search explicitly turned off:
+            // migration must keep the disabled switch, preserve hotkey, clean retired keys, and round-trip cleanly.
+            var v54IconDisabled = JsonSerializer.SerializeToNode(state)!;
+            v54IconDisabled["SchemaVersion"] = 54;
+            var iconTopBar = v54IconDisabled["TopBar"]!.AsObject();
+            iconTopBar["Modules"]!["Search"] = false;
+            iconTopBar["SearchHotkey"] = "Ctrl+Alt+S";
+            iconTopBar["UseEverything"] = true;
+            iconTopBar["SearchPresentation"] = "Icon";
+            iconTopBar["SearchWindowWidth"] = 520;
+            v54IconDisabled["LauncherPreferences"]!.AsObject().Remove("UseEverything");
+            File.WriteAllText(Path.Combine(directory, "widgets.json"), v54IconDisabled.ToJsonString());
+            var upgradedIcon = store.Load();
+            Assert(upgradedIcon.SchemaVersion == AppState.CurrentSchemaVersion, "v54 图标模式迁移到当前版本");
+            Assert(!upgradedIcon.TopBar.Modules.Search, "v55 迁移不得将用户关闭的顶栏搜索开关重置为开启");
+            Assert(upgradedIcon.TopBar.SearchHotkey == "Ctrl+Alt+S" && upgradedIcon.LauncherPreferences.UseEverything,
+                "v54 图标模式迁移应保留热键并迁入 Everything 开关");
+            Assert(upgradedIcon.TopBar.ExtensionData is null
+                || retiredKeys.All(key => !upgradedIcon.TopBar.ExtensionData.ContainsKey(key)),
+                "v54 图标模式迁移后应清理顶栏已退役搜索字段");
+            store.Save(upgradedIcon);
+            var reloadedIcon = store.Load();
+            Assert(!reloadedIcon.TopBar.Modules.Search
+                && reloadedIcon.TopBar.SearchHotkey == "Ctrl+Alt+S"
+                && reloadedIcon.LauncherPreferences.UseEverything
+                && reloadedIcon.TopBar.ExtensionData is null,
+                "v55 迁移结果保存重载后应保持一致且无残留退役字段");
         }
         finally
         {
@@ -281,17 +316,9 @@ public static class TopBarSearchTests
         Assert(theme.Bindings.TopBarModules is null, "主题包默认不携带模块开关");
         theme.Bindings.TopBarModules = new TopBarModuleSwitches { Search = false };
         Assert(theme.Bindings.TopBarModules.Search == false, "主题包携带搜索开关");
-        var personal = new TopBarState
-        {
-            UseEverything = true,
-            SearchPresentation = SearchPresentation.Floating,
-            SearchWindowWidth = 520,
-            SearchSurfaceColor = "#F3F6FC",
-            SearchCornerRadius = 16
-        };
+        var personal = new TopBarState { SearchHotkey = "Alt+Q" };
         ThemeRules.ApplyTopBar(theme, personal);
-        Assert(personal.UseEverything && personal.SearchPresentation == SearchPresentation.Floating
-            && personal.SearchWindowWidth == 520 && personal.SearchSurfaceColor == "#F3F6FC" && personal.SearchCornerRadius == 16,
-            "应用主题应保留本机搜索来源、入口布局和外观");
+        Assert(!personal.Modules.Search && personal.SearchHotkey == "Alt+Q",
+            "应用主题应同步搜索入口开关并保留本机搜索热键");
     }
 }

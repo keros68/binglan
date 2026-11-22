@@ -73,13 +73,29 @@ public partial class LauncherPanelWindow
         }
     }
 
+    private void OnTabAllClick(object sender, RoutedEventArgs args)
+    {
+        if (!_queryWasEmpty) SelectSearchFilter(PanelFilter.All);
+    }
+
     private void OnTabAppsClick(object sender, RoutedEventArgs args) => SwitchMainTab(LauncherMainTab.Apps);
     private void OnTabFilesClick(object sender, RoutedEventArgs args) => SwitchMainTab(LauncherMainTab.Files);
     private void OnTabGroupsClick(object sender, RoutedEventArgs args) => SwitchMainTab(LauncherMainTab.Groups);
 
     private void SwitchMainTab(LauncherMainTab tab, bool persist = true)
     {
-        if (!_queryWasEmpty) SearchBox.Clear();
+        if (!_queryWasEmpty)
+        {
+            SelectSearchFilter(tab switch
+            {
+                LauncherMainTab.Apps => PanelFilter.Apps,
+                LauncherMainTab.Files => PanelFilter.Files,
+                _ => PanelFilter.Groups
+            });
+            return;
+        }
+        EndGroupEditing(focusSearch: false);
+        CancelGroupDelete(focusSearch: false);
         _activeTab = tab;
         _filter = _browseFilter = FilterForTab(tab);
         _browseSource = null;
@@ -112,9 +128,22 @@ public partial class LauncherPanelWindow
     private void UpdateMainTabButtons()
     {
         if (TabAppsButton is null) return;
-        TabAppsButton.Tag = _queryWasEmpty && _activeTab == LauncherMainTab.Apps ? "Selected" : null;
-        TabFilesButton.Tag = _queryWasEmpty && _activeTab == LauncherMainTab.Files ? "Selected" : null;
-        TabGroupsButton.Tag = _queryWasEmpty && _activeTab == LauncherMainTab.Groups ? "Selected" : null;
+        TabAllButton.Visibility = _queryWasEmpty ? Visibility.Collapsed : Visibility.Visible;
+        var allSelected = !_queryWasEmpty && _filter == PanelFilter.All;
+        var appsSelected = _queryWasEmpty ? _activeTab == LauncherMainTab.Apps : _filter == PanelFilter.Apps;
+        var filesSelected = _queryWasEmpty ? _activeTab == LauncherMainTab.Files : _filter == PanelFilter.Files;
+        var groupsSelected = _queryWasEmpty ? _activeTab == LauncherMainTab.Groups : _filter == PanelFilter.Groups;
+
+        TabAllButton.Tag = allSelected ? "Selected" : null;
+        TabAppsButton.Tag = appsSelected ? "Selected" : null;
+        TabFilesButton.Tag = filesSelected ? "Selected" : null;
+        TabGroupsButton.Tag = groupsSelected ? "Selected" : null;
+
+        System.Windows.Automation.AutomationProperties.SetItemStatus(TabAllButton, allSelected ? "已选择" : "");
+        System.Windows.Automation.AutomationProperties.SetItemStatus(TabAppsButton, appsSelected ? "已选择" : "");
+        System.Windows.Automation.AutomationProperties.SetItemStatus(TabFilesButton, filesSelected ? "已选择" : "");
+        System.Windows.Automation.AutomationProperties.SetItemStatus(TabGroupsButton, groupsSelected ? "已选择" : "");
+
         AppsNavPanel.Visibility = _activeTab == LauncherMainTab.Apps ? Visibility.Visible : Visibility.Collapsed;
         FilesNavPanel.Visibility = _activeTab == LauncherMainTab.Files ? Visibility.Visible : Visibility.Collapsed;
         GroupsNavPanel.Visibility = _activeTab == LauncherMainTab.Groups ? Visibility.Visible : Visibility.Collapsed;
@@ -138,6 +167,22 @@ public partial class LauncherPanelWindow
     {
         if (_preferences.AppsSortByName) return;
         _preferences.AppsSortByName = true;
+        _saveOrganizer?.Invoke();
+        Render(_unfilteredRows, preserveSelection: false);
+    }
+
+    private void OnFileSortByNameClick(object sender, RoutedEventArgs args)
+    {
+        if (!_preferences.FilesSortByModified) return;
+        _preferences.FilesSortByModified = false;
+        _saveOrganizer?.Invoke();
+        Render(_unfilteredRows, preserveSelection: false);
+    }
+
+    private void OnFileSortByModifiedClick(object sender, RoutedEventArgs args)
+    {
+        if (_preferences.FilesSortByModified) return;
+        _preferences.FilesSortByModified = true;
         _saveOrganizer?.Invoke();
         Render(_unfilteredRows, preserveSelection: false);
     }
@@ -197,6 +242,11 @@ public partial class LauncherPanelWindow
 
     private void SelectBrowse(PanelFilter filter, LauncherAppCategory? purpose = null, string? group = null)
     {
+        if (group != _category)
+        {
+            EndGroupEditing(focusSearch: false);
+            CancelGroupDelete(focusSearch: false);
+        }
         _filter = _browseFilter = filter;
         _category = group;
         _purpose = purpose;
@@ -274,11 +324,16 @@ public partial class LauncherPanelWindow
         if (!IsOverview) return _rows;
 
         var items = new List<object>();
-        var width = Width - PanelSurface.Padding.Left - PanelSurface.Padding.Right - BrowseNavigation.Width
+        var width = Width - PanelContentGrid.Margin.Left - PanelContentGrid.Margin.Right - BrowseNavigation.Width
             - NavigationSurface.Margin.Right - SystemParameters.VerticalScrollBarWidth;
         var pinnedLimit = Math.Clamp((int)(width / LauncherGridPanel.TileWidth), 1, 8);
-        var pinned = _rows.Where(row => row.IsFavorite).Take(pinnedLimit).ToHashSet();
-        AddSection(items, "常用", _rows.Where(pinned.Contains));
+        var pinned = _preferences.FavoriteMode == LauncherFavoriteMode.Off
+            ? new HashSet<PanelRow>()
+            : _rows.Where(row => row.IsFavorite).Take(pinnedLimit).ToHashSet();
+        if (pinned.Count > 0)
+        {
+            AddSection(items, "常用", _rows.Where(pinned.Contains));
+        }
 
         if (_preferences.AppsSortByName)
         {
@@ -321,6 +376,7 @@ public partial class LauncherPanelWindow
         if (!_queryWasEmpty)
         {
             SectionTitle.Visibility = Visibility.Collapsed;
+            BreadcrumbBar.Visibility = Visibility.Collapsed;
             FilePlacesBar.Visibility = Visibility.Collapsed;
             return;
         }
@@ -330,6 +386,12 @@ public partial class LauncherPanelWindow
         AppSortToggle.Visibility = IsOverview ? Visibility.Visible : Visibility.Collapsed;
         SortByCategoryButton.Tag = !_preferences.AppsSortByName ? "Selected" : null;
         SortByNameButton.Tag = _preferences.AppsSortByName ? "Selected" : null;
+
+        var showFileSort = _activeTab == LauncherMainTab.Files
+            && (_folderStack.Count > 0 || _fileMode is FileBrowseMode.FileType or FileBrowseMode.Place);
+        FileSortToggle.Visibility = showFileSort ? Visibility.Visible : Visibility.Collapsed;
+        FileSortByNameButton.Tag = !_preferences.FilesSortByModified ? "Selected" : null;
+        FileSortByModifiedButton.Tag = _preferences.FilesSortByModified ? "Selected" : null;
 
         var showRecentPrivacy = _activeTab == LauncherMainTab.Files
             && _folderStack.Count == 0
@@ -343,6 +405,12 @@ public partial class LauncherPanelWindow
         var listActive = IsListViewActive();
         ViewGridButton.Tag = !listActive ? "Selected" : null;
         ViewListButton.Tag = listActive ? "Selected" : null;
+
+        var showGroupActions = _activeTab == LauncherMainTab.Groups
+            && _saveOrganizer is not null
+            && _readGroups().Any(group => group.Id.ToString("N") == _category);
+        RenameGroupButton.Visibility = showGroupActions ? Visibility.Visible : Visibility.Collapsed;
+        DeleteGroupButton.Visibility = showGroupActions ? Visibility.Visible : Visibility.Collapsed;
 
         OpenDirectoryButton.Visibility = CurrentOpenableDirectoryPath() is not null
             ? Visibility.Visible : Visibility.Collapsed;
@@ -360,7 +428,18 @@ public partial class LauncherPanelWindow
 
         var (title, subtitle) = ResolveHeaderTitle(scope);
         SectionTitle.Text = title;
-        SectionTitle.Visibility = string.IsNullOrEmpty(title) ? Visibility.Collapsed : Visibility.Visible;
+        var breadcrumbs = BuildFileBreadcrumbs();
+        if (breadcrumbs.Count > 0)
+        {
+            BreadcrumbBar.ItemsSource = breadcrumbs;
+            BreadcrumbBar.Visibility = Visibility.Visible;
+            SectionTitle.Visibility = Visibility.Collapsed;
+        }
+        else
+        {
+            BreadcrumbBar.Visibility = Visibility.Collapsed;
+            SectionTitle.Visibility = string.IsNullOrEmpty(title) ? Visibility.Collapsed : Visibility.Visible;
+        }
         SectionSubtitle.Text = subtitle;
     }
 
@@ -371,23 +450,23 @@ public partial class LauncherPanelWindow
             if (_purpose is { } p)
             {
                 var hint = p == LauncherAppCategory.Unclassified
-                    ? $"{_rows.Count} 项 · 未识别及不足 {LauncherAppCategoryRules.MinimumCategoryItemCount} 项的小类自动归此"
-                    : $"{_rows.Count} 项";
+                    ? $"未识别及不足 {LauncherAppCategoryRules.MinimumCategoryItemCount} 项的小类自动归此"
+                    : string.Empty;
                 return (LauncherAppCategoryRules.DisplayName(p), hint);
             }
-            return ("全部应用", _preferences.AppsSortByName ? $"{_rows.Count} 项 · 按名称排列" : $"{_rows.Count} 项 · 按用途分段");
+            return ("全部应用", _preferences.AppsSortByName ? "按名称排列" : "按用途分段");
         }
         if (_activeTab == LauncherMainTab.Groups)
         {
             if (scope is null) return ("我的分组", "点左侧新建分组，右键任意应用或文件加入");
-            return (scope, $"{_rows.Count} 项 · 支持应用与文件混排");
+            return (scope, "支持应用与文件混排");
         }
         return ResolveFilesHeader();
     }
 
     private string ResolveEmptyHint()
     {
-        if (!_queryWasEmpty) return "没有匹配项目";
+        if (!_queryWasEmpty) return _filter == PanelFilter.Groups ? "我的分组中没有匹配项目" : "没有匹配项目";
         if (_activeTab == LauncherMainTab.Groups)
         {
             return _category is null ? "点击左侧「新建分组」创建你的第一个工作流分组" : "右键应用或文件可加入此分组";
@@ -405,10 +484,12 @@ public partial class LauncherPanelWindow
 
     private string ResolveStatusText()
     {
+        if (!_queryWasEmpty) return _rows.Count == 0 ? "" : $"{_rows.Count} 个项目";
         if (_activeTab == LauncherMainTab.Files && _loadingDirectory) return "正在读取文件夹…";
         if (_activeTab == LauncherMainTab.Files && _directoryError is { Length: > 0 } err) return err;
         if (_activeTab == LauncherMainTab.Files && _directoryTruncated) return $"已显示前 {_rows.Count} 项，点击「打开目录」查看全部";
-        return _rows.Count == 0 ? "" : $"{_rows.Count} 个项目";
+        if (_browseSource is not null) return _rows.Count == 0 ? "" : $"已筛选 · {_rows.Count} 项";
+        return "";
     }
 
     private void AddPurposeMenu(ContextMenu menu, PanelRow row)
@@ -518,6 +599,7 @@ public partial class LauncherPanelWindow
 
     private void SelectAndReveal(PanelRow row)
     {
+        ResultsList.Tag = true;
         ResultsList.SelectedItem = row;
         ResultsList.ScrollIntoView(row);
     }

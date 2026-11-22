@@ -91,7 +91,8 @@ internal sealed class DockCompositionBackdrop : IDisposable
         }
     }
 
-    internal void Update(System.Windows.Rect rect, double radiusX, double radiusY, double opacity, Color fill, Color border)
+    internal void Update(System.Windows.Rect rect, double radiusX, double radiusY, double opacity, Color fill, Color border,
+        double tintScale = 0.24d)
     {
         if (_compositionState == 0)
         {
@@ -106,7 +107,7 @@ internal sealed class DockCompositionBackdrop : IDisposable
             (float)radiusX,
             (float)radiusY,
             (float)Math.Clamp(opacity, 0, 1),
-            (byte)Math.Round(fill.A * 0.24),
+            (byte)Math.Clamp(Math.Round(fill.A * tintScale), 0, 255),
             fill.R,
             fill.G,
             fill.B,
