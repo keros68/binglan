@@ -414,9 +414,10 @@ public class WidgetWindowBase : Window
         LostMouseCapture += (_, _) => EndDrag();
         PreviewKeyDown += (_, e) =>
         {
-            if (e.Key == Key.F2 && !IsTitleEditing && TitleEditorBox is not null)
+            if (e.Key == Key.F2
+                && Keyboard.Modifiers == ModifierKeys.None
+                && HandleRenameKey())
             {
-                BeginTitleEdit();
                 e.Handled = true;
             }
         };
@@ -2127,6 +2128,8 @@ public class WidgetWindowBase : Window
         var menu = new ContextMenu();
         var appSettings = new MenuItem { Header = "在冰蓝桌面中设置…" };
         appSettings.Click += (_, _) => RequestAppSettings();
+        var rename = new MenuItem { Header = "重命名", InputGestureText = "F2" };
+        rename.Click += (_, _) => Dispatcher.BeginInvoke(BeginTitleEdit);
         var delete = new MenuItem { Header = "删除此组件" };
         delete.Click += (_, _) => DeleteRequested?.Invoke(this);
         var exit = new MenuItem { Header = "退出冰蓝桌面" };
@@ -2134,15 +2137,32 @@ public class WidgetWindowBase : Window
         // A locked card can no longer be dragged or resized; its content still works.
         var lockPosition = new MenuItem { Header = "锁定位置和大小", IsCheckable = true };
         lockPosition.Click += (_, _) => ApplyWidgetLock(lockPosition.IsChecked);
-        menu.Opened += (_, _) => lockPosition.IsChecked = IsWidgetLocked;
+        menu.Opened += (_, _) =>
+        {
+            lockPosition.IsChecked = IsWidgetLocked;
+            rename.Visibility = TitleEditorBox is not null ? Visibility.Visible : Visibility.Collapsed;
+        };
 
         menu.Items.Add(appSettings);
+        menu.Items.Add(rename);
         menu.Items.Add(lockPosition);
         PopulateContextMenu(menu);
         menu.Items.Add(new Separator());
         menu.Items.Add(delete);
         menu.Items.Add(exit);
         return menu;
+    }
+
+    /// <summary>Handles the F2 shortcut; subclasses may rename a focused child item before falling back to the card title.</summary>
+    protected virtual bool HandleRenameKey()
+    {
+        if (IsTitleEditing || TitleEditorBox is null)
+        {
+            return false;
+        }
+
+        BeginTitleEdit();
+        return true;
     }
 
     /// <summary>Allows subclasses to append card-specific entries to the shared context menu.</summary>

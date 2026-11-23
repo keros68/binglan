@@ -3047,8 +3047,14 @@ internal static class Program
             Assert(
                 window.ContextMenu.Items.OfType<MenuItem>()
                     .Select(item => item.Header?.ToString())
-                    .SequenceEqual(["在冰蓝桌面中设置…", "锁定位置和大小", "贴边隐藏", "删除此组件", "退出冰蓝桌面"]),
-                "组件右键菜单仍承载桌面内设置或创建入口");
+                    .SequenceEqual(["在冰蓝桌面中设置…", "重命名", "锁定位置和大小", "贴边隐藏", "删除此组件", "退出冰蓝桌面"]),
+                "组件右键菜单应包含重命名并保持精简入口");
+            var renameItem = window.ContextMenu.Items.OfType<MenuItem>().Single(item => Equals(item.Header, "重命名"));
+            renameItem.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+            Pump();
+            Assert(window.IsTitleEditing, "右键点击重命名应进入卡片标题就地编辑");
+            window.EndTitleEdit(commit: false);
+            Pump();
             var buttons = FindVisualChildren<Button>(window).ToList();
             var importButton = buttons.Single(
                 button => Equals(button.ToolTip, "添加文件、文件夹或桌面项目"));

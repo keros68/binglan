@@ -1082,6 +1082,11 @@ public partial class FileBoxWindow : WidgetWindowBase
             return;
         }
 
+        PromptRenameMapping(tile);
+    }
+
+    private void PromptRenameMapping(FileTile tile)
+    {
         var dialog = new TextPromptDialog(
             "修改显示名称",
             "留空则恢复原名称。",
@@ -1093,6 +1098,23 @@ public partial class FileBoxWindow : WidgetWindowBase
         {
             RenameMapping(tile, dialog.Value);
         }
+    }
+
+    protected override bool HandleRenameKey()
+    {
+        if (!IsTitleEditing
+            && Keyboard.FocusedElement is FrameworkElement { DataContext: FileTile focusedTile } focused
+            && FileList.IsAncestorOf(focused))
+        {
+            var selected = SelectedTiles();
+            if (selected.Count <= 1 || !_selectedIds.Contains(focusedTile.Mapping.Id))
+            {
+                PromptRenameMapping(focusedTile);
+                return true;
+            }
+        }
+
+        return base.HandleRenameKey();
     }
 
     internal void RenameMapping(FileTile tile, string displayName)

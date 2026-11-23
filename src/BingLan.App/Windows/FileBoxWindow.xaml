@@ -38,7 +38,7 @@
             <MenuItem Header="上移" Click="MoveMappingUp_Click"/>
             <MenuItem Header="下移" Click="MoveMappingDown_Click"/>
             <Separator/>
-            <MenuItem Header="修改显示名称…" Click="RenameMapping_Click"/>
+            <MenuItem Header="修改显示名称…" InputGestureText="F2" Click="RenameMapping_Click"/>
             <MenuItem Header="转移到其他文件收纳盒"/>
             <MenuItem Header="重新定位…">
                 <MenuItem Header="选择文件…" Click="RelinkFile_Click"/>
