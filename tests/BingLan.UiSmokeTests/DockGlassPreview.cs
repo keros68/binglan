@@ -51,7 +51,7 @@ internal static class DockGlassPreview
             typeof(IceBlueDockWindow).GetField("_hiddenBySmartHide", BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(dock, true);
             Invoke("BeginSmartHide");
         });
-        Action("从把手展开", () => { Invoke("ApplyHandleExpansion", bar!.Monitor!, handle!.CurrentRect); Invoke("ShowDock", true); });
+        Action("从把手展开", () => Invoke("ShowDock"));
         void Capture(string name)
         {
             var at = scene.PointToScreen(new System.Windows.Point());
@@ -82,7 +82,7 @@ internal static class DockGlassPreview
             state.HiddenHandleTopDip = (corner.Y - bar.Monitor.Bounds.Top) / dpi;
             handle.MoveTo(new PixelRect((int)corner.X, (int)corner.Y, (int)(corner.X + 44 * dpi), (int)(corner.Y + 44 * dpi)));
             Field<DispatcherTimer>("_foregroundTimer").Stop();
-            Invoke("ShowDock", false);
+            Invoke("ShowDock");
             if (Environment.GetCommandLineArgs().Contains("--dock-glass-capture"))
             {
                 await Task.Delay(400);
@@ -91,8 +91,7 @@ internal static class DockGlassPreview
                 Invoke("BeginSmartHide");
                 await Task.Delay(500);
                 Capture("02-handle");
-                Invoke("ApplyHandleExpansion", bar.Monitor!, handle.CurrentRect);
-                Invoke("ShowDock", true);
+                Invoke("ShowDock");
                 await Task.Delay(400);
                 Capture("03-handle-expanded");
                 host.Close();

@@ -92,7 +92,7 @@ internal static class ShellSurfaceTests
             {
                 IceBlueDockWindow.Motion = motion;
             }
-            showDock.Invoke(dock, new object[] { false });
+            showDock.Invoke(dock, null);
             Assert(!dock.IsVisible, "系统菜单打开时其他显示请求不能覆盖菜单");
             Assert(!(bool)yieldToMenu.Invoke(dock, new object[] { false })! && dock.IsVisible,
                 "系统菜单关闭后应恢复原本显示的 Dock");
