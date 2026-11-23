@@ -242,7 +242,7 @@ public sealed partial class WidgetCoordinator : IDisposable
         // Leaving high contrast puts the default row surface back; the material's one returns.
         AccessibilityThemeManager.HighContrastChanged += OnHighContrastChanged;
         _fullScreenWatcher.Changed += UpdateSamplingMode;
-        _fullScreenWatcher.Changed += () => _cornerReveal.SetSuspended(_fullScreenWatcher.IsTrueFullScreenInFront);
+        _fullScreenWatcher.Changed += () => _cornerReveal.SetSuspended(_fullScreenWatcher.IsGameLikeFullScreenInFront);
         _cornerReveal.Raised += () => _dock.EnsureAboveDesktop();
         _taskbar.ExplorerRestarted += () =>
         {

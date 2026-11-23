@@ -22,6 +22,14 @@ internal static class UpdateServiceTests
         Check(!UpdateService.IsAutoCheckDue(now.AddHours(-23), now), "一天内不重复检查");
         Check(UpdateService.IsAutoCheckDue(now.AddHours(-24), now), "满一天后到期");
         Check(UpdateService.IsAutoCheckDue(now.AddHours(3), now), "时钟被调回时视为到期");
+
+        Check(UpdateService.FormatAvailableBadgeText(null) is null, "无新版本时不生成徽标文案");
+        var badgeRelease = new UpdateRelease(
+            new Version(0, 4, 1, 0),
+            string.Empty,
+            new Uri("https://github.com/keros68/binglan/releases/tag/v0.4.1"),
+            null);
+        Check(UpdateService.FormatAvailableBadgeText(badgeRelease) == "有新版本 0.4.1", "有新版本时格式化三段版本号徽标文案");
     }
 
     internal static void TestReleaseParsing()

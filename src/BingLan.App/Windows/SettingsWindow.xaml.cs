@@ -3738,9 +3738,28 @@ public partial class SettingsWindow : Window
 
     private void RefreshUpdateView()
     {
+        if (_isClosed)
+        {
+            return;
+        }
         var updater = _maintenance.Updater;
         CheckUpdatesButton.IsEnabled = updater is { IsBusy: false };
         UpdateStatusText.Text = updater?.Status ?? "此运行方式不提供更新检查。";
+        var badgeText = UpdateService.FormatAvailableBadgeText(updater?.Available);
+        if (badgeText is not null)
+        {
+            NavUpdateBadgeText.Text = badgeText;
+            AutomationProperties.SetName(NavUpdateBadgeButton, $"{badgeText}，前往通用设置查看更新");
+            NavUpdateBadgeButton.Visibility = Visibility.Visible;
+            GeneralNavUpdateDot.Visibility = Visibility.Visible;
+        }
+        else
+        {
+            NavUpdateBadgeText.Text = string.Empty;
+            AutomationProperties.SetName(NavUpdateBadgeButton, string.Empty);
+            NavUpdateBadgeButton.Visibility = Visibility.Collapsed;
+            GeneralNavUpdateDot.Visibility = Visibility.Collapsed;
+        }
         if (updater?.Available is { } release)
         {
             UpdateAvailableCard.Visibility = Visibility.Visible;
@@ -3758,6 +3777,9 @@ public partial class SettingsWindow : Window
             UpdateAvailableCard.Visibility = Visibility.Collapsed;
         }
     }
+
+    private void NavUpdateBadge_Click(object sender, RoutedEventArgs e) =>
+        SelectNavigationPage(SettingsNavigationRules.GeneralPageKey);
 
     private void AutoCheckUpdates_Changed(object sender, RoutedEventArgs e)
     {

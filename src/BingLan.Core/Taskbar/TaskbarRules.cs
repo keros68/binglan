@@ -144,9 +144,11 @@ public static class TaskbarRecovery
 }
 
 /// <summary>
-/// Where the strip that keeps an auto-hidden bottom taskbar from appearing in the middle
-/// of the edge goes: two pixels high along the bottom of the monitor, leaving 15 % of the
-/// width (at least 160 DIP) free at each end, where the taskbar still appears.
+/// Where the strip that keeps an auto-hidden bottom taskbar from appearing along the edge
+/// goes: two pixels high along the bottom of the monitor, either full-width
+/// (<see cref="TaskbarEdgeRevealMode.Disabled"/>) or leaving 15 % of the width
+/// (at least 160 DIP) free at each end (<see cref="TaskbarEdgeRevealMode.CornersOnly"/>),
+/// where the taskbar still appears.
 /// </summary>
 public static class TaskbarCornerRules
 {
@@ -181,6 +183,27 @@ public static class TaskbarCornerRules
         TaskbarEdgeRevealMode.Disabled => FullEdgeStrip(monitor) is { Width: > 0 } full ? full : null,
         _ => null,
     };
+
+    /// <summary>
+    /// Returns true when the foreground window is a true full-screen game or video surface
+    /// that should pause the bottom-edge strips. Maximized windows, normal resizable
+    /// desktop windows with standard chrome (unless explicitly topmost), and tool/overlay
+    /// windows keep the strips in place. UWP <c>ApplicationFrameWindow</c> hosts report standard
+    /// frame styles even in full-screen and are excluded from the standard-chrome filter.
+    /// </summary>
+    public static bool ShouldSuspendForFullScreen(
+        bool coversMonitor,
+        bool foregroundIsZoomed,
+        bool hasCaptionAndThickFrame,
+        bool isApplicationFrameWindow,
+        bool isToolOrOverlayWindow,
+        bool isTopmost) =>
+        DockVacateRules.IsTrueFullScreen(
+            coversMonitor,
+            foregroundIsZoomed,
+            hasStandardWindowChrome: !isApplicationFrameWindow && hasCaptionAndThickFrame,
+            isToolOrOverlayWindow: isToolOrOverlayWindow,
+            isTopmost: isTopmost);
 }
 
 /// <summary>

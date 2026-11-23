@@ -117,8 +117,30 @@ begin
     '}');
 end;
 
-// Before an update replaces the files, the running copy is stopped and its taskbar and
-// desktop icon changes are undone, so nothing stays changed if the new copy never starts.
+// Stops any other BingLan copy running under the current user from a different path
+// (such as a portable or preview build). The app uses a named single-instance mutex,
+// so a copy running elsewhere would prevent the newly installed version from starting.
+procedure StopOtherCopies(const ExePath: String);
+begin
+  RunPowerShell(
+    '$p = ' + PowerShellLiteral(ExePath) + '; ' +
+    '$sid = [System.Diagnostics.Process]::GetCurrentProcess().SessionId; ' +
+    '$me = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value; ' +
+    '$others = @(Get-Process -Name BingLan -ErrorAction SilentlyContinue | ' +
+    '  Where-Object { $_.SessionId -eq $sid -and $_.Path -ne $p }); ' +
+    'foreach ($proc in $others) { ' +
+    '  $w = Get-CimInstance Win32_Process -Filter (''ProcessId = '' + $proc.Id) -ErrorAction SilentlyContinue; ' +
+    '  if (-not $w) { continue } ' +
+    '  $o = Invoke-CimMethod -InputObject $w -MethodName GetOwnerSid -ErrorAction SilentlyContinue; ' +
+    '  if (-not $o -or $o.Sid -ne $me) { continue } ' +
+    '  Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue; ' +
+    '  try { $null = $proc.WaitForExit(12000) } catch {} ' +
+    '}');
+end;
+
+// Before installing or updating, stops the installed copy (if any) and any other copy
+// running from a different path, then undoes taskbar and desktop icon changes on update
+// so nothing stays changed if the new copy never starts.
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
   ExePath: String;
@@ -130,6 +152,10 @@ begin
   if IsUpdate then
   begin
     StopInstalledApp(ExePath, RelaunchAfterUpdate());
+  end;
+  StopOtherCopies(ExePath);
+  if IsUpdate then
+  begin
     Exec(ExePath, '--restore-taskbar', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   end;
 end;

@@ -197,11 +197,33 @@
                 BorderBrush="{DynamicResource SettingsSurfaceBorderBrush}"
                 BorderThickness="0,0,1,0">
             <DockPanel Margin="10,14,10,14">
-                <TextBlock x:Name="NavVersionText"
-                           Margin="12,0,0,0"
-                           DockPanel.Dock="Bottom"
-                           FontSize="12"
-                           Foreground="{DynamicResource SettingsFaintInkBrush}"/>
+                <StackPanel Margin="12,8,12,0" DockPanel.Dock="Bottom">
+                    <Button x:Name="NavUpdateBadgeButton"
+                            Margin="0,0,0,6"
+                            MinHeight="28"
+                            Padding="10,4"
+                            HorizontalAlignment="Left"
+                            Style="{StaticResource AccentButtonStyle}"
+                            ToolTip="查看新版本并更新"
+                            Click="NavUpdateBadge_Click"
+                            Visibility="Collapsed">
+                        <StackPanel Orientation="Horizontal">
+                            <Ellipse Width="7"
+                                     Height="7"
+                                     Margin="0,0,6,0"
+                                     VerticalAlignment="Center"
+                                     Fill="{DynamicResource IceActionTextBrush}"/>
+                            <TextBlock x:Name="NavUpdateBadgeText"
+                                       VerticalAlignment="Center"
+                                       FontSize="12"
+                                       FontWeight="Medium"
+                                       TextTrimming="CharacterEllipsis"/>
+                        </StackPanel>
+                    </Button>
+                    <TextBlock x:Name="NavVersionText"
+                               FontSize="12"
+                               Foreground="{DynamicResource SettingsFaintInkBrush}"/>
+                </StackPanel>
                 <ListBox x:Name="SettingsNavigationList"
                          AutomationProperties.Name="设置类别"
                          Padding="0"
@@ -275,6 +297,13 @@
                                 <Path Style="{StaticResource NavigationIconStyle}" Data="{StaticResource NavIcon.General}"/>
                             </Border>
                             <TextBlock VerticalAlignment="Center" Text="通用设置"/>
+                            <Ellipse x:Name="GeneralNavUpdateDot"
+                                     Width="7"
+                                     Height="7"
+                                     Margin="8,0,0,0"
+                                     VerticalAlignment="Center"
+                                     Fill="{DynamicResource IceActionBrush}"
+                                     Visibility="Collapsed"/>
                         </StackPanel>
                     </ListBoxItem>
                 </ListBox>
@@ -2854,7 +2883,7 @@
                                 <!-- 只在选“自动隐藏”时显示：两项都只影响任务栏弹出。 -->
                                 <StackPanel x:Name="TaskbarPopupPanel" Visibility="Collapsed">
                                     <local:SettingsRow Header="鼠标触边唤出"
-                                                       Description="仅对底部自动隐藏的任务栏生效。选“禁止鼠标触边唤出”时，仍可按 Win 键或点击 Dock 开始按钮打开任务栏；全屏时暂停"
+                                                       Description="仅对底部自动隐藏的任务栏生效。选“禁止鼠标触边唤出”时，仍可按 Win 键或点击 Dock 开始按钮打开任务栏；全屏游戏、视频等窗口中暂停"
                                                        local:SettingsSearch.Keywords="弹出方式 两角 禁止唤出 彻底隐藏">
                                         <ComboBox x:Name="TaskbarEdgeRevealComboBox"
                                                   Width="200"

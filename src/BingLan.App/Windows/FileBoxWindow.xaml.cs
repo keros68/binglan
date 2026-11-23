@@ -662,6 +662,9 @@ public partial class FileBoxWindow : WidgetWindowBase
     private void SortType_Click(object sender, RoutedEventArgs e) =>
         ApplySort(FileMappingSortMode.Type);
 
+    private void SortModified_Click(object sender, RoutedEventArgs e) =>
+        ApplySort(FileMappingSortMode.Modified);
+
     public void CaptureState()
     {
         if (!IsEdgeDocked)

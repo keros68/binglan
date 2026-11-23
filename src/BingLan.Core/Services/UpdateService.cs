@@ -69,6 +69,13 @@ public sealed class UpdateService
     public static Version Normalize(Version version) =>
         new(version.Major, version.Minor, Math.Max(0, version.Build));
 
+    /// <summary>
+    /// Formats the persistent update badge label for the settings sidebar, or returns null
+    /// when no newer release is available.
+    /// </summary>
+    public static string? FormatAvailableBadgeText(UpdateRelease? available) =>
+        available is null ? null : $"有新版本 {Normalize(available.Version).ToString(3)}";
+
     public static UpdateRelease? ParseRelease(string json)
     {
         using var document = JsonDocument.Parse(json);

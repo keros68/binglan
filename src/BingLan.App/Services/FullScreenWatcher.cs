@@ -3,6 +3,7 @@ using System.Text;
 using System.Windows.Threading;
 using BingLan.App.Interop;
 using BingLan.Core.Dock;
+using BingLan.Core.Taskbar;
 
 namespace BingLan.App.Services;
 
@@ -30,6 +31,13 @@ internal sealed class FullScreenWatcher : IDisposable
     /// </summary>
     internal bool IsTrueFullScreenInFront { get; private set; }
 
+    /// <summary>
+    /// Whether the foreground window is a full-screen game or video surface (covers its
+    /// monitor, not maximized, not a tool/click-through overlay, and without standard
+    /// resizable chrome unless explicitly topmost).
+    /// </summary>
+    internal bool IsGameLikeFullScreenInFront { get; private set; }
+
     internal event Action? Changed;
 
     internal void Start()
@@ -45,14 +53,45 @@ internal sealed class FullScreenWatcher : IDisposable
         var foreground = DockNativeMethods.GetForegroundWindow();
         var fullScreen = IsFullScreen(foreground);
         var trueFullScreen = fullScreen && !DockNativeMethods.IsZoomed(foreground);
-        if (fullScreen == IsFullScreenInFront && trueFullScreen == IsTrueFullScreenInFront)
+        var gameLikeFullScreen = trueFullScreen && IsGameLikeFullScreenChrome(foreground);
+        if (fullScreen == IsFullScreenInFront
+            && trueFullScreen == IsTrueFullScreenInFront
+            && gameLikeFullScreen == IsGameLikeFullScreenInFront)
         {
             return;
         }
 
         IsFullScreenInFront = fullScreen;
         IsTrueFullScreenInFront = trueFullScreen;
+        IsGameLikeFullScreenInFront = gameLikeFullScreen;
         Changed?.Invoke();
+    }
+
+    internal static bool IsGameLikeFullScreen(nint window, nint targetMonitor = 0) =>
+        IsFullScreen(window, targetMonitor, excludeMaximized: true)
+        && IsGameLikeFullScreenChrome(window);
+
+    private static bool IsGameLikeFullScreenChrome(nint window)
+    {
+        var style = (long)NativeMethods.GetWindowLongPtr(window, NativeMethods.GwlStyle);
+        var exStyle = NativeMethods.GetExStyleOf(window);
+        var className = new StringBuilder(64);
+        DockNativeMethods.GetClassNameW(window, className, className.Capacity);
+        var isApplicationFrame = string.Equals(
+            className.ToString(),
+            "ApplicationFrameWindow",
+            StringComparison.Ordinal);
+        var hasCaptionAndThickFrame = (style & NativeMethods.WsCaption) == NativeMethods.WsCaption
+            && (style & NativeMethods.WsThickFrame) != 0;
+        var isToolOrOverlay = (exStyle & (NativeMethods.WsExToolWindow | NativeMethods.WsExTransparent)) != 0;
+        var isTopmost = (exStyle & NativeMethods.WsExTopmost) != 0;
+        return TaskbarCornerRules.ShouldSuspendForFullScreen(
+            coversMonitor: true,
+            foregroundIsZoomed: false,
+            hasCaptionAndThickFrame: hasCaptionAndThickFrame,
+            isApplicationFrameWindow: isApplicationFrame,
+            isToolOrOverlayWindow: isToolOrOverlay,
+            isTopmost: isTopmost);
     }
 
     internal static bool IsFullScreen(nint window, nint targetMonitor = 0, bool excludeMaximized = false)

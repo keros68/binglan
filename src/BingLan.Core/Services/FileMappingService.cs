@@ -6,7 +6,8 @@ public enum FileMappingSortMode
 {
     Manual,
     Name,
-    Type
+    Type,
+    Modified
 }
 
 /// <summary>A named group of file types a box can collect, such as documents or images.</summary>
@@ -488,6 +489,11 @@ public static class FileMappingService
                 .OrderBy(item => GetTypeSortKey(item.Path), StringComparer.OrdinalIgnoreCase)
                 .ThenBy(GetDisplayName, StringComparer.CurrentCultureIgnoreCase)
                 .ThenBy(item => item.Path, StringComparer.OrdinalIgnoreCase),
+            // Newest first; a target that no longer exists sinks to the end.
+            FileMappingSortMode.Modified => ordered
+                .OrderByDescending(item => GetModifiedTime(item.Path))
+                .ThenBy(GetDisplayName, StringComparer.CurrentCultureIgnoreCase)
+                .ThenBy(item => item.Path, StringComparer.OrdinalIgnoreCase),
             _ => ordered
         };
 
@@ -538,6 +544,19 @@ public static class FileMappingService
                Path.GetFileNameWithoutExtension(name) is { Length: > 0 } stripped
             ? stripped
             : name;
+    }
+
+    private static DateTime GetModifiedTime(string path)
+    {
+        try
+        {
+            // Works for folders too; a missing path reports 1601-01-01 and so sorts last.
+            return File.GetLastWriteTimeUtc(path);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            return DateTime.MinValue;
+        }
     }
 
     private static string GetTypeSortKey(string path)

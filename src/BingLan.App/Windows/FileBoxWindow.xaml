@@ -388,6 +388,7 @@
                                 <MenuItem Header="手动调整（保留当前顺序）" Click="SortManual_Click"/>
                                 <MenuItem Header="按名称" Click="SortName_Click"/>
                                 <MenuItem Header="按类型" Click="SortType_Click"/>
+                                <MenuItem Header="按修改时间（新的在前）" Click="SortModified_Click"/>
                             </ContextMenu>
                         </Button.ContextMenu>
                     </Button>
