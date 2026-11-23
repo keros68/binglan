@@ -2414,6 +2414,19 @@
                                             </StackPanel>
                                         </Border>
                                     </local:SettingsRow>
+                                    <local:SettingsRow x:Name="DockRevealModeRow"
+                                                       Header="唤出方式"
+                                                       Description="Dock 隐藏后如何重新显示。不想右下角出现小把手时，选“只用屏幕底边（不显示把手）”；原生任务栏一直显示时，推到屏幕最底边即可唤出"
+                                                       local:SettingsSearch.Keywords="唤出方式 把手 角落把手 右下角 隐藏把手 屏幕底边">
+                                        <ComboBox x:Name="DockRevealModeComboBox"
+                                                  Width="220"
+                                                  AutomationProperties.Name="Dock 唤出方式"
+                                                  SelectionChanged="DockSetting_Changed">
+                                            <ComboBoxItem Content="屏幕底边和把手" Tag="EdgeAndHandle"/>
+                                            <ComboBoxItem Content="只用把手" Tag="HandleOnly"/>
+                                            <ComboBoxItem Content="只用屏幕底边（不显示把手）" Tag="EdgeOnly"/>
+                                        </ComboBox>
+                                    </local:SettingsRow>
                                     <local:SettingsRow Header="图标大小" local:SettingsSearch.Keywords="Dock 大小">
                                         <StackPanel Orientation="Horizontal">
                                             <Slider x:Name="DockIconSizeSlider"
@@ -2614,17 +2627,6 @@
                                                       Style="{StaticResource ToggleSwitchStyle}"
                                                       Checked="DockSetting_Changed"
                                                       Unchecked="DockSetting_Changed"/>
-                                        </local:SettingsRow>
-                                        <local:SettingsRow Header="唤出方式"
-                                                           Description="Dock 隐藏后如何重新显示。原生任务栏一直显示时，鼠标停在任务栏上不会唤出 Dock：默认用把手唤出；选“只用屏幕底边”则不显示把手，把鼠标推到屏幕最底边唤出">
-                                            <ComboBox x:Name="DockRevealModeComboBox"
-                                                      Width="220"
-                                                      AutomationProperties.Name="Dock 唤出方式"
-                                                      SelectionChanged="DockSetting_Changed">
-                                                <ComboBoxItem Content="屏幕底边和把手" Tag="EdgeAndHandle"/>
-                                                <ComboBoxItem Content="只用把手" Tag="HandleOnly"/>
-                                                <ComboBoxItem Content="只用屏幕底边（不显示把手）" Tag="EdgeOnly"/>
-                                            </ComboBox>
                                         </local:SettingsRow>
                                     </StackPanel>
                                     <local:SettingsRow Header="不在 Dock 中显示的应用"

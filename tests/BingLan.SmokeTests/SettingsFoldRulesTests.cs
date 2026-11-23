@@ -106,8 +106,9 @@ internal static class SettingsFoldRulesTests
 
         // 上提到 Dock 常驻区的设置不应继续归属折叠区。
         Check(!SettingsFoldRules.TryGetFoldForSetting("DockIconSizeSlider", out _)
-                && !SettingsFoldRules.TryGetFoldForSetting("DockHoverMagnificationCheckBox", out _),
-            "上提到 Dock 常驻区的图标大小与悬停放大不应映射到折叠区");
+                && !SettingsFoldRules.TryGetFoldForSetting("DockHoverMagnificationCheckBox", out _)
+                && !SettingsFoldRules.TryGetFoldForSetting("DockRevealModeComboBox", out _),
+            "上提到 Dock 常驻区的图标大小、悬停放大与唤出方式不应映射到折叠区");
 
         // 移出「更多选项」上提到桌面组件详情顶部固定操作栏的按钮不应继续归属折叠区。
         Check(!SettingsFoldRules.TryGetFoldForSetting("DeleteComponentButton", out _)

@@ -60,7 +60,7 @@ public static class SettingsFoldRules
         new(SettingsNavigationRules.ComponentsPageKey, "Builtin", 8, [ComponentMoreFold, ComponentOwnLookFold]),
         new(SettingsNavigationRules.ComponentsPageKey, "Widget", 8, [SelectedWidgetMoreFold, SelectedWidgetOwnLookFold]),
         new(SettingsNavigationRules.AppearancePageKey, SettingsNavigationRules.AppearancePageKey, 6, [AppearanceMoreFold, AppearanceLayoutFold]),
-        new(SettingsNavigationRules.DockPageKey, SettingsNavigationRules.DockPageKey, 7, [DockAdvancedFold]),
+        new(SettingsNavigationRules.DockPageKey, SettingsNavigationRules.DockPageKey, 8, [DockAdvancedFold]),
         new(SettingsNavigationRules.TopBarPageKey, SettingsNavigationRules.TopBarPageKey, 6, [TopBarOrderFold, TopBarAdvancedFold]),
         new(SettingsNavigationRules.TaskbarPageKey, SettingsNavigationRules.TaskbarPageKey, 3, []),
         new(SettingsNavigationRules.LauncherPageKey, SettingsNavigationRules.LauncherPageKey, 6, [LauncherMoreFold]),
@@ -144,7 +144,6 @@ public static class SettingsFoldRules
         ["MotionSelector"] = DockAdvancedFold,
         ["DockMaximizeReleaseRow"] = DockAdvancedFold,
         ["DockMaximizeReleaseCheckBox"] = DockAdvancedFold,
-        ["DockRevealModeComboBox"] = DockAdvancedFold,
         ["DockHiddenList"] = DockAdvancedFold,
 
         // TopBarPage -> TopBarOrderFold / TopBarAdvancedFold
