@@ -2078,14 +2078,30 @@
                                                 </StackPanel>
                                             </Border>
                                         </local:SettingsRow>
-                                        <local:SettingsRow Header="鼠标离开 5 秒后自动收起"
-                                                           Description="开启后展开文件收纳盒，鼠标移开满 5 秒自动收起成标题条；在盒内悬停、打开菜单或对话框时不收起，收起后点标题条即可展开"
-                                                           local:SettingsSearch.Keywords="桌面分组盒 分组盒 文件盒 文件收纳盒 围栏 Fences 自动收起 折叠 抽屉 5秒">
+                                        <local:SettingsRow Header="鼠标离开后自动收起"
+                                                           Description="开启后展开文件收纳盒，鼠标移开满设定时间自动收起成标题条；在盒内悬停、打开菜单或对话框时不收起，收起后点标题条即可展开"
+                                                           local:SettingsSearch.Keywords="桌面分组盒 分组盒 文件盒 文件收纳盒 围栏 Fences 自动收起 折叠 抽屉 5秒 立即收起">
                                             <CheckBox x:Name="FileBoxAutoCollapseCheckBox"
-                                                      AutomationProperties.Name="鼠标离开 5 秒后自动收起"
+                                                      AutomationProperties.Name="鼠标离开后自动收起"
                                                       Style="{StaticResource ToggleSwitchStyle}"
                                                       Checked="FileBoxAutoCollapse_Changed"
                                                       Unchecked="FileBoxAutoCollapse_Changed"/>
+                                        </local:SettingsRow>
+                                        <local:SettingsRow x:Name="FileBoxAutoCollapseDelayRow"
+                                                           Header="自动收起时间"
+                                                           Description="鼠标离开文件收纳盒后等待多久收起；“移开即收（0.5 秒）”兼顾干脆收回与防误触"
+                                                           Visibility="Collapsed"
+                                                           local:SettingsSearch.Keywords="自动收起时间 延迟 立即收起 移开即收 0.5秒 1秒 3秒 5秒 10秒">
+                                            <ComboBox x:Name="FileBoxAutoCollapseDelayComboBox"
+                                                      Width="180"
+                                                      AutomationProperties.Name="自动收起时间"
+                                                      SelectionChanged="FileBoxAutoCollapseDelay_Changed">
+                                                <ComboBoxItem Content="移开即收（0.5 秒）" Tag="0.5"/>
+                                                <ComboBoxItem Content="1 秒" Tag="1"/>
+                                                <ComboBoxItem Content="3 秒" Tag="3"/>
+                                                <ComboBoxItem Content="5 秒（默认）" Tag="5"/>
+                                                <ComboBoxItem Content="10 秒" Tag="10"/>
+                                            </ComboBox>
                                         </local:SettingsRow>
                                         <local:SettingsRow Header="桌面上的原图标"
                                                            Description="收纳只记路径不搬原文件。要隐藏 Windows 桌面图标，请开启“隐藏 Windows 桌面图标”；退出冰蓝桌面时自动恢复"

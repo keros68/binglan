@@ -8947,6 +8947,12 @@ internal static class Program
             toggle.IsChecked = true;
             Pump();
             Assert(box.State.AutoCollapse, "开启开关应写入分组盒 AutoCollapse 状态");
+            var delayRow = Require<FrameworkElement>(settings, "FileBoxAutoCollapseDelayRow");
+            var delayCombo = Require<ComboBox>(settings, "FileBoxAutoCollapseDelayComboBox");
+            Assert(delayRow.Visibility == Visibility.Visible, "开启自动收起后应显示自动收起时间行");
+            delayCombo.SelectedItem = delayCombo.Items.OfType<ComboBoxItem>().Single(item => (string)item.Tag == "0.5");
+            Pump();
+            Assert(box.State.AutoCollapseDelaySeconds == 0.5d, "选择移开即收（0.5 秒）应写入分组盒延迟状态");
 
             if (!box.IsMouseOver)
             {

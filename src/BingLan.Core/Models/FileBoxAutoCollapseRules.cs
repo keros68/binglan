@@ -1,12 +1,37 @@
 namespace BingLan.Core.Models;
 
 /// <summary>
-/// Rules governing a file box's optional 5-second idle auto-collapse drawer behaviour.
+/// Rules governing a file box's optional idle auto-collapse drawer behaviour.
 /// </summary>
 public static class FileBoxAutoCollapseRules
 {
-    public static readonly TimeSpan IdleDelay = TimeSpan.FromSeconds(5);
+    public const double DefaultDelaySeconds = 5d;
+    public const double MinimumDelaySeconds = 0.5d;
+    public const double MaximumDelaySeconds = 30d;
+    public static readonly TimeSpan IdleDelay = TimeSpan.FromSeconds(DefaultDelaySeconds);
+    public static IReadOnlyList<double> DelayOptionsSeconds { get; } = [0.5d, 1d, 3d, 5d, 10d];
     public const double ClickMoveThresholdPixels = 4d;
+
+    public static double CoerceDelaySeconds(double? seconds)
+    {
+        if (seconds is not { } value || !double.IsFinite(value) || value <= 0d)
+        {
+            return DefaultDelaySeconds;
+        }
+
+        return Math.Clamp(value, MinimumDelaySeconds, MaximumDelaySeconds);
+    }
+
+    public static TimeSpan ResolveDelay(double? seconds) =>
+        TimeSpan.FromSeconds(CoerceDelaySeconds(seconds));
+
+    public static string FormatShortDelay(double? seconds)
+    {
+        var value = CoerceDelaySeconds(seconds);
+        return Math.Abs(value - Math.Round(value)) < 0.001d
+            ? $"{Math.Round(value):0} 秒"
+            : $"{value:0.#} 秒";
+    }
 
     public static bool ShouldRunCountdown(
         bool autoCollapseEnabled,

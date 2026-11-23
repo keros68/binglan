@@ -1796,7 +1796,19 @@ internal static class ThemeStyleTests
     public static void TestFileBoxAutoCollapseRulesAndSchemaV48Migration()
     {
         Check(FileBoxAutoCollapseRules.IdleDelay == TimeSpan.FromSeconds(5),
-            "自动收起无操作延时应为 5 秒");
+            "自动收起默认无操作延时应为 5 秒");
+        Check(FileBoxAutoCollapseRules.ResolveDelay(null) == TimeSpan.FromSeconds(5)
+                && FileBoxAutoCollapseRules.ResolveDelay(0) == TimeSpan.FromSeconds(5)
+                && FileBoxAutoCollapseRules.ResolveDelay(-2) == TimeSpan.FromSeconds(5),
+            "缺省或非正延迟应回退 5 秒");
+        Check(FileBoxAutoCollapseRules.ResolveDelay(0.5d) == TimeSpan.FromMilliseconds(500)
+                && FileBoxAutoCollapseRules.ResolveDelay(0.1d) == TimeSpan.FromMilliseconds(500)
+                && FileBoxAutoCollapseRules.ResolveDelay(10d) == TimeSpan.FromSeconds(10)
+                && FileBoxAutoCollapseRules.ResolveDelay(99d) == TimeSpan.FromSeconds(30),
+            "自动收起时间应支持 0.5 秒移开即收并钳制越界值");
+        Check(FileBoxAutoCollapseRules.FormatShortDelay(0.5d) == "0.5 秒"
+                && FileBoxAutoCollapseRules.FormatShortDelay(5d) == "5 秒",
+            "自动收起短文案格式化正确");
         Check(FileBoxAutoCollapseRules.ShouldRunCountdown(true, false, false, false, false, false),
             "开启自动收起且展开、未悬停、无遮挡/编辑/拖动时应运行倒计时");
         Check(!FileBoxAutoCollapseRules.ShouldRunCountdown(false, false, false, false, false, false),
@@ -1844,11 +1856,13 @@ internal static class ThemeStyleTests
                 "旧配置与缺省字段加载后分组盒自动收起应默认关闭");
 
             migrated.FileBoxes.Single().AutoCollapse = true;
+            migrated.FileBoxes.Single().AutoCollapseDelaySeconds = 0.5d;
             store.Save(migrated);
 
             var reloaded = store.Load();
-            Check(reloaded.FileBoxes.Single().AutoCollapse,
-                "分组盒 AutoCollapse=true 应正确持久化往返");
+            Check(reloaded.FileBoxes.Single().AutoCollapse
+                    && reloaded.FileBoxes.Single().AutoCollapseDelaySeconds == 0.5d,
+                "分组盒 AutoCollapse=true 与自定义延迟应正确持久化往返");
 
             var json = File.ReadAllText(store.StatePath);
             var root = System.Text.Json.Nodes.JsonNode.Parse(json)!.AsObject();

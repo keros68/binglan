@@ -292,6 +292,20 @@ public partial class FileBoxWindow : WidgetWindowBase
         NotifyStateChanged();
     }
 
+    public void SetAutoCollapseDelay(double seconds)
+    {
+        var coerced = FileBoxAutoCollapseRules.CoerceDelaySeconds(seconds);
+        if (State.AutoCollapseDelaySeconds is { } current && Math.Abs(current - coerced) < 0.001d)
+        {
+            return;
+        }
+
+        State.AutoCollapseDelaySeconds = coerced;
+        RefreshPinOpenButton();
+        RefreshAutoCollapseTimer();
+        NotifyStateChanged();
+    }
+
     private void PinOpenButton_Click(object sender, RoutedEventArgs e)
     {
         _pinnedOpenForSession = !_pinnedOpenForSession;
@@ -310,7 +324,7 @@ public partial class FileBoxWindow : WidgetWindowBase
         PinOpenButton.Content = _pinnedOpenForSession ? "\uE840" : "\uE718";
         PinOpenButton.Opacity = _pinnedOpenForSession ? 1.0 : 0.72;
         PinOpenButton.ToolTip = _pinnedOpenForSession
-            ? "已保持展开（点击恢复 5 秒自动收起）"
+            ? $"已保持展开（点击恢复 {FileBoxAutoCollapseRules.FormatShortDelay(State.AutoCollapseDelaySeconds)} 自动收起）"
             : "暂时保持展开（鼠标移开不自动收起）";
     }
 
@@ -2048,6 +2062,7 @@ public partial class FileBoxWindow : WidgetWindowBase
         if (shouldRun)
         {
             _autoCollapseTimer.Stop();
+            _autoCollapseTimer.Interval = FileBoxAutoCollapseRules.ResolveDelay(State.AutoCollapseDelaySeconds);
             _autoCollapseTimer.Start();
         }
         else

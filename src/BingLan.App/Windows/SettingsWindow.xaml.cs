@@ -1581,6 +1581,14 @@ public partial class SettingsWindow : Window
             FileBoxTilesRadio.IsChecked = !list;
             FileBoxListRadio.IsChecked = list;
             FileBoxAutoCollapseCheckBox.IsChecked = box.State.AutoCollapse;
+            FileBoxAutoCollapseDelayRow.Visibility = box.State.AutoCollapse ? Visibility.Visible : Visibility.Collapsed;
+            var delaySeconds = FileBoxAutoCollapseRules.CoerceDelaySeconds(box.State.AutoCollapseDelaySeconds);
+            FileBoxAutoCollapseDelayComboBox.SelectedItem = FileBoxAutoCollapseDelayComboBox.Items
+                .OfType<ComboBoxItem>()
+                .FirstOrDefault(item => item.Tag is string tag
+                    && double.TryParse(tag, System.Globalization.CultureInfo.InvariantCulture, out var option)
+                    && Math.Abs(option - delaySeconds) < 0.001d)
+                ?? FileBoxAutoCollapseDelayComboBox.Items.OfType<ComboBoxItem>().FirstOrDefault(item => item.Tag as string == "5");
         }
         finally
         {
@@ -1597,9 +1605,27 @@ public partial class SettingsWindow : Window
 
         var enabled = FileBoxAutoCollapseCheckBox.IsChecked == true;
         box.SetAutoCollapse(enabled);
+        FileBoxAutoCollapseDelayRow.Visibility = enabled ? Visibility.Visible : Visibility.Collapsed;
+        var delayText = FileBoxAutoCollapseRules.FormatShortDelay(box.State.AutoCollapseDelaySeconds);
         ComponentSettingsStatusText.Text = enabled
-            ? $"“{box.State.Title}”已开启鼠标离开 5 秒后自动收起"
+            ? $"“{box.State.Title}”已开启鼠标离开 {delayText} 后自动收起"
             : $"“{box.State.Title}”已关闭自动收起";
+    }
+
+    private void FileBoxAutoCollapseDelay_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (_loadingViewMode || _selectedComponentEntry?.Window is not FileBoxWindow box)
+        {
+            return;
+        }
+
+        if (FileBoxAutoCollapseDelayComboBox?.SelectedItem is ComboBoxItem { Tag: string tag }
+            && double.TryParse(tag, System.Globalization.CultureInfo.InvariantCulture, out var seconds))
+        {
+            box.SetAutoCollapseDelay(seconds);
+            ComponentSettingsStatusText.Text =
+                $"“{box.State.Title}”自动收起时间已设为 {FileBoxAutoCollapseRules.FormatShortDelay(seconds)}";
+        }
     }
 
     private void FileBoxViewMode_Changed(object sender, RoutedEventArgs e)
