@@ -111,6 +111,43 @@ public partial class IceBlueDockWindow : Window
 
     // Pre-allocated hover magnification slots (rebuilt only when dock items change) so
     // pointer movement allocates nothing; timer stops immediately on MouseLeave/hide.
+    /// <summary>
+    /// Steps once per rendered frame so the magnification eases in sync with the display
+    /// instead of drifting against a free-running timer.
+    /// </summary>
+    private sealed class RenderFrameTicker(Action step)
+    {
+        private TimeSpan _lastFrame = TimeSpan.MinValue;
+
+        public bool IsEnabled { get; private set; }
+
+        public void Start()
+        {
+            if (IsEnabled) return;
+            IsEnabled = true;
+            _lastFrame = TimeSpan.MinValue;
+            CompositionTarget.Rendering += OnRendering;
+        }
+
+        public void Stop()
+        {
+            if (!IsEnabled) return;
+            IsEnabled = false;
+            CompositionTarget.Rendering -= OnRendering;
+        }
+
+        private void OnRendering(object? sender, EventArgs e)
+        {
+            // Rendering can fire more than once for a frame; step only on a new frame time.
+            if (e is System.Windows.Media.RenderingEventArgs args)
+            {
+                if (args.RenderingTime == _lastFrame) return;
+                _lastFrame = args.RenderingTime;
+            }
+            step();
+        }
+    }
+
     private sealed class MagnificationSlot(Button button, ScaleTransform scale, TranslateTransform translate)
     {
         public Button Button { get; } = button;
@@ -123,7 +160,7 @@ public partial class IceBlueDockWindow : Window
     }
 
     private readonly List<MagnificationSlot> _magSlots = [];
-    private readonly DispatcherTimer _magTimer;
+    private readonly RenderFrameTicker _magTimer;
     private readonly System.Diagnostics.Stopwatch _magClock = new();
     private long _magLastTicks;
     private double _topOverflowDip;
@@ -188,12 +225,7 @@ public partial class IceBlueDockWindow : Window
             (_, _) => OnDragHoverTick(),
             Dispatcher);
         _dragHoverTimer.Stop();
-        _magTimer = new DispatcherTimer(
-            TimeSpan.FromMilliseconds(16),
-            DispatcherPriority.Render,
-            (_, _) => StepMagnification(),
-            Dispatcher);
-        _magTimer.Stop();
+        _magTimer = new RenderFrameTicker(StepMagnification);
         SourceInitialized += OnSourceInitialized;
         SizeChanged += (_, _) => SyncMagnificationHitRegion();
         Closing += OnClosing;
