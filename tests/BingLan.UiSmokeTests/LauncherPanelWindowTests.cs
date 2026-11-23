@@ -1005,10 +1005,10 @@ internal static class LauncherPanelWindowTests
             Press(panel, Key.Return);
             until(() => panel.VisibleEntries.Count == 2 && Require<ItemsControl>(panel, "BreadcrumbBar").IsVisible,
                 "钻入子目录后应显示可点击面包屑");
-            Assert(panel.VisibleEntries[0].Candidate.DisplayName == "alpha-old",
+            Assert(panel.VisibleEntries[0].Candidate.DisplayName == "alpha-old.txt",
                 "默认按名称排序时 alpha-old 应排在 zeta-new 前：实际 " + string.Join("、", panel.VisibleEntries.Select(entry => entry.Candidate.DisplayName)));
             Click(panel, "FileSortByModifiedButton");
-            until(() => panel.VisibleEntries[0].Candidate.DisplayName == "zeta-new",
+            until(() => panel.VisibleEntries[0].Candidate.DisplayName == "zeta-new.txt",
                 "切换为最近修改排序后最新文件应排在前面");
 
             // 目录内筛选
@@ -1018,7 +1018,7 @@ internal static class LauncherPanelWindowTests
             var scopeCheck = Require<CheckBox>(panel, "SearchCurrentCategory");
             scopeCheck.IsChecked = true;
             scopeCheck.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-            until(() => panel.VisibleEntries.Count == 1 && panel.VisibleEntries[0].Candidate.DisplayName == "zeta-new",
+            until(() => panel.VisibleEntries.Count == 1 && panel.VisibleEntries[0].Candidate.DisplayName == "zeta-new.txt",
                 "勾选仅搜当前目录应只返回当前目录匹配文件");
             search.Text = "";
             until(() => panel.VisibleEntries.Count == 2, "清空搜索应恢复当前目录列表");
