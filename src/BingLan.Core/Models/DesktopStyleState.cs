@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -49,6 +50,28 @@ public sealed record CardPalette(string Key, string Name, string Body, string He
 
 /// <summary>The dock's colours from the shared material, as #AARRGGBB.</summary>
 public sealed record DockGlass(string Surface, string Border, string RunningDot);
+
+/// <summary>
+/// Static glass sheen, specular rim highlight, inner shadow edge, faded divider and
+/// interactive icon plate tokens shared across Dock, TopBar and Overview Card.
+/// All colours are #AARRGGBB; high-contrast and unbacked (clear) surfaces disable sheen.
+/// </summary>
+public sealed record GlassSheenPalette(
+    bool Enabled,
+    bool IsLightSurface,
+    string RimTopColor,
+    string RimMiddleColor,
+    string RimBottomColor,
+    string InnerShadowTopColor,
+    string InnerShadowBottomColor,
+    string DiagonalStartColor,
+    string DiagonalMidColor,
+    string DiagonalEndColor,
+    string DividerEdgeColor,
+    string DividerCenterColor,
+    string HoverPlateFillColor,
+    string HoverPlateBorderColor,
+    string PressedPlateFillColor);
 
 /// <summary>The body and text colours one built-in card gets from the shared material.</summary>
 public sealed record ComponentGlass(string BackgroundColor, double BackgroundOpacity, string TextColor);
@@ -538,6 +561,196 @@ public static class DesktopStyleRules
             WithAlpha(rgb, alpha),
             opacity < 0.05d ? "#00FFFFFF" : light ? "#BFFFFFFF" : "#33FFFFFF",
             light && opacity >= 0.5d ? "#C21F3A55" : "#E6FFFFFF");
+    }
+
+    /// <summary>
+    /// Resolves static glass sheen &amp; specular detail tokens for floating glass surfaces
+    /// (Dock, TopBar, Overview Card). High-contrast and unbacked surfaces (surface opacity
+    /// below 5%) suppress all specular/diagonal/inner-shadow sheen so readability is never hurt.
+    /// </summary>
+    public static GlassSheenPalette ResolveGlassSheen(
+        string? surfaceWithAlpha,
+        bool clearMaterial = false,
+        bool highContrast = false)
+    {
+        var parsed = TryParseSurfaceColor(surfaceWithAlpha, out var alpha, out var red, out var green, out var blue);
+        var isLight = parsed && (0.2126d * red + 0.7152d * green + 0.0722d * blue) / 255d > 0.6d;
+        var isUnbacked = !parsed || alpha < MinimumGlassDensity;
+
+        if (highContrast)
+        {
+            return new GlassSheenPalette(
+                Enabled: false,
+                IsLightSurface: isLight,
+                RimTopColor: "#00FFFFFF",
+                RimMiddleColor: "#00FFFFFF",
+                RimBottomColor: "#00FFFFFF",
+                InnerShadowTopColor: "#00000000",
+                InnerShadowBottomColor: "#00000000",
+                DiagonalStartColor: "#00FFFFFF",
+                DiagonalMidColor: "#00FFFFFF",
+                DiagonalEndColor: "#00000000",
+                DividerEdgeColor: "#00FFFFFF",
+                DividerCenterColor: "#FFFFFFFF",
+                HoverPlateFillColor: "#00FFFFFF",
+                HoverPlateBorderColor: "#00FFFFFF",
+                PressedPlateFillColor: "#00FFFFFF");
+        }
+
+        if (isUnbacked)
+        {
+            return new GlassSheenPalette(
+                Enabled: false,
+                IsLightSurface: isLight,
+                RimTopColor: "#00FFFFFF",
+                RimMiddleColor: "#00FFFFFF",
+                RimBottomColor: "#00FFFFFF",
+                InnerShadowTopColor: "#00000000",
+                InnerShadowBottomColor: "#00000000",
+                DiagonalStartColor: "#00FFFFFF",
+                DiagonalMidColor: "#00FFFFFF",
+                DiagonalEndColor: "#00000000",
+                DividerEdgeColor: "#00FFFFFF",
+                DividerCenterColor: "#52FFFFFF",
+                HoverPlateFillColor: "#1AFFFFFF",
+                HoverPlateBorderColor: "#28FFFFFF",
+                PressedPlateFillColor: "#28FFFFFF");
+        }
+
+        if (isLight)
+        {
+            return clearMaterial
+                ? new GlassSheenPalette(
+                    Enabled: true,
+                    IsLightSurface: true,
+                    RimTopColor: "#8AFFFFFF",
+                    RimMiddleColor: "#22FFFFFF",
+                    RimBottomColor: "#12FFFFFF",
+                    InnerShadowTopColor: "#000B1C2E",
+                    InnerShadowBottomColor: "#160B1C2E",
+                    DiagonalStartColor: "#14FFFFFF",
+                    DiagonalMidColor: "#00FFFFFF",
+                    DiagonalEndColor: "#0A0A1A2A",
+                    DividerEdgeColor: "#001F3A55",
+                    DividerCenterColor: "#381F3A55",
+                    HoverPlateFillColor: "#36FFFFFF",
+                    HoverPlateBorderColor: "#5CFFFFFF",
+                    PressedPlateFillColor: "#1A1B324B")
+                : new GlassSheenPalette(
+                    Enabled: true,
+                    IsLightSurface: true,
+                    RimTopColor: "#78FFFFFF",
+                    RimMiddleColor: "#1AFFFFFF",
+                    RimBottomColor: "#0DFFFFFF",
+                    InnerShadowTopColor: "#000B1C2E",
+                    InnerShadowBottomColor: "#1C0B1C2E",
+                    DiagonalStartColor: "#1CFFFFFF",
+                    DiagonalMidColor: "#00FFFFFF",
+                    DiagonalEndColor: "#0E0A1A2A",
+                    DividerEdgeColor: "#001F3A55",
+                    DividerCenterColor: "#421F3A55",
+                    HoverPlateFillColor: "#2EFFFFFF",
+                    HoverPlateBorderColor: "#54FFFFFF",
+                    PressedPlateFillColor: "#1C1B324B");
+        }
+
+        return clearMaterial
+            ? new GlassSheenPalette(
+                Enabled: true,
+                IsLightSurface: false,
+                RimTopColor: "#4CFFFFFF",
+                RimMiddleColor: "#14FFFFFF",
+                RimBottomColor: "#0AFFFFFF",
+                InnerShadowTopColor: "#00000000",
+                InnerShadowBottomColor: "#2E000000",
+                DiagonalStartColor: "#10FFFFFF",
+                DiagonalMidColor: "#00FFFFFF",
+                DiagonalEndColor: "#10050B14",
+                DividerEdgeColor: "#00FFFFFF",
+                DividerCenterColor: "#30FFFFFF",
+                HoverPlateFillColor: "#1CFFFFFF",
+                HoverPlateBorderColor: "#2CFFFFFF",
+                PressedPlateFillColor: "#24000000")
+            : new GlassSheenPalette(
+                Enabled: true,
+                IsLightSurface: false,
+                RimTopColor: "#42FFFFFF",
+                RimMiddleColor: "#10FFFFFF",
+                RimBottomColor: "#08FFFFFF",
+                InnerShadowTopColor: "#00000000",
+                InnerShadowBottomColor: "#38000000",
+                DiagonalStartColor: "#14FFFFFF",
+                DiagonalMidColor: "#00FFFFFF",
+                DiagonalEndColor: "#16050B14",
+                DividerEdgeColor: "#00FFFFFF",
+                DividerCenterColor: "#38FFFFFF",
+                HoverPlateFillColor: "#1EFFFFFF",
+                HoverPlateBorderColor: "#30FFFFFF",
+                PressedPlateFillColor: "#28000000");
+    }
+
+    public static GlassSheenPalette ResolveDockSheen(
+        DesktopStyleState style,
+        DockState? dock = null,
+        bool clearMaterial = false,
+        bool highContrast = false)
+    {
+        ArgumentNullException.ThrowIfNull(style);
+        return ResolveGlassSheen(Dock(style, dock).Surface, clearMaterial, highContrast);
+    }
+
+    public static GlassSheenPalette ResolveTopBarSheen(
+        DesktopStyleState style,
+        TopBarState? topBar = null,
+        bool highContrast = false)
+    {
+        ArgumentNullException.ThrowIfNull(style);
+        var clearMaterial = topBar is { FrostedGlass: false };
+        return ResolveGlassSheen(TopBar(style, topBar).Surface, clearMaterial, highContrast);
+    }
+
+    private static bool TryParseSurfaceColor(
+        string? value,
+        out double alpha,
+        out byte red,
+        out byte green,
+        out byte blue)
+    {
+        alpha = 0d;
+        red = 0;
+        green = 0;
+        blue = 0;
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        var trimmed = value.Trim();
+        if (!trimmed.StartsWith('#'))
+        {
+            return false;
+        }
+
+        if (trimmed.Length == 9
+            && byte.TryParse(trimmed.AsSpan(1, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var a)
+            && byte.TryParse(trimmed.AsSpan(3, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out red)
+            && byte.TryParse(trimmed.AsSpan(5, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out green)
+            && byte.TryParse(trimmed.AsSpan(7, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out blue))
+        {
+            alpha = a / 255d;
+            return true;
+        }
+
+        if (trimmed.Length == 7
+            && byte.TryParse(trimmed.AsSpan(1, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out red)
+            && byte.TryParse(trimmed.AsSpan(3, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out green)
+            && byte.TryParse(trimmed.AsSpan(5, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out blue))
+        {
+            alpha = 1d;
+            return true;
+        }
+
+        return false;
     }
 
     private static string WithAlpha(string rgb, double alpha) =>

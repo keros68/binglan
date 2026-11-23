@@ -23,7 +23,7 @@ internal static class AudioEndpointVolumeInterop
     /// The master volume of the default audio endpoint, 0–1, or null when audio is not
     /// available (no device, service down, COM failure).
     /// </summary>
-    internal static float? ReadMasterVolumeScalar()
+    internal static (float Scalar, bool Muted)? ReadMasterVolume()
     {
         try
         {
@@ -53,9 +53,12 @@ internal static class AudioEndpointVolumeInterop
 
                     try
                     {
-                        return endpoint.GetMasterVolumeLevelScalar(out var scalar) == 0
-                            ? scalar
-                            : null;
+                        if (endpoint.GetMasterVolumeLevelScalar(out var scalar) != 0)
+                        {
+                            return null;
+                        }
+                        var muted = endpoint.GetMute(out var isMuted) == 0 && isMuted;
+                        return (scalar, muted);
                     }
                     finally
                     {

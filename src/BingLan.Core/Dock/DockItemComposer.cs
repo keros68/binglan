@@ -322,6 +322,7 @@ public static class DockPinRules
     public static void Normalize(DockState state)
     {
         ArgumentNullException.ThrowIfNull(state);
+        state.Edge = DockEdgeRules.Normalize(state.Edge);
         if (!Enum.IsDefined(state.VisibilityMode))
         {
             state.VisibilityMode = DockVisibilityMode.ReserveWorkArea;

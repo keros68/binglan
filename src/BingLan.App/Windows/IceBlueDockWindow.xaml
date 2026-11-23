@@ -27,16 +27,28 @@
                                 Background="{TemplateBinding Background}"
                                 BorderBrush="{TemplateBinding BorderBrush}"
                                 BorderThickness="{TemplateBinding BorderThickness}"
-                                CornerRadius="14"
+                                CornerRadius="12"
                                 Padding="{TemplateBinding Padding}">
-                            <ContentPresenter HorizontalAlignment="Center"
-                                              VerticalAlignment="Center"/>
+                            <Grid>
+                                <Border x:Name="HoverPlate"
+                                        CornerRadius="11"
+                                        BorderThickness="1"
+                                        Background="Transparent"
+                                        BorderBrush="Transparent"
+                                        IsHitTestVisible="False"/>
+                                <ContentPresenter HorizontalAlignment="Center"
+                                                  VerticalAlignment="Center"/>
+                            </Grid>
                         </Border>
-                        <!-- No tile behind the icon: its square would not match the icon's own
-                             shape. Hover zooms the icon; a press dims it. -->
                         <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="HoverPlate" Property="Background" Value="{DynamicResource DockItemHoverBrush}"/>
+                                <Setter TargetName="HoverPlate" Property="BorderBrush" Value="{DynamicResource DockItemHoverBorderBrush}"/>
+                            </Trigger>
                             <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="Shell" Property="Opacity" Value="0.7"/>
+                                <Setter TargetName="HoverPlate" Property="Background" Value="{DynamicResource DockItemPressedBrush}"/>
+                                <Setter TargetName="HoverPlate" Property="BorderBrush" Value="{DynamicResource DockItemHoverBorderBrush}"/>
+                                <Setter TargetName="Shell" Property="Opacity" Value="0.82"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -46,7 +58,7 @@
     </Window.Resources>
     <Border x:Name="DockSurface"
             VerticalAlignment="Bottom"
-            Padding="14,5"
+            Padding="0"
             ClipToBounds="False"
             Background="{DynamicResource DockSurfaceBrush}"
             BorderBrush="{DynamicResource DockSurfaceBorderBrush}"
@@ -54,12 +66,35 @@
             CornerRadius="18"
             AllowDrop="True"
             MouseRightButtonUp="OnDockSurfaceRightClick">
-        <ScrollViewer x:Name="ItemScroller"
-                      HorizontalScrollBarVisibility="Hidden"
-                      VerticalScrollBarVisibility="Disabled">
-            <StackPanel x:Name="ItemPanel"
-                        Orientation="Horizontal"
-                        VerticalAlignment="Bottom"/>
-        </ScrollViewer>
+        <Grid ClipToBounds="False">
+            <!-- 玻璃质感 1：极淡对角反光渐变（冻结画刷，零 Effect） -->
+            <Border x:Name="DockDiagonalSheen"
+                    IsHitTestVisible="False"
+                    CornerRadius="17"
+                    Background="{DynamicResource DockDiagonalSheenBrush}"/>
+            <!-- 玻璃质感 2：内侧极淡内阴影 / 下沿暗边 -->
+            <Border x:Name="DockInnerShadow"
+                    IsHitTestVisible="False"
+                    CornerRadius="17"
+                    BorderThickness="1"
+                    BorderBrush="{DynamicResource DockInnerShadowBrush}"/>
+            <!-- 玻璃质感 3：顶部 1px 镜面高光（上亮下透线性渐变描边） -->
+            <Border x:Name="DockSpecularRim"
+                    IsHitTestVisible="False"
+                    CornerRadius="17"
+                    BorderThickness="1"
+                    BorderBrush="{DynamicResource DockSpecularRimBrush}"/>
+            <Border x:Name="DockContentHost"
+                    Padding="14,5"
+                    ClipToBounds="False">
+                <ScrollViewer x:Name="ItemScroller"
+                              HorizontalScrollBarVisibility="Hidden"
+                              VerticalScrollBarVisibility="Disabled">
+                    <StackPanel x:Name="ItemPanel"
+                                Orientation="Horizontal"
+                                VerticalAlignment="Bottom"/>
+                </ScrollViewer>
+            </Border>
+        </Grid>
     </Border>
 </Window>

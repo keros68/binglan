@@ -2341,6 +2341,18 @@
                                                   AutomationProperties.Name="Dock 所在显示器"
                                                   SelectionChanged="DockSetting_Changed"/>
                                     </local:SettingsRow>
+                                    <local:SettingsRow Header="停靠位置"
+                                                       Description="选择冰蓝 Dock 停靠在屏幕的底部、左侧或右侧"
+                                                       local:SettingsSearch.Keywords="Dock 位置 停靠 底部 左侧 右侧 竖向 垂直">
+                                        <ComboBox x:Name="DockEdgeComboBox"
+                                                  Width="200"
+                                                  AutomationProperties.Name="Dock 停靠位置"
+                                                  SelectionChanged="DockSetting_Changed">
+                                            <ComboBoxItem Content="底部（默认）" Tag="Bottom"/>
+                                            <ComboBoxItem Content="左侧" Tag="Left"/>
+                                            <ComboBoxItem Content="右侧" Tag="Right"/>
+                                        </ComboBox>
+                                    </local:SettingsRow>
                                     <local:SettingsRow Header="显示方式"
                                                        Description="始终显示时最大化的窗口停在 Dock 上方，全屏应用运行时 Dock 退到后面；智能隐藏时窗口移到 Dock 位置后隐藏，按唤出方式重新显示"
                                                        local:SettingsSearch.Keywords="自动隐藏 保留底部">

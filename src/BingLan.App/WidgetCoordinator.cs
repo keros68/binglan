@@ -139,6 +139,7 @@ public sealed partial class WidgetCoordinator : IDisposable
         _dock.ReadFileBoxes = ReadLauncherFileBoxes;
         _dock.SendToFileBox = SendLauncherPathToFileBoxAsync;
         _dock.ResolvePanelForeground = ResolveLauncherForeground;
+        _dock.ResolveTopBarReservedBottomPx = ResolveTopBarBottomForMonitor;
         _dock.ShellRecovered += _desktopSurfaceWatcher.ScheduleCheck;
         _dock.ShowDesktopTriggered += _desktopSurfaceWatcher.ScheduleToggleDesktopCheck;
         _taskbar = new TaskbarAdapter(TaskbarCheckpointPath(_store.DataDirectory));
@@ -1761,9 +1762,32 @@ public sealed partial class WidgetCoordinator : IDisposable
         SaveNow();
     }
 
+    private int? ResolveTopBarBottomForMonitor(MonitorSnapshot monitor)
+    {
+        if (!_state.TopBar.IsEnabled || _state.TopBar.DisplayMode != TopBarDisplayMode.FullWidth)
+        {
+            return null;
+        }
+
+        var targetsSameMonitor = string.IsNullOrWhiteSpace(_state.TopBar.MonitorDeviceName)
+            ? monitor.IsPrimary
+            : string.Equals(_state.TopBar.MonitorDeviceName, monitor.DeviceName, StringComparison.OrdinalIgnoreCase);
+        if (!targetsSameMonitor)
+        {
+            return null;
+        }
+
+        var scale = monitor.Dpi / 96d;
+        return monitor.Bounds.Top + Math.Max(1, (int)Math.Ceiling(_state.TopBar.Height * scale));
+    }
+
     private void ApplyTopBar()
     {
         _topBar.Apply();
+        if (_state.Dock.IsEnabled && DockEdgeRules.IsVertical(_state.Dock.Edge))
+        {
+            _dock.Apply();
+        }
         SyncGlobalHotkeys();
         UpdateSamplingMode();
         ScheduleSave();
@@ -2311,6 +2335,7 @@ public sealed partial class WidgetCoordinator : IDisposable
         resources["DockSurfaceBrush"] = Brush(dock.Surface);
         resources["DockSurfaceBorderBrush"] = Brush(dock.Border);
         resources["DockRunningDotBrush"] = Brush(dock.RunningDot);
+        FloatingGlassPalette.ApplyDockSheenResources(resources, dock, clearMaterial: false, highContrast: false);
         FloatingGlassPalette.Apply(resources, dock);
         _launcherPanel?.ApplyAppearance();
         resources["PerformanceAccentBrush"] = Brush("#F5" + _state.Style.AccentColor.TrimStart('#'));

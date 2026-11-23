@@ -108,13 +108,30 @@ internal static class ShellSurfaceNativeMethods
         || (GetAsyncKeyState(VkRButton) & 0x8000) != 0
         || (GetAsyncKeyState(VkMButton) & 0x8000) != 0;
 
-    internal static bool IsSystemMenuForeground()
+    internal static bool IsSystemMenuForeground() =>
+        TryGetForegroundSystemMenu(out _, out _);
+
+    internal static bool TryGetForegroundSystemMenu(
+        out bool isTaskbarWindow,
+        out BingLan.Core.Dock.PixelRect bounds)
     {
+        isTaskbarWindow = false;
+        bounds = default;
         var window = DockNativeMethods.GetForegroundWindow();
         var name = ClassNameOf(window);
         if (name is not ("Shell_TrayWnd" or "Shell_SecondaryTrayWnd" or "Xaml_WindowedPopupClass"
             or "Windows.UI.Core.CoreWindow" or "ControlCenterWindow" or "TopLevelWindowForOverflowXamlIsland")) return false;
-        return ProcessNameOf(window) is { } processName && IsSystemMenu(name, processName);
+        if (ProcessNameOf(window) is not { } processName || !IsSystemMenu(name, processName))
+        {
+            return false;
+        }
+
+        isTaskbarWindow = name is "Shell_TrayWnd" or "Shell_SecondaryTrayWnd";
+        if (DockNativeMethods.GetWindowRect(window, out var rect))
+        {
+            bounds = new BingLan.Core.Dock.PixelRect(rect.Left, rect.Top, rect.Right, rect.Bottom);
+        }
+        return true;
     }
 
     internal static bool IsStartMenuForeground()

@@ -27,16 +27,39 @@ public static class DockHandleGeometry
     /// The handle's default spot: the work area's right end, on the same band as the
     /// dock row (bottom edge at the work-area bottom minus the dock's edge gap).
     /// </summary>
-    public static PixelRect Default(PixelRect workArea, int handleSizePixels, int marginPixels, int edgeGapPixels)
+    public static PixelRect Default(PixelRect workArea, int handleSizePixels, int marginPixels, int edgeGapPixels) =>
+        Default(workArea, handleSizePixels, marginPixels, edgeGapPixels, DockEdge.Bottom);
+
+    public static PixelRect Default(
+        PixelRect workArea,
+        int handleSizePixels,
+        int marginPixels,
+        int edgeGapPixels,
+        DockEdge edge)
     {
         if (!workArea.HasArea)
         {
             return new PixelRect(0, 0, handleSizePixels, handleSizePixels);
         }
 
-        var right = Math.Max(workArea.Left + handleSizePixels, workArea.Right - marginPixels);
-        var bottom = Math.Max(workArea.Top + handleSizePixels, workArea.Bottom - Math.Max(0, edgeGapPixels));
-        return new PixelRect(right - handleSizePixels, bottom - handleSizePixels, right, bottom);
+        var safeGap = Math.Max(0, edgeGapPixels);
+        var normalized = DockEdgeRules.Normalize(edge);
+        if (normalized == DockEdge.Left)
+        {
+            var left = Math.Min(Math.Max(workArea.Left, workArea.Right - handleSizePixels), workArea.Left + safeGap);
+            var bottom = Math.Max(workArea.Top + handleSizePixels, workArea.Bottom - marginPixels);
+            return new PixelRect(left, bottom - handleSizePixels, left + handleSizePixels, bottom);
+        }
+        if (normalized == DockEdge.Right)
+        {
+            var right = Math.Max(workArea.Left + handleSizePixels, workArea.Right - safeGap);
+            var bottom = Math.Max(workArea.Top + handleSizePixels, workArea.Bottom - marginPixels);
+            return new PixelRect(right - handleSizePixels, bottom - handleSizePixels, right, bottom);
+        }
+
+        var defaultRight = Math.Max(workArea.Left + handleSizePixels, workArea.Right - marginPixels);
+        var defaultBottom = Math.Max(workArea.Top + handleSizePixels, workArea.Bottom - safeGap);
+        return new PixelRect(defaultRight - handleSizePixels, defaultBottom - handleSizePixels, defaultRight, defaultBottom);
     }
 
     /// <summary>Keeps a dragged handle fully inside the work area, preserving its size.</summary>
@@ -64,18 +87,60 @@ public static class DockHandleGeometry
         PixelRect workArea,
         int dockThicknessPixels,
         int contentLengthPixels,
-        int gapPixels)
+        int gapPixels) =>
+        ExpandedDock(handle, workArea, dockThicknessPixels, contentLengthPixels, gapPixels, DockEdge.Bottom);
+
+    public static PixelRect ExpandedDock(
+        PixelRect handle,
+        PixelRect workArea,
+        int dockThicknessPixels,
+        int contentLengthPixels,
+        int gapPixels,
+        DockEdge edge)
     {
         if (!workArea.HasArea)
         {
             return handle;
         }
 
+        var normalized = DockEdgeRules.Normalize(edge);
+        var thickness = Math.Max(1, dockThicknessPixels);
+        if (DockEdgeRules.IsVertical(normalized))
+        {
+            var maxVerticalLength = Math.Max(1, (int)Math.Round(workArea.Height * DockLayoutMetrics.HandleMaxExtentFraction));
+            var verticalLength = Math.Clamp(contentLengthPixels, 1, maxVerticalLength);
+            int verticalLeft;
+            if (normalized == DockEdge.Left)
+            {
+                verticalLeft = Math.Clamp(handle.Left, workArea.Left, Math.Max(workArea.Left, workArea.Right - thickness));
+            }
+            else
+            {
+                var verticalRight = Math.Clamp(handle.Right, Math.Min(workArea.Right, workArea.Left + thickness), workArea.Right);
+                verticalLeft = Math.Max(workArea.Left, verticalRight - thickness);
+            }
+
+            var handleCentreY = (handle.Top + handle.Bottom) / 2;
+            var workAreaCentreY = (workArea.Top + workArea.Bottom) / 2;
+            int verticalTop;
+            if (handleCentreY >= workAreaCentreY)
+            {
+                var verticalBottom = Math.Max(workArea.Top + verticalLength, handle.Top - gapPixels);
+                verticalTop = verticalBottom - verticalLength;
+            }
+            else
+            {
+                verticalTop = Math.Min(workArea.Bottom - verticalLength, handle.Bottom + gapPixels);
+            }
+
+            verticalTop = Math.Clamp(verticalTop, workArea.Top, Math.Max(workArea.Top, workArea.Bottom - verticalLength));
+            return new PixelRect(verticalLeft, verticalTop, Math.Min(workArea.Right, verticalLeft + thickness), verticalTop + verticalLength);
+        }
+
         // The expanded row grows from the handle and may cross the screen, so it keeps
         // the stricter cap instead of the dock's wider bottom-edge limit.
         var maxLength = Math.Max(1, (int)Math.Round(workArea.Width * DockLayoutMetrics.HandleMaxExtentFraction));
         var length = Math.Clamp(contentLengthPixels, 1, maxLength);
-        var thickness = Math.Max(1, dockThicknessPixels);
         var bottom = Math.Min(handle.Bottom, workArea.Bottom);
         var top = Math.Max(workArea.Top, bottom - thickness);
         bottom = Math.Min(workArea.Bottom, top + thickness);

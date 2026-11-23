@@ -126,6 +126,34 @@
              of its own (the ice-blue accent lightened) so it reads on any background. -->
         <SolidColorBrush x:Key="DockHandleBrush" Color="#F2AACEF8"/>
         <SolidColorBrush x:Key="DockSurfaceBorderBrush" Color="#BFFFFFFF"/>
+        <LinearGradientBrush x:Key="DockSpecularRimBrush" StartPoint="0,0" EndPoint="0,1">
+            <GradientStop Color="#78FFFFFF" Offset="0"/>
+            <GradientStop Color="#1AFFFFFF" Offset="0.42"/>
+            <GradientStop Color="#0DFFFFFF" Offset="1"/>
+        </LinearGradientBrush>
+        <LinearGradientBrush x:Key="DockInnerShadowBrush" StartPoint="0,0" EndPoint="0,1">
+            <GradientStop Color="#000B1C2E" Offset="0"/>
+            <GradientStop Color="#000B1C2E" Offset="0.68"/>
+            <GradientStop Color="#1C0B1C2E" Offset="1"/>
+        </LinearGradientBrush>
+        <LinearGradientBrush x:Key="DockDiagonalSheenBrush" StartPoint="0,0" EndPoint="1,1">
+            <GradientStop Color="#1CFFFFFF" Offset="0"/>
+            <GradientStop Color="#00FFFFFF" Offset="0.48"/>
+            <GradientStop Color="#0E0A1A2A" Offset="1"/>
+        </LinearGradientBrush>
+        <LinearGradientBrush x:Key="DockDividerBrush" StartPoint="0,0" EndPoint="0,1">
+            <GradientStop Color="#001F3A55" Offset="0"/>
+            <GradientStop Color="#421F3A55" Offset="0.5"/>
+            <GradientStop Color="#001F3A55" Offset="1"/>
+        </LinearGradientBrush>
+        <LinearGradientBrush x:Key="DockDividerHorizontalBrush" StartPoint="0,0" EndPoint="1,0">
+            <GradientStop Color="#001F3A55" Offset="0"/>
+            <GradientStop Color="#421F3A55" Offset="0.5"/>
+            <GradientStop Color="#001F3A55" Offset="1"/>
+        </LinearGradientBrush>
+        <SolidColorBrush x:Key="DockItemHoverBrush" Color="#2EFFFFFF"/>
+        <SolidColorBrush x:Key="DockItemHoverBorderBrush" Color="#54FFFFFF"/>
+        <SolidColorBrush x:Key="DockItemPressedBrush" Color="#1C1B324B"/>
         <SolidColorBrush x:Key="DockActiveDotBrush" Color="#E0559EF3"/>
         <!-- The lively blue of the performance bars and download rate. -->
         <SolidColorBrush x:Key="PerformanceAccentBrush" Color="#F51EA9FF"/>

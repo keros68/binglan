@@ -2,8 +2,11 @@ using System.Windows;
 using System.Windows.Media;
 using BingLan.Core.Models;
 using Brush = System.Windows.Media.Brush;
+using Brushes = System.Windows.Media.Brushes;
 using Color = System.Windows.Media.Color;
 using ColorConverter = System.Windows.Media.ColorConverter;
+using Point = System.Windows.Point;
+using SystemColors = System.Windows.SystemColors;
 
 namespace BingLan.App.Dock;
 
@@ -16,6 +19,9 @@ internal static class FloatingGlassPalette
         var light = darkInk ?? (0.2126d * tint.R + 0.7152d * tint.G + 0.0722d * tint.B) / 255d > 0.6d;
         var solid = tint;
         solid.A = byte.MaxValue;
+
+        var sheen = DesktopStyleRules.ResolveGlassSheen(dock.Surface, clearGlass, highContrast);
+        ApplySheenLayerResources(resources, "FloatingGlass", sheen);
 
         if (launcher && clearGlass && !highContrast)
         {
@@ -67,6 +73,126 @@ internal static class FloatingGlassPalette
         Add("FloatingGlassFocusBrush", Paint(light ? "#316B9C" : "#AFD5FF"), SystemColors.HighlightBrush);
 
         void Add(string key, Brush normal, Brush contrast) => resources[key] = highContrast ? contrast : normal;
+    }
+
+    internal static void ApplyDockSheenResources(
+        ResourceDictionary resources,
+        DockGlass dock,
+        bool clearMaterial = false,
+        bool highContrast = false)
+    {
+        var sheen = DesktopStyleRules.ResolveGlassSheen(dock.Surface, clearMaterial, highContrast);
+        ApplySheenLayerResources(resources, "Dock", sheen);
+        resources["DockDividerBrush"] = highContrast
+            ? SystemColors.WindowTextBrush
+            : CreateLinearGradient(
+                new Point(0, 0),
+                new Point(0, 1),
+                (sheen.DividerEdgeColor, 0d),
+                (sheen.DividerCenterColor, 0.5d),
+                (sheen.DividerEdgeColor, 1d));
+        resources["DockDividerHorizontalBrush"] = highContrast
+            ? SystemColors.WindowTextBrush
+            : CreateLinearGradient(
+                new Point(0, 0),
+                new Point(1, 0),
+                (sheen.DividerEdgeColor, 0d),
+                (sheen.DividerCenterColor, 0.5d),
+                (sheen.DividerEdgeColor, 1d));
+        resources["DockItemHoverBrush"] = highContrast
+            ? Brushes.Transparent
+            : Paint(sheen.HoverPlateFillColor);
+        resources["DockItemHoverBorderBrush"] = highContrast
+            ? SystemColors.HighlightBrush
+            : Paint(sheen.HoverPlateBorderColor);
+        resources["DockItemPressedBrush"] = highContrast
+            ? SystemColors.ControlBrush
+            : Paint(sheen.PressedPlateFillColor);
+    }
+
+    internal static void ApplyTopBarSheenResources(
+        ResourceDictionary resources,
+        DockGlass topBarGlass,
+        bool clearMaterial,
+        bool highContrast)
+    {
+        var sheen = DesktopStyleRules.ResolveGlassSheen(topBarGlass.Surface, clearMaterial, highContrast);
+        ApplySheenLayerResources(resources, "TopBar", sheen);
+        if (highContrast)
+        {
+            resources["TopBarModuleHoverBrush"] = SystemColors.ControlBrush;
+            resources["TopBarModulePressedBrush"] = SystemColors.HighlightBrush;
+            resources["TopBarSearchFillBrush"] = SystemColors.WindowBrush;
+            resources["TopBarSearchBorderBrush"] = SystemColors.WindowTextBrush;
+            resources["TopBarSearchHoverBrush"] = SystemColors.ControlBrush;
+            resources["TopBarSearchPressedBrush"] = SystemColors.HighlightBrush;
+            return;
+        }
+
+        resources["TopBarModuleHoverBrush"] = Paint(sheen.HoverPlateFillColor);
+        resources["TopBarModulePressedBrush"] = Paint(sheen.PressedPlateFillColor);
+        if (sheen.IsLightSurface)
+        {
+            resources["TopBarSearchFillBrush"] = Paint("#36FFFFFF");
+            resources["TopBarSearchBorderBrush"] = Paint("#52FFFFFF");
+            resources["TopBarSearchHoverBrush"] = Paint("#50FFFFFF");
+            resources["TopBarSearchPressedBrush"] = Paint("#201B324B");
+        }
+        else
+        {
+            resources["TopBarSearchFillBrush"] = Paint("#26FFFFFF");
+            resources["TopBarSearchBorderBrush"] = Paint("#26FFFFFF");
+            resources["TopBarSearchHoverBrush"] = Paint("#38FFFFFF");
+            resources["TopBarSearchPressedBrush"] = Paint("#46FFFFFF");
+        }
+    }
+
+    private static void ApplySheenLayerResources(
+        ResourceDictionary resources,
+        string prefix,
+        GlassSheenPalette sheen)
+    {
+        if (!sheen.Enabled)
+        {
+            resources[$"{prefix}SpecularRimBrush"] = Brushes.Transparent;
+            resources[$"{prefix}InnerShadowBrush"] = Brushes.Transparent;
+            resources[$"{prefix}DiagonalSheenBrush"] = Brushes.Transparent;
+            return;
+        }
+
+        resources[$"{prefix}SpecularRimBrush"] = CreateLinearGradient(
+            new Point(0, 0),
+            new Point(0, 1),
+            (sheen.RimTopColor, 0d),
+            (sheen.RimMiddleColor, 0.42d),
+            (sheen.RimBottomColor, 1d));
+        resources[$"{prefix}InnerShadowBrush"] = CreateLinearGradient(
+            new Point(0, 0),
+            new Point(0, 1),
+            (sheen.InnerShadowTopColor, 0d),
+            (sheen.InnerShadowTopColor, 0.68d),
+            (sheen.InnerShadowBottomColor, 1d));
+        resources[$"{prefix}DiagonalSheenBrush"] = CreateLinearGradient(
+            new Point(0, 0),
+            new Point(1, 1),
+            (sheen.DiagonalStartColor, 0d),
+            (sheen.DiagonalMidColor, 0.48d),
+            (sheen.DiagonalEndColor, 1d));
+    }
+
+    private static Brush CreateLinearGradient(
+        Point start,
+        Point end,
+        params (string Color, double Offset)[] stops)
+    {
+        var collection = new GradientStopCollection(stops.Length);
+        foreach (var (color, offset) in stops)
+        {
+            collection.Add(new GradientStop((Color)ColorConverter.ConvertFromString(color), offset));
+        }
+        var brush = new LinearGradientBrush(collection, start, end);
+        brush.Freeze();
+        return brush;
     }
 
     private static Brush Paint(string value) => BrushOf((Color)ColorConverter.ConvertFromString(value));

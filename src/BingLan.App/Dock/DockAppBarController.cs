@@ -9,13 +9,12 @@ using BingLan.Core.Dock;
 namespace BingLan.App.Dock;
 
 /// <summary>
-/// Positions the dock at the bottom centre of a monitor and optionally reserves the
-/// work area through the documented AppBar API. Registration is released on dispose
-/// and replayed after Explorer recreates the taskbar.
+/// Positions the dock along the selected monitor edge (bottom, left, or right) and
+/// optionally reserves the work area through the documented AppBar API. Registration is
+/// released on dispose, edge/monitor changes, and replayed after Explorer recreates the taskbar.
 /// </summary>
 internal sealed class DockAppBarController : IDisposable
 {
-    private const DockEdge Edge = DockEdge.Bottom;
     private const int ExplorerRecoveryAttemptCount = 5;
     private const int MaxTransientReserveFailures = 3;
     private static readonly TimeSpan ExplorerRecoveryDelay = TimeSpan.FromMilliseconds(400);
@@ -30,13 +29,15 @@ internal sealed class DockAppBarController : IDisposable
     private readonly AppBarWorkAreaCheck _workAreaCheck = new();
     private readonly DispatcherTimer _deferredPosition;
     private readonly DispatcherTimer _reserveRetryTimer;
+    private DockEdge _edge = DockEdge.Bottom;
+    private int? _topBarReservedBottomPx;
     private PixelRect _reservedStrip;
     private MonitorSnapshot? _monitor;
     private bool _reserveWorkArea;
     private double _contentLengthDip = DockLayoutMetrics.EmptyLengthDip;
     private double _thicknessDip = DockLayoutMetrics.DockThicknessDip;
     private double _edgeGapDip = DockLayoutMetrics.EdgeGapDip;
-    private double _topOverflowDip;
+    private double _overflowDip;
     private PixelRect? _floatingOverride;
     private bool _fullScreenDetected;
     private bool _positioning;
@@ -101,6 +102,8 @@ internal sealed class DockAppBarController : IDisposable
 
     internal PixelRect Bounds { get; private set; }
 
+    internal DockEdge Edge => _edge;
+
     internal bool IsReserved => _reservation.IsRegistered;
 
     internal bool IsRecovering => _explorerRecovering || _transientRecovering;
@@ -146,9 +149,13 @@ internal sealed class DockAppBarController : IDisposable
         double contentLengthDip,
         double thicknessDip,
         double edgeGapDip,
-        double topOverflowDip = 0d)
+        double overflowDip = 0d,
+        DockEdge edge = DockEdge.Bottom,
+        int? topBarReservedBottomPx = null)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+        var normalizedEdge = DockEdgeRules.Normalize(edge);
+        var edgeChanged = _edge != normalizedEdge;
         var monitorChanged = _monitor is not null
             && AppBarReservationState.HasMonitorTargetChanged(
                 _monitor.DeviceName,
@@ -157,17 +164,20 @@ internal sealed class DockAppBarController : IDisposable
                 monitor.DeviceName,
                 monitor.Bounds,
                 monitor.Dpi);
+        var targetChanged = monitorChanged || edgeChanged;
         if (_monitor?.Bounds != monitor.Bounds || _monitor?.WorkingArea != monitor.WorkingArea)
         {
             TaskbarEdgeGuard.InvalidateNativeTaskbarLayout(monitor.Bounds);
         }
         _monitor = monitor;
+        _edge = normalizedEdge;
+        _topBarReservedBottomPx = topBarReservedBottomPx;
         _reserveWorkArea = reserveWorkArea;
         _contentLengthDip = Math.Max(DockLayoutMetrics.EmptyLengthDip, contentLengthDip);
         _thicknessDip = thicknessDip;
         _edgeGapDip = edgeGapDip;
-        _topOverflowDip = double.IsFinite(topOverflowDip) ? Math.Max(0d, topOverflowDip) : 0d;
-        if (!reserveWorkArea || monitorChanged)
+        _overflowDip = double.IsFinite(overflowDip) ? Math.Max(0d, overflowDip) : 0d;
+        if (!reserveWorkArea || targetChanged)
         {
             _consecutiveReserveFailures = 0;
             _transientRecovering = false;
@@ -182,7 +192,9 @@ internal sealed class DockAppBarController : IDisposable
         _applying = true;
         try
         {
-            Dispatch(_reservation.Apply(reserveWorkArea, monitorChanged));
+            // When switching edges or monitors while reserved, AppBarReservationState emits
+            // [Unregister, Register] so the old edge reservation is released before claiming the new one.
+            Dispatch(_reservation.Apply(reserveWorkArea, targetChanged));
             Position();
         }
         finally
@@ -258,7 +270,7 @@ internal sealed class DockAppBarController : IDisposable
                 strip = reserved;
             }
             else if (_reserveWorkArea
-                && AppBarReservationState.IsValidStrip(_reservedStrip, _monitor.Bounds, thicknessPixels)
+                && AppBarReservationState.IsValidStrip(_reservedStrip, _monitor.Bounds, thicknessPixels, _edge)
                 && _consecutiveReserveFailures < MaxTransientReserveFailures)
             {
                 // Transient Explorer hiccups can make ABM_QUERYPOS/ABM_SETPOS fail briefly;
@@ -292,41 +304,49 @@ internal sealed class DockAppBarController : IDisposable
 
                 var workArea = GetLiveWorkingArea(_monitor);
                 var fallbackArea = workArea.HasArea ? workArea : _monitor.Bounds;
+                var maxFallbackThickness = DockEdgeRules.IsVertical(_edge)
+                    ? fallbackArea.Width
+                    : fallbackArea.Height;
                 strip = DockGeometry.Calculate(
                     fallbackArea,
-                    Edge,
-                    Math.Min(stripThickness, fallbackArea.Height));
+                    _edge,
+                    Math.Min(stripThickness, maxFallbackThickness));
             }
 
             var nativeSafeArea = TaskbarEdgeGuard.AvoidNativeTaskbar(_monitor.Bounds, _monitor.Bounds);
-            var safeLeft = Math.Max(strip.Left, nativeSafeArea.Left);
-            var safeRight = Math.Min(strip.Right, nativeSafeArea.Right);
-            if (safeRight > safeLeft)
-            {
-                strip = strip with { Left = safeLeft, Right = safeRight };
-            }
+            var safeCrossArea = DockEdgeRules.IsVertical(_edge)
+                ? DockEdgeRules.ComputeSafeVerticalBounds(
+                    _monitor.Bounds,
+                    GetLiveWorkingArea(_monitor),
+                    nativeSafeArea,
+                    _topBarReservedBottomPx)
+                : nativeSafeArea;
+            strip = DockEdgeRules.ClipStripCrossAxis(strip, safeCrossArea, _edge);
             var requestedLength = Math.Max(1, (int)Math.Round(_contentLengthDip * scale));
+            var stripExtent = DockEdgeRules.AvailableExtentPixels(strip, _edge);
             var contentLength = FloatingDockGeometry.ClampExtent(
                 requestedLength,
-                strip.Width,
+                stripExtent,
                 DockLayoutMetrics.MaxExtentFraction,
                 Math.Max(1, (int)Math.Round(DockLayoutMetrics.EmptyLengthDip * scale)));
             Bounds = FloatingDockGeometry.Calculate(
                 strip,
-                Edge,
+                _edge,
                 contentLength,
                 thicknessPixels,
                 edgeGapPixels);
 
             var placement = _floatingOverride ?? Bounds;
-            var overflowPixels = _topOverflowDip > 0d
-                ? (int)Math.Round(_topOverflowDip * scale)
+            var overflowPixels = _overflowDip > 0d
+                ? (int)Math.Round(_overflowDip * scale)
                 : 0;
-            // Extend only the transparent top headroom of the HWND; AppBar reservation and
-            // Bounds remain unchanged so maximized/full-screen geometry is untouched.
-            var windowRect = overflowPixels > 0
-                ? placement with { Top = Math.Max(_monitor.Bounds.Top, placement.Top - overflowPixels) }
-                : placement;
+            // Extend only the transparent inward magnification headroom of the HWND; AppBar
+            // reservation and resting Bounds remain unchanged.
+            var windowRect = DockEdgeRules.ExpandWindowForOverflow(
+                placement,
+                _monitor.Bounds,
+                _edge,
+                overflowPixels);
             DockNativeMethods.MoveWindow(
                 _handle,
                 windowRect.Left,
@@ -344,10 +364,21 @@ internal sealed class DockAppBarController : IDisposable
 
     private PixelRect? TryReserveStrip(MonitorSnapshot monitor, int thicknessPixels, int stripThickness)
     {
-        var requestedHeight = Math.Min(stripThickness, monitor.Bounds.Height);
-        var requested = DockGeometry.Calculate(monitor.Bounds, Edge, requestedHeight);
+        var maxThickness = DockEdgeRules.IsVertical(_edge)
+            ? monitor.Bounds.Width
+            : monitor.Bounds.Height;
+        var requestedThickness = Math.Min(stripThickness, maxThickness);
+        var requestBase = monitor.Bounds;
+        if (DockEdgeRules.IsVertical(_edge)
+            && _topBarReservedBottomPx is { } topLimit
+            && topLimit > requestBase.Top
+            && topLimit < requestBase.Bottom)
+        {
+            requestBase = requestBase with { Top = topLimit };
+        }
+        var requested = DockGeometry.Calculate(requestBase, _edge, requestedThickness);
         var data = CreateData();
-        data.Edge = (uint)Edge;
+        data.Edge = (uint)_edge;
         data.Rectangle = ToNative(requested);
         if (DockNativeMethods.SHAppBarMessage(DockNativeMethods.AbmQueryPos, ref data) == 0)
         {
@@ -361,7 +392,7 @@ internal sealed class DockAppBarController : IDisposable
             }
 
             data = CreateData();
-            data.Edge = (uint)Edge;
+            data.Edge = (uint)_edge;
             data.Rectangle = ToNative(requested);
             if (DockNativeMethods.SHAppBarMessage(DockNativeMethods.AbmQueryPos, ref data) == 0)
             {
@@ -370,11 +401,8 @@ internal sealed class DockAppBarController : IDisposable
         }
 
         var queried = ToPixel(data.Rectangle);
-        var adjusted = queried with
-        {
-            Top = queried.Bottom - requestedHeight
-        };
-        if (!AppBarReservationState.IsValidStrip(adjusted, monitor.Bounds, thicknessPixels))
+        var adjusted = DockEdgeRules.AdjustQueriedAppBarStrip(queried, _edge, requestedThickness);
+        if (!AppBarReservationState.IsValidStrip(adjusted, monitor.Bounds, thicknessPixels, _edge))
         {
             return null;
         }
@@ -382,10 +410,12 @@ internal sealed class DockAppBarController : IDisposable
         // Explorer already holds an unchanged strip; setting it again would only
         // notify the other AppBars and invite them to answer in kind — unless the
         // work area shows Explorer reserving more than that strip.
+        var (workAreaEdge, stripInnerEdge) = DockEdgeRules.WorkAreaEdgesForCheck(
+            GetLiveWorkingArea(monitor),
+            adjusted,
+            _edge);
         if (_positionGuard.NeedsSubmit(adjusted)
-            || _workAreaCheck.NeedsResubmit(
-                GetLiveWorkingArea(monitor).Bottom,
-                adjusted.Top))
+            || _workAreaCheck.NeedsResubmit(workAreaEdge, stripInnerEdge))
         {
             data.Rectangle = ToNative(adjusted);
             if (DockNativeMethods.SHAppBarMessage(DockNativeMethods.AbmSetPos, ref data) == 0)
@@ -395,7 +425,7 @@ internal sealed class DockAppBarController : IDisposable
 
             UiDiagnostics.Hit(UiActivity.AppBarSetPosition);
             var actual = ToPixel(data.Rectangle);
-            if (!AppBarReservationState.IsValidStrip(actual, monitor.Bounds, thicknessPixels))
+            if (!AppBarReservationState.IsValidStrip(actual, monitor.Bounds, thicknessPixels, _edge))
             {
                 return null;
             }
@@ -404,7 +434,7 @@ internal sealed class DockAppBarController : IDisposable
             _reservedStrip = actual;
         }
 
-        return AppBarReservationState.IsValidStrip(_reservedStrip, monitor.Bounds, thicknessPixels)
+        return AppBarReservationState.IsValidStrip(_reservedStrip, monitor.Bounds, thicknessPixels, _edge)
             ? _reservedStrip
             : null;
     }

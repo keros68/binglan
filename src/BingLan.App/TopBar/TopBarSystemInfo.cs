@@ -30,10 +30,12 @@ internal static class TopBarSystemInfo
         return (percent, TopBarModuleRules.ClassifyBattery(status.AcLineStatus, status.BatteryFlag));
     }
 
-    internal static int? ReadVolumePercent()
+    internal static (int Percent, bool Muted)? ReadVolume()
     {
-        var scalar = AudioEndpointVolumeInterop.ReadMasterVolumeScalar();
-        return scalar is { } value ? TopBarModuleRules.VolumePercentFromScalar(value) : null;
+        var volume = AudioEndpointVolumeInterop.ReadMasterVolume();
+        return volume is { } value
+            ? (TopBarModuleRules.VolumePercentFromScalar(value.Scalar), value.Muted)
+            : null;
     }
 
     internal static TopBarNetworkStatus ReadNetwork()

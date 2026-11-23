@@ -105,6 +105,9 @@ public partial class IceBlueDockWindow : Window
     private readonly DispatcherTimer _dragHoverTimer;
     private DockButtonParts? _hoveredDragParts;
     private bool _hoveredDragOpensWithApp;
+    private DockButtonParts? _pinDragIndicatorParts;
+    private bool _pinDragIndicatorAfter;
+    private DockEdge _renderedEdge = DockEdge.Bottom;
     private bool _externalDragActive;
     private string[]? _cachedDragPaths;
     private Task<IReadOnlyList<DroppedPathInfo>>? _cachedDragInfoTask;
@@ -155,6 +158,8 @@ public partial class IceBlueDockWindow : Window
         public TranslateTransform Translate { get; } = translate;
         public double CurrentScale = 1d;
         public double TargetScale = 1d;
+        public double CurrentLiftX;
+        public double TargetLiftX;
         public double CurrentLiftY;
         public double TargetLiftY;
     }
@@ -234,9 +239,20 @@ public partial class IceBlueDockWindow : Window
         DockSurface.Drop += OnDropOnSurface;
         DockSurface.PreviewMouseMove += OnDockSurfacePreviewMouseMove;
         DockSurface.MouseLeave += OnDockSurfaceMouseLeave;
-        // When the row overflows, the wheel scrolls it sideways instead of doing nothing.
+        // When the dock overflows, the wheel scrolls along the active layout axis.
         ItemScroller.PreviewMouseWheel += (sender, e) =>
         {
+            if (IsVertical)
+            {
+                if (ItemScroller.ScrollableHeight <= 0)
+                {
+                    return;
+                }
+                ItemScroller.ScrollToVerticalOffset(
+                    ItemScroller.VerticalOffset - Math.Sign(e.Delta) * ItemCellStep());
+                e.Handled = true;
+                return;
+            }
             if (ItemScroller.ScrollableWidth <= 0)
             {
                 return;
@@ -245,6 +261,29 @@ public partial class IceBlueDockWindow : Window
                 ItemScroller.HorizontalOffset - Math.Sign(e.Delta) * ItemCellStep());
             e.Handled = true;
         };
+    }
+
+    private DockEdge CurrentEdge => DockEdgeRules.Normalize(_state.Edge);
+    private bool IsVertical => DockEdgeRules.IsVertical(CurrentEdge);
+
+    private static PlacementMode InwardMenuPlacement(DockEdge edge) => DockEdgeRules.Normalize(edge) switch
+    {
+        DockEdge.Left => PlacementMode.Right,
+        DockEdge.Right => PlacementMode.Left,
+        _ => PlacementMode.Top
+    };
+
+    private void ApplyToolTipPlacement(FrameworkElement element)
+    {
+        var edge = CurrentEdge;
+        ToolTipService.SetPlacement(element, InwardMenuPlacement(edge));
+        ToolTipService.SetHorizontalOffset(element, edge switch
+        {
+            DockEdge.Left => 6d,
+            DockEdge.Right => -6d,
+            _ => 0d
+        });
+        ToolTipService.SetVerticalOffset(element, edge == DockEdge.Bottom ? -6d : 0d);
     }
 
     private double ItemCellStep() => DockLayoutMetrics.ItemCell(_effectiveIconSize);
@@ -258,6 +297,7 @@ public partial class IceBlueDockWindow : Window
     internal Func<IReadOnlyList<(Guid Id, string Title)>>? ReadFileBoxes { get; init; }
     internal Func<Guid, string, Task<string>>? SendToFileBox { get; init; }
     internal Func<nint, nint>? ResolvePanelForeground { get; init; }
+    internal Func<MonitorSnapshot, int?>? ResolveTopBarReservedBottomPx { get; init; }
 
     internal event Action? HideRequested;
 
@@ -336,6 +376,7 @@ public partial class IceBlueDockWindow : Window
             return;
         }
 
+        var edge = CurrentEdge;
         // A window maximized on the dock's monitor may take over the reserved strip;
         // while it does, the dock follows smart-hide rules instead of holding the space.
         var reserveWorkArea = _state.VisibilityMode == DockVisibilityMode.ReserveWorkArea
@@ -343,25 +384,36 @@ public partial class IceBlueDockWindow : Window
         _lastReservationAttempt = DateTimeOffset.UtcNow;
         UpdateEffectiveIconSize(monitor, _items);
         var thicknessDip = DockLayoutMetrics.Thickness(_state.IconSize);
-        var topOverflowDip = DockMagnificationRules.RequiredTopOverflowDip(
+        var overflowDip = DockMagnificationRules.RequiredTopOverflowDip(
             _state.HoverMagnification,
             _state.HoverMagnificationScale,
             _effectiveIconSize,
             Motion,
             SystemParameters.ClientAreaAnimation);
-        var previousTopOverflowDip = _topOverflowDip;
-        ApplyOverflowLayout(thicknessDip, topOverflowDip);
-        if (DockMagnificationRules.ShouldResetSlotsOnOverflowChange(previousTopOverflowDip, topOverflowDip))
+        var previousOverflowDip = _topOverflowDip;
+        ApplyOverflowLayout(thicknessDip, overflowDip);
+        if (_renderedEdge != edge)
+        {
+            _lastSignature = string.Empty;
+            _lastStructureKey = string.Empty;
+            ApplyItems(_items);
+        }
+        if (DockMagnificationRules.ShouldResetSlotsOnOverflowChange(previousOverflowDip, overflowDip))
         {
             StopMagnification(animateReturn: false);
         }
+        var topBarBottomPx = DockEdgeRules.IsVertical(edge)
+            ? ResolveTopBarReservedBottomPx?.Invoke(monitor)
+            : null;
         _appBar.Apply(
             monitor,
             reserveWorkArea,
             ContentLengthDip(),
             thicknessDip,
             _state.BottomGapDip,
-            topOverflowDip);
+            overflowDip,
+            edge,
+            topBarBottomPx);
         SyncMagnificationHitRegion();
         if (!reserveWorkArea || _appBar.IsReserved)
         {
@@ -370,7 +422,13 @@ public partial class IceBlueDockWindow : Window
         else if (!_reservationFailureReported)
         {
             _reservationFailureReported = true;
-            CommandFailed?.Invoke("无法保留屏幕底部空间，Dock 暂时按智能隐藏显示，稍后自动重试。");
+            var edgeName = edge switch
+            {
+                DockEdge.Left => "左侧",
+                DockEdge.Right => "右侧",
+                _ => "底部"
+            };
+            CommandFailed?.Invoke($"无法保留屏幕{edgeName}空间，Dock 暂时按智能隐藏显示，稍后自动重试。");
         }
         if (!UsesSmartHide)
         {
@@ -692,7 +750,8 @@ public partial class IceBlueDockWindow : Window
             UpdateEffectiveIconSize(monitor, items);
         }
         var commands = VisibleCommands;
-        var rowSettings = $"{_effectiveIconSize}|{commands}|{_dockOverflowing}";
+        var edge = CurrentEdge;
+        var rowSettings = $"{_effectiveIconSize}|{commands}|{_dockOverflowing}|{edge}";
         var signature = $"{rowSettings}|{BuildSignature(items)}|{string.Join(",", items.Select(item => $"{(_attention.Wants(item.Group) ? '!' : '-')}{_attention.UnreadCount(item.Group)}"))}";
         if (string.Equals(signature, _lastSignature, StringComparison.Ordinal))
         {
@@ -703,6 +762,7 @@ public partial class IceBlueDockWindow : Window
             || items.Count(item => item.IsPinned) != _items.Count(item => item.IsPinned)
             || _renderedCommandButtons != commands;
         _renderedCommandButtons = commands;
+        _renderedEdge = edge;
         _lastSignature = signature;
         _items = items;
 
@@ -722,6 +782,7 @@ public partial class IceBlueDockWindow : Window
         }
 
         ClearDragTargetVisual();
+        ClearPinDragIndicator();
         StopMagnification(animateReturn: false);
         _lastStructureKey = structureKey;
         _itemButtons.Clear();
@@ -784,14 +845,16 @@ public partial class IceBlueDockWindow : Window
             Content = glyph,
             Width = _effectiveIconSize + 16,
             Height = _effectiveIconSize + 16,
+            Margin = IsVertical ? new Thickness(0, 4, 0, 4) : new Thickness(4, 0, 4, 0),
             Style = (Style)Resources["DockItemButtonStyle"],
-            ToolTip = "应用较多，点击查看全部应用；也可用滚轮横向滚动",
+            ToolTip = IsVertical ? "应用较多，点击查看全部应用；也可用滚轮纵向滚动" : "应用较多，点击查看全部应用；也可用滚轮横向滚动",
             Focusable = true
         };
+        ApplyToolTipPlacement(button);
         AutomationProperties.SetName(button, "查看全部应用");
         button.Click += (_, _) =>
         {
-            var menu = CreateMenu(button, PlacementMode.Top);
+            var menu = CreateMenu(button, InwardMenuPlacement(CurrentEdge));
             foreach (var item in _items)
             {
                 var icon = _visuals.TryGetValue(item.Key, out var visual) ? visual.Icon : null;
@@ -912,19 +975,39 @@ public partial class IceBlueDockWindow : Window
         };
         var iconSlot = new Grid { Width = _effectiveIconSize, Height = _effectiveIconSize };
         iconSlot.Children.Add(icon);
-        // Reserve the running-indicator slot to align with the app icons.
-        var content = new StackPanel();
-        content.Children.Add(iconSlot);
-        content.Children.Add(new Border { Height = 7, Visibility = Visibility.Hidden });
+        // Reserve the running-indicator slot on the screen-edge side to align with app icons.
+        var edge = CurrentEdge;
+        var vertical = DockEdgeRules.IsVertical(edge);
+        var content = new StackPanel
+        {
+            Orientation = vertical ? Orientation.Horizontal : Orientation.Vertical
+        };
+        if (edge == DockEdge.Left)
+        {
+            content.Children.Add(new Border { Width = 7, Visibility = Visibility.Hidden });
+            content.Children.Add(iconSlot);
+        }
+        else if (edge == DockEdge.Right)
+        {
+            content.Children.Add(iconSlot);
+            content.Children.Add(new Border { Width = 7, Visibility = Visibility.Hidden });
+        }
+        else
+        {
+            content.Children.Add(iconSlot);
+            content.Children.Add(new Border { Height = 7, Visibility = Visibility.Hidden });
+        }
         var button = new Button
         {
             Content = content,
             Width = _effectiveIconSize + 16,
             Height = _effectiveIconSize + 16,
+            Margin = vertical ? new Thickness(0, 4, 0, 4) : new Thickness(4, 0, 4, 0),
             Style = (Style)Resources["DockItemButtonStyle"],
             ToolTip = toolTip,
             Focusable = true
         };
+        ApplyToolTipPlacement(button);
         AutomationProperties.SetName(button, name);
         AddHoverZoom(button, icon);
         return button;
@@ -952,14 +1035,31 @@ public partial class IceBlueDockWindow : Window
 
     private Border BuildDivider()
     {
+        if (IsVertical)
+        {
+            var horizontalDivider = new Border
+            {
+                Width = _effectiveIconSize * 0.68,
+                Height = 1,
+                Margin = new Thickness(0, 6, 0, 6),
+                CornerRadius = new CornerRadius(0.5),
+                SnapsToDevicePixels = true,
+                HorizontalAlignment = System.Windows.HorizontalAlignment.Center
+            };
+            horizontalDivider.SetResourceReference(Border.BackgroundProperty, "DockDividerHorizontalBrush");
+            return horizontalDivider;
+        }
+
         var divider = new Border
         {
             Width = 1,
-            Height = _effectiveIconSize * 0.8,
+            Height = _effectiveIconSize * 0.68,
             Margin = new Thickness(6, 0, 6, 0),
+            CornerRadius = new CornerRadius(0.5),
+            SnapsToDevicePixels = true,
             VerticalAlignment = System.Windows.VerticalAlignment.Center
         };
-        divider.SetResourceReference(Border.BackgroundProperty, "DockSurfaceBorderBrush");
+        divider.SetResourceReference(Border.BackgroundProperty, "DockDividerBrush");
         return divider;
     }
 
@@ -972,12 +1072,19 @@ public partial class IceBlueDockWindow : Window
 
     private DockButtonParts BuildItem(DockItem item)
     {
-        var content = new StackPanel { Orientation = Orientation.Vertical };
+        var edge = CurrentEdge;
+        var vertical = DockEdgeRules.IsVertical(edge);
+        var (originX, originY) = DockEdgeRules.MagnificationOrigin(edge);
+        var content = new StackPanel
+        {
+            Orientation = vertical ? Orientation.Horizontal : Orientation.Vertical
+        };
         var icon = new Image
         {
             Width = _effectiveIconSize,
             Height = _effectiveIconSize,
-            HorizontalAlignment = System.Windows.HorizontalAlignment.Center
+            HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center
         };
         RenderOptions.SetBitmapScalingMode(icon, BitmapScalingMode.HighQuality);
         var iconHost = new Grid();
@@ -989,30 +1096,49 @@ public partial class IceBlueDockWindow : Window
             Width = _effectiveIconSize,
             Height = _effectiveIconSize,
             HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
             IsHitTestVisible = false,
-            RenderTransformOrigin = new Point(0.5, 1)
+            RenderTransformOrigin = new Point(originX, originY)
         };
         iconHost.Children.Add(badgeLayer);
-        content.Children.Add(iconHost);
-        // The dot under a running app: wider for several windows, blue for the current one.
+        // Running indicator sits on the screen-facing side of the icon (bottom / left / right).
         var dot = new Border
         {
+            Width = 4,
             Height = 4,
             CornerRadius = new CornerRadius(2),
-            Margin = new Thickness(0, 3, 0, 0),
-            HorizontalAlignment = System.Windows.HorizontalAlignment.Center
+            Margin = edge switch
+            {
+                DockEdge.Left => new Thickness(0, 0, 3, 0),
+                DockEdge.Right => new Thickness(3, 0, 0, 0),
+                _ => new Thickness(0, 3, 0, 0)
+            },
+            SnapsToDevicePixels = true,
+            HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center
         };
-        content.Children.Add(dot);
+        if (edge == DockEdge.Left)
+        {
+            content.Children.Add(dot);
+            content.Children.Add(iconHost);
+        }
+        else
+        {
+            content.Children.Add(iconHost);
+            content.Children.Add(dot);
+        }
 
         var button = new Button
         {
             Content = content,
             Width = _effectiveIconSize + 16,
             Height = _effectiveIconSize + 16,
+            Margin = vertical ? new Thickness(0, 4, 0, 4) : new Thickness(4, 0, 4, 0),
             Style = (Style)Resources["DockItemButtonStyle"],
             Tag = item,
             AllowDrop = true
         };
+        ApplyToolTipPlacement(button);
 
         button.Click += (_, _) =>
         {
@@ -1048,7 +1174,7 @@ public partial class IceBlueDockWindow : Window
                 {
                     if (!_closing && IsVisible)
                     {
-                        OpenItemMenu(current, currentName);
+                        OpenItemMenu(current, currentName, button);
                     }
                 },
                 DispatcherPriority.Input);
@@ -1080,7 +1206,7 @@ public partial class IceBlueDockWindow : Window
         {
             if (parts.Button.Tag is DockItem current)
             {
-                OnItemDrop(current, eventArgs);
+                OnItemDrop(parts, current, eventArgs);
             }
         };
         UpdateItemButton(parts, item);
@@ -1140,7 +1266,16 @@ public partial class IceBlueDockWindow : Window
             });
         }
 
-        parts.Dot.Width = item.HasMultipleWindows ? 10 : 4;
+        if (IsVertical)
+        {
+            parts.Dot.Width = 4;
+            parts.Dot.Height = item.HasMultipleWindows ? 10 : 4;
+        }
+        else
+        {
+            parts.Dot.Width = item.HasMultipleWindows ? 10 : 4;
+            parts.Dot.Height = 4;
+        }
         parts.Dot.Visibility = item.IsRunning ? Visibility.Visible : Visibility.Hidden;
         if (wantsAttention)
         {
@@ -1255,7 +1390,8 @@ public partial class IceBlueDockWindow : Window
         var group = new TransformGroup();
         group.Children.Add(scale);
         group.Children.Add(translate);
-        icon.RenderTransformOrigin = new Point(0.5, 1);
+        var (originX, originY) = DockEdgeRules.MagnificationOrigin(CurrentEdge);
+        icon.RenderTransformOrigin = new Point(originX, originY);
         icon.RenderTransform = group;
         _magSlots.Add(new MagnificationSlot(button, scale, translate));
         button.MouseEnter += (_, _) =>
@@ -1275,13 +1411,48 @@ public partial class IceBlueDockWindow : Window
         return scale;
     }
 
-    private void ApplyOverflowLayout(double thicknessDip, double topOverflowDip)
+    private void ApplyOverflowLayout(double thicknessDip, double overflowDip)
     {
-        _topOverflowDip = topOverflowDip;
+        var edge = CurrentEdge;
+        var vertical = DockEdgeRules.IsVertical(edge);
+        _topOverflowDip = overflowDip;
+        if (vertical)
+        {
+            DockSurface.Width = thicknessDip;
+            DockSurface.Height = double.NaN;
+            DockSurface.HorizontalAlignment = edge == DockEdge.Left
+                ? System.Windows.HorizontalAlignment.Left
+                : System.Windows.HorizontalAlignment.Right;
+            DockSurface.VerticalAlignment = VerticalAlignment.Stretch;
+            DockContentHost.Padding = new Thickness(5, 14, 5, 14);
+            ItemScroller.HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled;
+            ItemScroller.VerticalScrollBarVisibility = ScrollBarVisibility.Hidden;
+            ItemScroller.Margin = overflowDip > 0d
+                ? edge == DockEdge.Left
+                    ? new Thickness(0, 0, -overflowDip, 0)
+                    : new Thickness(-overflowDip, 0, 0, 0)
+                : new Thickness(0);
+            ItemPanel.Orientation = Orientation.Vertical;
+            ItemPanel.HorizontalAlignment = edge == DockEdge.Left
+                ? System.Windows.HorizontalAlignment.Left
+                : System.Windows.HorizontalAlignment.Right;
+            ItemPanel.VerticalAlignment = VerticalAlignment.Stretch;
+            return;
+        }
+
+        DockSurface.Width = double.NaN;
         DockSurface.Height = thicknessDip;
-        ItemScroller.Margin = topOverflowDip > 0d
-            ? new Thickness(0, -topOverflowDip, 0, 0)
+        DockSurface.HorizontalAlignment = System.Windows.HorizontalAlignment.Stretch;
+        DockSurface.VerticalAlignment = VerticalAlignment.Bottom;
+        DockContentHost.Padding = new Thickness(14, 5, 14, 5);
+        ItemScroller.HorizontalScrollBarVisibility = ScrollBarVisibility.Hidden;
+        ItemScroller.VerticalScrollBarVisibility = ScrollBarVisibility.Disabled;
+        ItemScroller.Margin = overflowDip > 0d
+            ? new Thickness(0, -overflowDip, 0, 0)
             : new Thickness(0);
+        ItemPanel.Orientation = Orientation.Horizontal;
+        ItemPanel.HorizontalAlignment = System.Windows.HorizontalAlignment.Stretch;
+        ItemPanel.VerticalAlignment = VerticalAlignment.Bottom;
     }
 
     private void OnDockSurfacePreviewMouseMove(object sender, MouseEventArgs e)
@@ -1301,7 +1472,10 @@ public partial class IceBlueDockWindow : Window
             return;
         }
 
-        var cursorX = e.GetPosition(ItemPanel).X;
+        var edge = CurrentEdge;
+        var vertical = DockEdgeRules.IsVertical(edge);
+        var pointer = e.GetPosition(ItemPanel);
+        var cursorAxis = vertical ? pointer.Y : pointer.X;
         var radiusDip = DockLayoutMetrics.ItemCell(_effectiveIconSize) * DockMagnificationRules.InfluenceRadiusCells;
         var motion = Motion;
         var clearReturn = _magReturnAnimating;
@@ -1321,10 +1495,14 @@ public partial class IceBlueDockWindow : Window
                 DetachSlotAnimations(slot);
             }
             var offset = VisualTreeHelper.GetOffset(slot.Button);
-            var centerX = offset.X + (slot.Button.ActualWidth * 0.5d);
-            var targetScale = DockMagnificationRules.ComputeScale(cursorX - centerX, radiusDip, maxScale);
+            var centerAxis = vertical
+                ? offset.Y + (slot.Button.ActualHeight * 0.5d)
+                : offset.X + (slot.Button.ActualWidth * 0.5d);
+            var targetScale = DockMagnificationRules.ComputeScale(cursorAxis - centerAxis, radiusDip, maxScale);
+            var (liftX, liftY) = DockEdgeRules.ComputeLiftVectorDip(edge, targetScale, _effectiveIconSize, motion);
             slot.TargetScale = targetScale;
-            slot.TargetLiftY = DockMagnificationRules.ComputeLiftDip(targetScale, _effectiveIconSize, motion);
+            slot.TargetLiftX = liftX;
+            slot.TargetLiftY = liftY;
         }
 
         if (!_magTimer.IsEnabled)
@@ -1366,11 +1544,15 @@ public partial class IceBlueDockWindow : Window
         {
             var slot = _magSlots[i];
             var nextScale = slot.CurrentScale + ((slot.TargetScale - slot.CurrentScale) * alpha);
-            var nextLift = slot.CurrentLiftY + ((slot.TargetLiftY - slot.CurrentLiftY) * alpha);
-            if (Math.Abs(slot.TargetScale - nextScale) < 0.0015d && Math.Abs(slot.TargetLiftY - nextLift) < 0.05d)
+            var nextLiftX = slot.CurrentLiftX + ((slot.TargetLiftX - slot.CurrentLiftX) * alpha);
+            var nextLiftY = slot.CurrentLiftY + ((slot.TargetLiftY - slot.CurrentLiftY) * alpha);
+            if (Math.Abs(slot.TargetScale - nextScale) < 0.0015d
+                && Math.Abs(slot.TargetLiftX - nextLiftX) < 0.05d
+                && Math.Abs(slot.TargetLiftY - nextLiftY) < 0.05d)
             {
                 nextScale = slot.TargetScale;
-                nextLift = slot.TargetLiftY;
+                nextLiftX = slot.TargetLiftX;
+                nextLiftY = slot.TargetLiftY;
             }
             else
             {
@@ -1383,10 +1565,15 @@ public partial class IceBlueDockWindow : Window
                 slot.Scale.ScaleX = nextScale;
                 slot.Scale.ScaleY = nextScale;
             }
-            if (nextLift != slot.CurrentLiftY)
+            if (nextLiftX != slot.CurrentLiftX)
             {
-                slot.CurrentLiftY = nextLift;
-                slot.Translate.Y = nextLift;
+                slot.CurrentLiftX = nextLiftX;
+                slot.Translate.X = nextLiftX;
+            }
+            if (nextLiftY != slot.CurrentLiftY)
+            {
+                slot.CurrentLiftY = nextLiftY;
+                slot.Translate.Y = nextLiftY;
             }
         }
 
@@ -1426,9 +1613,13 @@ public partial class IceBlueDockWindow : Window
             for (var i = 0; i < _magSlots.Count; i++)
             {
                 var slot = _magSlots[i];
-                var wasMagnified = Math.Abs(slot.CurrentScale - 1d) > 0.001d || Math.Abs(slot.CurrentLiftY) > 0.05d;
+                var wasMagnified = Math.Abs(slot.CurrentScale - 1d) > 0.001d
+                    || Math.Abs(slot.CurrentLiftX) > 0.05d
+                    || Math.Abs(slot.CurrentLiftY) > 0.05d;
                 slot.CurrentScale = 1d;
                 slot.TargetScale = 1d;
+                slot.CurrentLiftX = 0d;
+                slot.TargetLiftX = 0d;
                 slot.CurrentLiftY = 0d;
                 slot.TargetLiftY = 0d;
                 if (wasMagnified)
@@ -1459,6 +1650,7 @@ public partial class IceBlueDockWindow : Window
                         slot.Scale.BeginAnimation(ScaleTransform.ScaleXProperty, scaleBack);
                         slot.Scale.BeginAnimation(ScaleTransform.ScaleYProperty, scaleBack);
                     }
+                    slot.Translate.BeginAnimation(TranslateTransform.XProperty, liftBack);
                     slot.Translate.BeginAnimation(TranslateTransform.YProperty, liftBack);
                     startedAny = true;
                 }
@@ -1481,24 +1673,32 @@ public partial class IceBlueDockWindow : Window
     private static void DetachSlotAnimations(MagnificationSlot slot)
     {
         var currentScale = slot.Scale.ScaleX;
-        var currentLift = slot.Translate.Y;
+        var currentLiftX = slot.Translate.X;
+        var currentLiftY = slot.Translate.Y;
         slot.Scale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
         slot.Scale.BeginAnimation(ScaleTransform.ScaleYProperty, null);
+        slot.Translate.BeginAnimation(TranslateTransform.XProperty, null);
         slot.Translate.BeginAnimation(TranslateTransform.YProperty, null);
         if (!double.IsFinite(currentScale) || currentScale <= 0d)
         {
             currentScale = 1d;
         }
-        if (!double.IsFinite(currentLift))
+        if (!double.IsFinite(currentLiftX))
         {
-            currentLift = 0d;
+            currentLiftX = 0d;
+        }
+        if (!double.IsFinite(currentLiftY))
+        {
+            currentLiftY = 0d;
         }
 
         slot.CurrentScale = currentScale;
         slot.Scale.ScaleX = currentScale;
         slot.Scale.ScaleY = currentScale;
-        slot.CurrentLiftY = currentLift;
-        slot.Translate.Y = currentLift;
+        slot.CurrentLiftX = currentLiftX;
+        slot.Translate.X = currentLiftX;
+        slot.CurrentLiftY = currentLiftY;
+        slot.Translate.Y = currentLiftY;
     }
 
     private void ResetMagnificationSlotsImmediate()
@@ -1508,13 +1708,17 @@ public partial class IceBlueDockWindow : Window
             var slot = _magSlots[i];
             slot.CurrentScale = 1d;
             slot.TargetScale = 1d;
+            slot.CurrentLiftX = 0d;
+            slot.TargetLiftX = 0d;
             slot.CurrentLiftY = 0d;
             slot.TargetLiftY = 0d;
             slot.Scale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
             slot.Scale.BeginAnimation(ScaleTransform.ScaleYProperty, null);
+            slot.Translate.BeginAnimation(TranslateTransform.XProperty, null);
             slot.Translate.BeginAnimation(TranslateTransform.YProperty, null);
             slot.Scale.ScaleX = 1d;
             slot.Scale.ScaleY = 1d;
+            slot.Translate.X = 0d;
             slot.Translate.Y = 0d;
         }
     }
@@ -1526,27 +1730,36 @@ public partial class IceBlueDockWindow : Window
             return;
         }
 
+        var edge = CurrentEdge;
         var widthPx = native.Right - native.Left;
         var heightPx = native.Bottom - native.Top;
-        var topOverflowPx = 0;
+        var overflowPx = 0;
         if (_topOverflowDip > 0d && PresentationSource.FromVisual(this) is { CompositionTarget: { } target })
         {
+            var dpiX = target.TransformToDevice.M11;
             var dpiY = target.TransformToDevice.M22;
-            if (DockSurface.IsLoaded && DockSurface.ActualHeight > 0d)
+            if (DockSurface.IsLoaded && DockSurface.ActualWidth > 0d && DockSurface.ActualHeight > 0d)
             {
-                var surfaceTopDip = DockSurface.TransformToAncestor(this).Transform(new Point(0d, 0d)).Y;
-                topOverflowPx = Math.Max(0, (int)Math.Floor(surfaceTopDip * dpiY));
+                var surfaceOrigin = DockSurface.TransformToAncestor(this).Transform(new Point(0d, 0d));
+                overflowPx = edge switch
+                {
+                    DockEdge.Left => Math.Max(0, (int)Math.Floor((ActualWidth - (surfaceOrigin.X + DockSurface.ActualWidth)) * dpiX)),
+                    DockEdge.Right => Math.Max(0, (int)Math.Floor(surfaceOrigin.X * dpiX)),
+                    _ => Math.Max(0, (int)Math.Floor(surfaceOrigin.Y * dpiY))
+                };
             }
-            if (topOverflowPx <= 0)
+            if (overflowPx <= 0)
             {
-                topOverflowPx = Math.Max(0, (int)Math.Round(_topOverflowDip * dpiY));
+                var axisDpi = DockEdgeRules.IsVertical(edge) ? dpiX : dpiY;
+                overflowPx = Math.Max(0, (int)Math.Round(_topOverflowDip * axisDpi));
             }
         }
 
         var desired = DockMagnificationRules.ComputeHitRegionRect(
             widthPx,
             heightPx,
-            topOverflowPx,
+            edge,
+            overflowPx,
             _magRegionExpanded,
             _morph.ActiveKind != DockMorphKind.None);
         if (_hasAppliedHitRegion && _appliedHitRegion == desired)
@@ -1614,7 +1827,7 @@ public partial class IceBlueDockWindow : Window
     {
         var menu = anchor is null
             ? CreateMenu()
-            : CreateMenu(anchor, PlacementMode.Top);
+            : CreateMenu(anchor, InwardMenuPlacement(CurrentEdge));
         if (item.Group is { } group)
         {
             if (item.HasMultipleWindows)
@@ -1724,7 +1937,7 @@ public partial class IceBlueDockWindow : Window
             return;
         }
 
-        var menu = anchor is null ? CreateMenu() : CreateMenu(anchor, PlacementMode.Top);
+        var menu = anchor is null ? CreateMenu() : CreateMenu(anchor, InwardMenuPlacement(CurrentEdge));
         foreach (var (id, title) in boxes)
         {
             menu.AddItem(title, async () =>
@@ -1817,6 +2030,7 @@ public partial class IceBlueDockWindow : Window
     private void OnSurfaceDragOver(object sender, DragEventArgs e)
     {
         ClearDragTargetVisual();
+        ClearPinDragIndicator();
         _dragHover.Clear();
 
         if (e.Data.GetDataPresent(PinDragFormat) || e.Data.GetDataPresent(RunningDragFormat))
@@ -1852,12 +2066,25 @@ public partial class IceBlueDockWindow : Window
         {
             ClearDragTargetVisual();
             _dragHover.Clear();
-            e.Effects = (e.AllowedEffects & DragDropEffects.Move) != 0
-                ? DragDropEffects.Move
-                : DragDropEffects.None;
+            var canMove = (e.AllowedEffects & DragDropEffects.Move) != 0;
+            e.Effects = canMove ? DragDropEffects.Move : DragDropEffects.None;
+            if (canMove)
+            {
+                var pos = e.GetPosition(parts.Button);
+                var afterHalf = IsVertical
+                    ? pos.Y >= parts.Button.ActualHeight * 0.5d
+                    : pos.X >= parts.Button.ActualWidth * 0.5d;
+                SetPinDragIndicator(parts, afterHalf);
+            }
+            else
+            {
+                ClearPinDragIndicator();
+            }
             e.Handled = true;
             return;
         }
+
+        ClearPinDragIndicator();
 
         if (parts.Button.Tag is not DockItem current
             || e.Data.GetData(System.Windows.DataFormats.FileDrop) is not string[] files)
@@ -1984,12 +2211,43 @@ public partial class IceBlueDockWindow : Window
         _hoveredDragOpensWithApp = false;
     }
 
+    private void SetPinDragIndicator(DockButtonParts parts, bool afterHalf)
+    {
+        if (ReferenceEquals(_pinDragIndicatorParts, parts) && _pinDragIndicatorAfter == afterHalf)
+        {
+            return;
+        }
+
+        ClearPinDragIndicator();
+        _pinDragIndicatorParts = parts;
+        _pinDragIndicatorAfter = afterHalf;
+        // Total edge thickness stays 2px (same as default 1+1) so the indicator never shifts layout.
+        parts.Button.BorderThickness = IsVertical
+            ? (afterHalf ? new Thickness(0, 0, 0, 2) : new Thickness(0, 2, 0, 0))
+            : (afterHalf ? new Thickness(0, 0, 2, 0) : new Thickness(2, 0, 0, 0));
+        parts.Button.SetResourceReference(Button.BorderBrushProperty, "DockActiveDotBrush");
+    }
+
+    private void ClearPinDragIndicator()
+    {
+        if (_pinDragIndicatorParts is null)
+        {
+            return;
+        }
+
+        _pinDragIndicatorParts.Button.ClearValue(Button.BorderThicknessProperty);
+        _pinDragIndicatorParts.Button.ClearValue(Button.BorderBrushProperty);
+        _pinDragIndicatorParts = null;
+        _pinDragIndicatorAfter = false;
+    }
+
     private void EndExternalDrag()
     {
         _externalDragActive = false;
         _dragHoverTimer.Stop();
         _dragHover.Clear();
         ClearDragTargetVisual();
+        ClearPinDragIndicator();
         _cachedDragPaths = null;
         _cachedDragInfoTask = null;
     }
@@ -2010,7 +2268,7 @@ public partial class IceBlueDockWindow : Window
     private async Task OpenFilesWithItemAsync(DockItem item, IReadOnlyList<DroppedPathInfo> paths) =>
         Report(await WindowCommandService.OpenFilesAsync(item, DisplayNameOf(item), paths));
 
-    private async void OnItemDrop(DockItem target, DragEventArgs e)
+    private async void OnItemDrop(DockButtonParts parts, DockItem target, DragEventArgs e)
     {
         if (e.Data.GetData(System.Windows.DataFormats.FileDrop) is string[] files)
         {
@@ -2033,8 +2291,11 @@ public partial class IceBlueDockWindow : Window
             return;
         }
 
+        var pos = e.GetPosition(parts.Button);
+        var pointerAxis = IsVertical ? pos.Y : pos.X;
+        var itemLength = IsVertical ? parts.Button.ActualHeight : parts.Button.ActualWidth;
         EndExternalDrag();
-        DropPin(e, target);
+        DropPin(e, target, pointerAxis, itemLength);
     }
 
     private void PickAppToPin()
@@ -2078,13 +2339,17 @@ public partial class IceBlueDockWindow : Window
         }
     }
 
-    private void DropPin(DragEventArgs e, DockItem target)
+    private void DropPin(DragEventArgs e, DockItem target, double pointerAxis, double itemLength)
     {
         if (e.Data.GetData(RunningDragFormat) is string runningKey)
         {
             e.Handled = true;
             var index = target.Pinned is { } at
-                ? DockPinRules.IndexOf(_state, DockPinRules.IdentityKey(at))
+                ? DockEdgeRules.ComputePinInsertIndex(
+                    DockPinRules.IndexOf(_state, DockPinRules.IdentityKey(at)),
+                    pointerAxis,
+                    itemLength,
+                    _state.PinnedApps.Count)
                 : _state.PinnedApps.Count;
             PinRunning(runningKey, index);
             return;
@@ -2098,8 +2363,14 @@ public partial class IceBlueDockWindow : Window
         }
 
         e.Handled = true;
+        var sourceIndex = DockPinRules.IndexOf(_state, key);
         var targetIndex = target.Pinned is { } pinned
-            ? DockPinRules.IndexOf(_state, DockPinRules.IdentityKey(pinned))
+            ? DockEdgeRules.ComputePinMoveIndex(
+                sourceIndex,
+                DockPinRules.IndexOf(_state, DockPinRules.IdentityKey(pinned)),
+                pointerAxis,
+                itemLength,
+                _state.PinnedApps.Count)
             : _state.PinnedApps.Count - 1;
         if (DockPinRules.Move(_state, key, targetIndex))
         {
@@ -2210,17 +2481,24 @@ public partial class IceBlueDockWindow : Window
 
     private void UpdateEffectiveIconSize(MonitorSnapshot monitor, IReadOnlyList<DockItem> items)
     {
-        // The reserved strip spans the monitor, so the row takes up to its fraction of
-        // the work-area width without taking space from any window.
-        var workArea = TaskbarEdgeGuard.AvoidNativeTaskbar(monitor.WorkingArea, monitor.Bounds);
-        var availableDip = workArea.Width * 96d / monitor.Dpi * DockLayoutMetrics.MaxExtentFraction;
+        var edge = CurrentEdge;
+        var nativeSafe = TaskbarEdgeGuard.AvoidNativeTaskbar(monitor.WorkingArea, monitor.Bounds);
+        var safeArea = DockEdgeRules.IsVertical(edge)
+            ? DockEdgeRules.ComputeSafeVerticalBounds(
+                monitor.Bounds,
+                monitor.WorkingArea,
+                nativeSafe,
+                ResolveTopBarReservedBottomPx?.Invoke(monitor))
+            : nativeSafe;
+        var availableDip = DockEdgeRules.AvailableExtentPixels(safeArea, edge)
+            * 96d / monitor.Dpi * DockLayoutMetrics.MaxExtentFraction;
         var cellCount = items.Count + LeadingButtonCount;
         var dividersDip = DividerCount(items) * DockLayoutMetrics.DividerDip;
         var preferred = _state.AutoIconSize
             ? DockLayoutMetrics.FitIconSize(cellCount, dividersDip, availableDip, _state.IconSize)
             : _state.IconSize;
-        // Even at the minimum icon size not everything fits: the row keeps the overflow
-        // button and scrolls horizontally instead of hiding apps for good.
+        // Even at the minimum icon size not everything fits: keep the overflow button and
+        // scroll along the dock axis instead of hiding apps for good.
         _dockOverflowing = DockLayoutMetrics.ContentLengthForItems(cellCount, DockLayoutMetrics.MinIconDip) + dividersDip
             > availableDip;
         if (_effectiveIconSize != preferred)
@@ -2253,11 +2531,21 @@ public partial class IceBlueDockWindow : Window
             }
         }
 
-        // Native menus own this interaction. The taskbar foreground window has no
-        // useful menu bounds, so overlap detection alone would reveal the Dock over it.
-        if (YieldToSystemMenu(ShellSurfaceNativeMethods.IsSystemMenuForeground())) return;
-
+        var edge = CurrentEdge;
         var bounds = _appBar.Bounds;
+        // Native menus own this interaction, except a taskbar on a different edge (such as a
+        // bottom Windows taskbar paired with a left/right dock) that does not touch the dock.
+        var isSystemMenu = ShellSurfaceNativeMethods.TryGetForegroundSystemMenu(out var isTaskbarSurface, out var systemMenuBounds);
+        var nativeTaskbarEdge = isTaskbarSurface
+            ? TaskbarEdgeGuard.GetNativeTaskbarLayout(monitor.Bounds)?.Edge
+            : null;
+        var shouldYield = DockVacateRules.ShouldYieldToSystemSurface(
+            isSystemMenu,
+            isTaskbarSurface,
+            edge,
+            nativeTaskbarEdge,
+            systemMenuBounds.HasArea && systemMenuBounds.Intersects(bounds));
+        if (YieldToSystemMenu(shouldYield)) return;
         var foreground = ForegroundWindowRect(out var foregroundBounds, out var foregroundWindow);
         var fullScreen = foreground
             && foregroundBounds.Left <= monitor.Bounds.Left
@@ -2339,11 +2627,11 @@ public partial class IceBlueDockWindow : Window
 
         DockNativeMethods.GetCursorPos(out var cursor);
         var revealDepth = Math.Max(2, (int)Math.Round(2 * monitor.Dpi / 96d));
-        // A visible native taskbar below the dock owns the bottom edge: pointing at it
-        // must not bring up the dock; see DockRevealRules for what reveals it then.
-        var bottomEdgeFree = MonitorCatalog.TryGetWorkingArea(monitor.MonitorHandle) is not { } liveWorkArea
-            || DockRevealRules.IsBottomEdgeFree(liveWorkArea, monitor.Bounds);
-        var edgeReveal = DockRevealRules.EdgeReveal(_state.RevealMode, bottomEdgeFree);
+        // Only a bar occupying the dock's own edge suppresses edge reveal; a bottom
+        // Windows taskbar never blocks a left or right dock from revealing.
+        var edgeFree = MonitorCatalog.TryGetWorkingArea(monitor.MonitorHandle) is not { } liveWorkArea
+            || DockRevealRules.IsEdgeFree(liveWorkArea, monitor.Bounds, edge);
+        var edgeReveal = DockRevealRules.EdgeReveal(_state.RevealMode, edgeFree);
         var handleAllowed = DockRevealRules.UsesHandle(_state.RevealMode);
         if (handleAllowed != _handleAllowed)
         {
@@ -2372,13 +2660,14 @@ public partial class IceBlueDockWindow : Window
                 && DockRevealRules.IsInRevealZone(
                     cursor.X,
                     cursor.Y,
-                    // Over an occupied edge only the last rows count: treat the dock as
+                    // Over an occupied edge only the last pixels count: treat the dock as
                     // flush with the screen edge so the zone shrinks to the thin strip.
                     edgeReveal == DockEdgeReveal.EdgeStrip
-                        ? bounds with { Bottom = monitor.Bounds.Bottom }
+                        ? DockRevealRules.FlushEdgeBounds(bounds, monitor.Bounds, edge)
                         : bounds,
                     monitor.Bounds,
-                    revealDepth),
+                    revealDepth,
+                    edge),
             PointerOverDock: pointerOverDock,
             InteractionActive: _menuOpen || _dragging || _externalDragActive || DateTimeOffset.UtcNow < _attentionRevealUntil,
             OverlapIsMaximizedWindow: maximizedOnDockMonitor);
@@ -2670,12 +2959,13 @@ public partial class IceBlueDockWindow : Window
         return new Point(placement.Width / 2d / scale, placement.Height / 2d / scale);
     }
 
-    // The anchor a reappear grows from: the middle of the row's bottom edge, so the
-    // row emerges upward from its own resting footprint.
+    // The anchor a reappear/yield grows from: the middle of the screen-facing edge so
+    // the dock emerges inward from its resting edge (upward, rightward, or leftward).
     private Point BottomEdgeCentre(PixelRect placement)
     {
         var scale = _appBar?.Monitor is { } monitor ? monitor.Dpi / 96d : 1d;
-        return new Point(placement.Width / 2d / scale, placement.Height / scale);
+        var (x, y) = DockEdgeRules.StripAnchorPointDip(placement, CurrentEdge, scale);
+        return new Point(x, y);
     }
 
     // The handle stands in for the dock while it is smart-hidden: it appears then and
@@ -2776,7 +3066,8 @@ public partial class IceBlueDockWindow : Window
                 workArea,
                 size,
                 DockHandleGeometry.HandleMarginPixels(scale),
-                edgeGapPixels);
+                edgeGapPixels,
+                CurrentEdge);
         }
 
         if (!_handleWindow.IsDragActive)
@@ -2801,7 +3092,8 @@ public partial class IceBlueDockWindow : Window
             workArea,
             thicknessPixels,
             contentLengthPixels,
-            DockHandleGeometry.ExpansionGapPixels(scale));
+            DockHandleGeometry.ExpansionGapPixels(scale),
+            CurrentEdge);
         if (_handleExpanded && _expandedRect == expanded)
         {
             return;

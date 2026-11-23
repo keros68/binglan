@@ -82,6 +82,8 @@ public sealed class DockState
     /// </summary>
     public bool ShowDesktopButton { get; set; } = true;
     public string? MonitorDeviceName { get; set; }
+    /// <summary>Which monitor edge the dock sits on: Bottom (default), Left, or Right. Top is rejected.</summary>
+    public DockEdge Edge { get; set; } = DockEdge.Bottom;
     public DockVisibilityMode VisibilityMode { get; set; } = DockVisibilityMode.ReserveWorkArea;
     public List<DockPinnedApp> PinnedApps { get; set; } = [];
 

@@ -38,4 +38,33 @@ public static class DockVacateRules
         && !foregroundIsZoomed
         && !isToolOrOverlayWindow
         && (!hasStandardWindowChrome || isTopmost);
+
+    /// <summary>
+    /// Decides whether the dock should step aside for a foreground Windows shell surface
+    /// (taskbar, Start menu, Quick Settings, tray overflow). When the foreground is the
+    /// taskbar itself on a different screen edge and does not overlap the dock (for example
+    /// a bottom Windows taskbar paired with a left/right dock), the dock stays visible.
+    /// </summary>
+    public static bool ShouldYieldToSystemSurface(
+        bool isSystemMenuForeground,
+        bool isTaskbarWindow,
+        DockEdge dockEdge,
+        DockEdge? nativeTaskbarEdge,
+        bool surfaceIntersectsDock)
+    {
+        if (!isSystemMenuForeground)
+        {
+            return false;
+        }
+
+        if (isTaskbarWindow
+            && nativeTaskbarEdge is { } taskbarEdge
+            && taskbarEdge != DockEdgeRules.Normalize(dockEdge)
+            && !surfaceIntersectsDock)
+        {
+            return false;
+        }
+
+        return true;
+    }
 }

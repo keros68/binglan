@@ -988,6 +988,11 @@ public sealed class LocalStateStore
             }
             state.SchemaVersion = 57;
         }
+        if (state.SchemaVersion < 58)
+        {
+            state.Dock.Edge = DockEdgeRules.Normalize(state.Dock.Edge);
+            state.SchemaVersion = 58;
+        }
         if (!Enum.IsDefined(state.Taskbar.Mode))
         {
             state.Taskbar.Mode = TaskbarMode.SystemDefault;

@@ -38,13 +38,24 @@ public sealed class AppBarReservationState
     /// vertically stacked dual-monitor layout can collapse the strip to zero height).
     /// </summary>
     public static bool IsValidStrip(PixelRect strip, PixelRect monitorBounds, int minimumThickness) =>
-        monitorBounds.HasArea
-        && strip.HasArea
-        && strip.Height >= Math.Min(Math.Max(1, minimumThickness), monitorBounds.Height)
-        && strip.Left >= monitorBounds.Left
-        && strip.Right <= monitorBounds.Right
-        && strip.Top >= monitorBounds.Top
-        && strip.Bottom <= monitorBounds.Bottom;
+        IsValidStrip(strip, monitorBounds, minimumThickness, DockEdge.Bottom);
+
+    public static bool IsValidStrip(PixelRect strip, PixelRect monitorBounds, int minimumThickness, DockEdge edge)
+    {
+        if (!monitorBounds.HasArea || !strip.HasArea)
+        {
+            return false;
+        }
+
+        var vertical = edge is DockEdge.Left or DockEdge.Right;
+        var actualThickness = vertical ? strip.Width : strip.Height;
+        var monitorSpan = vertical ? monitorBounds.Width : monitorBounds.Height;
+        return actualThickness >= Math.Min(Math.Max(1, minimumThickness), monitorSpan)
+            && strip.Left >= monitorBounds.Left
+            && strip.Right <= monitorBounds.Right
+            && strip.Top >= monitorBounds.Top
+            && strip.Bottom <= monitorBounds.Bottom;
+    }
 
     public static bool HasMonitorTargetChanged(
         string? previousDeviceName,

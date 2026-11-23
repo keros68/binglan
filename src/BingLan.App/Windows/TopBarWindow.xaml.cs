@@ -211,6 +211,7 @@ public sealed partial class TopBarWindow : Window
         System.Net.NetworkInformation.NetworkChange.NetworkAddressChanged += OnNetworkAddressChanged;
         SystemEvents.TimeChanged += OnSystemTimeChanged;
         SystemEvents.PowerModeChanged += OnPowerModeChanged;
+        AccessibilityThemeManager.HighContrastChanged += OnHighContrastChanged;
         // The centred search box must not sit on top of the side modules when they
         // leave little room: every size change on the bar or either module group
         // re-clamps the box width around the true centre.
@@ -517,6 +518,7 @@ public sealed partial class TopBarWindow : Window
         System.Net.NetworkInformation.NetworkChange.NetworkAddressChanged -= OnNetworkAddressChanged;
         SystemEvents.TimeChanged -= OnSystemTimeChanged;
         SystemEvents.PowerModeChanged -= OnPowerModeChanged;
+        AccessibilityThemeManager.HighContrastChanged -= OnHighContrastChanged;
         if (_shellHookActive && _handle != 0)
         {
             DockNativeMethods.DeregisterShellHookWindow(_handle);
@@ -607,7 +609,7 @@ public sealed partial class TopBarWindow : Window
 
     private static TopBarSystemFacts ReadSystemFacts() => new(
         TopBarSystemInfo.ReadBattery(),
-        TopBarSystemInfo.ReadVolumePercent(),
+        TopBarSystemInfo.ReadVolume(),
         TopBarSystemInfo.ReadNetwork());
 
     private void RefreshSystemFacts()
@@ -646,7 +648,7 @@ public sealed partial class TopBarWindow : Window
     // UI thread (STA), so the whole module rides the fast focus tick.
     private sealed record TopBarSystemFacts(
         (int Percent, TopBarBatteryStatus Status) Battery,
-        int? VolumePercent,
+        (int Percent, bool Muted)? Volume,
         TopBarNetworkStatus Network);
 
     // ---------------------------------------------------------------- modules
@@ -671,6 +673,7 @@ public sealed partial class TopBarWindow : Window
     private const string GlyphWifiOff = "\uE871";
     private const string GlyphVolume = "\uE767";
     private const string GlyphVolume0 = "\uE992";
+    private const string GlyphVolumeMuted = "\uE74F";
     private const string GlyphVolume1 = "\uE993";
     private const string GlyphVolume2 = "\uE994";
     private const string GlyphVolume3 = "\uE995";
@@ -2056,11 +2059,12 @@ public sealed partial class TopBarWindow : Window
         }
         if (ModuleText(TopBarModuleKind.Volume) is { } volume)
         {
-            var percent = facts.VolumePercent;
-            volume.Text = percent is { } value ? $"{value}%" : "—";
+            var percent = facts.Volume?.Percent;
+            var muted = facts.Volume?.Muted == true;
+            volume.Text = muted ? "静音" : percent is { } value ? $"{value}%" : "—";
             if (ModuleIcon(TopBarModuleKind.Volume) is { } volumeIcon)
             {
-                volumeIcon.Text = percent switch
+                volumeIcon.Text = muted ? GlyphVolumeMuted : percent switch
                 {
                     null => GlyphVolume,
                     0 => GlyphVolume0,
@@ -2308,10 +2312,19 @@ public sealed partial class TopBarWindow : Window
         ApplySurface();
     }
 
+    private void OnHighContrastChanged(object? sender, EventArgs e)
+    {
+        if (!_closing)
+        {
+            ApplySurface();
+        }
+    }
+
     private void ApplySurface()
     {
         var glass = DesktopStyleRules.TopBar(_style, _state);
-        var acrylic = !IsCapsule && _acrylicAvailable
+        var highContrast = AccessibilityThemeManager.IsHighContrastEnabled || SystemParameters.HighContrast;
+        var acrylic = !highContrast && !IsCapsule && _acrylicAvailable
             && DesktopStyleRules.TopBarFrostedScrim(_state, glass.Surface);
         _acrylicBackdrop = acrylic;
         // The first call must also clear the startup probe on a light surface.
@@ -2322,8 +2335,19 @@ public sealed partial class TopBarWindow : Window
                 : TaskbarNativeMethods.AccentDisabled,
             acrylic ? AcrylicScrimAbgr : 0))
             _appliedAcrylic = acrylic;
+        BingLan.App.Dock.FloatingGlassPalette.ApplyTopBarSheenResources(
+            Resources,
+            glass,
+            clearMaterial: !_state.FrostedGlass,
+            highContrast);
         Surface.BorderThickness = IsCapsule ? new Thickness(1) : new Thickness(0, 0, 0, 1);
         Surface.CornerRadius = IsCapsule ? new CornerRadius(20) : new CornerRadius(0);
+        var innerRadius = IsCapsule ? new CornerRadius(19) : new CornerRadius(0);
+        SurfaceDiagonalSheen.CornerRadius = innerRadius;
+        SurfaceInnerShadow.CornerRadius = innerRadius;
+        SurfaceInnerShadow.BorderThickness = IsCapsule ? new Thickness(1) : new Thickness(0, 0, 0, 1);
+        SurfaceSpecularRim.CornerRadius = innerRadius;
+        SurfaceSpecularRim.BorderThickness = IsCapsule ? new Thickness(1) : new Thickness(0, 1, 0, 0);
         Surface.HorizontalAlignment = IsCapsule ? HorizontalAlignment.Center : HorizontalAlignment.Stretch;
         Surface.VerticalAlignment = IsCapsule ? VerticalAlignment.Top : VerticalAlignment.Stretch;
         Surface.Width = IsCapsule ? (_capsuleExpanded ? CapsuleExpandedWidth : _capsuleCompactWidth) : double.NaN;
@@ -2347,6 +2371,12 @@ public sealed partial class TopBarWindow : Window
         }
         _capsuleGlass?.Dispose();
         _capsuleGlass = null;
+        if (highContrast)
+        {
+            Surface.Background = System.Windows.SystemColors.WindowBrush;
+            Surface.BorderBrush = System.Windows.SystemColors.WindowTextBrush;
+            return;
+        }
         Surface.Background = FrozenBrush(acrylic ? AcrylicSurfaceTint : glass.Surface);
         Surface.BorderBrush = FrozenBrush(glass.Border);
     }

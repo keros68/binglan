@@ -2963,6 +2963,11 @@ public partial class SettingsWindow : Window
             DockRevealModeComboBox.SelectedItem = DockRevealModeComboBox.Items
                 .OfType<ComboBoxItem>()
                 .First(item => (string)item.Tag == _dockState.RevealMode.ToString());
+            var normalizedEdge = DockEdgeRules.Normalize(_dockState.Edge);
+            DockEdgeComboBox.SelectedItem = DockEdgeComboBox.Items
+                .OfType<ComboBoxItem>()
+                .FirstOrDefault(item => string.Equals((string)item.Tag, normalizedEdge.ToString(), StringComparison.Ordinal))
+                ?? DockEdgeComboBox.Items.OfType<ComboBoxItem>().First();
             DockStartMenuButtonCheckBox.IsChecked = _dockState.ShowStartMenuButton;
             DockLauncherButtonCheckBox.IsChecked = _dockState.ShowLauncherButton;
             DockShowDesktopButtonCheckBox.IsChecked = _dockState.ShowDesktopButton;
@@ -3062,6 +3067,11 @@ public partial class SettingsWindow : Window
             && Enum.TryParse<DockRevealMode>(revealTag, out var revealMode))
         {
             _dockState.RevealMode = revealMode;
+        }
+        if (DockEdgeComboBox?.SelectedItem is ComboBoxItem { Tag: string edgeTag }
+            && Enum.TryParse<DockEdge>(edgeTag, out var dockEdge))
+        {
+            _dockState.Edge = DockEdgeRules.Normalize(dockEdge);
         }
         _dockState.ShowStartMenuButton = DockStartMenuButtonCheckBox.IsChecked == true;
         _dockState.ShowLauncherButton = DockLauncherButtonCheckBox.IsChecked == true;

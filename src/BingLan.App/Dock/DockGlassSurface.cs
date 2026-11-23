@@ -221,12 +221,15 @@ internal sealed class DockGlassSurface : IDisposable
             var radiusX = radius * rect.Width / _surface.ActualWidth * dpi.M11;
             var radiusY = radius * rect.Height / _surface.ActualHeight * dpi.M22;
             rect.Transform(dpi);
-            var (backdropBounds, topInsetPx) = DockMagnificationRules.ComputeBackdropSurfaceBounds(
+            var (backdropBounds, leftInsetPx, topInsetPx) = DockMagnificationRules.ComputeBackdropSurfaceBounds(
                 bounds,
+                (int)Math.Floor(rect.X),
                 (int)Math.Floor(rect.Y),
+                (int)Math.Ceiling(rect.Width),
+                (int)Math.Ceiling(rect.Height),
                 _tracking);
-            var visualRect = topInsetPx > 0
-                ? new Rect(rect.X, rect.Y - topInsetPx, rect.Width, rect.Height)
+            var visualRect = leftInsetPx > 0 || topInsetPx > 0
+                ? new Rect(rect.X - leftInsetPx, rect.Y - topInsetPx, rect.Width, rect.Height)
                 : rect;
             _backdrop ??= new DockCompositionBackdrop();
             var visual = (Rect: visualRect, RadiusX: radiusX, RadiusY: radiusY,

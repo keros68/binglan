@@ -120,7 +120,9 @@ internal static class AccessibilityThemeManager
             ApplyIcePalette(resources);
         }
         SettingsPalette.Apply(resources, highContrast, dark: false, translucent: false, includeShared: false);
-        FloatingGlassPalette.Apply(resources, DesktopStyleRules.Dock(new DesktopStyleState()), highContrast);
+        var defaultDock = DesktopStyleRules.Dock(new DesktopStyleState());
+        FloatingGlassPalette.Apply(resources, defaultDock, highContrast);
+        FloatingGlassPalette.ApplyDockSheenResources(resources, defaultDock, clearMaterial: false, highContrast);
 
         if (IsHighContrastEnabled == highContrast)
         {

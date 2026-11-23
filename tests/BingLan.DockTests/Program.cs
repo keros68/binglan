@@ -24,6 +24,7 @@ Run("托盘驻留应用的唤回快捷键", TestTrayAppRevealRules);
 Run("Dock 内容尺寸边界", TestContentLengthBounds);
 Run("Dock 图标大小决定按钮与高度并被钳制", TestDockIconSize);
 Run("Dock 悬停余弦放大与设置规范化", TestDockHoverMagnification);
+Run("Dock 左右停靠：几何、放大轴与内侧隆起、触发区、避让顶栏与任务栏、v58 迁移", TestDockSideDocking);
 Run("Dock 距底部高度默认等于原固定间距并被钳制", TestDockBottomGap);
 Run("Dock 隐藏把手几何：默认角位、钳制与左右展开锚定", TestDockHandleGeometry);
 Run("Dock 隐藏把手位置状态规范化", TestDockHandleState);
@@ -2353,6 +2354,141 @@ static void TestDockHoverMagnification()
         "保持关闭时允许重置槽位");
     Assert(!DockMagnificationRules.ShouldResetSlotsOnOverflowChange(44d, 52d),
         "保持开启仅改变放大倍率或尺寸时不应中断当前悬停放大");
+}
+
+static void TestDockSideDocking()
+{
+    // 1. 停靠位置规范化：仅支持底部、左侧、右侧；顶部及非法值回落到底部。
+    AssertEqual(DockEdge.Bottom, DockEdgeRules.Normalize(DockEdge.Bottom), "底部停靠应保持");
+    AssertEqual(DockEdge.Left, DockEdgeRules.Normalize(DockEdge.Left), "左侧停靠应保持");
+    AssertEqual(DockEdge.Right, DockEdgeRules.Normalize(DockEdge.Right), "右侧停靠应保持");
+    AssertEqual(DockEdge.Bottom, DockEdgeRules.Normalize(DockEdge.Top), "不支持顶部停靠（避免与顶部信息条冲突），应回落到底部");
+    AssertEqual(DockEdge.Bottom, DockEdgeRules.Normalize((DockEdge)99), "非法停靠边枚举应回落到底部");
+    Assert(!DockEdgeRules.IsVertical(DockEdge.Bottom), "底部为横向排布");
+    Assert(DockEdgeRules.IsVertical(DockEdge.Left) && DockEdgeRules.IsVertical(DockEdge.Right), "左右为纵向排布");
+
+    var normalizedState = new DockState { Edge = DockEdge.Top };
+    DockPinRules.Normalize(normalizedState);
+    AssertEqual(DockEdge.Bottom, normalizedState.Edge, "DockPinRules.Normalize 应把顶部停靠纠正为底部");
+
+    // 2. 放大锚点与向屏幕内侧隆起方向。
+    AssertEqual((0.5d, 1d), DockEdgeRules.MagnificationOrigin(DockEdge.Bottom), "底部锚点在底边中点");
+    AssertEqual((0d, 0.5d), DockEdgeRules.MagnificationOrigin(DockEdge.Left), "左侧锚点在左边中点（向右放大）");
+    AssertEqual((1d, 0.5d), DockEdgeRules.MagnificationOrigin(DockEdge.Right), "右侧锚点在右边中点（向左放大）");
+
+    var bottomLift = DockEdgeRules.ComputeLiftVectorDip(DockEdge.Bottom, 1.5d, 40d, MotionLevel.Standard);
+    var leftLift = DockEdgeRules.ComputeLiftVectorDip(DockEdge.Left, 1.5d, 40d, MotionLevel.Standard);
+    var rightLift = DockEdgeRules.ComputeLiftVectorDip(DockEdge.Right, 1.5d, 40d, MotionLevel.Standard);
+    Assert(bottomLift.X == 0d && bottomLift.Y < 0d, "底部停靠放大时应向上隆起");
+    Assert(leftLift.X > 0d && leftLift.Y == 0d, "左侧停靠放大时应向右（屏幕内侧）隆起");
+    Assert(rightLift.X < 0d && rightLift.Y == 0d, "右侧停靠放大时应向左（屏幕内侧）隆起");
+    AssertEqual(Math.Abs(bottomLift.Y), Math.Abs(leftLift.X), "左右隆起幅度应与底部一致");
+    AssertEqual((0d, 0d), DockEdgeRules.ComputeLiftVectorDip(DockEdge.Left, 1.5d, 40d, MotionLevel.Reduced), "减弱档不应产生位移");
+
+    // 3. 放大透明留白扩展、SetWindowRgn 命中区域与玻璃背板裁剪。
+    var monitor = new PixelRect(0, 0, 1920, 1080);
+    var leftPlacement = new PixelRect(12, 240, 80, 840);
+    var leftExpanded = DockEdgeRules.ExpandWindowForOverflow(leftPlacement, monitor, DockEdge.Left, 44);
+    AssertEqual(new PixelRect(12, 240, 124, 840), leftExpanded, "左侧停靠放大留白应向右扩展");
+    var leftRegion = DockMagnificationRules.ComputeHitRegionRect(leftExpanded.Width, leftExpanded.Height, DockEdge.Left, 44, false, false);
+    AssertEqual(new PixelRect(0, 0, 68, 600), leftRegion!.Value, "左侧停靠常态命中区域应排除右侧 44px 透明留白");
+    var (leftBackdrop, leftInsetX, leftInsetY) = DockMagnificationRules.ComputeBackdropSurfaceBounds(leftExpanded, 0, 0, 68, 600, false);
+    AssertEqual(new PixelRect(12, 240, 80, 840), leftBackdrop, "左侧停靠玻璃背板应仅覆盖本体，不覆盖右侧透明留白");
+    Assert(leftInsetX == 0 && leftInsetY == 0, "左侧停靠背板原点无偏移");
+
+    var rightPlacement = new PixelRect(1840, 240, 1908, 840);
+    var rightExpanded = DockEdgeRules.ExpandWindowForOverflow(rightPlacement, monitor, DockEdge.Right, 44);
+    AssertEqual(new PixelRect(1796, 240, 1908, 840), rightExpanded, "右侧停靠放大留白应向左扩展");
+    var rightRegion = DockMagnificationRules.ComputeHitRegionRect(rightExpanded.Width, rightExpanded.Height, DockEdge.Right, 44, false, false);
+    AssertEqual(new PixelRect(44, 0, 112, 600), rightRegion!.Value, "右侧停靠常态命中区域应排除左侧 44px 透明留白");
+    var (rightBackdrop, rightInsetX, rightInsetY) = DockMagnificationRules.ComputeBackdropSurfaceBounds(rightExpanded, 44, 0, 68, 600, false);
+    AssertEqual(new PixelRect(1840, 240, 1908, 840), rightBackdrop, "右侧停靠玻璃背板应向右缩进 44px 仅覆盖本体");
+    Assert(rightInsetX == 44 && rightInsetY == 0, "右侧停靠背板应记录 44px 左侧偏移");
+
+    // 4. AppBar 预留校验、工作区边对齐与顶部信息条/底部任务栏共存避让。
+    var leftStrip = new PixelRect(0, 32, 96, 1032);
+    Assert(AppBarReservationState.IsValidStrip(leftStrip, monitor, 68, DockEdge.Left), "有效左侧预留条应通过校验");
+    Assert(!AppBarReservationState.IsValidStrip(new PixelRect(0, 32, 20, 1032), monitor, 68, DockEdge.Left), "宽度不足的左侧预留条应判无效");
+    AssertEqual(new PixelRect(0, 32, 96, 1032), DockEdgeRules.AdjustQueriedAppBarStrip(new PixelRect(0, 32, 120, 1032), DockEdge.Left, 96), "左侧查询结果应按左侧基准保留厚度");
+    AssertEqual(new PixelRect(1824, 32, 1920, 1032), DockEdgeRules.AdjustQueriedAppBarStrip(new PixelRect(1800, 32, 1920, 1032), DockEdge.Right, 96), "右侧查询结果应按右侧基准保留厚度");
+    AssertEqual((96, 96), DockEdgeRules.WorkAreaEdgesForCheck(new PixelRect(96, 32, 1920, 1032), leftStrip, DockEdge.Left), "左侧预留条应比对工作区 Left 与预留条 Right");
+    AssertEqual((1824, 1824), DockEdgeRules.WorkAreaEdgesForCheck(new PixelRect(0, 32, 1824, 1032), new PixelRect(1824, 32, 1920, 1032), DockEdge.Right), "右侧预留条应比对工作区 Right 与预留条 Left");
+
+    var safeVertical = DockEdgeRules.ComputeSafeVerticalBounds(
+        monitor,
+        liveWorkArea: new PixelRect(0, 0, 1920, 1032),
+        nativeTaskbarSafeArea: new PixelRect(0, 0, 1920, 1032),
+        topBarBottomPx: 40);
+    AssertEqual(new PixelRect(0, 40, 1920, 1032), safeVertical, "左右 Dock 纵向范围应避开顶部信息条（Top=40）与底部任务栏（Bottom=1032）");
+    var clippedLeft = DockEdgeRules.ClipStripCrossAxis(new PixelRect(0, 0, 96, 1080), safeVertical, DockEdge.Left);
+    AssertEqual(new PixelRect(0, 40, 96, 1032), clippedLeft, "裁剪后的左侧预留条不得与顶栏或底栏重叠");
+    AssertEqual(992, DockEdgeRules.AvailableExtentPixels(safeVertical, DockEdge.Left), "左右 Dock 可用长度应取纵向高度");
+
+    // 5. 自动隐藏触发区与任务栏共存判定。
+    var bottomTaskbarWorkArea = new PixelRect(0, 0, 1920, 1032);
+    Assert(DockRevealRules.IsEdgeFree(bottomTaskbarWorkArea, monitor, DockEdge.Left), "底部任务栏不应视为占用左侧边缘");
+    Assert(DockRevealRules.IsEdgeFree(bottomTaskbarWorkArea, monitor, DockEdge.Right), "底部任务栏不应视为占用右侧边缘");
+    Assert(!DockRevealRules.IsEdgeFree(new PixelRect(60, 0, 1920, 1080), monitor, DockEdge.Left), "左侧任务栏应视为占用左侧边缘");
+
+    Assert(DockRevealRules.IsInRevealZone(0, 500, leftPlacement, monitor, 2, DockEdge.Left), "指针贴屏幕左边缘应在左侧唤出区");
+    Assert(DockRevealRules.IsInRevealZone(10, 500, leftPlacement, monitor, 2, DockEdge.Left), "指针穿越左缘与悬空 Dock 间空隙时应保持在唤出区");
+    Assert(!DockRevealRules.IsInRevealZone(50, 500, leftPlacement, monitor, 2, DockEdge.Left), "深入屏幕内部不在左侧唤出区");
+    Assert(!DockRevealRules.IsInRevealZone(0, 100, leftPlacement, monitor, 2, DockEdge.Left), "纵向超出 Dock 范围不应触发左侧唤出");
+    Assert(DockRevealRules.IsInRevealZone(1919, 500, rightPlacement, monitor, 2, DockEdge.Right), "指针贴屏幕右边缘应在右侧唤出区");
+    Assert(DockRevealRules.IsInRevealZone(1910, 500, rightPlacement, monitor, 2, DockEdge.Right), "指针穿越右缘与悬空 Dock 间空隙时应保持在唤出区");
+    Assert(!DockRevealRules.IsInRevealZone(1860, 500, rightPlacement, monitor, 2, DockEdge.Right), "深入屏幕内部不在右侧唤出区");
+
+    Assert(!DockVacateRules.ShouldYieldToSystemSurface(true, isTaskbarWindow: true, DockEdge.Left, DockEdge.Bottom, surfaceIntersectsDock: false),
+        "底部任务栏 + 左侧 Dock 时点击底部任务栏不应无故让位");
+    Assert(!DockVacateRules.ShouldYieldToSystemSurface(true, isTaskbarWindow: true, DockEdge.Right, DockEdge.Bottom, surfaceIntersectsDock: false),
+        "底部任务栏 + 右侧 Dock 时点击底部任务栏不应无故让位");
+    Assert(DockVacateRules.ShouldYieldToSystemSurface(true, isTaskbarWindow: true, DockEdge.Bottom, DockEdge.Bottom, surfaceIntersectsDock: false),
+        "底部任务栏 + 底部 Dock 时仍应让位");
+    Assert(DockVacateRules.ShouldYieldToSystemSurface(true, isTaskbarWindow: false, DockEdge.Left, DockEdge.Bottom, surfaceIntersectsDock: false),
+        "系统开始菜单或快速设置弹出时左右 Dock 仍应礼让");
+
+    // 6. 隐藏把手默认角位与纵向展开、重现锚点、Y 轴拖拽排序索引。
+    var leftHandle = DockHandleGeometry.Default(bottomTaskbarWorkArea, 44, 16, 28, DockEdge.Left);
+    AssertEqual(new PixelRect(28, 972, 72, 1016), leftHandle, "左侧 Dock 默认把手应贴近左下工作区");
+    var leftHandleExpanded = DockHandleGeometry.ExpandedDock(leftHandle, bottomTaskbarWorkArea, 68, 400, 8, DockEdge.Left);
+    Assert(leftHandleExpanded.Width == 68 && leftHandleExpanded.Height == 400 && leftHandleExpanded.Bottom <= leftHandle.Top - 8,
+        "左下把手展开左侧 Dock 时应纵向向上生长");
+    AssertEqual((0d, 300d), DockEdgeRules.StripAnchorPointDip(leftPlacement, DockEdge.Left, 1d), "左侧重现锚点在左边中点");
+    AssertEqual((68d, 300d), DockEdgeRules.StripAnchorPointDip(rightPlacement, DockEdge.Right, 1d), "右侧重现锚点在右边中点");
+
+    AssertEqual(1, DockEdgeRules.ComputePinInsertIndex(1, pointerAxis: 10d, itemLength: 56d, pinnedCount: 4), "拖入上半格应插在目标之前");
+    AssertEqual(2, DockEdgeRules.ComputePinInsertIndex(1, pointerAxis: 40d, itemLength: 56d, pinnedCount: 4), "拖入下半格应插在目标之后");
+    AssertEqual(2, DockEdgeRules.ComputePinMoveIndex(sourceIndex: 0, targetIndex: 2, pointerAxis: 40d, itemLength: 56d, pinnedCount: 4), "从上方拖到目标下半格应落在目标位置");
+    AssertEqual(1, DockEdgeRules.ComputePinMoveIndex(sourceIndex: 3, targetIndex: 1, pointerAxis: 10d, itemLength: 56d, pinnedCount: 4), "从下方拖到目标上半格应落在目标位置");
+
+    // 7. Schema v57 -> v58 迁移与持久化往返。
+    var temp = Path.Combine(Path.GetTempPath(), $"BingLan-dock-edge-{Guid.NewGuid():N}");
+    try
+    {
+        Directory.CreateDirectory(temp);
+        var store = new LocalStateStore(temp);
+        File.WriteAllText(store.StatePath, """{ "SchemaVersion": 57, "Dock": { "IsEnabled": true, "IconSize": 48 } }""");
+        var migrated = store.Load();
+        AssertEqual(AppState.CurrentSchemaVersion, migrated.SchemaVersion, "v57 状态应迁移到最新 Schema 版本");
+        AssertEqual(DockEdge.Bottom, migrated.Dock.Edge, "旧配置缺省停靠位置应迁移为底部");
+        AssertEqual(48d, migrated.Dock.IconSize, "迁移不得丢失原有 Dock 设置");
+
+        migrated.Dock.Edge = DockEdge.Right;
+        store.Save(migrated);
+        var reloaded = store.Load();
+        AssertEqual(DockEdge.Right, reloaded.Dock.Edge, "右侧停靠设置应完整持久化往返");
+
+        File.WriteAllText(store.StatePath, """{ "SchemaVersion": 58, "Dock": { "Edge": 1 } }""");
+        var sanitized = store.Load();
+        AssertEqual(DockEdge.Bottom, sanitized.Dock.Edge, "手工写入的顶部停靠枚举在加载时应被规范化为底部");
+    }
+    finally
+    {
+        if (Directory.Exists(temp))
+        {
+            Directory.Delete(temp, true);
+        }
+    }
 }
 
 static void Assert(bool condition, string message)

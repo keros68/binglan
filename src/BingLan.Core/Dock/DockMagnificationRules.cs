@@ -140,18 +140,46 @@ public static class DockMagnificationRules
         int windowHeightPx,
         int topOverflowPx,
         bool isMagnificationActive,
+        bool isMorphAnimating) =>
+        ComputeHitRegionRect(
+            windowWidthPx,
+            windowHeightPx,
+            DockEdge.Bottom,
+            topOverflowPx,
+            isMagnificationActive,
+            isMorphAnimating);
+
+    public static PixelRect? ComputeHitRegionRect(
+        int windowWidthPx,
+        int windowHeightPx,
+        DockEdge edge,
+        int overflowPx,
+        bool isMagnificationActive,
         bool isMorphAnimating)
     {
         if (windowWidthPx <= 0
             || windowHeightPx <= 0
-            || topOverflowPx <= 0
+            || overflowPx <= 0
             || isMagnificationActive
             || isMorphAnimating)
         {
             return null;
         }
 
-        var clampedTop = Math.Clamp(topOverflowPx, 0, Math.Max(0, windowHeightPx - 1));
+        var normalized = DockEdgeRules.Normalize(edge);
+        if (normalized == DockEdge.Left)
+        {
+            var clamped = Math.Clamp(overflowPx, 0, Math.Max(0, windowWidthPx - 1));
+            return clamped > 0 ? new PixelRect(0, 0, windowWidthPx - clamped, windowHeightPx) : null;
+        }
+
+        if (normalized == DockEdge.Right)
+        {
+            var clamped = Math.Clamp(overflowPx, 0, Math.Max(0, windowWidthPx - 1));
+            return clamped > 0 ? new PixelRect(clamped, 0, windowWidthPx, windowHeightPx) : null;
+        }
+
+        var clampedTop = Math.Clamp(overflowPx, 0, Math.Max(0, windowHeightPx - 1));
         if (clampedTop <= 0)
         {
             return null;
@@ -170,19 +198,46 @@ public static class DockMagnificationRules
         int surfaceTopOffsetPx,
         bool isMorphAnimating)
     {
-        if (isMorphAnimating || surfaceTopOffsetPx <= 0 || !windowBounds.HasArea)
+        var (bounds, _, topInset) = ComputeBackdropSurfaceBounds(
+            windowBounds,
+            surfaceLeftOffsetPx: 0,
+            surfaceTopOffsetPx,
+            surfaceWidthPx: 0,
+            surfaceHeightPx: 0,
+            isMorphAnimating);
+        return (bounds, topInset);
+    }
+
+    /// <summary>
+    /// Generalised backdrop cropping across all dock edges: trims transparent magnification
+    /// headroom on any side (top for bottom dock, right for left dock, left for right dock)
+    /// while leaving morph animations unclipped.
+    /// </summary>
+    public static (PixelRect Bounds, int LeftInsetPx, int TopInsetPx) ComputeBackdropSurfaceBounds(
+        PixelRect windowBounds,
+        int surfaceLeftOffsetPx,
+        int surfaceTopOffsetPx,
+        int surfaceWidthPx,
+        int surfaceHeightPx,
+        bool isMorphAnimating)
+    {
+        if (isMorphAnimating || !windowBounds.HasArea)
         {
-            return (windowBounds, 0);
+            return (windowBounds, 0, 0);
         }
 
-        var inset = Math.Clamp(surfaceTopOffsetPx, 0, Math.Max(0, windowBounds.Height - 1));
-        if (inset <= 0)
-        {
-            return (windowBounds, 0);
-        }
+        var leftInset = Math.Clamp(surfaceLeftOffsetPx, 0, Math.Max(0, windowBounds.Width - 1));
+        var topInset = Math.Clamp(surfaceTopOffsetPx, 0, Math.Max(0, windowBounds.Height - 1));
+        var availableWidth = windowBounds.Width - leftInset;
+        var availableHeight = windowBounds.Height - topInset;
+        var width = surfaceWidthPx > 0 ? Math.Clamp(surfaceWidthPx, 1, availableWidth) : availableWidth;
+        var height = surfaceHeightPx > 0 ? Math.Clamp(surfaceHeightPx, 1, availableHeight) : availableHeight;
 
-        return (
-            new PixelRect(windowBounds.Left, windowBounds.Top + inset, windowBounds.Right, windowBounds.Bottom),
-            inset);
+        var cropped = new PixelRect(
+            windowBounds.Left + leftInset,
+            windowBounds.Top + topInset,
+            windowBounds.Left + leftInset + width,
+            windowBounds.Top + topInset + height);
+        return (cropped, leftInset, topInset);
     }
 }

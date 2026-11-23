@@ -20,13 +20,36 @@ public static class DockRevealRules
         int cursorY,
         PixelRect dockBounds,
         PixelRect monitorBounds,
-        int revealDepth)
+        int revealDepth) =>
+        IsInRevealZone(cursorX, cursorY, dockBounds, monitorBounds, revealDepth, DockEdge.Bottom);
+
+    public static bool IsInRevealZone(
+        int cursorX,
+        int cursorY,
+        PixelRect dockBounds,
+        PixelRect monitorBounds,
+        int revealDepth,
+        DockEdge edge)
     {
-        var zoneTop = Math.Min(dockBounds.Bottom, monitorBounds.Bottom - Math.Max(1, revealDepth));
-        return cursorY >= zoneTop
-            && cursorY < monitorBounds.Bottom
-            && cursorX >= dockBounds.Left
-            && cursorX < dockBounds.Right;
+        var depth = Math.Max(1, revealDepth);
+        return DockEdgeRules.Normalize(edge) switch
+        {
+            DockEdge.Left =>
+                cursorX >= monitorBounds.Left
+                && cursorX < Math.Max(dockBounds.Left, monitorBounds.Left + depth)
+                && cursorY >= dockBounds.Top
+                && cursorY < dockBounds.Bottom,
+            DockEdge.Right =>
+                cursorX >= Math.Min(dockBounds.Right, monitorBounds.Right - depth)
+                && cursorX < monitorBounds.Right
+                && cursorY >= dockBounds.Top
+                && cursorY < dockBounds.Bottom,
+            _ =>
+                cursorY >= Math.Min(dockBounds.Bottom, monitorBounds.Bottom - depth)
+                && cursorY < monitorBounds.Bottom
+                && cursorX >= dockBounds.Left
+                && cursorX < dockBounds.Right
+        };
     }
 
     /// <summary>
@@ -34,7 +57,28 @@ public static class DockRevealRules
     /// area the dock itself does not reserve (smart hide or a released reservation).
     /// </summary>
     public static bool IsBottomEdgeFree(PixelRect workArea, PixelRect monitorBounds) =>
-        workArea.Bottom >= monitorBounds.Bottom;
+        IsEdgeFree(workArea, monitorBounds, DockEdge.Bottom);
+
+    /// <summary>
+    /// Whether the chosen dock edge is unoccupied by another bar (such as a visible taskbar).
+    /// A bottom taskbar never blocks left/right edge reveal.
+    /// </summary>
+    public static bool IsEdgeFree(PixelRect workArea, PixelRect monitorBounds, DockEdge edge) => edge switch
+    {
+        DockEdge.Left => workArea.Left <= monitorBounds.Left,
+        DockEdge.Right => workArea.Right >= monitorBounds.Right,
+        DockEdge.Top => workArea.Top <= monitorBounds.Top,
+        _ => workArea.Bottom >= monitorBounds.Bottom
+    };
+
+    /// <summary>Clamps the dock's screen-facing edge flush to the monitor for EdgeStrip reveal.</summary>
+    public static PixelRect FlushEdgeBounds(PixelRect dockBounds, PixelRect monitorBounds, DockEdge edge) =>
+        DockEdgeRules.Normalize(edge) switch
+        {
+            DockEdge.Left => dockBounds with { Left = monitorBounds.Left },
+            DockEdge.Right => dockBounds with { Right = monitorBounds.Right },
+            _ => dockBounds with { Bottom = monitorBounds.Bottom }
+        };
 
     public static DockEdgeReveal EdgeReveal(DockRevealMode mode, bool bottomEdgeFree) => mode switch
     {

@@ -40,6 +40,7 @@ internal sealed class DockHost : IDisposable
     internal Func<Guid, string, Task<string>>? SendToFileBox { get; set; }
 
     internal Func<nint, nint>? ResolvePanelForeground { get; set; }
+    internal Func<MonitorSnapshot, int?>? ResolveTopBarReservedBottomPx { get; set; }
     internal Func<bool> IsLauncherEnabled { get; set; } = () => true;
 
     internal IEnumerable<nint> ActiveDesktopHandles() =>
@@ -105,6 +106,7 @@ internal sealed class DockHost : IDisposable
             ReadFileBoxes = ReadFileBoxes,
             SendToFileBox = SendToFileBox,
             ResolvePanelForeground = ResolvePanelForeground,
+            ResolveTopBarReservedBottomPx = ResolveTopBarReservedBottomPx,
             LauncherEnabled = IsLauncherEnabled()
         };
         if (LauncherRequested is not null)
