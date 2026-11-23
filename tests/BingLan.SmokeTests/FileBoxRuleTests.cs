@@ -30,6 +30,7 @@ internal static class FileBoxRuleTests
         TestDeleteOriginalSettingDefaultsOff();
         TestHeaderToolsOnHoverDefaultsOff();
         TestFileBoxEdgeDockRulesAndIsolation();
+        TestInternetShortcutIconParsing();
     }
 
     private static void TestPreparedImportPreservesMappingsAndDoesNotRecheckFiles()
@@ -663,6 +664,56 @@ internal static class FileBoxRuleTests
         {
             Directory.Delete(temp, true);
         }
+    }
+
+    private static void TestInternetShortcutIconParsing()
+    {
+        var steamShortcut = """
+            [{000214A0-0000-0000-C000-000000000046}]
+            Prop3=19,0
+            [InternetShortcut]
+            IDList=
+            IconIndex=0
+            URL=steam://rungameid/730
+            IconFile=C:\Program Files (x86)\Steam\steam\games\8e1b2c3d.ico
+            """;
+        var parsed = InternetShortcutRules.ParseIconLocation(steamShortcut, @"C:\Users\Test\Desktop");
+        Assert(parsed is { FilePath: @"C:\Program Files (x86)\Steam\steam\games\8e1b2c3d.ico", Index: 0 },
+            "应解析标准 Steam .url 的 IconFile 与 IconIndex");
+
+        var quotedWithComma = """
+            [InternetShortcut]
+            URL=steam://rungameid/570
+            IconFile="D:\游戏\Steam\bin\game.exe",-101
+            """;
+        var parsedQuoted = InternetShortcutRules.ParseIconLocation(quotedWithComma, @"D:\Desktop");
+        Assert(parsedQuoted is { FilePath: @"D:\游戏\Steam\bin\game.exe", Index: -101 },
+            "应支持带引号和逗号资源索引的 IconFile");
+
+        var relative = """
+            [InternetShortcut]
+            IconFile=icons\game.ico
+            IconIndex=2
+            """;
+        var parsedRelative = InternetShortcutRules.ParseIconLocation(relative, @"D:\Games");
+        Assert(parsedRelative is { FilePath: @"D:\Games\icons\game.ico", Index: 2 },
+            "应支持相对路径 IconFile");
+
+        var unc = """
+            [InternetShortcut]
+            IconFile=\\server\share\game.ico
+            """;
+        Assert(InternetShortcutRules.ParseIconLocation(unc, @"C:\Desktop") is null,
+            "不得解析 UNC 网络路径以防阻塞");
+
+        var wrongSection = """
+            [OtherSection]
+            IconFile=C:\Steam\game.ico
+            [InternetShortcut]
+            URL=https://example.com
+            """;
+        Assert(InternetShortcutRules.ParseIconLocation(wrongSection, @"C:\Desktop") is null,
+            "仅读取 [InternetShortcut] 节内的 IconFile");
     }
 
     private static void Assert(bool condition, string message)

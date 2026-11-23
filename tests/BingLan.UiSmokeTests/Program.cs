@@ -2912,6 +2912,57 @@ internal static class Program
         Assert(Math.Max(fileIcon.PixelWidth, fileIcon.PixelHeight) <= 128
                 && Math.Max(shellIcon.PixelWidth, shellIcon.PixelHeight) <= 128,
             $"图标帧应不超过 128 px，实际 {fileIcon.PixelWidth} 与 {shellIcon.PixelWidth}");
+
+        // Steam 游戏 .url 快捷方式：在后台 MTA 线程读取时应直接解析 IconFile 指向的 .ico。
+        var steamDir = Path.Combine(Path.GetTempPath(), $"BingLanSteamUrl-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(steamDir);
+        try
+        {
+            var icoPath = Path.Combine(steamDir, "game.ico");
+            using (var pngStream = new MemoryStream())
+            {
+                var wb = new WriteableBitmap(48, 48, 96, 96, PixelFormats.Bgra32, null);
+                var raw = new byte[48 * 48 * 4];
+                for (var i = 0; i < raw.Length; i += 4)
+                {
+                    raw[i] = 40; raw[i + 1] = 180; raw[i + 2] = 240; raw[i + 3] = 255;
+                }
+                wb.WritePixels(new Int32Rect(0, 0, 48, 48), raw, 48 * 4, 0);
+                var encoder = new PngBitmapEncoder();
+                encoder.Frames.Add(BitmapFrame.Create(wb));
+                encoder.Save(pngStream);
+                var pngBytes = pngStream.ToArray();
+                using var icoStream = File.Create(icoPath);
+                using var writer = new BinaryWriter(icoStream);
+                writer.Write((ushort)0);
+                writer.Write((ushort)1);
+                writer.Write((ushort)1);
+                writer.Write((byte)48);
+                writer.Write((byte)48);
+                writer.Write((byte)0);
+                writer.Write((byte)0);
+                writer.Write((ushort)1);
+                writer.Write((ushort)32);
+                writer.Write((uint)pngBytes.Length);
+                writer.Write((uint)22);
+                writer.Write(pngBytes);
+            }
+            var urlPath = Path.Combine(steamDir, "TestSteamGame.url");
+            File.WriteAllText(urlPath, $"[InternetShortcut]\r\nURL=steam://rungameid/730\r\nIconFile={icoPath}\r\nIconIndex=0\r\n");
+
+            var urlIcon = Task.Run(() => ShellIconProvider.GetIcon(urlPath)).GetAwaiter().GetResult() as BitmapSource;
+            Assert(urlIcon is not null && urlIcon.PixelWidth == 48 && urlIcon.PixelHeight == 48,
+                $"后台线程提取 Steam .url 图标应命中 48×48 .ico，实际 {urlIcon?.PixelWidth}×{urlIcon?.PixelHeight}");
+            var probe = new FormatConvertedBitmap(urlIcon!, PixelFormats.Bgra32, null, 0);
+            var sample = new byte[4];
+            probe.CopyPixels(new Int32Rect(24, 24, 1, 1), sample, 4, 0);
+            Assert(sample[3] == 255 && sample[2] >= 220 && sample[1] >= 160,
+                $"Steam .url 图标应返回原 .ico 像素而非系统占位图标，实际 BGRA=({sample[0]},{sample[1]},{sample[2]},{sample[3]})");
+        }
+        finally
+        {
+            Directory.Delete(steamDir, recursive: true);
+        }
         var pattern = new byte[256 * 256 * 4];
         for (var y = 0; y < 256; y++)
         {
