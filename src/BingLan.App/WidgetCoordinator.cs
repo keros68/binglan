@@ -2069,7 +2069,14 @@ public sealed partial class WidgetCoordinator : IDisposable
                 return;
             }
 
-            var status = await SetCleanDesktopAsync(!_state.CleanDesktopEnabled);
+            if (_state.CleanDesktopEnabled)
+            {
+                // Showing the native desktop also tucks the widgets away so they do not cover the icons.
+                await ToggleTemporaryNativeDesktopAsync();
+                return;
+            }
+
+            var status = await SetCleanDesktopAsync(true);
             _settingsWindow?.RefreshCleanDesktopSettings(status);
         }
         catch (Exception exception)
