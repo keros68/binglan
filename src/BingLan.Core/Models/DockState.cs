@@ -154,6 +154,12 @@ public sealed class DockState
     /// <summary>Whether the dock takes its colours from the card material.</summary>
     public bool FollowCardLook { get; set; } = true;
 
+    /// <summary>
+    /// Whether the dock uses Windows 11 native Composition blur behind its tint.
+    /// Turning it off renders a clean translucent WPF surface instead.
+    /// </summary>
+    public bool FrostedGlass { get; set; } = true;
+
     /// <summary>The dock's own colour, used when it does not follow the card material.</summary>
     public string SurfaceColor { get; set; } = DefaultSurfaceColor;
 

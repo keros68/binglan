@@ -51,6 +51,8 @@ Run("托盘里的应用闪烁：固定图标显示提醒，激活后清除", Tes
 Run("固定的启动器图标匹配子目录里的真实进程，且不误吞同目录或系统程序", TestDockPinLauncherStub);
 Run("提醒弹跳：次数随动画档位、系统开关和设置变化，同一应用有间隔", TestDockBounceRules);
 Run("始终自动隐藏：无重叠也收起，指针到边缘才出现", TestDockAutoHideAlways);
+Run("从把手唤出正中 Dock：跨越期间保留宽限，进入条带或全屏立即清零", TestDockHandleRevealGrace);
+Run("Dock 玻璃着色与回退规则：自定义使用完整浓度、省电与关闭实时毛玻璃自动回退", TestDockGlassRules);
 Run("重叠超过延迟后才隐藏且仅触发一次", TestDockAutoHideDelay);
 Run("指针进入唤出区域应立即显示并重置计时器", TestDockAutoHidePointerRevealResetsTimer);
 Run("指针悬停在 Dock 上应立即显示", TestDockAutoHidePointerOverDockShowsImmediately);
@@ -1326,6 +1328,102 @@ static void TestDockAutoHideAlways()
     Assert(
         state.Update(away, t0 + DockAutoHideState.HideDelay + DockAutoHideState.HideDelay),
         "指针离开一个延迟后应再次收起");
+}
+
+static void TestDockHandleRevealGrace()
+{
+    var t0 = DateTimeOffset.UtcNow;
+    var deadline = DockAutoHideState.UpdateHandleRevealDeadline(
+        DateTimeOffset.MinValue,
+        t0,
+        revealedFromHandle: true,
+        pointerOverStrip: false,
+        clearRequested: false);
+    AssertEqual(t0 + DockAutoHideState.HandleRevealGrace, deadline, "从把手唤出应设置宽限截止时间");
+
+    // 鼠标离开把手、正在移向正中 Dock：最大化窗口覆盖期间，宽限期内应保持显示。
+    var state = new DockAutoHideState();
+    var maximizedCovered = new DockAutoHideInput(
+        WindowOverlapsDock: true,
+        ForegroundIsFullScreen: false,
+        PointerInRevealZone: false,
+        PointerOverDock: false,
+        InteractionActive: false,
+        OverlapIsMaximizedWindow: true);
+    Assert(state.Update(maximizedCovered, t0), "最大化覆盖时应先收起");
+    Assert(!state.IsShown, "应已处于隐藏态");
+
+    var tMid = t0 + TimeSpan.FromMilliseconds(500);
+    deadline = DockAutoHideState.UpdateHandleRevealDeadline(
+        deadline, tMid, revealedFromHandle: false, pointerOverStrip: false, clearRequested: false);
+    Assert(tMid < deadline, "移动途中宽限尚未到期");
+    var travellingToStrip = maximizedCovered with { InteractionActive = tMid < deadline };
+    Assert(state.Update(travellingToStrip, tMid), "从把手唤出后的宽限期内正中 Dock 应保持展开");
+    Assert(state.IsShown, "宽限期内正中 Dock 应保持显示");
+
+    // 鼠标到达正中 Dock：宽限立即清零，之后离开正中 Dock 即可按常规规则收起。
+    var tArrive = t0 + TimeSpan.FromMilliseconds(900);
+    deadline = DockAutoHideState.UpdateHandleRevealDeadline(
+        deadline, tArrive, revealedFromHandle: false, pointerOverStrip: true, clearRequested: false);
+    AssertEqual(DateTimeOffset.MinValue, deadline, "指针到达正中 Dock 后应清除把手宽限");
+    Assert(!state.Update(maximizedCovered with { PointerOverDock = true }, tArrive), "停在正中 Dock 上应保持显示");
+    Assert(state.Update(maximizedCovered, tArrive + TimeSpan.FromMilliseconds(50)), "离开正中 Dock 后最大化覆盖应立即收起");
+
+    // 真全屏或拖动把手请求清除时应立刻失效。
+    var cleared = DockAutoHideState.UpdateHandleRevealDeadline(
+        t0 + DockAutoHideState.HandleRevealGrace,
+        tMid,
+        revealedFromHandle: true,
+        pointerOverStrip: false,
+        clearRequested: true);
+    AssertEqual(DateTimeOffset.MinValue, cleared, "全屏或拖动把手时应立即清除宽限");
+}
+
+static void TestDockGlassRules()
+{
+    // 自定义外观（如 #FFFFFF 96% -> A=245）不再被 0.24 压成 23% 灰雾。
+    AssertEqual((byte)245, DockGlassRules.ComputeBackdropTintAlpha(245, fullTintOpacity: true),
+        "自定义 Dock 应按完整不透明度着色，避免白色 96% 变成黑灰");
+    AssertEqual((byte)59, DockGlassRules.ComputeBackdropTintAlpha(245, fullTintOpacity: false),
+        "跟随卡片外观的默认 Dock 应保持 0.24 通透衰减");
+    AssertEqual((byte)0, DockGlassRules.ComputeBackdropTintAlpha(0, fullTintOpacity: true),
+        "零透明度保持 0");
+
+    // 任一门控不满足（省电模式、关闭实时毛玻璃、Win10、关透明、高对比度、零透明）均应回退 WPF 半透明底。
+    Assert(DockGlassRules.ShouldUseCompositionBackdrop(true, true, true, false, false, 200),
+        "Win11 且未开省电、开启透明与毛玻璃时应启用原生合成背板");
+    Assert(!DockGlassRules.ShouldUseCompositionBackdrop(true, true, true, batterySaverActive: true, false, 200),
+        "笔记本省电模式下应自动回退半透明纯色，避免 HostBackdropBrush 发黑");
+    Assert(!DockGlassRules.ShouldUseCompositionBackdrop(true, frostedGlassEnabled: false, true, false, false, 200),
+        "关闭 Dock 实时毛玻璃开关时应回退半透明纯色");
+    Assert(!DockGlassRules.ShouldUseCompositionBackdrop(isWindows11OrLater: false, true, true, false, false, 200),
+        "Win10 不应启用 Win11 原生合成背板");
+    Assert(!DockGlassRules.ShouldUseCompositionBackdrop(true, true, transparencyEnabled: false, false, false, 200),
+        "系统透明效果关闭时应回退半透明纯色");
+    Assert(!DockGlassRules.ShouldUseCompositionBackdrop(true, true, true, false, highContrastEnabled: true, 200),
+        "高对比度下应回退系统色");
+    Assert(!DockGlassRules.ShouldUseCompositionBackdrop(true, true, true, false, false, surfaceAlpha: 0),
+        "无底板零透明时不启用合成背板");
+
+    // DockState.FrostedGlass 默认为 true 且可持久化关闭。
+    var folder = Path.Combine(Path.GetTempPath(), $"BingLanDockFrosted-{Guid.NewGuid():N}");
+    try
+    {
+        var store = new LocalStateStore(folder);
+        var state = new AppState();
+        Assert(state.Dock.FrostedGlass, "Dock 实时毛玻璃默认开启");
+        state.Dock.FrostedGlass = false;
+        store.Save(state);
+        var reloaded = store.Load();
+        Assert(!reloaded.Dock.FrostedGlass, "关闭 Dock 实时毛玻璃后重载应保持关闭");
+    }
+    finally
+    {
+        if (Directory.Exists(folder))
+        {
+            Directory.Delete(folder, recursive: true);
+        }
+    }
 }
 
 static void TestDockAutoHideDelay()

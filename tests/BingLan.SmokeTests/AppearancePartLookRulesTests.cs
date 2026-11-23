@@ -107,6 +107,8 @@ internal static class AppearancePartLookRulesTests
             ("LauncherColorEditor", AppearancePartKind.Launcher),
             ("LauncherOpacitySlider", AppearancePartKind.Launcher),
             ("LauncherCornerRadiusSlider", AppearancePartKind.Launcher),
+            ("DockFrostedRow", AppearancePartKind.Dock),
+            ("DockFrostedCheckBox", AppearancePartKind.Dock),
             ("DockLookSettingsRow", AppearancePartKind.Dock),
             ("DockFollowLookRadio", AppearancePartKind.Dock),
             ("DockCustomLookRadio", AppearancePartKind.Dock),

@@ -807,6 +807,7 @@ public sealed partial class WidgetCoordinator : IDisposable
 
         _sessionEndedHandled = true;
         _sessionEndingPending = false;
+        Dock.DockCompositionBackdrop.MarkSessionEnding();
         _saveTimer.Stop();
         SaveNow();
         if (_cleanDesktop.IsActive && _state.CleanDesktopEnabled && _startup.IsEnabled())
@@ -817,6 +818,9 @@ public sealed partial class WidgetCoordinator : IDisposable
         {
             _cleanDesktop.Dispose();
         }
+        _launcherPanel?.Close();
+        _dock.Dispose();
+        _topBar.Dispose();
         _taskbar.Dispose();
     }
 

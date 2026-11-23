@@ -50,6 +50,9 @@ public partial class DockHandleWindow : Window
     /// <summary>Raised on release after a real drag: the owner clamps and persists the position.</summary>
     internal event Action? DragEnded;
 
+    /// <summary>Raised on a click without dragging so the dock reveals immediately at its resting position.</summary>
+    internal event Action? Clicked;
+
     /// <summary>Raised while external files are dragged over the handle so the dock can expand.</summary>
     internal event Action? FileDragEntered;
 
@@ -71,6 +74,8 @@ public partial class DockHandleWindow : Window
     }
 
     internal bool IsDragActive => _dragging;
+
+    internal void SetFrostedGlass(bool enabled) => _glass.SetFrostedGlass(enabled);
 
     internal void MoveTo(PixelRect rect)
     {
@@ -164,7 +169,7 @@ public partial class DockHandleWindow : Window
             _pressStartRect.Top + deltaY + _pressStartRect.Height));
     }
 
-    internal void EndDrag()
+    internal void EndDrag(bool allowClick = false)
     {
         if (!_dragging)
         {
@@ -177,6 +182,10 @@ public partial class DockHandleWindow : Window
         if (started)
         {
             DragEnded?.Invoke();
+        }
+        else if (allowClick)
+        {
+            Clicked?.Invoke();
         }
     }
 
@@ -295,12 +304,16 @@ public partial class DockHandleWindow : Window
 
     private void OnHandleMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
     {
-        EndDrag();
+        EndDrag(allowClick: true);
+        if (IsMouseCaptured)
+        {
+            ReleaseMouseCapture();
+        }
     }
 
     private void OnHandleLostMouseCapture(object sender, MouseEventArgs e)
     {
-        EndDrag();
+        EndDrag(allowClick: false);
     }
 
     private void OnHandleMouseEnter(object sender, MouseEventArgs e)

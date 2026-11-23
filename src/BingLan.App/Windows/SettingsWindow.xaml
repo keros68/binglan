@@ -798,6 +798,17 @@
                                     Visibility="Collapsed"
                                     local:SettingsSearch.Title="冰蓝 Dock"
                                     local:SettingsSearch.AccordionPart="Dock">
+                            <local:SettingsRow x:Name="DockFrostedRow"
+                                               Style="{StaticResource NestedSettingsRowStyle}"
+                                               Header="Dock 实时毛玻璃"
+                                               Description="Windows 11 下对背景做实时模糊；若部分系统或驱动下底色发黑、或动态壁纸负载偏高，关闭后改为半透明纯色"
+                                               local:SettingsSearch.Keywords="Dock 实时毛玻璃 Dock 磨砂 毛玻璃 发黑 黑灰 模糊 性能">
+                                <CheckBox x:Name="DockFrostedCheckBox"
+                                          AutomationProperties.Name="Dock 实时毛玻璃"
+                                          Style="{StaticResource ToggleSwitchStyle}"
+                                          Checked="DockFrosted_Changed"
+                                          Unchecked="DockFrosted_Changed"/>
+                            </local:SettingsRow>
                             <local:SettingsRow x:Name="DockLookSettingsRow"
                                                Style="{StaticResource NestedSettingsRowStyle}"
                                                Header="Dock 外观"

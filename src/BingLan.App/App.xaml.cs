@@ -21,83 +21,105 @@ public partial class App : System.Windows.Application
     private SingleInstanceGate? _singleInstanceGate;
     private EventWaitHandle? _exitSignal;
     private RegisteredWaitHandle? _exitWait;
+    private bool _startupCompleted;
 
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
         UseSoftwareRendering();
-        AccessibilityThemeManager.EnsureInitialized();
-        // Every window shows the app icon in the taskbar and Alt+Tab instead of a blank one.
-        var appIcon = new System.Windows.Media.Imaging.BitmapImage(
-            new Uri("pack://application:,,,/BingLan;component/Assets/Brand/BingLan.ico", UriKind.Absolute));
-        appIcon.Freeze();
-        EventManager.RegisterClassHandler(
-            typeof(Window),
-            FrameworkElement.LoadedEvent,
-            new RoutedEventHandler((sender, _) =>
-            {
-                if (sender is Window { Icon: null } window)
+        RegisterCrashHandlers();
+        try
+        {
+            AccessibilityThemeManager.EnsureInitialized();
+            // Every window shows the app icon in the taskbar and Alt+Tab instead of a blank one.
+            var appIcon = new System.Windows.Media.Imaging.BitmapImage(
+                new Uri("pack://application:,,,/BingLan;component/Assets/Brand/BingLan.ico", UriKind.Absolute));
+            appIcon.Freeze();
+            EventManager.RegisterClassHandler(
+                typeof(Window),
+                FrameworkElement.LoadedEvent,
+                new RoutedEventHandler((sender, _) =>
                 {
-                    window.Icon = appIcon;
-                }
-            }));
-        if (AppContext.TryGetSwitch(SuppressCoordinatorStartupSwitch, out var suppress) && suppress)
-        {
-            return;
+                    if (sender is Window { Icon: null } window)
+                    {
+                        window.Icon = appIcon;
+                    }
+                }));
+            if (AppContext.TryGetSwitch(SuppressCoordinatorStartupSwitch, out var suppress) && suppress)
+            {
+                return;
+            }
+            var interactiveQa = e.Args.Contains(
+                "--interactive-qa",
+                StringComparer.OrdinalIgnoreCase);
+            var dataDirectory = interactiveQa
+                ? Path.Combine(Path.GetTempPath(), "BingLanWidgets-InteractiveQa")
+                : null;
+            if (e.Args.Contains("--restore-taskbar", StringComparer.OrdinalIgnoreCase))
+            {
+                // Used by an uninstaller or by hand: undo taskbar and desktop icon changes
+                // left by a crash.
+                var directory = new Core.Services.LocalStateStore(dataDirectory).DataDirectory;
+                var taskbarRestored = Taskbar.TaskbarAdapter.RecoverFromCheckpoint(
+                    WidgetCoordinator.TaskbarCheckpointPath(directory));
+                var iconsRestored = Services.CleanDesktopAdapter.RecoverNow(
+                    WidgetCoordinator.CleanDesktopCheckpointPath(directory));
+                Shutdown(taskbarRestored && iconsRestored ? 0 : 1);
+                return;
+            }
+            var instanceName = interactiveQa
+                ? InteractiveQaInstanceName
+                : ProductionInstanceName;
+            var replace = e.Args.Contains(ReplaceInstanceSwitch, StringComparer.OrdinalIgnoreCase);
+            if (replace)
+            {
+                SignalRunningInstanceToExit(instanceName);
+            }
+            if (!TryAcquireInstance(
+                    instanceName,
+                    replace || e.Args.Contains(WaitForPreviousInstanceSwitch, StringComparer.OrdinalIgnoreCase)))
+            {
+                Shutdown();
+                return;
+            }
+            _coordinator = new WidgetCoordinator(interactiveQa, dataDirectory, showOnboarding: true);
+            _coordinator.Start();
+            _startupCompleted = true;
+            if (interactiveQa && e.Args.Contains("--open-launcher", StringComparer.OrdinalIgnoreCase))
+            {
+                Dispatcher.BeginInvoke(_coordinator.ToggleLauncherPanel,
+                    System.Windows.Threading.DispatcherPriority.ApplicationIdle);
+            }
+            SessionEnding += (_, _) => _coordinator?.OnQueryEndSession();
+            ListenForExitSignal(instanceName);
         }
-        var interactiveQa = e.Args.Contains(
-            "--interactive-qa",
-            StringComparer.OrdinalIgnoreCase);
-        var dataDirectory = interactiveQa
-            ? Path.Combine(Path.GetTempPath(), "BingLanWidgets-InteractiveQa")
-            : null;
-        if (e.Args.Contains("--restore-taskbar", StringComparer.OrdinalIgnoreCase))
+        catch (Exception ex)
         {
-            // Used by an uninstaller or by hand: undo taskbar and desktop icon changes
-            // left by a crash.
-            var directory = new Core.Services.LocalStateStore(dataDirectory).DataDirectory;
-            var taskbarRestored = Taskbar.TaskbarAdapter.RecoverFromCheckpoint(
-                WidgetCoordinator.TaskbarCheckpointPath(directory));
-            var iconsRestored = Services.CleanDesktopAdapter.RecoverNow(
-                WidgetCoordinator.CleanDesktopCheckpointPath(directory));
-            Shutdown(taskbarRestored && iconsRestored ? 0 : 1);
-            return;
+            Services.StartupLog.WriteCrash("Startup", ex);
+            Shutdown(1);
         }
-        var instanceName = interactiveQa
-            ? InteractiveQaInstanceName
-            : ProductionInstanceName;
-        var replace = e.Args.Contains(ReplaceInstanceSwitch, StringComparer.OrdinalIgnoreCase);
-        if (replace)
-        {
-            SignalRunningInstanceToExit(instanceName);
-        }
-        if (!TryAcquireInstance(
-                instanceName,
-                replace || e.Args.Contains(WaitForPreviousInstanceSwitch, StringComparer.OrdinalIgnoreCase)))
-        {
-            Shutdown();
-            return;
-        }
-        _coordinator = new WidgetCoordinator(interactiveQa, dataDirectory, showOnboarding: true);
-        _coordinator.Start();
-        if (interactiveQa && e.Args.Contains("--open-launcher", StringComparer.OrdinalIgnoreCase))
-        {
-            Dispatcher.BeginInvoke(_coordinator.ToggleLauncherPanel,
-                System.Windows.Threading.DispatcherPriority.ApplicationIdle);
-        }
-        SessionEnding += (_, _) => _coordinator?.OnQueryEndSession();
-        ListenForExitSignal(instanceName);
+    }
+
+    private void RegisterCrashHandlers()
+    {
+        AppDomain.CurrentDomain.UnhandledException += (_, args) =>
+            Services.StartupLog.WriteCrash(
+                args.IsTerminating ? "AppDomain.Fatal" : "AppDomain",
+                args.ExceptionObject);
         // Once running, one failed action (a shell call, a damaged file) is logged and
-        // reported instead of closing every card; startup failures still end the process.
+        // reported instead of closing every card; startup failures are logged and exit cleanly.
         DispatcherUnhandledException += (_, args) =>
         {
-            Services.StartupLog.Write($"未处理异常：{args.Exception}");
-            args.Handled = true;
-            _coordinator?.ReportFailedAction();
+            Services.StartupLog.WriteCrash("Dispatcher", args.Exception);
+            if (_startupCompleted)
+            {
+                args.Handled = true;
+                _coordinator?.ReportFailedAction();
+            }
         };
         TaskScheduler.UnobservedTaskException += (_, args) =>
         {
-            Services.StartupLog.Write($"未观察的后台异常：{args.Exception}");
+            Services.StartupLog.WriteCrash("TaskScheduler", args.Exception);
             args.SetObserved();
         };
     }

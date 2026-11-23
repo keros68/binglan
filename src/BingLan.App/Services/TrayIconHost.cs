@@ -215,47 +215,54 @@ internal sealed class TrayIconHost : IDisposable
 
     private nint WindowProc(nint hwnd, uint message, nint wParam, nint lParam)
     {
-        if (message == WmQueryEndSession)
+        try
         {
-            return 1;
-        }
-
-        if (message == WmEndSession && !_disposed)
-        {
-            SessionEndingResolved?.Invoke(wParam != 0);
-            return 0;
-        }
-
-        if (!_disposed && TaskbarCreatedMessage != 0 && message == TaskbarCreatedMessage)
-        {
-            _added = false;
-            if (_visible)
+            if (message == WmQueryEndSession)
             {
-                AddOrUpdateShellIcon(forceAdd: true);
+                return 1;
             }
-            return 0;
-        }
 
-        if (message == WmTrayCallback && !_disposed)
-        {
-            var notification = (int)(lParam & 0xFFFF);
-            switch (notification)
+            if (message == WmEndSession && !_disposed)
             {
-                case WmLeftButtonDoubleClick:
-                    _dispatcher.BeginInvoke(InvokeDoubleClick);
-                    return 0;
-                case WmRightButtonUp:
-                case WmContextMenu:
-                    _dispatcher.BeginInvoke(ShowContextMenu);
-                    return 0;
-                case NinBalloonUserClick:
-                    _dispatcher.BeginInvoke(() => BalloonTipClicked?.Invoke(this, EventArgs.Empty));
-                    return 0;
-                case NinBalloonHide:
-                case NinBalloonTimeout:
-                    _dispatcher.BeginInvoke(() => BalloonTipClosed?.Invoke(this, EventArgs.Empty));
-                    return 0;
+                SessionEndingResolved?.Invoke(wParam != 0);
+                return 0;
             }
+
+            if (!_disposed && TaskbarCreatedMessage != 0 && message == TaskbarCreatedMessage)
+            {
+                _added = false;
+                if (_visible)
+                {
+                    AddOrUpdateShellIcon(forceAdd: true);
+                }
+                return 0;
+            }
+
+            if (message == WmTrayCallback && !_disposed)
+            {
+                var notification = (int)(lParam & 0xFFFF);
+                switch (notification)
+                {
+                    case WmLeftButtonDoubleClick:
+                        _dispatcher.BeginInvoke(InvokeDoubleClick);
+                        return 0;
+                    case WmRightButtonUp:
+                    case WmContextMenu:
+                        _dispatcher.BeginInvoke(ShowContextMenu);
+                        return 0;
+                    case NinBalloonUserClick:
+                        _dispatcher.BeginInvoke(() => BalloonTipClicked?.Invoke(this, EventArgs.Empty));
+                        return 0;
+                    case NinBalloonHide:
+                    case NinBalloonTimeout:
+                        _dispatcher.BeginInvoke(() => BalloonTipClosed?.Invoke(this, EventArgs.Empty));
+                        return 0;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            StartupLog.WriteCrash("TrayIconHost.WindowProc", ex);
         }
 
         return NativeMethods.DefWindowProc(hwnd, message, wParam, lParam);

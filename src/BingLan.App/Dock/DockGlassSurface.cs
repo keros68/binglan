@@ -30,7 +30,8 @@ internal sealed class DockGlassSurface : IDisposable
     private readonly Border _surface;
     private readonly string _fillKey;
     private readonly string _strokeKey;
-    private readonly bool _fullTintOpacity;
+    private bool _fullTintOpacity;
+    private bool _frostedGlass = true;
     private HwndSource? _source;
     private DockCompositionBackdrop? _backdrop;
     private bool _failed;
@@ -39,8 +40,9 @@ internal sealed class DockGlassSurface : IDisposable
     private bool _tracking;
     private bool _usingGlassFill;
     private bool _clearMode;
-    private (Rect Rect, double RadiusX, double RadiusY, double Opacity, Color Fill, Color Stroke)? _lastVisual;
+    private (Rect Rect, double RadiusX, double RadiusY, double Opacity, Color Fill, Color Stroke, bool FullTint)? _lastVisual;
     private bool _transparency = ReadTransparency();
+    private bool _batterySaver = ReadBatterySaver();
 
     internal DockGlassSurface(Window window, Border surface, string fillKey, string strokeKey, string? glassFillKey = null,
         bool fullTintOpacity = false)
@@ -84,6 +86,30 @@ internal sealed class DockGlassSurface : IDisposable
         Sync(true);
     }
 
+    internal void SetFrostedGlass(bool enabled)
+    {
+        if (_frostedGlass == enabled) return;
+        _frostedGlass = enabled;
+        if (!enabled)
+        {
+            Release();
+        }
+        else
+        {
+            _failed = false;
+            _lastVisual = null;
+        }
+        Sync(true);
+    }
+
+    internal void SetFullTintOpacity(bool fullTintOpacity)
+    {
+        if (_fullTintOpacity == fullTintOpacity) return;
+        _fullTintOpacity = fullTintOpacity;
+        _lastVisual = null;
+        Sync();
+    }
+
     internal void TrackAnimation(bool active)
     {
         if (_disposed) return;
@@ -120,11 +146,19 @@ internal sealed class DockGlassSurface : IDisposable
     private void ThemeChanged(object? sender, EventArgs e) => Sync();
     private void PowerModeChanged(object sender, PowerModeChangedEventArgs e)
     {
-        if (e.Mode == PowerModes.Resume)
+        if (e.Mode is PowerModes.Resume or PowerModes.StatusChange)
         {
             _window.Dispatcher.BeginInvoke(() =>
             {
-                _failed = false;
+                if (_disposed)
+                {
+                    return;
+                }
+                if (e.Mode == PowerModes.Resume)
+                {
+                    _failed = false;
+                }
+                _batterySaver = ReadBatterySaver();
                 _lastVisual = null;
                 Sync(true);
             });
@@ -141,6 +175,7 @@ internal sealed class DockGlassSurface : IDisposable
                 _failed = false;
             }
             _transparency = ReadTransparency();
+            _batterySaver = ReadBatterySaver();
             _lastVisual = null;
             Sync(true);
         }
@@ -175,9 +210,14 @@ internal sealed class DockGlassSurface : IDisposable
             var fill = _surface.GetValue(FillProperty) as SolidColorBrush;
             var glassFill = _surface.GetValue(GlassFillProperty) as SolidColorBrush ?? fill;
             var stroke = _surface.GetValue(StrokeProperty) as SolidColorBrush;
-            if (!OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000)
-                || !_transparency || AccessibilityThemeManager.IsHighContrastEnabled || SystemParameters.HighContrast
-                || glassFill is null || glassFill.Color.A == 0)
+            if (glassFill is null
+                || !DockGlassRules.ShouldUseCompositionBackdrop(
+                    OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000),
+                    _frostedGlass,
+                    _transparency,
+                    _batterySaver,
+                    AccessibilityThemeManager.IsHighContrastEnabled || SystemParameters.HighContrast,
+                    glassFill.Color.A))
             {
                 Release();
                 return;
@@ -233,11 +273,18 @@ internal sealed class DockGlassSurface : IDisposable
                 : rect;
             _backdrop ??= new DockCompositionBackdrop();
             var visual = (Rect: visualRect, RadiusX: radiusX, RadiusY: radiusY,
-                Opacity: _surface.Opacity * _window.Opacity, Fill: glassFill.Color, Stroke: stroke?.Color ?? Colors.Transparent);
+                Opacity: _surface.Opacity * _window.Opacity, Fill: glassFill.Color, Stroke: stroke?.Color ?? Colors.Transparent,
+                FullTint: _fullTintOpacity);
             if (_lastVisual != visual)
             {
-                _backdrop.Update(visual.Rect, visual.RadiusX, visual.RadiusY, visual.Opacity, visual.Fill, visual.Stroke,
-                    _fullTintOpacity ? 1.0d : 0.24d);
+                _backdrop.Update(
+                    visual.Rect,
+                    visual.RadiusX,
+                    visual.RadiusY,
+                    visual.Opacity,
+                    visual.Fill,
+                    visual.Stroke,
+                    DockGlassRules.ComputeBackdropTintAlpha(visual.Fill.A, visual.FullTint));
                 _lastVisual = visual;
             }
             // Alpha 1 retains native layered-window hit testing over the whole surface.
@@ -283,6 +330,20 @@ internal sealed class DockGlassSurface : IDisposable
             return key?.GetValue("EnableTransparency") is not int value || value != 0;
         }
         catch { return false; }
+    }
+
+    private static bool ReadBatterySaver()
+    {
+        try
+        {
+            var status = default(TopBarNativeMethods.SystemPowerStatus);
+            return TopBarNativeMethods.GetSystemPowerStatus(ref status)
+                && (status.SystemStatusFlag & 1) != 0;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     public void Dispose()

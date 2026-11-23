@@ -3122,6 +3122,7 @@ public partial class SettingsWindow : Window
         _loadingDockLook = true;
         try
         {
+            DockFrostedCheckBox.IsChecked = _dockState.FrostedGlass;
             DockFollowLookRadio.IsChecked = _dockState.FollowCardLook;
             DockCustomLookRadio.IsChecked = !_dockState.FollowCardLook;
             DockCustomLookPanel.IsEnabled = !_dockState.FollowCardLook;
@@ -3155,6 +3156,17 @@ public partial class SettingsWindow : Window
         _dockState.FollowCardLook = DockFollowLookRadio.IsChecked == true;
         ApplyDockChange(_dockState.FollowCardLook ? "Dock 跟随卡片外观" : "Dock 使用自定义外观");
         LoadDockLook();
+    }
+
+    private void DockFrosted_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_loadingDockLook || _loadingDock || DockFrostedCheckBox is null)
+        {
+            return;
+        }
+
+        _dockState.FrostedGlass = DockFrostedCheckBox.IsChecked == true;
+        ApplyDockChange(_dockState.FrostedGlass ? "已开启 Dock 实时毛玻璃" : "已关闭 Dock 实时毛玻璃，改用半透明纯色");
     }
 
     private void DockOpacity_Changed(object sender, RoutedPropertyChangedEventArgs<double> e)

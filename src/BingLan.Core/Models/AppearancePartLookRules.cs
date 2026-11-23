@@ -80,6 +80,8 @@ public static class AppearancePartLookRules
         // Dock look controls moved from DockPage
         ["AppearanceDockPartRow"] = AppearancePartKind.Dock,
         ["AppearanceDockPartEditor"] = AppearancePartKind.Dock,
+        ["DockFrostedRow"] = AppearancePartKind.Dock,
+        ["DockFrostedCheckBox"] = AppearancePartKind.Dock,
         ["DockLookSettingsRow"] = AppearancePartKind.Dock,
         ["DockFollowLookRadio"] = AppearancePartKind.Dock,
         ["DockCustomLookRadio"] = AppearancePartKind.Dock,

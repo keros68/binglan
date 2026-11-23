@@ -10,10 +10,19 @@ internal sealed class DockCompositionBackdrop : IDisposable
 {
     private static readonly NativeMethods.WindowProcedure Procedure = WindowProc;
     private static bool _classRegistered;
+    private static volatile bool _sessionEnding;
+    private readonly int _ownerThreadId = Environment.CurrentManagedThreadId;
     private nint _window;
     private nint _compositionState;
     private PixelRect? _bounds;
     private bool? _topmost;
+
+    /// <summary>
+    /// Marks that Windows is ending the user session so teardown skips calling
+    /// <c>Compositor.Close()</c> while CoreMessaging/STA may already be tearing down
+    /// (which otherwise raises CoreUIComponents 0xC0000602 / Unknown Hard Error).
+    /// </summary>
+    internal static void MarkSessionEnding() => _sessionEnding = true;
 
     internal DockCompositionBackdrop()
     {
@@ -92,7 +101,7 @@ internal sealed class DockCompositionBackdrop : IDisposable
     }
 
     internal void Update(System.Windows.Rect rect, double radiusX, double radiusY, double opacity, Color fill, Color border,
-        double tintScale = 0.24d)
+        byte tintAlpha)
     {
         if (_compositionState == 0)
         {
@@ -107,7 +116,7 @@ internal sealed class DockCompositionBackdrop : IDisposable
             (float)radiusX,
             (float)radiusY,
             (float)Math.Clamp(opacity, 0, 1),
-            (byte)Math.Clamp(Math.Round(fill.A * tintScale), 0, 255),
+            tintAlpha,
             fill.R,
             fill.G,
             fill.B,
@@ -120,15 +129,25 @@ internal sealed class DockCompositionBackdrop : IDisposable
     public void Dispose()
     {
         IsShown = false;
+        var sameThread = Environment.CurrentManagedThreadId == _ownerThreadId;
+        var skipCompositionClose = _sessionEnding || Environment.HasShutdownStarted || !sameThread;
         if (_compositionState != 0)
         {
-            BingLanBackdrop_Destroy(_compositionState);
+            var state = _compositionState;
             _compositionState = 0;
+            if (!skipCompositionClose)
+            {
+                BingLanBackdrop_Destroy(state);
+            }
         }
         if (_window != 0)
         {
-            NativeMethods.DestroyWindow(_window);
+            var hwnd = _window;
             _window = 0;
+            if (sameThread)
+            {
+                NativeMethods.DestroyWindow(hwnd);
+            }
         }
     }
 

@@ -21,8 +21,10 @@ internal static class DockHandleTests
         var handle = new DockHandleWindow();
         var dragStarted = 0;
         var dragEnded = 0;
+        var clicked = 0;
         handle.DragStarted += () => dragStarted++;
         handle.DragEnded += () => dragEnded++;
+        handle.Clicked += () => clicked++;
         show(handle);
         try
         {
@@ -72,12 +74,19 @@ internal static class DockHandleTests
                 throw new InvalidOperationException("松手后应触发一次拖动结束");
             }
 
-            // 按下即松开、无位移的单击不触发位置提交。
+            // 按下即松开、无位移的单击不触发位置提交，仅在正常释放时触发点击唤出。
             handle.BeginDrag(700, 522);
-            handle.EndDrag();
-            if (dragEnded != 1)
+            handle.EndDrag(allowClick: false);
+            if (dragEnded != 1 || clicked != 0)
             {
-                throw new InvalidOperationException("无位移的单击不应触发拖动结束");
+                throw new InvalidOperationException("捕获丢失导致的无位移结束不应触发拖动结束或点击");
+            }
+
+            handle.BeginDrag(700, 522);
+            handle.EndDrag(allowClick: true);
+            if (dragEnded != 1 || clicked != 1)
+            {
+                throw new InvalidOperationException("无位移的正常单击应触发一次 Clicked 而不触发拖动结束");
             }
 
             handle.SetVisible(false);

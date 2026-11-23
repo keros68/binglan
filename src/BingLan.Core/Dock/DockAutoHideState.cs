@@ -19,7 +19,33 @@ public sealed class DockAutoHideState
 {
     public static readonly TimeSpan HideDelay = TimeSpan.FromMilliseconds(600);
 
+    /// <summary>
+    /// Brief window after the pointer hovers or clicks the corner handle so the user can
+    /// travel from the corner handle to the centred dock without a maximized foreground
+    /// window collapsing the dock mid-way.
+    /// </summary>
+    public static readonly TimeSpan HandleRevealGrace = TimeSpan.FromMilliseconds(2200);
+
     private DateTimeOffset? _hideRequestedAt;
+
+    /// <summary>
+    /// Updates the deadline that keeps a handle-revealed dock visible while the pointer
+    /// moves from the handle toward the centred dock strip.
+    /// </summary>
+    public static DateTimeOffset UpdateHandleRevealDeadline(
+        DateTimeOffset currentDeadline,
+        DateTimeOffset now,
+        bool revealedFromHandle,
+        bool pointerOverStrip,
+        bool clearRequested)
+    {
+        if (clearRequested || pointerOverStrip)
+        {
+            return DateTimeOffset.MinValue;
+        }
+
+        return revealedFromHandle ? now + HandleRevealGrace : currentDeadline;
+    }
 
     /// <summary>
     /// The overlap the state machine sees: with the dock set to stay tucked away it always

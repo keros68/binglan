@@ -213,25 +213,32 @@ internal sealed class DesktopDoubleClickWatcher : IDisposable
 
     private nint WndProc(nint hwnd, uint message, nint wParam, nint lParam)
     {
-        if (message == DesktopDoubleClickNativeMethods.WmInput)
+        try
         {
-            HandleRawInput(lParam);
-            return NativeMethods.DefWindowProc(hwnd, message, wParam, lParam);
-        }
+            if (message == DesktopDoubleClickNativeMethods.WmInput)
+            {
+                HandleRawInput(lParam);
+                return NativeMethods.DefWindowProc(hwnd, message, wParam, lParam);
+            }
 
-        if (message == DesktopDoubleClickNativeMethods.WmClose)
-        {
-            UnregisterRawInput();
-            _ = NativeMethods.DestroyWindow(hwnd);
-            return 0;
-        }
+            if (message == DesktopDoubleClickNativeMethods.WmClose)
+            {
+                UnregisterRawInput();
+                _ = NativeMethods.DestroyWindow(hwnd);
+                return 0;
+            }
 
-        if (message == DesktopDoubleClickNativeMethods.WmNcDestroy)
+            if (message == DesktopDoubleClickNativeMethods.WmNcDestroy)
+            {
+                UnregisterRawInput();
+                Interlocked.Exchange(ref _hwnd, 0);
+                DesktopDoubleClickNativeMethods.PostQuitMessage(0);
+                return 0;
+            }
+        }
+        catch (Exception ex)
         {
-            UnregisterRawInput();
-            Interlocked.Exchange(ref _hwnd, 0);
-            DesktopDoubleClickNativeMethods.PostQuitMessage(0);
-            return 0;
+            StartupLog.WriteCrash("DesktopDoubleClickWatcher.WndProc", ex);
         }
 
         return NativeMethods.DefWindowProc(hwnd, message, wParam, lParam);

@@ -15,7 +15,8 @@ internal static class TopBarNativeMethods
         internal byte AcLineStatus;
         internal byte BatteryFlag;
         internal byte BatteryLifePercent;
-        internal byte Reserved1;
+        // Windows 10/11 SystemStatusFlag: bit 0 is set while Battery Saver is on.
+        internal byte SystemStatusFlag;
         internal int BatteryLifeTime;
         internal int BatteryFullLifeTime;
     }
