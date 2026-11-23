@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Interop;
@@ -2935,7 +2936,6 @@ public partial class SettingsWindow : Window
         LoadDesktopMode();
     }
 
-    private void LoadDockSettings()
 
     // The Dock page names the screen edge the Dock sits on, so its wording follows the setting.
     private void ApplyDockEdgeWording(DockEdge edge)
@@ -2952,6 +2952,7 @@ public partial class SettingsWindow : Window
         DockMaximizeReleaseRow.Description = DockEdgeWording.MaximizeReleaseDescription(edge);
         AutomationProperties.SetName(DockMaximizeReleaseCheckBox, DockEdgeWording.MaximizeReleaseHeader(edge));
     }
+    private void LoadDockSettings()
     {
         _loadingDock = true;
         try
@@ -2984,8 +2985,8 @@ public partial class SettingsWindow : Window
                 .OfType<ComboBoxItem>()
                 .FirstOrDefault(item => string.Equals((string)item.Tag, normalizedEdge.ToString(), StringComparison.Ordinal))
                 ?? DockEdgeComboBox.Items.OfType<ComboBoxItem>().First();
-            DockStartMenuButtonCheckBox.IsChecked = _dockState.ShowStartMenuButton;
             ApplyDockEdgeWording(normalizedEdge);
+            DockStartMenuButtonCheckBox.IsChecked = _dockState.ShowStartMenuButton;
             DockLauncherButtonCheckBox.IsChecked = _dockState.ShowLauncherButton;
             DockShowDesktopButtonCheckBox.IsChecked = _dockState.ShowDesktopButton;
             DockBottomGapSlider.Value = _dockState.BottomGapDip;
@@ -3089,8 +3090,8 @@ public partial class SettingsWindow : Window
             && Enum.TryParse<DockEdge>(edgeTag, out var dockEdge))
         {
             _dockState.Edge = DockEdgeRules.Normalize(dockEdge);
-        }
             ApplyDockEdgeWording(_dockState.Edge);
+        }
         _dockState.ShowStartMenuButton = DockStartMenuButtonCheckBox.IsChecked == true;
         _dockState.ShowLauncherButton = DockLauncherButtonCheckBox.IsChecked == true;
         _dockState.ShowDesktopButton = DockShowDesktopButtonCheckBox.IsChecked == true;
