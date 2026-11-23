@@ -2574,6 +2574,26 @@
                                                       Checked="DockSetting_Changed"
                                                       Unchecked="DockSetting_Changed"/>
                                         </local:SettingsRow>
+                                        <local:SettingsRow x:Name="DockAutoHideAlwaysRow"
+                                                           Header="始终自动隐藏"
+                                                           Description="仅智能隐藏下有效。开启后 Dock 平时一直收起，只有鼠标碰到屏幕边缘或把手时才出现；关闭时只在被窗口挡住时收起"
+                                                           local:SettingsSearch.Keywords="自动隐藏 一直隐藏 总是弹出 自己弹出">
+                                            <CheckBox x:Name="DockAutoHideAlwaysCheckBox"
+                                                      AutomationProperties.Name="Dock 始终自动隐藏"
+                                                      Style="{StaticResource ToggleSwitchStyle}"
+                                                      Checked="DockSetting_Changed"
+                                                      Unchecked="DockSetting_Changed"/>
+                                        </local:SettingsRow>
+                                        <local:SettingsRow x:Name="DockRevealOnAttentionRow"
+                                                           Header="有新消息时临时弹出 Dock"
+                                                           Description="仅智能隐藏下有效。开启后，应用闪烁提醒时（如聊天软件来消息）已收起的 Dock 会弹出几秒；关闭时标记只显示在图标上，下次出现 Dock 时可见"
+                                                           local:SettingsSearch.Keywords="新消息 闪烁 弹出 提醒 微信">
+                                            <CheckBox x:Name="DockRevealOnAttentionCheckBox"
+                                                      AutomationProperties.Name="有新消息时临时弹出 Dock"
+                                                      Style="{StaticResource ToggleSwitchStyle}"
+                                                      Checked="DockSetting_Changed"
+                                                      Unchecked="DockSetting_Changed"/>
+                                        </local:SettingsRow>
                                         <local:SettingsRow Header="唤出方式"
                                                            Description="Dock 隐藏后如何重新显示。原生任务栏一直显示时，鼠标停在任务栏上不会唤出 Dock：默认用把手唤出；选“只用屏幕底边”则不显示把手，把鼠标推到屏幕最底边唤出">
                                             <ComboBox x:Name="DockRevealModeComboBox"

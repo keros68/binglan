@@ -588,7 +588,7 @@ public partial class IceBlueDockWindow : Window
         };
         if (changed)
         {
-            if ((int)wParam == HshellFlash && UsesSmartHide)
+            if ((int)wParam == HshellFlash && UsesSmartHide && _state.RevealOnAttention)
             {
                 // A hidden dock shows itself briefly so the mark is seen.
                 _attentionRevealUntil = DateTimeOffset.UtcNow + AttentionReveal;
@@ -2649,7 +2649,9 @@ public partial class IceBlueDockWindow : Window
             // this monitor is guaranteed to take over the strip the moment the
             // reservation releases — count it as overlap before its animated resize
             // has covered the pixels, or the collapse would lag the maximize click.
-            WindowOverlapsDock: overlaps || maximizedOnDockMonitor,
+            WindowOverlapsDock: DockAutoHideState.TreatAsOverlapping(
+                _state.AutoHideAlways,
+                overlaps || maximizedOnDockMonitor),
             ForegroundIsFullScreen: trueFullScreen,
             PointerInRevealZone: edgeReveal != DockEdgeReveal.None
                 && DockRevealRules.IsInRevealZone(
@@ -2710,7 +2712,8 @@ public partial class IceBlueDockWindow : Window
                 && !(cursor.X >= _expandedRect.Left && cursor.X < _expandedRect.Right
                     && cursor.Y >= _expandedRect.Top && cursor.Y < _expandedRect.Bottom);
             if (_handleExpanded && !_morph.IsCollapsing
-                && (!_autoHide.IsShown || (pointerLeftDock && !overlaps)))
+                && (!_autoHide.IsShown
+                    || (pointerLeftDock && !DockAutoHideState.TreatAsOverlapping(_state.AutoHideAlways, overlaps))))
             {
                 // A collapse flight owns the expanded placement until it completes;
                 // this branch only serves the still-shown strip jump.

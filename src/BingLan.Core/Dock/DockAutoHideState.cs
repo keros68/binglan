@@ -21,6 +21,13 @@ public sealed class DockAutoHideState
 
     private DateTimeOffset? _hideRequestedAt;
 
+    /// <summary>
+    /// The overlap the state machine sees: with the dock set to stay tucked away it always
+    /// counts as covered, so only the pointer or an interaction brings it back.
+    /// </summary>
+    public static bool TreatAsOverlapping(bool autoHideAlways, bool windowOverlapsDock) =>
+        autoHideAlways || windowOverlapsDock;
+
     public bool IsShown { get; private set; } = true;
 
     public bool Update(DockAutoHideInput input, DateTimeOffset now)

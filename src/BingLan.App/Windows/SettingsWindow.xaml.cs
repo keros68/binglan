@@ -2977,6 +2977,10 @@ public partial class SettingsWindow : Window
             DockMaximizeReleaseCheckBox.IsChecked = _dockState.ReleaseWhenMaximized;
             DockMaximizeReleaseRow.IsEnabled =
                 _dockState.VisibilityMode == DockVisibilityMode.ReserveWorkArea;
+            DockAutoHideAlwaysCheckBox.IsChecked = _dockState.AutoHideAlways;
+            DockRevealOnAttentionCheckBox.IsChecked = _dockState.RevealOnAttention;
+            DockAutoHideAlwaysRow.IsEnabled = DockRevealOnAttentionRow.IsEnabled =
+                _dockState.VisibilityMode == DockVisibilityMode.SmartHide;
             DockRevealModeComboBox.SelectedItem = DockRevealModeComboBox.Items
                 .OfType<ComboBoxItem>()
                 .First(item => (string)item.Tag == _dockState.RevealMode.ToString());
@@ -3052,7 +3056,8 @@ public partial class SettingsWindow : Window
 
     private void DockSetting_Changed(object sender, RoutedEventArgs e)
     {
-        if (_loadingDock || DockEnabledCheckBox is null || DockMonitorComboBox is null || DockMaximizeReleaseRow is null)
+        if (_loadingDock || DockEnabledCheckBox is null || DockMonitorComboBox is null || DockMaximizeReleaseRow is null
+            || DockAutoHideAlwaysCheckBox is null || DockRevealOnAttentionCheckBox is null)
         {
             return;
         }
@@ -3081,6 +3086,10 @@ public partial class SettingsWindow : Window
         _dockState.ReleaseWhenMaximized = DockMaximizeReleaseCheckBox.IsChecked == true;
         DockMaximizeReleaseRow.IsEnabled =
             _dockState.VisibilityMode == DockVisibilityMode.ReserveWorkArea;
+        _dockState.AutoHideAlways = DockAutoHideAlwaysCheckBox.IsChecked == true;
+        _dockState.RevealOnAttention = DockRevealOnAttentionCheckBox.IsChecked == true;
+        DockAutoHideAlwaysRow.IsEnabled = DockRevealOnAttentionRow.IsEnabled =
+            _dockState.VisibilityMode == DockVisibilityMode.SmartHide;
         if (DockRevealModeComboBox?.SelectedItem is ComboBoxItem { Tag: string revealTag }
             && Enum.TryParse<DockRevealMode>(revealTag, out var revealMode))
         {

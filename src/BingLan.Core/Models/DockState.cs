@@ -121,6 +121,19 @@ public sealed class DockState
     /// </summary>
     public bool ReleaseWhenMaximized { get; set; }
 
+    /// <summary>
+    /// Whether smart hide keeps the dock tucked away until the pointer reaches its edge
+    /// or handle, instead of hiding it only while a window covers it. Off by default.
+    /// </summary>
+    public bool AutoHideAlways { get; set; }
+
+    /// <summary>
+    /// Whether a hidden dock shows itself for a few seconds when an app flashes for
+    /// attention, so the mark is seen. Off by default: the mark stays on the app's icon
+    /// and shows with the dock, and chat apps that flash often no longer pop it up.
+    /// </summary>
+    public bool RevealOnAttention { get; set; }
+
     public DockRevealMode RevealMode { get; set; } = DockRevealMode.EdgeAndHandle;
 
     /// <summary>

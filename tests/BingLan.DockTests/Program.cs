@@ -47,6 +47,7 @@ Run("移动固定项顺序", TestDockMove);
 Run("固定状态规范化", TestDockNormalize);
 Run("Dock 自动隐藏初始为显示", TestDockAutoHideStartsShown);
 Run("无重叠时保持显示", TestDockAutoHideNoOverlapStaysShown);
+Run("始终自动隐藏：无重叠也收起，指针到边缘才出现", TestDockAutoHideAlways);
 Run("重叠超过延迟后才隐藏且仅触发一次", TestDockAutoHideDelay);
 Run("指针进入唤出区域应立即显示并重置计时器", TestDockAutoHidePointerRevealResetsTimer);
 Run("指针悬停在 Dock 上应立即显示", TestDockAutoHidePointerOverDockShowsImmediately);
@@ -1220,6 +1221,32 @@ static void TestDockAutoHideNoOverlapStaysShown()
     var changed = state.Update(new DockAutoHideInput(false, false, false, false, false, false), now);
     Assert(!changed, "无重叠时不应触发状态变化");
     Assert(state.IsShown, "无重叠时应保持显示");
+}
+
+static void TestDockAutoHideAlways()
+{
+    var state = new DockAutoHideState();
+    var t0 = DateTimeOffset.UtcNow;
+    Assert(!DockAutoHideState.TreatAsOverlapping(false, false), "未开启时无窗口重叠不应视为被遮挡");
+    Assert(DockAutoHideState.TreatAsOverlapping(false, true), "未开启时窗口重叠仍视为被遮挡");
+    Assert(DockAutoHideState.TreatAsOverlapping(true, false), "开启后无窗口重叠也应视为被遮挡");
+
+    var idle = new DockAutoHideInput(
+        DockAutoHideState.TreatAsOverlapping(true, false), false, false, false, false, false);
+    Assert(!state.Update(idle, t0), "开启后应先经过隐藏延迟");
+    Assert(state.Update(idle, t0 + DockAutoHideState.HideDelay), "开启后无窗口重叠也应在延迟后收起");
+    Assert(!state.IsShown, "收起后应处于隐藏状态");
+
+    var atEdge = new DockAutoHideInput(
+        DockAutoHideState.TreatAsOverlapping(true, false), false, true, false, false, false);
+    Assert(state.Update(atEdge, t0 + DockAutoHideState.HideDelay), "指针到屏幕边缘应唤出");
+    Assert(state.IsShown, "唤出后应显示");
+    var away = new DockAutoHideInput(
+        DockAutoHideState.TreatAsOverlapping(true, false), false, false, false, false, false);
+    Assert(!state.Update(away, t0 + DockAutoHideState.HideDelay), "指针离开后重新计时");
+    Assert(
+        state.Update(away, t0 + DockAutoHideState.HideDelay + DockAutoHideState.HideDelay),
+        "指针离开一个延迟后应再次收起");
 }
 
 static void TestDockAutoHideDelay()
