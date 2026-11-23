@@ -89,7 +89,7 @@
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="*"/>
             </Grid.RowDefinitions>
-            <DockPanel x:Name="ModuleHeader">
+            <DockPanel x:Name="ModuleHeader" LastChildFill="False">
                 <StackPanel x:Name="RightModules"
                             DockPanel.Dock="Right"
                             Orientation="Horizontal"/>
