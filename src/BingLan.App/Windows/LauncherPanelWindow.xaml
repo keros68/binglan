@@ -437,6 +437,7 @@
             <Setter Property="Foreground" Value="{DynamicResource FloatingGlassInkBrush}" />
             <Setter Property="AutomationProperties.Name" Value="{Binding Name}" />
             <Setter Property="ToolTip" Value="{Binding Location}" />
+            <Setter Property="Tag" Value="{Binding Tag, RelativeSource={RelativeSource AncestorType=ListBox}}" />
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="ListBoxItem">
@@ -449,13 +450,13 @@
                                 <Setter TargetName="Tile" Property="BorderBrush" Value="{DynamicResource FloatingGlassControlBorderBrush}" />
                             </Trigger>
                             <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Tile" Property="BorderBrush" Value="{DynamicResource FloatingGlassFocusBrush}" /></Trigger>
-                            <MultiDataTrigger>
-                                <MultiDataTrigger.Conditions>
-                                    <Condition Binding="{Binding IsSelected, RelativeSource={RelativeSource Self}}"><Condition.Value><sys:Boolean>True</sys:Boolean></Condition.Value></Condition>
-                                    <Condition Binding="{Binding Tag, RelativeSource={RelativeSource AncestorType=ListBox}}"><Condition.Value><sys:Boolean>True</sys:Boolean></Condition.Value></Condition>
-                                </MultiDataTrigger.Conditions>
+                            <MultiTrigger>
+                                <MultiTrigger.Conditions>
+                                    <Condition Property="IsSelected" Value="True" />
+                                    <Condition Property="Tag"><Condition.Value><sys:Boolean>True</sys:Boolean></Condition.Value></Condition>
+                                </MultiTrigger.Conditions>
                                 <Setter TargetName="Tile" Property="BorderBrush" Value="{DynamicResource FloatingGlassFocusBrush}" />
-                            </MultiDataTrigger>
+                            </MultiTrigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
