@@ -2312,7 +2312,8 @@
                         </Grid.ColumnDefinitions>
                         <StackPanel>
                             <TextBlock Style="{StaticResource PageTitleStyle}" Text="冰蓝 Dock"/>
-                            <TextBlock Style="{StaticResource PageSubtitleStyle}"
+                            <TextBlock x:Name="DockPageSubtitleText"
+                                       Style="{StaticResource PageSubtitleStyle}"
                                        Text="屏幕底部的应用栏：显示哪些应用、怎么出现、多大。"/>
                         </StackPanel>
                         <Button x:Name="DockRestoreModeButton"
@@ -2455,7 +2456,7 @@
                                 <Expander.Header>
                                     <StackPanel>
                                         <TextBlock Style="{StaticResource FoldTitleStyle}" Text="尺寸与高级"/>
-                                        <TextBlock Style="{StaticResource CaptionStyle}" Text="入口按钮、缩放与放大强度、距底高度、唤出与最大化行为及隐藏应用"/>
+                                        <TextBlock x:Name="DockAdvancedCaptionText" Style="{StaticResource CaptionStyle}" Text="入口按钮、缩放与放大强度、距底高度、唤出与最大化行为及隐藏应用"/>
                                     </StackPanel>
                                 </Expander.Header>
                                 <StackPanel>
@@ -2511,7 +2512,7 @@
                                                 <TextBlock x:Name="DockHoverMagnificationScaleText" Style="{StaticResource ValueTextStyle}"/>
                                             </StackPanel>
                                         </local:SettingsRow>
-                                        <local:SettingsRow Header="距底部高度" Description="Dock 底边到屏幕底边的距离；任务栏常显时从任务栏上沿算起">
+                                        <local:SettingsRow x:Name="DockGapRow" Header="距底部高度" Description="Dock 底边到屏幕底边的距离；任务栏常显时从任务栏上沿算起">
                                             <StackPanel Orientation="Horizontal">
                                                 <Slider x:Name="DockBottomGapSlider"
                                                         Width="200"

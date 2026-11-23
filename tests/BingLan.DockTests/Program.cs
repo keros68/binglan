@@ -25,6 +25,7 @@ Run("Dock 内容尺寸边界", TestContentLengthBounds);
 Run("Dock 图标大小决定按钮与高度并被钳制", TestDockIconSize);
 Run("Dock 悬停余弦放大与设置规范化", TestDockHoverMagnification);
 Run("Dock 左右停靠：几何、放大轴与内侧隆起、触发区、避让顶栏与任务栏、v58 迁移", TestDockSideDocking);
+Run("Dock 设置页文案：底部保持原文，左右停靠时按边命名", TestDockEdgeWording);
 Run("Dock 距底部高度默认等于原固定间距并被钳制", TestDockBottomGap);
 Run("Dock 隐藏把手几何：默认角位、钳制与左右展开锚定", TestDockHandleGeometry);
 Run("Dock 隐藏把手位置状态规范化", TestDockHandleState);
@@ -2354,6 +2355,32 @@ static void TestDockHoverMagnification()
         "保持关闭时允许重置槽位");
     Assert(!DockMagnificationRules.ShouldResetSlotsOnOverflowChange(44d, 52d),
         "保持开启仅改变放大倍率或尺寸时不应中断当前悬停放大");
+}
+
+static void TestDockEdgeWording()
+{
+    // Bottom keeps the original wording word for word.
+    Assert(DockEdgeWording.PageSubtitle(DockEdge.Bottom) == "屏幕底部的应用栏：显示哪些应用、怎么出现、多大。", "底部副标题应保持原文");
+    Assert(DockEdgeWording.EnabledDescription(DockEdge.Bottom) == "屏幕底部居中显示固定的应用和正在运行的应用", "底部启用说明应保持原文");
+    Assert(DockEdgeWording.ReserveLabel(DockEdge.Bottom) == "始终显示，保留底部空间", "底部预留选项应保持原文");
+    Assert(DockEdgeWording.ReserveAutomationName(DockEdge.Bottom) == "始终显示，并保留屏幕底部空间", "底部预留选项朗读名应保持原文");
+    Assert(DockEdgeWording.GapHeader(DockEdge.Bottom) == "距底部高度", "底部距离标题应保持原文");
+    Assert(DockEdgeWording.MaximizeReleaseHeader(DockEdge.Bottom) == "最大化窗口时临时隐藏并释放底部空间", "底部最大化释放标题应保持原文");
+    Assert(DockEdgeWording.MaximizeReleaseDescription(DockEdge.Bottom).Contains("鼠标移到屏幕底边或把手"), "底部最大化释放说明应保持原文");
+
+    foreach (var (edge, side) in new[] { (DockEdge.Left, "左侧"), (DockEdge.Right, "右侧") })
+    {
+        var texts = new[]
+        {
+            DockEdgeWording.PageSubtitle(edge), DockEdgeWording.EnabledDescription(edge),
+            DockEdgeWording.ReserveLabel(edge), DockEdgeWording.ReserveAutomationName(edge),
+            DockEdgeWording.AdvancedCaption(edge), DockEdgeWording.GapHeader(edge),
+            DockEdgeWording.GapDescription(edge), DockEdgeWording.GapAutomationName(edge),
+            DockEdgeWording.MaximizeReleaseHeader(edge), DockEdgeWording.MaximizeReleaseDescription(edge)
+        };
+        Assert(texts.All(text => !text.Contains('底')), $"{side}停靠的设置文案不应再出现“底”字");
+        Assert(DockEdgeWording.ReserveLabel(edge).Contains(side), $"{side}停靠的预留选项应写明{side}");
+    }
 }
 
 static void TestDockSideDocking()
