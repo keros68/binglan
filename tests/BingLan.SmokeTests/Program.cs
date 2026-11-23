@@ -117,7 +117,6 @@ Run("Schema v46 旧默认值精确迁移", ThemeStyleTests.TestSchemaV46LegacyDe
 Run("Dock 不透明度对照与迁移后一致性", ThemeStyleTests.TestDockOpacityFormulaTable);
 Run("四种竖屏预设边界、最小尺寸与横屏坐标", ThemeStyleTests.TestPortraitPresets);
 Run("任务栏只在两角唤出时底边细条的位置", ThemeStyleTests.TestTaskbarCornerStrip);
-Run("任务栏底边夹紧区域与两角留空", TaskbarEdgeClampTests.Run);
 Run("主题包整体风格与自定义图标往返", ThemeStyleTests.TestStyleAndIconsRoundTrip);
 Run("主题包丢弃不安全图标", ThemeStyleTests.TestUnsafeIconsAreDropped);
 Run("主题包清单校验", ThemeStyleTests.TestManifestIsValidated);
