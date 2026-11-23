@@ -151,9 +151,6 @@
             <GradientStop Color="#421F3A55" Offset="0.5"/>
             <GradientStop Color="#001F3A55" Offset="1"/>
         </LinearGradientBrush>
-        <SolidColorBrush x:Key="DockItemHoverBrush" Color="#2EFFFFFF"/>
-        <SolidColorBrush x:Key="DockItemHoverBorderBrush" Color="#54FFFFFF"/>
-        <SolidColorBrush x:Key="DockItemPressedBrush" Color="#1C1B324B"/>
         <SolidColorBrush x:Key="DockActiveDotBrush" Color="#E0559EF3"/>
         <!-- The lively blue of the performance bars and download rate. -->
         <SolidColorBrush x:Key="PerformanceAccentBrush" Color="#F51EA9FF"/>

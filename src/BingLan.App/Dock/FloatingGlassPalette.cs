@@ -99,15 +99,6 @@ internal static class FloatingGlassPalette
                 (sheen.DividerEdgeColor, 0d),
                 (sheen.DividerCenterColor, 0.5d),
                 (sheen.DividerEdgeColor, 1d));
-        resources["DockItemHoverBrush"] = highContrast
-            ? Brushes.Transparent
-            : Paint(sheen.HoverPlateFillColor);
-        resources["DockItemHoverBorderBrush"] = highContrast
-            ? SystemColors.HighlightBrush
-            : Paint(sheen.HoverPlateBorderColor);
-        resources["DockItemPressedBrush"] = highContrast
-            ? SystemColors.ControlBrush
-            : Paint(sheen.PressedPlateFillColor);
     }
 
     internal static void ApplyTopBarSheenResources(

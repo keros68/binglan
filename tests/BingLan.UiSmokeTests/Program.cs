@@ -8765,8 +8765,7 @@ internal static class Program
                 var name = key.ToString() ?? string.Empty;
                 var decorative = name.Contains("Sheen", StringComparison.Ordinal)
                     || name.Contains("Specular", StringComparison.Ordinal)
-                    || name.Contains("InnerShadow", StringComparison.Ordinal)
-                    || name.StartsWith("DockItem", StringComparison.Ordinal);
+                    || name.Contains("InnerShadow", StringComparison.Ordinal);
                 var acceptable = brush.Color.A == byte.MaxValue || (decorative && brush.Color.A == 0);
                 if (!acceptable)
                 {

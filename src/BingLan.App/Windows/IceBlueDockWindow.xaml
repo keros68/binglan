@@ -29,26 +29,14 @@
                                 BorderThickness="{TemplateBinding BorderThickness}"
                                 CornerRadius="12"
                                 Padding="{TemplateBinding Padding}">
-                            <Grid>
-                                <Border x:Name="HoverPlate"
-                                        CornerRadius="11"
-                                        BorderThickness="1"
-                                        Background="Transparent"
-                                        BorderBrush="Transparent"
-                                        IsHitTestVisible="False"/>
-                                <ContentPresenter HorizontalAlignment="Center"
-                                                  VerticalAlignment="Center"/>
-                            </Grid>
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"/>
                         </Border>
+                        <!-- No tile behind the icon: its square would not match the icon's own
+                             shape. Hover zooms the icon; a press dims it. -->
                         <ControlTemplate.Triggers>
-                            <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="HoverPlate" Property="Background" Value="{DynamicResource DockItemHoverBrush}"/>
-                                <Setter TargetName="HoverPlate" Property="BorderBrush" Value="{DynamicResource DockItemHoverBorderBrush}"/>
-                            </Trigger>
                             <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="HoverPlate" Property="Background" Value="{DynamicResource DockItemPressedBrush}"/>
-                                <Setter TargetName="HoverPlate" Property="BorderBrush" Value="{DynamicResource DockItemHoverBorderBrush}"/>
-                                <Setter TargetName="Shell" Property="Opacity" Value="0.82"/>
+                                <Setter TargetName="Shell" Property="Opacity" Value="0.7"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
