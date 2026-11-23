@@ -107,6 +107,8 @@ public sealed class ThemeBindings
     public bool TopBarEnabled { get; set; }
     public TopBarVisibilityMode TopBarVisibility { get; set; } = TopBarVisibilityMode.ReserveTopEdge;
     public TopBarModuleSwitches? TopBarModules { get; set; }
+    public List<TopBarModuleKind>? TopBarLeftOrder { get; set; }
+    public List<TopBarModuleKind>? TopBarRightOrder { get; set; }
     public bool TopBarFollowCardLook { get; set; } = true;
     public string TopBarSurfaceColor { get; set; } = TopBarState.DefaultSurfaceColor;
     public double TopBarSurfaceOpacity { get; set; } = TopBarState.DefaultSurfaceOpacity;

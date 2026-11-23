@@ -2769,6 +2769,31 @@
                                 </local:SettingsRow>
                             </local:SettingsGroup>
 
+                            <Expander x:Name="TopBarOrderFold"
+                                      Margin="0,12,0,4"
+                                      IsExpanded="False"
+                                      Style="{StaticResource SettingsFoldStyle}"
+                                      AutomationProperties.Name="模块顺序">
+                                <Expander.Header>
+                                    <StackPanel>
+                                        <TextBlock Style="{StaticResource FoldTitleStyle}" Text="模块顺序"/>
+                                        <TextBlock Style="{StaticResource CaptionStyle}" Text="调整左右两侧模块的排列顺序与位置；搜索入口保持居中"/>
+                                    </StackPanel>
+                                </Expander.Header>
+                                <StackPanel x:Name="TopBarOrderBehaviorPanel">
+                                    <local:SettingsRow Header="模块顺序"
+                                                       Description="同一侧按从左到右排列，也可以把模块切到另一侧"
+                                                       local:SettingsSearch.Keywords="顶栏排序 状态条排序 模块顺序 左右顺序 排列 恢复默认顺序">
+                                        <Button x:Name="TopBarResetOrderButton"
+                                                Style="{StaticResource GhostButtonStyle}"
+                                                Content="恢复默认顺序"
+                                                AutomationProperties.Name="恢复顶部信息条默认模块顺序"
+                                                Click="TopBarResetOrder_Click"/>
+                                    </local:SettingsRow>
+                                    <StackPanel x:Name="TopBarOrderPanel" Margin="18,4,18,12"/>
+                                </StackPanel>
+                            </Expander>
+
                             <Expander x:Name="TopBarAdvancedFold"
                                       Margin="0,12,0,4"
                                       IsExpanded="False"

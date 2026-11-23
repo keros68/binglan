@@ -383,6 +383,25 @@ internal static class SettingsWindowTests
             Pump();
             Assert(topBar.VisibilityMode == TopBarVisibilityMode.SmartHide, "显示方式应写入状态");
 
+            var topBarOrderFold = Require<Expander>(window, "TopBarOrderFold");
+            Assert(!topBarOrderFold.IsExpanded, "顶端信息条模块顺序默认收起");
+            topBarOrderFold.IsExpanded = true;
+            Pump();
+            var resetOrderButton = Require<Button>(window, "TopBarResetOrderButton");
+            Assert(!resetOrderButton.IsEnabled, "默认顺序下恢复默认顺序按钮应禁用");
+            var orderPanel = Require<Panel>(window, "TopBarOrderPanel");
+            Click(FindButtonByAutomationName(orderPanel, "把天气向左移"));
+            var (reorderedLeft, _) = TopBarRules.ResolveOrder(topBar);
+            Assert(reorderedLeft[0] == TopBarModuleKind.Weather && resetOrderButton.IsEnabled,
+                "点击左移按钮应立即更新顶栏模块顺序并启用恢复按钮");
+            Click(FindButtonByAutomationName(orderPanel, "把时钟与日期移到左侧"));
+            var (clockMovedLeft, clockMovedRight) = TopBarRules.ResolveOrder(topBar);
+            Assert(clockMovedLeft.Contains(TopBarModuleKind.Clock) && !clockMovedRight.Contains(TopBarModuleKind.Clock),
+                "点击移到左侧应将时钟从右侧移到左侧");
+            Click(resetOrderButton);
+            Assert(TopBarRules.IsDefaultOrder(topBar) && !resetOrderButton.IsEnabled,
+                "点击恢复默认顺序应还原默认排布并禁用按钮");
+
             var topBarAdvanced = Require<Expander>(window, "TopBarAdvancedFold");
             Assert(!topBarAdvanced.IsExpanded, "顶端信息条高度默认收起");
             topBarAdvanced.IsExpanded = true;
@@ -691,5 +710,33 @@ internal static class SettingsWindowTests
             weatherWindow.Close();
             Pump();
         }
+    }
+
+    private static Button FindButtonByAutomationName(DependencyObject root, string automationName)
+    {
+        var queue = new Queue<DependencyObject>();
+        queue.Enqueue(root);
+        while (queue.Count > 0)
+        {
+            var current = queue.Dequeue();
+            if (current is Button button
+                && string.Equals(
+                    System.Windows.Automation.AutomationProperties.GetName(button),
+                    automationName,
+                    StringComparison.Ordinal))
+            {
+                return button;
+            }
+
+            foreach (var child in LogicalTreeHelper.GetChildren(current))
+            {
+                if (child is DependencyObject dep)
+                {
+                    queue.Enqueue(dep);
+                }
+            }
+        }
+
+        throw new InvalidOperationException($"未找到按钮：{automationName}");
     }
 }

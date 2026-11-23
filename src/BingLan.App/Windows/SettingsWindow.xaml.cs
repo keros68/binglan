@@ -3221,6 +3221,7 @@ public partial class SettingsWindow : Window
         {
             TopBarEnabledCheckBox.IsChecked = state.IsEnabled;
             TopBarOptionsPanel.IsEnabled = state.IsEnabled;
+            TopBarOrderBehaviorPanel.IsEnabled = state.IsEnabled;
             TopBarAdvancedBehaviorPanel.IsEnabled = state.IsEnabled;
             TopBarFrostedCheckBox.IsChecked = state.FrostedGlass;
             TopBarReserveRadio.IsChecked = state.VisibilityMode == TopBarVisibilityMode.ReserveTopEdge;
@@ -3261,6 +3262,7 @@ public partial class SettingsWindow : Window
                 }
             }
 
+            LoadTopBarOrderList();
             LoadTopBarLook();
         }
         finally
@@ -3279,6 +3281,7 @@ public partial class SettingsWindow : Window
 
         state.IsEnabled = TopBarEnabledCheckBox.IsChecked == true;
         TopBarOptionsPanel.IsEnabled = state.IsEnabled;
+        TopBarOrderBehaviorPanel.IsEnabled = state.IsEnabled;
         TopBarAdvancedBehaviorPanel.IsEnabled = state.IsEnabled;
         state.FrostedGlass = TopBarFrostedCheckBox.IsChecked == true;
         state.VisibilityMode = TopBarSmartHideRadio.IsChecked == true
@@ -3301,8 +3304,217 @@ public partial class SettingsWindow : Window
         {
             state.MonitorDeviceName = deviceName;
         }
+        LoadTopBarOrderList();
         ApplyTopBarChange(state.IsEnabled ? "已应用" : "顶部信息条已关闭");
         RefreshAppearanceOverrides();
+    }
+
+    private static bool IsTopBarOrderModuleAvailable(TopBarModuleKind kind) =>
+        kind != TopBarModuleKind.TrayOverflow || OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000);
+
+    private void LoadTopBarOrderList()
+    {
+        if (TopBarOrderPanel is null || _topBarState is not { } state)
+        {
+            return;
+        }
+
+        TopBarOrderPanel.Children.Clear();
+        var (left, right) = TopBarRules.ResolveOrder(state);
+        TopBarOrderPanel.Children.Add(BuildTopBarOrderSection(
+            "左侧模块（从左到右）",
+            TopBarModuleSide.Left,
+            left.Where(IsTopBarOrderModuleAvailable).ToArray(),
+            state));
+        TopBarOrderPanel.Children.Add(BuildTopBarOrderSection(
+            "右侧模块（从左到右）",
+            TopBarModuleSide.Right,
+            right.Where(IsTopBarOrderModuleAvailable).ToArray(),
+            state));
+        if (TopBarResetOrderButton is not null)
+        {
+            TopBarResetOrderButton.IsEnabled = !TopBarRules.IsDefaultOrder(state);
+        }
+    }
+
+    private FrameworkElement BuildTopBarOrderSection(
+        string title,
+        TopBarModuleSide side,
+        IReadOnlyList<TopBarModuleKind> modules,
+        TopBarState state)
+    {
+        var section = new StackPanel
+        {
+            Margin = side == TopBarModuleSide.Left ? new Thickness(0, 4, 0, 10) : new Thickness(0, 2, 0, 0)
+        };
+        var heading = new TextBlock
+        {
+            Text = title,
+            FontSize = 12,
+            Margin = new Thickness(2, 0, 0, 6)
+        };
+        heading.SetResourceReference(TextBlock.ForegroundProperty, "SettingsFaintInkBrush");
+        section.Children.Add(heading);
+
+        if (modules.Count == 0)
+        {
+            var empty = new TextBlock
+            {
+                Text = "当前无模块",
+                FontSize = 12,
+                Margin = new Thickness(8, 2, 0, 4)
+            };
+            empty.SetResourceReference(TextBlock.ForegroundProperty, "SettingsFaintInkBrush");
+            section.Children.Add(empty);
+            return section;
+        }
+
+        var listHost = new StackPanel();
+        for (var index = 0; index < modules.Count; index++)
+        {
+            var kind = modules[index];
+            var label = TopBarRules.ModuleLabel(kind);
+            var enabled = TopBarRules.IsModuleOn(state.Modules, kind);
+            var rowGrid = new Grid();
+            rowGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            rowGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+            var namePanel = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            namePanel.Children.Add(new TextBlock
+            {
+                Text = label,
+                VerticalAlignment = VerticalAlignment.Center,
+                Opacity = enabled ? 1d : 0.55d
+            });
+            if (!enabled)
+            {
+                var hiddenTag = new TextBlock
+                {
+                    Text = "（已隐藏）",
+                    FontSize = 12,
+                    Margin = new Thickness(4, 0, 0, 0),
+                    VerticalAlignment = VerticalAlignment.Center
+                };
+                hiddenTag.SetResourceReference(TextBlock.ForegroundProperty, "SettingsFaintInkBrush");
+                namePanel.Children.Add(hiddenTag);
+            }
+            Grid.SetColumn(namePanel, 0);
+            rowGrid.Children.Add(namePanel);
+
+            var actions = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            var moveLeft = new Button
+            {
+                Content = "←",
+                MinWidth = 32,
+                Height = 28,
+                Padding = new Thickness(6, 0, 6, 0),
+                Margin = new Thickness(0, 0, 4, 0),
+                Style = (Style)FindResource("GhostButtonStyle"),
+                IsEnabled = index > 0,
+                ToolTip = "向左移"
+            };
+            AutomationProperties.SetName(moveLeft, $"把{label}向左移");
+            moveLeft.Click += (_, _) => MoveTopBarModule(kind, -1);
+
+            var moveRight = new Button
+            {
+                Content = "→",
+                MinWidth = 32,
+                Height = 28,
+                Padding = new Thickness(6, 0, 6, 0),
+                Margin = new Thickness(0, 0, 6, 0),
+                Style = (Style)FindResource("GhostButtonStyle"),
+                IsEnabled = index < modules.Count - 1,
+                ToolTip = "向右移"
+            };
+            AutomationProperties.SetName(moveRight, $"把{label}向右移");
+            moveRight.Click += (_, _) => MoveTopBarModule(kind, 1);
+
+            var targetSide = side == TopBarModuleSide.Left ? TopBarModuleSide.Right : TopBarModuleSide.Left;
+            var switchLabel = targetSide == TopBarModuleSide.Right ? "移到右侧" : "移到左侧";
+            var switchSide = new Button
+            {
+                Content = switchLabel,
+                Height = 28,
+                Padding = new Thickness(10, 0, 10, 0),
+                Style = (Style)FindResource("GhostButtonStyle")
+            };
+            AutomationProperties.SetName(switchSide, $"把{label}{switchLabel}");
+            switchSide.Click += (_, _) => MoveTopBarModuleSide(kind, targetSide);
+
+            actions.Children.Add(moveLeft);
+            actions.Children.Add(moveRight);
+            actions.Children.Add(switchSide);
+            Grid.SetColumn(actions, 1);
+            rowGrid.Children.Add(actions);
+
+            var rowBorder = new Border
+            {
+                CornerRadius = new CornerRadius(8),
+                BorderThickness = new Thickness(1),
+                Padding = new Thickness(12, 4, 8, 4),
+                Margin = new Thickness(0, 0, 0, 4),
+                Child = rowGrid
+            };
+            rowBorder.SetResourceReference(Border.BackgroundProperty, "SettingsSurfaceHoverBrush");
+            rowBorder.SetResourceReference(Border.BorderBrushProperty, "SettingsSurfaceBorderBrush");
+            listHost.Children.Add(rowBorder);
+        }
+
+        section.Children.Add(listHost);
+        return section;
+    }
+
+    private void MoveTopBarModule(TopBarModuleKind kind, int delta)
+    {
+        if (_topBarState is not { } state)
+        {
+            return;
+        }
+
+        if (!TopBarRules.MoveModule(state, kind, delta, IsTopBarOrderModuleAvailable))
+        {
+            return;
+        }
+
+        LoadTopBarOrderList();
+        ApplyTopBarChange($"已调整“{TopBarRules.ModuleLabel(kind)}”位置");
+    }
+
+    private void MoveTopBarModuleSide(TopBarModuleKind kind, TopBarModuleSide targetSide)
+    {
+        if (_topBarState is not { } state)
+        {
+            return;
+        }
+
+        if (!TopBarRules.MoveModuleToSide(state, kind, targetSide))
+        {
+            return;
+        }
+
+        LoadTopBarOrderList();
+        var sideName = targetSide == TopBarModuleSide.Left ? "左侧" : "右侧";
+        ApplyTopBarChange($"已将“{TopBarRules.ModuleLabel(kind)}”移到{sideName}");
+    }
+
+    private void TopBarResetOrder_Click(object sender, RoutedEventArgs e)
+    {
+        if (_topBarState is not { } state || !TopBarRules.ResetOrder(state))
+        {
+            return;
+        }
+
+        LoadTopBarOrderList();
+        ApplyTopBarChange("已恢复顶部信息条默认模块顺序");
     }
 
     // ---------------------------------------------------------------- 顶栏搜索热键

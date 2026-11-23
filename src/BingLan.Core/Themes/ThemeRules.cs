@@ -27,6 +27,7 @@ public static class ThemeRules
         ArgumentNullException.ThrowIfNull(state);
         DesktopExperienceRules.Normalize(state.DesktopExperience);
 
+        var (topBarLeftOrder, topBarRightOrder) = TopBarRules.ResolveOrder(state.TopBar);
         var package = new ThemePackage
         {
             Manifest = new ThemeManifest
@@ -42,6 +43,8 @@ public static class ThemeRules
                 TopBarEnabled = state.TopBar.IsEnabled,
                 TopBarVisibility = state.TopBar.VisibilityMode,
                 TopBarModules = CopyTopBarModules(state.TopBar.Modules),
+                TopBarLeftOrder = [.. topBarLeftOrder],
+                TopBarRightOrder = [.. topBarRightOrder],
                 TopBarFollowCardLook = state.TopBar.FollowCardLook,
                 TopBarSurfaceColor = state.TopBar.SurfaceColor,
                 TopBarSurfaceOpacity = state.TopBar.SurfaceOpacity
@@ -312,6 +315,14 @@ public static class ThemeRules
         {
             package.Bindings.TopBarVisibility = TopBarVisibilityMode.ReserveTopEdge;
         }
+        if (package.Bindings.TopBarLeftOrder is not null || package.Bindings.TopBarRightOrder is not null)
+        {
+            var (left, right) = TopBarRules.NormalizeOrder(
+                package.Bindings.TopBarLeftOrder,
+                package.Bindings.TopBarRightOrder);
+            package.Bindings.TopBarLeftOrder = left;
+            package.Bindings.TopBarRightOrder = right;
+        }
         package.Bindings.TopBarSurfaceColor = WidgetAppearanceRules.CoerceBackgroundColor(
             package.Bindings.TopBarSurfaceColor);
         if (double.IsNaN(package.Bindings.TopBarSurfaceOpacity)
@@ -367,6 +378,12 @@ public static class ThemeRules
         if (package.Bindings.TopBarModules is { } modules)
         {
             topBar.Modules = CopyTopBarModules(modules);
+        }
+        if (package.Bindings.TopBarLeftOrder is not null || package.Bindings.TopBarRightOrder is not null)
+        {
+            topBar.LeftOrder = package.Bindings.TopBarLeftOrder is { } left ? [.. left] : null;
+            topBar.RightOrder = package.Bindings.TopBarRightOrder is { } right ? [.. right] : null;
+            TopBarRules.Normalize(topBar);
         }
         topBar.FollowCardLook = package.Bindings.TopBarFollowCardLook;
         topBar.SurfaceColor = package.Bindings.TopBarSurfaceColor;

@@ -993,6 +993,11 @@ public sealed class LocalStateStore
             state.Dock.Edge = DockEdgeRules.Normalize(state.Dock.Edge);
             state.SchemaVersion = 58;
         }
+        if (state.SchemaVersion < 59)
+        {
+            TopBarRules.Normalize(state.TopBar);
+            state.SchemaVersion = 59;
+        }
         if (!Enum.IsDefined(state.Taskbar.Mode))
         {
             state.Taskbar.Mode = TaskbarMode.SystemDefault;

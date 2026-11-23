@@ -31,6 +31,7 @@ public static class TopBarTests
         TestCapsuleSummary();
         TestRevealZoneAndTopEdge();
         TestThemeTopBarFields();
+        TestModuleOrderAndMigration();
     }
 
     private static void TestDefaultsAndNormalize()
@@ -526,6 +527,118 @@ public static class TopBarTests
         Assert(
             package.Bindings.TopBarVisibility == TopBarVisibilityMode.ReserveTopEdge,
             "主题顶栏显示方式回退");
+    }
+
+    private static void TestModuleOrderAndMigration()
+    {
+        var state = new TopBarState();
+        Assert(TopBarRules.IsDefaultOrder(state), "新建顶栏默认顺序");
+        var (defaultLeft, defaultRight) = TopBarRules.ResolveOrder(state);
+        Assert(defaultLeft.SequenceEqual(TopBarRules.DefaultLeftOrder), "默认左侧顺序");
+        Assert(defaultRight.SequenceEqual(TopBarRules.DefaultRightOrder), "默认右侧顺序");
+
+        // 左/右移与跨侧移动
+        Assert(!TopBarRules.MoveModule(state, TopBarModuleKind.TodoSummary, -1), "首位不能再左移");
+        Assert(TopBarRules.MoveModule(state, TopBarModuleKind.Weather, -1), "天气应能左移到首位");
+        var (afterLeftMove, _) = TopBarRules.ResolveOrder(state);
+        Assert(afterLeftMove[0] == TopBarModuleKind.Weather && afterLeftMove[1] == TopBarModuleKind.TodoSummary,
+            "左移后顺序应更新");
+
+        Assert(TopBarRules.MoveModuleToSide(state, TopBarModuleKind.Clock, TopBarModuleSide.Left),
+            "时钟应能移到左侧");
+        var (withClockLeft, withoutClockRight) = TopBarRules.ResolveOrder(state);
+        Assert(withClockLeft.Contains(TopBarModuleKind.Clock) && !withoutClockRight.Contains(TopBarModuleKind.Clock),
+            "跨侧移动不应重复出现");
+        Assert(!TopBarRules.MoveModuleToSide(state, TopBarModuleKind.Clock, TopBarModuleSide.Left),
+            "已在目标侧时返回 false");
+        Assert(!TopBarRules.MoveModule(state, TopBarModuleKind.Search, 1), "搜索入口固定居中，不参与排序");
+
+        // 跳过不可用模块（模拟 Win10 隐藏 TrayOverflow）
+        var win10State = new TopBarState();
+        Assert(TopBarRules.MoveModule(
+                win10State,
+                TopBarModuleKind.Volume,
+                1,
+                kind => kind != TopBarModuleKind.TrayOverflow),
+            "跳过不可用模块右移应成功");
+        var (_, win10Right) = TopBarRules.ResolveOrder(win10State);
+        var win10RightList = win10Right.ToList();
+        Assert(win10RightList.IndexOf(TopBarModuleKind.Volume) > win10RightList.IndexOf(TopBarModuleKind.InputMethod),
+            "右移应越过不可见的 TrayOverflow 排到输入法之后");
+
+        // 异常数据规范化：去重、忽略 Search 与非法枚举、补齐缺失项
+        var messy = new TopBarState
+        {
+            LeftOrder = [TopBarModuleKind.Clock, TopBarModuleKind.Search, (TopBarModuleKind)999, TopBarModuleKind.Clock],
+            RightOrder = [TopBarModuleKind.Clock, TopBarModuleKind.Weather]
+        };
+        TopBarRules.Normalize(messy);
+        var (cleanLeft, cleanRight) = TopBarRules.ResolveOrder(messy);
+        Assert(cleanLeft[0] == TopBarModuleKind.Clock && !cleanLeft.Contains(TopBarModuleKind.Search),
+            "规范化应保留有效项并剔除 Search 和非法枚举");
+        Assert(!cleanRight.Contains(TopBarModuleKind.Clock) && cleanRight[0] == TopBarModuleKind.Weather,
+            "重复模块以左侧优先");
+        Assert(cleanLeft.Count + cleanRight.Count == TopBarRules.DefaultLeftOrder.Count + TopBarRules.DefaultRightOrder.Count,
+            "缺失的可排序模块应自动补齐");
+
+        // 允许清空一侧（非 null 空列表）
+        var allRight = new TopBarState();
+        foreach (var kind in TopBarRules.DefaultLeftOrder)
+        {
+            Assert(TopBarRules.MoveModuleToSide(allRight, kind, TopBarModuleSide.Right), $"应允许将 {kind} 移到右侧");
+        }
+        var (emptyLeft, fullRight) = TopBarRules.ResolveOrder(allRight);
+        Assert(emptyLeft.Count == 0 && fullRight.Count == 10, "应允许左侧全部移到右侧");
+
+        // 恢复默认顺序
+        Assert(TopBarRules.ResetOrder(state), "自定义顺序应可恢复默认");
+        Assert(TopBarRules.IsDefaultOrder(state) && state.LeftOrder is null && state.RightOrder is null,
+            "恢复默认后回到空引用默认态");
+        Assert(!TopBarRules.ResetOrder(state), "已是默认时再次恢复返回 false");
+
+        // Schema v58 -> v59 迁移与持久化往返
+        var folder = Path.Combine(Path.GetTempPath(), $"BingLanTopBarOrderTest-{Guid.NewGuid():N}");
+        try
+        {
+            var store = new LocalStateStore(folder);
+            var appState = new AppState { SchemaVersion = 58 };
+            appState.TopBar.IsEnabled = true;
+            TopBarRules.MoveModuleToSide(appState.TopBar, TopBarModuleKind.Clock, TopBarModuleSide.Left);
+            TopBarRules.MoveModule(appState.TopBar, TopBarModuleKind.Weather, -1);
+            store.Save(appState);
+
+            var stateFile = Path.Combine(folder, "widgets.json");
+            var raw = File.ReadAllText(stateFile);
+            File.WriteAllText(stateFile, raw.Replace(
+                $"\"SchemaVersion\": {AppState.CurrentSchemaVersion}",
+                "\"SchemaVersion\": 58"));
+
+            var reloaded = store.Load();
+            Assert(reloaded.SchemaVersion == AppState.CurrentSchemaVersion, "v58 应迁移到当前 SchemaVersion");
+            Assert(TopBarRules.OrderSignature(reloaded.TopBar) == TopBarRules.OrderSignature(appState.TopBar),
+                "迁移并重载后应保留自定义顶栏模块顺序");
+
+            // 主题包导出与导入保留顺序，老主题包保留本机顺序
+            var exported = ThemeRules.Export(reloaded, "排序主题", new ThemeArea(0, 0, 1920, 1040), new Version(0, 4, 2));
+            Assert(exported.Bindings.TopBarLeftOrder is not null && exported.Bindings.TopBarLeftOrder.Contains(TopBarModuleKind.Clock),
+                "主题包应导出自定义顶栏顺序");
+            var importedTarget = new TopBarState();
+            ThemeRules.ApplyTopBar(exported, importedTarget);
+            Assert(TopBarRules.OrderSignature(importedTarget) == TopBarRules.OrderSignature(reloaded.TopBar),
+                "导入主题包应恢复顶栏模块顺序");
+
+            var legacyBindings = new ThemePackage();
+            ThemeRules.ApplyTopBar(legacyBindings, importedTarget);
+            Assert(TopBarRules.OrderSignature(importedTarget) == TopBarRules.OrderSignature(reloaded.TopBar),
+                "不含顺序字段的旧主题包不应覆盖本机模块顺序");
+        }
+        finally
+        {
+            if (Directory.Exists(folder))
+            {
+                Directory.Delete(folder, recursive: true);
+            }
+        }
     }
 
     [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]

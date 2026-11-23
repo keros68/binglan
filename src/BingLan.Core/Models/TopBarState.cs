@@ -16,6 +16,12 @@ public enum TopBarDisplayMode
     Capsule
 }
 
+public enum TopBarModuleSide
+{
+    Left,
+    Right
+}
+
 /// <summary>The top bar's read-only modules, in display order. The search box sits in
 /// the bar's centre regardless of this order; its kind is here so it shares the module
 /// switch machinery with the rest.</summary>
@@ -84,6 +90,20 @@ public sealed class TopBarState
 
     public TopBarModuleSwitches Modules { get; set; } = new();
 
+    /// <summary>
+    /// Custom left-to-right module order on the left side of the bar. Null together with
+    /// <see cref="RightOrder"/> means the built-in default order; an empty list intentionally
+    /// keeps the left side empty. The search entry always stays centred and is excluded.
+    /// </summary>
+    public List<TopBarModuleKind>? LeftOrder { get; set; }
+
+    /// <summary>
+    /// Custom left-to-right module order on the right side of the bar. Null together with
+    /// <see cref="LeftOrder"/> means the built-in default order; an empty list intentionally
+    /// keeps the right side empty.
+    /// </summary>
+    public List<TopBarModuleKind>? RightOrder { get; set; }
+
     /// <summary>Whether the bar takes its colours from the card material. The default
     /// dark menu-bar look reads white-on-charcoal; the card material is too light for it.</summary>
     public bool FollowCardLook { get; set; }
@@ -113,6 +133,219 @@ public static class TopBarRules
 {
     public static IReadOnlyList<TopBarModuleKind> ModuleOrder { get; } =
         Enum.GetValues<TopBarModuleKind>();
+
+    public static IReadOnlyList<TopBarModuleKind> DefaultLeftOrder { get; } =
+    [
+        TopBarModuleKind.TodoSummary,
+        TopBarModuleKind.Weather,
+        TopBarModuleKind.Performance
+    ];
+
+    public static IReadOnlyList<TopBarModuleKind> DefaultRightOrder { get; } =
+    [
+        TopBarModuleKind.Battery,
+        TopBarModuleKind.Network,
+        TopBarModuleKind.Volume,
+        TopBarModuleKind.TrayOverflow,
+        TopBarModuleKind.InputMethod,
+        TopBarModuleKind.Attention,
+        TopBarModuleKind.Clock
+    ];
+
+    public static bool IsOrderable(TopBarModuleKind kind) =>
+        Enum.IsDefined(kind) && kind != TopBarModuleKind.Search;
+
+    public static string ModuleLabel(TopBarModuleKind kind) => kind switch
+    {
+        TopBarModuleKind.TodoSummary => "待办概要",
+        TopBarModuleKind.Weather => "天气",
+        TopBarModuleKind.Performance => "性能",
+        TopBarModuleKind.Attention => "消息提示",
+        TopBarModuleKind.InputMethod => "输入法",
+        TopBarModuleKind.Volume => "音量",
+        TopBarModuleKind.Network => "网络",
+        TopBarModuleKind.Battery => "电量",
+        TopBarModuleKind.Clock => "时钟与日期",
+        TopBarModuleKind.Search => "搜索",
+        TopBarModuleKind.TrayOverflow => "系统托盘",
+        _ => kind.ToString()
+    };
+
+    public static (List<TopBarModuleKind> Left, List<TopBarModuleKind> Right) NormalizeOrder(
+        IEnumerable<TopBarModuleKind>? left,
+        IEnumerable<TopBarModuleKind>? right)
+    {
+        if (left is null && right is null)
+        {
+            return ([.. DefaultLeftOrder], [.. DefaultRightOrder]);
+        }
+
+        var normalizedLeft = new List<TopBarModuleKind>();
+        var normalizedRight = new List<TopBarModuleKind>();
+        var seen = new HashSet<TopBarModuleKind>();
+
+        if (left is not null)
+        {
+            foreach (var kind in left)
+            {
+                if (IsOrderable(kind) && seen.Add(kind))
+                {
+                    normalizedLeft.Add(kind);
+                }
+            }
+        }
+
+        if (right is not null)
+        {
+            foreach (var kind in right)
+            {
+                if (IsOrderable(kind) && seen.Add(kind))
+                {
+                    normalizedRight.Add(kind);
+                }
+            }
+        }
+
+        foreach (var kind in DefaultLeftOrder)
+        {
+            if (seen.Add(kind))
+            {
+                normalizedLeft.Add(kind);
+            }
+        }
+
+        foreach (var kind in DefaultRightOrder)
+        {
+            if (seen.Add(kind))
+            {
+                normalizedRight.Add(kind);
+            }
+        }
+
+        return (normalizedLeft, normalizedRight);
+    }
+
+    public static (IReadOnlyList<TopBarModuleKind> Left, IReadOnlyList<TopBarModuleKind> Right) ResolveOrder(
+        TopBarState state)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        if (state.LeftOrder is null && state.RightOrder is null)
+        {
+            return (DefaultLeftOrder, DefaultRightOrder);
+        }
+
+        return NormalizeOrder(state.LeftOrder, state.RightOrder);
+    }
+
+    public static bool IsDefaultOrder(TopBarState state)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        if (state.LeftOrder is null && state.RightOrder is null)
+        {
+            return true;
+        }
+
+        var (left, right) = NormalizeOrder(state.LeftOrder, state.RightOrder);
+        return left.SequenceEqual(DefaultLeftOrder) && right.SequenceEqual(DefaultRightOrder);
+    }
+
+    public static string OrderSignature(TopBarState state)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        var (left, right) = ResolveOrder(state);
+        return $"{string.Join(',', left)}|{string.Join(',', right)}";
+    }
+
+    public static bool MoveModule(
+        TopBarState state,
+        TopBarModuleKind kind,
+        int delta,
+        Func<TopBarModuleKind, bool>? isAvailable = null)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        if (!IsOrderable(kind) || delta == 0)
+        {
+            return false;
+        }
+
+        var (left, right) = NormalizeOrder(state.LeftOrder, state.RightOrder);
+        var list = left.Contains(kind) ? left : right;
+        var index = list.IndexOf(kind);
+        if (index < 0)
+        {
+            return false;
+        }
+
+        var step = delta < 0 ? -1 : 1;
+        var target = index + step;
+        while (target >= 0 && target < list.Count
+               && isAvailable is not null && !isAvailable(list[target]))
+        {
+            target += step;
+        }
+
+        if (target < 0 || target >= list.Count)
+        {
+            return false;
+        }
+
+        list.RemoveAt(index);
+        list.Insert(target, kind);
+        StoreOrder(state, left, right);
+        return true;
+    }
+
+    public static bool MoveModuleToSide(TopBarState state, TopBarModuleKind kind, TopBarModuleSide targetSide)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        if (!IsOrderable(kind))
+        {
+            return false;
+        }
+
+        var (left, right) = NormalizeOrder(state.LeftOrder, state.RightOrder);
+        var source = targetSide == TopBarModuleSide.Left ? right : left;
+        var destination = targetSide == TopBarModuleSide.Left ? left : right;
+        if (!source.Remove(kind))
+        {
+            return false;
+        }
+
+        destination.Add(kind);
+        StoreOrder(state, left, right);
+        return true;
+    }
+
+    public static bool ResetOrder(TopBarState state)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        if (IsDefaultOrder(state))
+        {
+            state.LeftOrder = null;
+            state.RightOrder = null;
+            return false;
+        }
+
+        state.LeftOrder = null;
+        state.RightOrder = null;
+        return true;
+    }
+
+    private static void StoreOrder(
+        TopBarState state,
+        List<TopBarModuleKind> left,
+        List<TopBarModuleKind> right)
+    {
+        if (left.SequenceEqual(DefaultLeftOrder) && right.SequenceEqual(DefaultRightOrder))
+        {
+            state.LeftOrder = null;
+            state.RightOrder = null;
+            return;
+        }
+
+        state.LeftOrder = left;
+        state.RightOrder = right;
+    }
 
     public static bool IsModuleOn(TopBarModuleSwitches switches, TopBarModuleKind kind) => kind switch
     {
@@ -181,6 +414,12 @@ public static class TopBarRules
         if (!TopBarSearchRules.IsValidHotkey(state.SearchHotkey))
         {
             state.SearchHotkey = TopBarState.DefaultSearchHotkey;
+        }
+
+        if (state.LeftOrder is not null || state.RightOrder is not null)
+        {
+            var (left, right) = NormalizeOrder(state.LeftOrder, state.RightOrder);
+            StoreOrder(state, left, right);
         }
     }
 }

@@ -163,6 +163,7 @@ internal static class TopBarWindowTests
         SearchModuleSwitchHidesEntry(show, pump);
         RateDigitsDoNotShiftSearchEntry(show, pump);
         SearchEntrySitsAtBarCentre(show, pump);
+        CustomModuleOrderUpdatesLayout(show, pump);
         EverythingProtocolAndFallback(pump);
         WindowsIndexQueryRules();
     }
@@ -753,6 +754,48 @@ internal static class TopBarWindowTests
             pump();
             Assert(entry.Visibility == Visibility.Collapsed,
                 "对称净空不足最小宽度时应临时隐藏搜索入口以避免遮挡侧栏模块");
+        }
+        finally
+        {
+            bar.Close();
+            pump();
+        }
+    }
+
+    private static void CustomModuleOrderUpdatesLayout(Action<Window> show, Action pump)
+    {
+        var state = BarState();
+        state.VisibilityMode = TopBarVisibilityMode.SmartHide;
+        TopBarRules.MoveModule(state, TopBarModuleKind.Weather, -1);
+        TopBarRules.MoveModuleToSide(state, TopBarModuleKind.Clock, TopBarModuleSide.Left);
+
+        using var sampler = new WindowsPerformanceSamplingService();
+        var bar = new TopBarWindow(state, new DesktopStyleState(), new FakeEnvironment(), sampler);
+        show(bar);
+        try
+        {
+            pump();
+            var leftModules = (StackPanel)bar.FindName("LeftModules");
+            var rightModules = (StackPanel)bar.FindName("RightModules");
+            var weather = ElementByName(bar, "天气模块");
+            var todo = ElementByName(bar, "待办模块");
+            var clock = ElementByName(bar, "时间日期模块");
+            Assert(ReferenceEquals(weather.Parent, leftModules) && ReferenceEquals(clock.Parent, leftModules),
+                "自定义排序后天气与移到左侧的时钟应位于 LeftModules");
+            Assert(leftModules.Children.IndexOf(weather) < leftModules.Children.IndexOf(todo),
+                "天气左移后应排在待办概要之前");
+            Assert(!ReferenceEquals(clock.Parent, rightModules), "移到左侧的时钟不应再留在 RightModules");
+
+            TopBarRules.ResetOrder(state);
+            bar.ApplyState();
+            pump();
+            var resetWeather = ElementByName(bar, "天气模块");
+            var resetTodo = ElementByName(bar, "待办模块");
+            var resetClock = ElementByName(bar, "时间日期模块");
+            Assert(leftModules.Children.IndexOf(resetTodo) < leftModules.Children.IndexOf(resetWeather),
+                "恢复默认顺序后 ApplyState 应立即把待办排回天气之前");
+            Assert(ReferenceEquals(resetClock.Parent, rightModules),
+                "恢复默认顺序后时钟应回到 RightModules");
         }
         finally
         {

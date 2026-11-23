@@ -35,6 +35,7 @@ public static class SettingsFoldRules
     public const string SelectedWidgetOwnLookFold = "SelectedWidgetOwnLookFold";
     public const string LauncherMoreFold = "LauncherMoreFold";
     public const string DockAdvancedFold = "DockAdvancedFold";
+    public const string TopBarOrderFold = "TopBarOrderFold";
     public const string TopBarAdvancedFold = "TopBarAdvancedFold";
     public const string GeneralMoreFold = "GeneralMoreFold";
 
@@ -47,6 +48,7 @@ public static class SettingsFoldRules
         new(SelectedWidgetMoreFold, SettingsNavigationRules.ComponentsPageKey, "Widget", MoreOptionsTitle, IsPreExisting: false),
         new(SelectedWidgetOwnLookFold, SettingsNavigationRules.ComponentsPageKey, "Widget", "独立外观", IsPreExisting: true),
         new(DockAdvancedFold, SettingsNavigationRules.DockPageKey, null, "尺寸与高级", IsPreExisting: true),
+        new(TopBarOrderFold, SettingsNavigationRules.TopBarPageKey, null, "模块顺序", IsPreExisting: true),
         new(TopBarAdvancedFold, SettingsNavigationRules.TopBarPageKey, null, "高度", IsPreExisting: true),
         new(LauncherMoreFold, SettingsNavigationRules.LauncherPageKey, null, MoreOptionsTitle, IsPreExisting: false),
         new(GeneralMoreFold, SettingsNavigationRules.GeneralPageKey, null, MoreOptionsTitle, IsPreExisting: false)
@@ -59,7 +61,7 @@ public static class SettingsFoldRules
         new(SettingsNavigationRules.ComponentsPageKey, "Widget", 8, [SelectedWidgetMoreFold, SelectedWidgetOwnLookFold]),
         new(SettingsNavigationRules.AppearancePageKey, SettingsNavigationRules.AppearancePageKey, 6, [AppearanceMoreFold, AppearanceLayoutFold]),
         new(SettingsNavigationRules.DockPageKey, SettingsNavigationRules.DockPageKey, 7, [DockAdvancedFold]),
-        new(SettingsNavigationRules.TopBarPageKey, SettingsNavigationRules.TopBarPageKey, 6, [TopBarAdvancedFold]),
+        new(SettingsNavigationRules.TopBarPageKey, SettingsNavigationRules.TopBarPageKey, 6, [TopBarOrderFold, TopBarAdvancedFold]),
         new(SettingsNavigationRules.TaskbarPageKey, SettingsNavigationRules.TaskbarPageKey, 3, []),
         new(SettingsNavigationRules.LauncherPageKey, SettingsNavigationRules.LauncherPageKey, 6, [LauncherMoreFold]),
         new(SettingsNavigationRules.GeneralPageKey, SettingsNavigationRules.GeneralPageKey, 7, [GeneralMoreFold])
@@ -145,7 +147,9 @@ public static class SettingsFoldRules
         ["DockRevealModeComboBox"] = DockAdvancedFold,
         ["DockHiddenList"] = DockAdvancedFold,
 
-        // TopBarPage -> TopBarAdvancedFold
+        // TopBarPage -> TopBarOrderFold / TopBarAdvancedFold
+        ["TopBarOrderPanel"] = TopBarOrderFold,
+        ["TopBarResetOrderButton"] = TopBarOrderFold,
         ["TopBarHeightSlider"] = TopBarAdvancedFold,
 
         // GeneralPage -> GeneralMoreFold

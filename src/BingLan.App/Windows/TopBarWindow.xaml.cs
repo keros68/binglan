@@ -164,6 +164,7 @@ public sealed partial class TopBarWindow : Window
 
     private Button? _searchButton;
     private int _moduleMask = -1;
+    private string _orderSignature = string.Empty;
     private bool? _appliedAcrylic;
     private DockGlassSurface? _capsuleGlass;
     private bool _searchHotkeyRegistered;
@@ -245,10 +246,12 @@ public sealed partial class TopBarWindow : Window
                     : TopBarRules.IsModuleOn(_state.Modules, kind);
                 return mask | (enabled ? 1 << (int)kind : 0);
             });
-        if (_moduleMask != moduleMask || _appliedDisplayMode != DisplayMode)
+        var orderSignature = TopBarRules.OrderSignature(_state);
+        if (_moduleMask != moduleMask || _appliedDisplayMode != DisplayMode || _orderSignature != orderSignature)
         {
             BuildModules();
             _moduleMask = moduleMask;
+            _orderSignature = orderSignature;
             _appliedDisplayMode = DisplayMode;
         }
         if (_searchButton is { } searchButton)
@@ -691,6 +694,10 @@ public sealed partial class TopBarWindow : Window
 
     private void BuildModules()
     {
+        if (_attentionPanel.Parent is Panel attentionParent)
+        {
+            attentionParent.Children.Remove(_attentionPanel);
+        }
         LeftModules.Children.Clear();
         RightModules.Children.Clear();
         CenterHost.Children.Clear();
@@ -763,57 +770,93 @@ public sealed partial class TopBarWindow : Window
         }
         CenterHost.Visibility = Visibility.Visible;
 
-        // The to-do module shows its own flyout instead of opening settings.
-        AddTodoModule(LeftModules);
-        // The weather is a glance with hover details; it does nothing on click.
-        AddModule(TopBarModuleKind.Weather, LeftModules, "天气", null, GlyphLocation);
-        AddModule(TopBarModuleKind.Performance, LeftModules, "性能",
-            _environment.OpenTaskManagerPerformance, GlyphDiagnostic);
+        if (TrayOverflowController.IsSupported && !_state.Modules.TrayOverflow)
+        {
+            _environment.CloseTrayOverflow();
+        }
 
-        // Right side from the outer edge inwards: the docked-right stack fills from the
-        // screen edge leftwards, so the clock is added last to sit at the corner. The
-        // attention marks sit between the input method and the clock.
-        // The battery, network and volume modules summon the system quick settings,
-        // the same panel the taskbar's tray icons open.
-        AddModule(TopBarModuleKind.Battery, RightModules, "电量",
-            () => _environment.OpenQuickSettings(TopBarModuleKind.Battery), GlyphBatteryUnknown);
-        AddModule(TopBarModuleKind.Network, RightModules, "网络",
-            () => _environment.OpenQuickSettings(TopBarModuleKind.Network), GlyphWifiOff);
-        AddModule(TopBarModuleKind.Volume, RightModules, "音量",
-            () => _environment.OpenQuickSettings(TopBarModuleKind.Volume), GlyphVolume);
-        if (TrayOverflowController.IsSupported)
+        var (leftOrder, rightOrder) = TopBarRules.ResolveOrder(_state);
+        foreach (var kind in leftOrder)
         {
-            if (!_state.Modules.TrayOverflow) _environment.CloseTrayOverflow();
-            var visibleOnPress = false;
-            AddModule(TopBarModuleKind.TrayOverflow, RightModules, "托盘", () =>
-            {
-                var wasVisibleOnPress = visibleOnPress;
-                visibleOnPress = false;
-                // If Explorer light-dismissed the XAML overflow island on mouse-down,
-                // do not immediately reopen it on mouse-up.
-                if (wasVisibleOnPress && !TrayOverflowController.IsVisible)
-                {
-                    return;
-                }
-                _environment.OpenTrayOverflow();
-            }, "\uE70E");
-            if (ModuleText(TopBarModuleKind.TrayOverflow) is { } trayText) trayText.Text = "托盘";
-            if (_modules.TryGetValue(TopBarModuleKind.TrayOverflow, out var trayButton))
-            {
-                trayButton.ToolTip = "打开 Windows 隐藏的托盘图标";
-                trayButton.PreviewMouseLeftButtonDown += (_, _) =>
-                    visibleOnPress = TrayOverflowController.IsVisible;
-                trayButton.MouseLeave += (_, _) => visibleOnPress = false;
-            }
+            AddOrderedModule(kind, LeftModules);
         }
-        AddModule(TopBarModuleKind.InputMethod, RightModules, "输入法", _environment.OpenInputMethod);
-        StyleInputMethodModule();
-        if (TopBarRules.IsModuleOn(_state.Modules, TopBarModuleKind.Attention))
+
+        foreach (var kind in rightOrder)
         {
-            RightModules.Children.Add(_attentionPanel);
+            AddOrderedModule(kind, RightModules);
         }
-        AddClockModule(RightModules);
+
         RefreshAttention();
+    }
+
+    private void AddOrderedModule(TopBarModuleKind kind, StackPanel panel)
+    {
+        switch (kind)
+        {
+            case TopBarModuleKind.TodoSummary:
+                // The to-do module shows its own flyout instead of opening settings.
+                AddTodoModule(panel);
+                break;
+            case TopBarModuleKind.Weather:
+                // The weather is a glance with hover details; it does nothing on click.
+                AddModule(TopBarModuleKind.Weather, panel, "天气", null, GlyphLocation);
+                break;
+            case TopBarModuleKind.Performance:
+                AddModule(TopBarModuleKind.Performance, panel, "性能",
+                    _environment.OpenTaskManagerPerformance, GlyphDiagnostic);
+                break;
+            case TopBarModuleKind.Battery:
+                AddModule(TopBarModuleKind.Battery, panel, "电量",
+                    () => _environment.OpenQuickSettings(TopBarModuleKind.Battery), GlyphBatteryUnknown);
+                break;
+            case TopBarModuleKind.Network:
+                AddModule(TopBarModuleKind.Network, panel, "网络",
+                    () => _environment.OpenQuickSettings(TopBarModuleKind.Network), GlyphWifiOff);
+                break;
+            case TopBarModuleKind.Volume:
+                AddModule(TopBarModuleKind.Volume, panel, "音量",
+                    () => _environment.OpenQuickSettings(TopBarModuleKind.Volume), GlyphVolume);
+                break;
+            case TopBarModuleKind.TrayOverflow:
+                if (TrayOverflowController.IsSupported)
+                {
+                    var visibleOnPress = false;
+                    AddModule(TopBarModuleKind.TrayOverflow, panel, "托盘", () =>
+                    {
+                        var wasVisibleOnPress = visibleOnPress;
+                        visibleOnPress = false;
+                        // If Explorer light-dismissed the XAML overflow island on mouse-down,
+                        // do not immediately reopen it on mouse-up.
+                        if (wasVisibleOnPress && !TrayOverflowController.IsVisible)
+                        {
+                            return;
+                        }
+                        _environment.OpenTrayOverflow();
+                    }, "\uE70E");
+                    if (ModuleText(TopBarModuleKind.TrayOverflow) is { } trayText) trayText.Text = "托盘";
+                    if (_modules.TryGetValue(TopBarModuleKind.TrayOverflow, out var trayButton))
+                    {
+                        trayButton.ToolTip = "打开 Windows 隐藏的托盘图标";
+                        trayButton.PreviewMouseLeftButtonDown += (_, _) =>
+                            visibleOnPress = TrayOverflowController.IsVisible;
+                        trayButton.MouseLeave += (_, _) => visibleOnPress = false;
+                    }
+                }
+                break;
+            case TopBarModuleKind.InputMethod:
+                AddModule(TopBarModuleKind.InputMethod, panel, "输入法", _environment.OpenInputMethod);
+                StyleInputMethodModule();
+                break;
+            case TopBarModuleKind.Attention:
+                if (TopBarRules.IsModuleOn(_state.Modules, TopBarModuleKind.Attention))
+                {
+                    panel.Children.Add(_attentionPanel);
+                }
+                break;
+            case TopBarModuleKind.Clock:
+                AddClockModule(panel);
+                break;
+        }
     }
 
     private void AddModule(TopBarModuleKind kind, StackPanel panel, string label, Action? click, string? glyph = null)
@@ -1161,11 +1204,12 @@ public sealed partial class TopBarWindow : Window
             Padding = new Thickness(16, 12, 16, 14),
             Child = BuildClockCard()
         };
+        var onRight = ReferenceEquals(button.Parent, RightModules);
         var flyout = new Popup
         {
             PlacementTarget = button,
             Placement = PlacementMode.Bottom,
-            HorizontalOffset = -140,
+            HorizontalOffset = onRight ? -140 : -6,
             VerticalOffset = 2,
             StaysOpen = true,
             AllowsTransparency = true,
@@ -1178,7 +1222,7 @@ public sealed partial class TopBarWindow : Window
                 _clockFlyout = null;
             }
         };
-        RightModules.Children.Add(flyout);
+        (button.Parent as Panel ?? RightModules).Children.Add(flyout);
         _clockFlyout = flyout;
         flyout.IsOpen = true;
         // Like the to-do flyout: the opening click must not read as an outside click.
@@ -1408,11 +1452,12 @@ public sealed partial class TopBarWindow : Window
         // The flyout owns its closing: a StaysOpen popup drops cross-process clicks
         // silently and swallows in-thread ones through capture, so the bar closes it
         // from its own poll instead.
+        var onRight = ReferenceEquals(button.Parent, RightModules);
         var flyout = new Popup
         {
             PlacementTarget = button,
             Placement = PlacementMode.Bottom,
-            HorizontalOffset = -6,
+            HorizontalOffset = onRight ? -140 : -6,
             VerticalOffset = 2,
             StaysOpen = true,
             AllowsTransparency = true,
@@ -1427,7 +1472,7 @@ public sealed partial class TopBarWindow : Window
         };
         // A popup outside the visual tree never hears outside clicks at all, so it
         // lives in the module panel; it takes no layout space while closed.
-        LeftModules.Children.Add(flyout);
+        (button.Parent as Panel ?? LeftModules).Children.Add(flyout);
         _todoFlyout = flyout;
         flyout.IsOpen = true;
         // The click that opened the flyout must not read as the next outside click.
