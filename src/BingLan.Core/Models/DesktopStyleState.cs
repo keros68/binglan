@@ -477,7 +477,11 @@ public static class DesktopStyleRules
         {
             return CustomDock(dock.SurfaceColor, dock.SurfaceOpacity);
         }
-        var alpha = Math.Clamp(0.82d + (style.GlassDensity - DefaultGlassDensity) * 0.45d, MinimumGlassDensity, 0.96d);
+        // In clear-glass mode (no real-time blur), match the card / file-box glass density
+        // directly so the dock looks like the same translucent glass instead of an 82% solid bar.
+        var alpha = dock is { FrostedGlass: false }
+            ? Math.Clamp(style.GlassDensity, MinimumGlassDensity, 0.96d)
+            : Math.Clamp(0.82d + (style.GlassDensity - DefaultGlassDensity) * 0.45d, MinimumGlassDensity, 0.96d);
         return style.Glass switch
         {
             GlassMode.Dark => new DockGlass(WithAlpha("#18222F", alpha), "#33FFFFFF", "#E6FFFFFF"),

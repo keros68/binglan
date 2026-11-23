@@ -3148,7 +3148,8 @@ public partial class SettingsWindow : Window
         _loadingDockLook = true;
         try
         {
-            DockFrostedCheckBox.IsChecked = _dockState.FrostedGlass;
+            DockFrostedRadio.IsChecked = _dockState.FrostedGlass;
+            DockClearGlassRadio.IsChecked = !_dockState.FrostedGlass;
             DockFollowLookRadio.IsChecked = _dockState.FollowCardLook;
             DockCustomLookRadio.IsChecked = !_dockState.FollowCardLook;
             DockCustomLookPanel.IsEnabled = !_dockState.FollowCardLook;
@@ -3186,13 +3187,13 @@ public partial class SettingsWindow : Window
 
     private void DockFrosted_Changed(object sender, RoutedEventArgs e)
     {
-        if (_loadingDockLook || _loadingDock || DockFrostedCheckBox is null)
+        if (_loadingDockLook || _loadingDock || DockFrostedRadio is null)
         {
             return;
         }
 
-        _dockState.FrostedGlass = DockFrostedCheckBox.IsChecked == true;
-        ApplyDockChange(_dockState.FrostedGlass ? "已开启 Dock 实时毛玻璃" : "已关闭 Dock 实时毛玻璃，改用半透明纯色");
+        _dockState.FrostedGlass = DockFrostedRadio.IsChecked == true;
+        ApplyDockChange(_dockState.FrostedGlass ? "Dock 已切换为磨砂玻璃" : "Dock 已切换为清透玻璃");
     }
 
     private void DockOpacity_Changed(object sender, RoutedPropertyChangedEventArgs<double> e)

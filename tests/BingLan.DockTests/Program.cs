@@ -1301,7 +1301,36 @@ static void TestDockBounceRules()
     Assert(!DockBounceRules.IntervalElapsed(now - TimeSpan.FromSeconds(3), now), "间隔未到不应再次弹跳");
     Assert(DockBounceRules.IntervalElapsed(now - DockBounceRules.MinInterval, now), "间隔已到应允许");
     Assert(DockBounceRules.IntervalElapsed(now + TimeSpan.FromMinutes(1), now), "时钟回拨后应允许");
-    Assert(new DockState().BounceOnAttention, "弹跳提醒默认应开启");
+    Assert(!new DockState().BounceOnAttention, "弹跳提醒默认应关闭");
+
+    // 老用户从 Schema v59 升级到 v60 时默认关闭弹跳提醒；升级后用户主动打开应持久化保留。
+    var folder = Path.Combine(Path.GetTempPath(), $"BingLanDockBounce-{Guid.NewGuid():N}");
+    try
+    {
+        var store = new LocalStateStore(folder);
+        var legacy = new AppState();
+        legacy.Dock.BounceOnAttention = true;
+        store.Save(legacy);
+        var raw = File.ReadAllText(store.StatePath)
+            .Replace($"\"SchemaVersion\": {AppState.CurrentSchemaVersion}", "\"SchemaVersion\": 59", StringComparison.Ordinal);
+        File.WriteAllText(store.StatePath, raw);
+
+        var migrated = store.Load();
+        AssertEqual(AppState.CurrentSchemaVersion, migrated.SchemaVersion, "v59 状态应迁移到当前 Schema");
+        Assert(!migrated.Dock.BounceOnAttention, "v59 老用户升级后弹跳提醒应默认关闭");
+
+        migrated.Dock.BounceOnAttention = true;
+        store.Save(migrated);
+        var reopened = store.Load();
+        Assert(reopened.Dock.BounceOnAttention, "v60 用户主动开启弹跳提醒后重启应保持开启");
+    }
+    finally
+    {
+        if (Directory.Exists(folder))
+        {
+            Directory.Delete(folder, recursive: true);
+        }
+    }
 }
 
 static void TestDockAutoHideAlways()
@@ -1404,6 +1433,18 @@ static void TestDockGlassRules()
         "高对比度下应回退系统色");
     Assert(!DockGlassRules.ShouldUseCompositionBackdrop(true, true, true, false, false, surfaceAlpha: 0),
         "无底板零透明时不启用合成背板");
+    Assert(!DockGlassRules.ShouldUseCompositionBackdrop(true, true, true, false, false, surfaceAlpha: 1),
+        "纯透明无底板占位色 #01FFFFFF（Alpha=1）不应启用磨砂合成背板");
+
+    // 清透玻璃模式下跟随卡片外观应直接使用卡片玻璃浓度，与分组盒透明度一致。
+    var lowDensityStyle = new DesktopStyleState { Glass = GlassMode.Light, GlassDensity = 0.30d };
+    var clearGlassDock = new DockState { FollowCardLook = true, FrostedGlass = false };
+    var frostedDock = new DockState { FollowCardLook = true, FrostedGlass = true };
+    var clearSurface = DesktopStyleRules.Dock(lowDensityStyle, clearGlassDock).Surface;
+    var frostedSurface = DesktopStyleRules.Dock(lowDensityStyle, frostedDock).Surface;
+    Assert(clearSurface.StartsWith("#4C", StringComparison.OrdinalIgnoreCase),
+        $"清透玻璃 Dock 跟随 30% 卡片浓度时应直接取 30% 不透明度，实际为 {clearSurface}");
+    Assert(clearSurface != frostedSurface, "清透玻璃与磨砂玻璃在低卡片浓度下应有区分");
 
     // DockState.FrostedGlass 默认为 true 且可持久化关闭。
     var folder = Path.Combine(Path.GetTempPath(), $"BingLanDockFrosted-{Guid.NewGuid():N}");

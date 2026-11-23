@@ -800,14 +800,23 @@
                                     local:SettingsSearch.AccordionPart="Dock">
                             <local:SettingsRow x:Name="DockFrostedRow"
                                                Style="{StaticResource NestedSettingsRowStyle}"
-                                               Header="Dock 实时毛玻璃"
-                                               Description="Windows 11 下对背景做实时模糊；若部分系统或驱动下底色发黑、或动态壁纸负载偏高，关闭后改为半透明纯色"
-                                               local:SettingsSearch.Keywords="Dock 实时毛玻璃 Dock 磨砂 毛玻璃 发黑 黑灰 模糊 性能">
-                                <CheckBox x:Name="DockFrostedCheckBox"
-                                          AutomationProperties.Name="Dock 实时毛玻璃"
-                                          Style="{StaticResource ToggleSwitchStyle}"
-                                          Checked="DockFrosted_Changed"
-                                          Unchecked="DockFrosted_Changed"/>
+                                               Header="Dock 质感"
+                                               Description="磨砂玻璃在 Windows 11 下对背景做实时模糊；清透玻璃不模糊，呈现与分组盒一致的透明玻璃质感（若部分系统下底色发黑或动态壁纸负载偏高也可选清透玻璃）"
+                                               local:SettingsSearch.Keywords="Dock 质感 磨砂玻璃 清透玻璃 透明玻璃 Dock 实时毛玻璃 Dock 磨砂 毛玻璃 发黑 黑灰 模糊 性能">
+                                <Border Style="{StaticResource SegmentHostStyle}">
+                                    <StackPanel Orientation="Horizontal">
+                                        <RadioButton x:Name="DockFrostedRadio"
+                                                     GroupName="DockMaterial"
+                                                     Style="{StaticResource SegmentRadioStyle}"
+                                                     Content="磨砂玻璃"
+                                                     Checked="DockFrosted_Changed"/>
+                                        <RadioButton x:Name="DockClearGlassRadio"
+                                                     GroupName="DockMaterial"
+                                                     Style="{StaticResource SegmentRadioStyle}"
+                                                     Content="清透玻璃"
+                                                     Checked="DockFrosted_Changed"/>
+                                    </StackPanel>
+                                </Border>
                             </local:SettingsRow>
                             <local:SettingsRow x:Name="DockLookSettingsRow"
                                                Style="{StaticResource NestedSettingsRowStyle}"
@@ -2465,6 +2474,16 @@
                                                   Checked="DockHoverMagnification_Changed"
                                                   Unchecked="DockHoverMagnification_Changed"/>
                                     </local:SettingsRow>
+                                    <local:SettingsRow x:Name="DockBounceOnAttentionRow"
+                                                       Header="有新消息时图标弹跳"
+                                                       Description="应用闪烁提醒时（如聊天软件来消息），它在 Dock 上的图标弹跳几下；Dock 已收起时，把手会闪动。默认关闭，遵循“动画”档位与系统动画开关"
+                                                       local:SettingsSearch.Keywords="弹跳 跳动 弹弹乐 新消息 通知 提醒 闪烁">
+                                        <CheckBox x:Name="DockBounceOnAttentionCheckBox"
+                                                  AutomationProperties.Name="有新消息时图标弹跳"
+                                                  Style="{StaticResource ToggleSwitchStyle}"
+                                                  Checked="DockSetting_Changed"
+                                                  Unchecked="DockSetting_Changed"/>
+                                    </local:SettingsRow>
                                     <local:SettingsRow Header="固定的应用"
                                                        Description="也可以把程序或快捷方式拖到 Dock 上，或在 Dock 中右键正在运行的应用选择“固定到 Dock”；拖动图标可调整顺序"
                                                        local:SettingsSearch.Keywords="固定 Pin 添加应用">
@@ -2620,16 +2639,6 @@
                                                            local:SettingsSearch.Keywords="自动隐藏 一直隐藏 总是弹出 自己弹出">
                                             <CheckBox x:Name="DockAutoHideAlwaysCheckBox"
                                                       AutomationProperties.Name="Dock 始终自动隐藏"
-                                                      Style="{StaticResource ToggleSwitchStyle}"
-                                                      Checked="DockSetting_Changed"
-                                                      Unchecked="DockSetting_Changed"/>
-                                        </local:SettingsRow>
-                                        <local:SettingsRow x:Name="DockBounceOnAttentionRow"
-                                                           Header="有新消息时图标弹跳"
-                                                           Description="应用闪烁提醒时（如聊天软件来消息），它在 Dock 上的图标弹跳几下；Dock 已收起时，把手会闪动。遵循“动画”档位与系统动画开关，同一应用 8 秒内至多弹跳一次"
-                                                           local:SettingsSearch.Keywords="弹跳 跳动 新消息 通知 提醒 闪烁">
-                                            <CheckBox x:Name="DockBounceOnAttentionCheckBox"
-                                                      AutomationProperties.Name="有新消息时图标弹跳"
                                                       Style="{StaticResource ToggleSwitchStyle}"
                                                       Checked="DockSetting_Changed"
                                                       Unchecked="DockSetting_Changed"/>

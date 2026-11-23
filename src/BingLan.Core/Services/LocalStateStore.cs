@@ -998,6 +998,11 @@ public sealed class LocalStateStore
             TopBarRules.Normalize(state.TopBar);
             state.SchemaVersion = 59;
         }
+        if (state.SchemaVersion < 60)
+        {
+            state.Dock.BounceOnAttention = false;
+            state.SchemaVersion = 60;
+        }
         if (!Enum.IsDefined(state.Taskbar.Mode))
         {
             state.Taskbar.Mode = TaskbarMode.SystemDefault;

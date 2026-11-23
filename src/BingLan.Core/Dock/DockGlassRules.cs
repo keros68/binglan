@@ -14,6 +14,12 @@ public static class DockGlassRules
     /// </summary>
     public const double SharedBackdropTintScale = 0.24d;
 
+    /// <summary>
+    /// Alpha 1 (<c>#01FFFFFF</c>) is the invisible hit-test sentinel used by clear / no-backing
+    /// surfaces; real-time backdrop blur only attaches when a visible surface tint is present.
+    /// </summary>
+    public const byte MinimumBackdropSurfaceAlpha = 2;
+
     public static bool ShouldUseCompositionBackdrop(
         bool isWindows11OrLater,
         bool frostedGlassEnabled,
@@ -26,7 +32,7 @@ public static class DockGlassRules
         && transparencyEnabled
         && !batterySaverActive
         && !highContrastEnabled
-        && surfaceAlpha > 0;
+        && surfaceAlpha >= MinimumBackdropSurfaceAlpha;
 
     public static byte ComputeBackdropTintAlpha(byte surfaceAlpha, bool fullTintOpacity) =>
         fullTintOpacity
