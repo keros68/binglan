@@ -100,8 +100,7 @@ internal static class ShellIconProvider
             return null;
         }
 
-        var extension = Path.GetExtension(path);
-        if (extension.Equals(".url", StringComparison.OrdinalIgnoreCase))
+        if (Path.GetExtension(path).Equals(".url", StringComparison.OrdinalIgnoreCase))
         {
             // Steam games and many launchers create .url shortcuts whose IconFile points to
             // a local .ico/.exe. Windows Shell's .url icon handler is STA-only and often
@@ -110,13 +109,6 @@ internal static class ShellIconProvider
             if (TryGetInternetShortcutIcon(path) is { } shortcutIcon)
             {
                 return shortcutIcon;
-            }
-        }
-        else if (extension.Equals(".ico", StringComparison.OrdinalIgnoreCase))
-        {
-            if (TryLoadIconFile(path) is { } directIcon)
-            {
-                return directIcon;
             }
         }
 
