@@ -992,9 +992,12 @@ internal static class LauncherPanelWindowTests
             // 切换到文件页 → 进入测试目录 → 钻入子目录A → 排序、目录内搜索、Backspace 返回
             Click(panel, "TabFilesButton");
             until(() => Require<ItemsControl>(panel, "FilePlacesBar").IsVisible, "文件总览应展示常用位置卡片");
-            var placeButton = Visuals<Button>(Require<ItemsControl>(panel, "FilePlacesBar"))
-                .Single(btn => System.Windows.Automation.AutomationProperties.GetName(btn) == "测试目录");
-            placeButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Button? placeButton = null;
+            until(() => (placeButton = Visuals<Button>(Require<ItemsControl>(panel, "FilePlacesBar"))
+                .FirstOrDefault(btn => System.Windows.Automation.AutomationProperties.GetName(btn) == "测试目录")) is not null,
+                "常用位置卡片应包含测试目录：实际 " + string.Join("、", Visuals<Button>(Require<ItemsControl>(panel, "FilePlacesBar"))
+                    .Select(btn => System.Windows.Automation.AutomationProperties.GetName(btn))));
+            placeButton!.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             until(() => panel.VisibleEntries.Any(entry => entry.Candidate.DisplayName == "子目录A"),
                 "点击常用位置应读取目录内容");
             var list = Require<ListBox>(panel, "ResultsList");
