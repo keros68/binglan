@@ -992,7 +992,8 @@ public partial class IceBlueDockWindow : Window
                 LaunchNewInstance(current, DisplayNameOf(current));
             }
         };
-        var iconScale = AddHoverZoom(button, icon);
+        // Scale the whole icon host so the attention dot and unread pill follow the zoom.
+        var iconScale = AddHoverZoom(button, iconHost);
         button.ContextMenuOpening += (_, eventArgs) => eventArgs.Handled = true;
         button.MouseRightButtonUp += (_, eventArgs) =>
         {
