@@ -3072,8 +3072,8 @@ internal static class Program
             var sortItems = sortButton.ContextMenu?.Items.OfType<MenuItem>().ToList() ?? [];
             Assert(
                 sortItems.Select(item => item.Header?.ToString())
-                    .SequenceEqual(["手动调整（保留当前顺序）", "按名称", "按类型"]),
-                "桌面分组盒缺少手动、名称或类型排序入口");
+                    .SequenceEqual(["手动调整（保留当前顺序）", "按名称", "按类型", "按修改时间（新的在前）"]),
+                "桌面分组盒缺少手动、名称、类型或修改时间排序入口");
             sortItems.Single(item => Equals(item.Header, "按名称"))
                 .RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
             Pump();
