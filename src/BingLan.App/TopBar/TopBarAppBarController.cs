@@ -4,7 +4,9 @@ using System.Windows.Interop;
 using System.Windows.Threading;
 using BingLan.App.Dock;
 using BingLan.App.Interop;
+using BingLan.App.Services;
 using BingLan.Core.Dock;
+using BingLan.Core.TopBar;
 
 namespace BingLan.App.TopBar;
 
@@ -18,7 +20,9 @@ internal sealed class TopBarAppBarController : IDisposable
 {
     private const DockEdge Edge = DockEdge.Top;
     private const int ExplorerRecoveryAttemptCount = 5;
+    private const int MaxTransientReserveFailures = 3;
     private static readonly TimeSpan ExplorerRecoveryDelay = TimeSpan.FromMilliseconds(400);
+    private static readonly TimeSpan TransientReserveRetryDelay = TimeSpan.FromMilliseconds(400);
     private readonly Window _window;
     private readonly nint _handle;
     private readonly HwndSource _source;
@@ -28,6 +32,8 @@ internal sealed class TopBarAppBarController : IDisposable
     private readonly AppBarPositionGuard _positionGuard = new();
     private readonly AppBarWorkAreaCheck _workAreaCheck = new();
     private readonly DispatcherTimer _deferredPosition;
+    private readonly DispatcherTimer _reserveRetryTimer;
+    private PixelRect _reservedStrip;
     private MonitorSnapshot? _monitor;
     private double _heightDip;
     private double? _compactWidthDip;
@@ -35,6 +41,9 @@ internal sealed class TopBarAppBarController : IDisposable
     private bool _fullScreenDetected;
     private bool _positioning;
     private bool _refreshNativeTaskbarLayout;
+    private bool _transientRecovering;
+    private bool _reserveFallbackLatched;
+    private int _consecutiveReserveFailures;
     private bool _disposed;
     private bool _setPositionApplied;
     private int _recoveryGeneration;
@@ -67,12 +76,31 @@ internal sealed class TopBarAppBarController : IDisposable
             },
             window.Dispatcher);
         _deferredPosition.Stop();
+        _reserveRetryTimer = new DispatcherTimer(
+            TransientReserveRetryDelay,
+            DispatcherPriority.Background,
+            (_, _) =>
+            {
+                _reserveRetryTimer!.Stop();
+                if (!_disposed && _reserveWorkArea && !_reserveFallbackLatched)
+                {
+                    if (!_reservation.IsRegistered)
+                    {
+                        Dispatch(_reservation.Apply(true));
+                    }
+                    Position();
+                }
+            },
+            window.Dispatcher);
+        _reserveRetryTimer.Stop();
         _source.AddHook(WindowProc);
     }
 
     internal event Action? EnvironmentChanged;
 
     internal event Action? ExplorerRestarted;
+
+    internal event Action? ReservationFallbackTriggered;
 
     internal PixelRect Bounds { get; private set; }
 
@@ -110,13 +138,25 @@ internal sealed class TopBarAppBarController : IDisposable
         {
             TaskbarEdgeGuard.InvalidateNativeTaskbarLayout(monitor.Bounds);
         }
+        var clampedHeightDip = Math.Max(1d, heightDip);
+        var heightChanged = Math.Abs(_heightDip - clampedHeightDip) > 0.01d;
         _monitor = monitor;
         _reserveWorkArea = reserveWorkArea;
-        _heightDip = Math.Max(1d, heightDip);
+        _heightDip = clampedHeightDip;
         _compactWidthDip = compactWidthDip;
 
+        if (!reserveWorkArea || monitorChanged || heightChanged)
+        {
+            _consecutiveReserveFailures = 0;
+            _transientRecovering = false;
+            _reserveFallbackLatched = false;
+            _reserveRetryTimer.Stop();
+            _reservedStrip = default;
+            _setPositionApplied = false;
+        }
+
         var nativeTopTaskbar = TaskbarEdgeGuard.GetNativeTaskbarLayout(monitor.Bounds)?.Edge == DockEdge.Top;
-        Dispatch(_reservation.Apply(reserveWorkArea && !nativeTopTaskbar, monitorChanged));
+        Dispatch(_reservation.Apply(reserveWorkArea && !nativeTopTaskbar && !_reserveFallbackLatched, monitorChanged));
         Position();
     }
 
@@ -127,7 +167,11 @@ internal sealed class TopBarAppBarController : IDisposable
             return;
         }
         _recoveryGeneration++;
+        _transientRecovering = false;
+        _reserveFallbackLatched = false;
+        _consecutiveReserveFailures = 0;
         _deferredPosition.Stop();
+        _reserveRetryTimer.Stop();
         Dispatch(_reservation.Release());
         _source.RemoveHook(WindowProc);
         _disposed = true;
@@ -184,7 +228,7 @@ internal sealed class TopBarAppBarController : IDisposable
                     Dispatch(_reservation.Release());
                 }
             }
-            else if (_reserveWorkArea && !_reservation.IsRegistered)
+            else if (_reserveWorkArea && !_reservation.IsRegistered && !_reserveFallbackLatched)
             {
                 Dispatch(_reservation.Apply(true));
             }
@@ -196,79 +240,50 @@ internal sealed class TopBarAppBarController : IDisposable
             var reservePixels = Math.Max(1, thicknessPixels - 1);
 
             PixelRect strip;
-            if (_reservation.IsRegistered)
+            if (_reservation.IsRegistered && TryReserveStrip(_monitor, reservePixels) is { } reserved)
             {
-                var requested = DockGeometry.Calculate(
-                    _monitor.Bounds,
-                    Edge,
-                    Math.Min(reservePixels, _monitor.Bounds.Height));
-                var data = CreateData();
-                data.Edge = (uint)Edge;
-                data.Rectangle = ToNative(requested);
-                var queriedOk = DockNativeMethods.SHAppBarMessage(DockNativeMethods.AbmQueryPos, ref data) != 0;
-                if (!queriedOk)
+                _consecutiveReserveFailures = 0;
+                _transientRecovering = false;
+                _reserveRetryTimer.Stop();
+                strip = reserved;
+            }
+            else if (_reserveWorkArea
+                && !nativeTopTaskbar
+                && !_reserveFallbackLatched
+                && _consecutiveReserveFailures < MaxTransientReserveFailures)
+            {
+                _consecutiveReserveFailures++;
+                _transientRecovering = true;
+                strip = AppBarReservationState.IsValidStrip(_reservedStrip, _monitor.Bounds, reservePixels, Edge)
+                    ? _reservedStrip
+                    : DockGeometry.Calculate(_monitor.Bounds, Edge, Math.Min(reservePixels, _monitor.Bounds.Height));
+                if (!_reserveRetryTimer.IsEnabled)
                 {
-                    _reservation.ResetRegistration();
-                    Dispatch(_reservation.Apply(true));
-                    if (_reservation.IsRegistered)
-                    {
-                        data = CreateData();
-                        data.Edge = (uint)Edge;
-                        data.Rectangle = ToNative(requested);
-                        queriedOk = DockNativeMethods.SHAppBarMessage(DockNativeMethods.AbmQueryPos, ref data) != 0;
-                    }
-                }
-                if (!queriedOk)
-                {
-                    _setPositionApplied = false;
-                    strip = requested;
-                }
-                else
-                {
-                    // Keep the strip at the top of whatever the system allows: other bars at
-                    // the same edge push it down rather than off the monitor.
-                    var adjusted = ToPixel(data.Rectangle) with
-                    {
-                        Bottom = data.Rectangle.Top + Math.Min(reservePixels, _monitor.Bounds.Height)
-                    };
-                    // ABN_POSCHANGED arrives for every bar's move (the auto-hiding taskbar
-                    // fires it constantly), and every ABM_SETPOS rebroadcasts a work-area
-                    // change system-wide — screen-capture overlays react to that by
-                    // re-laying out. An unchanged strip needs no new broadcast, but a
-                    // registration that has not sent its first SETPOS yet must not skip,
-                    // and a drifted window rect must still be corrected via MoveWindow.
-                    if (adjusted == Bounds
-                        && _setPositionApplied
-                        && !_workAreaCheck.NeedsResubmit(
-                            DockAppBarController.GetLiveWorkingArea(_monitor).Top,
-                            adjusted.Bottom))
-                    {
-                        var expectedWindowRect = adjusted with
-                        {
-                            Bottom = Math.Min(adjusted.Top + thicknessPixels, _monitor.Bounds.Bottom)
-                        };
-                        if (!DockNativeMethods.GetWindowRect(_handle, out var actualRect)
-                            || ToPixel(actualRect) != expectedWindowRect)
-                        {
-                            DockNativeMethods.MoveWindow(
-                                _handle,
-                                expectedWindowRect.Left,
-                                expectedWindowRect.Top,
-                                expectedWindowRect.Width,
-                                expectedWindowRect.Height,
-                                true);
-                        }
-                        UpdateWindowLayer();
-                        return;
-                    }
-                    data.Rectangle = ToNative(adjusted);
-                    _setPositionApplied = DockNativeMethods.SHAppBarMessage(
-                        DockNativeMethods.AbmSetPos, ref data) != 0;
-                    strip = ToPixel(data.Rectangle);
+                    _reserveRetryTimer.Start();
                 }
             }
             else
             {
+                var fellBackFromReserve = _reserveWorkArea && !nativeTopTaskbar
+                    && (_reservation.IsRegistered || _transientRecovering);
+                _consecutiveReserveFailures = 0;
+                _transientRecovering = false;
+                _reserveRetryTimer.Stop();
+                _reservedStrip = default;
+                _setPositionApplied = false;
+                if (_reservation.IsRegistered)
+                {
+                    Dispatch(_reservation.Release());
+                }
+                if (fellBackFromReserve)
+                {
+                    _reserveFallbackLatched = true;
+                    StartupLog.Write("顶部信息条未能确认顶边工作区预留，已临时切换为智能隐藏");
+                    _window.Dispatcher.BeginInvoke(
+                        DispatcherPriority.Background,
+                        () => ReservationFallbackTriggered?.Invoke());
+                }
+
                 var workArea = TaskbarEdgeGuard.AvoidNativeTaskbar(
                     DockAppBarController.GetLiveWorkingArea(_monitor), _monitor.Bounds);
                 strip = DockGeometry.Calculate(
@@ -290,19 +305,102 @@ internal sealed class TopBarAppBarController : IDisposable
             {
                 Bottom = Math.Min(strip.Top + thicknessPixels, _monitor.Bounds.Bottom)
             };
-            DockNativeMethods.MoveWindow(
-                _handle,
-                windowRect.Left,
-                windowRect.Top,
-                windowRect.Width,
-                windowRect.Height,
-                true);
+            if (!DockNativeMethods.GetWindowRect(_handle, out var actualRect)
+                || ToPixel(actualRect) != windowRect)
+            {
+                DockNativeMethods.MoveWindow(
+                    _handle,
+                    windowRect.Left,
+                    windowRect.Top,
+                    windowRect.Width,
+                    windowRect.Height,
+                    true);
+            }
             UpdateWindowLayer();
         }
         finally
         {
             _positioning = false;
         }
+    }
+
+    private PixelRect? TryReserveStrip(MonitorSnapshot monitor, int reservePixels)
+    {
+        var requestedThickness = Math.Min(reservePixels, monitor.Bounds.Height);
+        var requested = DockGeometry.Calculate(monitor.Bounds, Edge, requestedThickness);
+        var data = CreateData();
+        data.Edge = (uint)Edge;
+        data.Rectangle = ToNative(requested);
+        if (DockNativeMethods.SHAppBarMessage(DockNativeMethods.AbmQueryPos, ref data) == 0)
+        {
+            _reservation.ResetRegistration();
+            Dispatch(_reservation.Apply(true));
+            if (!_reservation.IsRegistered)
+            {
+                return null;
+            }
+
+            data = CreateData();
+            data.Edge = (uint)Edge;
+            data.Rectangle = ToNative(requested);
+            if (DockNativeMethods.SHAppBarMessage(DockNativeMethods.AbmQueryPos, ref data) == 0)
+            {
+                return null;
+            }
+        }
+
+        // Keep the strip at the top of whatever the system allows: other bars at
+        // the same edge push it down rather than off the monitor.
+        var adjusted = ToPixel(data.Rectangle) with
+        {
+            Bottom = data.Rectangle.Top + requestedThickness
+        };
+        if (!AppBarReservationState.IsValidStrip(adjusted, monitor.Bounds, requestedThickness, Edge))
+        {
+            return null;
+        }
+
+        // ABN_POSCHANGED arrives for every bar's move, and every ABM_SETPOS rebroadcasts
+        // a work-area change system-wide. Skip redundant SETPOS when the strip is unchanged
+        // and the live work area already reflects it, but resubmit once if another app or
+        // display transition reset the work area.
+        var liveWorkArea = DockAppBarController.GetLiveWorkingArea(monitor);
+        if (!_setPositionApplied
+            || adjusted != _reservedStrip
+            || _workAreaCheck.NeedsResubmit(liveWorkArea.Top, adjusted.Bottom))
+        {
+            data.Rectangle = ToNative(adjusted);
+            if (DockNativeMethods.SHAppBarMessage(DockNativeMethods.AbmSetPos, ref data) == 0)
+            {
+                _setPositionApplied = false;
+                return null;
+            }
+
+            var actual = ToPixel(data.Rectangle);
+            if (!AppBarReservationState.IsValidStrip(actual, monitor.Bounds, requestedThickness, Edge))
+            {
+                _setPositionApplied = false;
+                return null;
+            }
+
+            liveWorkArea = DockAppBarController.GetLiveWorkingArea(monitor);
+            if (!TopBarReserveRules.IsWorkAreaReserved(liveWorkArea, actual))
+            {
+                _setPositionApplied = false;
+                return null;
+            }
+
+            _setPositionApplied = true;
+            _reservedStrip = actual;
+        }
+        else if (!TopBarReserveRules.IsWorkAreaReserved(liveWorkArea, _reservedStrip))
+        {
+            return null;
+        }
+
+        return AppBarReservationState.IsValidStrip(_reservedStrip, monitor.Bounds, requestedThickness, Edge)
+            ? _reservedStrip
+            : null;
     }
 
     private nint WindowProc(nint hwnd, int message, nint wParam, nint lParam, ref bool handled)
@@ -315,6 +413,12 @@ internal sealed class TopBarAppBarController : IDisposable
         if ((uint)message == _taskbarCreatedMessage)
         {
             InvalidateNativeTaskbarLayout();
+            _transientRecovering = false;
+            _reserveFallbackLatched = false;
+            _consecutiveReserveFailures = 0;
+            _reserveRetryTimer.Stop();
+            _reservedStrip = default;
+            _setPositionApplied = false;
             _reservation.ResetRegistration();
             _positionGuard.Reset();
             _workAreaCheck.Reset();
@@ -377,6 +481,7 @@ internal sealed class TopBarAppBarController : IDisposable
                 break;
             case DockNativeMethods.WmDisplayChange:
             case DockNativeMethods.WmDpiChanged:
+                _reserveFallbackLatched = false;
                 _window.Dispatcher.BeginInvoke(
                     DispatcherPriority.Background,
                     NotifyEnvironmentChanged);

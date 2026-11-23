@@ -468,6 +468,61 @@ public static class TopBarTests
         // DockGeometry 的顶边条已是满宽，顶栏直接复用。
         var strip = DockGeometry.Calculate(monitor, DockEdge.Top, 40);
         Assert(strip is { Left: 0, Top: 0, Right: 1920, Bottom: 40 }, "顶边条满宽贴顶");
+
+        // 智能隐藏右上角避让区：按实际重叠窗口右边缘计算，兼容右侧 Dock、半屏窗口与多 DPI。
+        var fullBar = new PixelRect(0, 0, 1920, 32);
+        var maximizedBrowser = new PixelRect(0, 0, 1920, 1040);
+        var excluded100 = TopBarRevealRules.ComputeCaptionButtonExclusion(maximizedBrowser, fullBar, 160);
+        Assert(excluded100 == (1760, 1920), "100% 缩放满屏最大化窗口排除最右 160 像素");
+        Assert(!TopBarRevealRules.IsInRevealZone(1910, 0, fullBar, 2, excluded100), "右上角关闭按钮处不触发顶栏唤出");
+        Assert(!TopBarRevealRules.IsInRevealZone(1760, 1, fullBar, 2, excluded100), "避让区左边界不触发唤出");
+        Assert(TopBarRevealRules.IsInRevealZone(1759, 0, fullBar, 2, excluded100), "避让区左侧仍正常触顶唤出");
+        Assert(TopBarRevealRules.IsInRevealZone(960, 0, fullBar, 2, excluded100), "屏幕顶边中部正常触顶唤出");
+
+        var rightDockBrowser = new PixelRect(0, 0, 1820, 1080);
+        var excludedWithRightDock = TopBarRevealRules.ComputeCaptionButtonExclusion(rightDockBrowser, fullBar, 240);
+        Assert(excludedWithRightDock == (1580, 1820), "右侧 Dock 推窄最大化窗口时按窗口右缘而非屏幕右缘排除（150% DPI）");
+        Assert(!TopBarRevealRules.IsInRevealZone(1800, 0, fullBar, 2, excludedWithRightDock), "右侧 Dock 场景下窗口关闭按钮不误唤出");
+        Assert(TopBarRevealRules.IsInRevealZone(1850, 0, fullBar, 2, excludedWithRightDock), "窗口右侧空白区仍可唤出");
+
+        var leftSnapped = new PixelRect(0, 0, 960, 1040);
+        var excludedSnapped = TopBarRevealRules.ComputeCaptionButtonExclusion(leftSnapped, fullBar, 320);
+        Assert(excludedSnapped == (640, 960), "左半屏贴顶窗口在 200% DPI 下按窗口右缘排除 320 像素");
+        Assert(!TopBarRevealRules.IsInRevealZone(950, 0, fullBar, 2, excludedSnapped), "左半屏贴顶窗口关闭按钮不误唤出");
+
+        var narrowWindow = new PixelRect(400, 0, 500, 400);
+        Assert(TopBarRevealRules.ComputeCaptionButtonExclusion(narrowWindow, fullBar, 160) == (400, 500),
+            "窄于排除宽度的窗口应钳制在窗口自身范围内");
+        Assert(TopBarRevealRules.ComputeCaptionButtonExclusion(new PixelRect(0, 40, 1920, 1040), fullBar, 160) is null,
+            "未与顶栏重叠的窗口不产生排除区");
+
+        // 预留模式工作区实效校验与异常贴顶窗口检测。
+        var reservedStrip = new PixelRect(0, 0, 1920, 31);
+        Assert(TopBarReserveRules.IsWorkAreaReserved(new PixelRect(0, 31, 1920, 1040), reservedStrip),
+            "工作区顶边下移到预留条下沿应判已生效");
+        Assert(TopBarReserveRules.IsWorkAreaReserved(new PixelRect(0, 60, 1920, 1040), reservedStrip),
+            "下方叠放其他 AppBar 使工作区更低仍应判已生效");
+        Assert(!TopBarReserveRules.IsWorkAreaReserved(new PixelRect(0, 0, 1920, 1040), reservedStrip),
+            "工作区顶边仍在 0 时不应把预留判为成功");
+
+        var negStrip = new PixelRect(-1920, -1080, 0, -1049);
+        Assert(TopBarReserveRules.IsWorkAreaReserved(new PixelRect(-1920, -1049, 0, -40), negStrip),
+            "负坐标副屏工作区顶边下移应判已生效");
+        Assert(!TopBarReserveRules.IsWorkAreaReserved(new PixelRect(-1920, -1080, 0, -40), negStrip),
+            "负坐标副屏工作区未下移应判失败");
+
+        Assert(!TopBarReserveRules.IsWindowCoveringReservedBar(new PixelRect(0, 31, 1920, 1040), reservedStrip),
+            "正常位于预留条下方的最大化窗口不算侵入顶栏");
+        Assert(!TopBarReserveRules.IsWindowCoveringReservedBar(new PixelRect(0, 30, 1920, 1040), reservedStrip),
+            "底部 1 像素无缝贴合不应误判为侵入顶栏");
+        Assert(TopBarReserveRules.IsWindowCoveringReservedBar(new PixelRect(0, 0, 1920, 1040), reservedStrip),
+            "顶边仍贴在 y=0 的最大化浏览器应判侵入预留顶栏");
+        Assert(!TopBarReserveRules.IsWindowCoveringReservedBar(new PixelRect(1920, 0, 3840, 1040), reservedStrip),
+            "另一块显示器上的贴顶窗口不应触发当前屏顶栏退避");
+        Assert(TopBarReserveRules.IsWindowCoveringReservedBar(new PixelRect(-1920, -1080, 0, -40), negStrip),
+            "负坐标副屏上顶边侵入的窗口应判侵入");
+        Assert(!TopBarReserveRules.IsWindowCoveringReservedBar(new PixelRect(-1920, -1049, 0, -40), negStrip),
+            "负坐标副屏上位于预留条下方的窗口不判侵入");
     }
 
     private static void TestThemeTopBarFields()

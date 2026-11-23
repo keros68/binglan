@@ -329,6 +329,7 @@ public sealed partial class TopBarWindow : Window
         _appBar = new TopBarAppBarController(this, _state.Height);
         _appBar.EnvironmentChanged += ApplyState;
         _appBar.ExplorerRestarted += RenderModules;
+        _appBar.ReservationFallbackTriggered += UpdateForForeground;
         ApplyAcrylicBackdrop();
         ApplyState();
     }
@@ -2450,10 +2451,13 @@ public sealed partial class TopBarWindow : Window
 
         if (_appBar.IsReserved)
         {
-            // A reserved bar rides above normal windows and under a full-screen app,
-            // like the taskbar; nothing else moves it.
-            _appBar.SetFullScreenDetected(fullScreen);
-            if (!IsVisible && !fullScreen)
+            // A reserved bar rides above normal windows and yields beneath a full-screen
+            // app or any foreground window that still intrudes deep into the top strip
+            // (such as a custom borderless or un-repositioned maximized window).
+            var coveredByForeground = fullScreen
+                || (foreground && TopBarReserveRules.IsWindowCoveringReservedBar(foregroundBounds, bounds));
+            _appBar.SetFullScreenDetected(coveredByForeground);
+            if (!IsVisible && !coveredByForeground)
             {
                 Show();
                 _appBar.EnsureLayer();
@@ -2474,6 +2478,12 @@ public sealed partial class TopBarWindow : Window
         {
             Top = Math.Max(monitor.Bounds.Top, bounds.Top - (int)Math.Round(6d * monitor.Dpi / 96d))
         } : bounds;
+        var captionExclusionPx = !IsCapsule && foreground && overlaps
+            ? (int)Math.Round(TopBarRevealRules.CaptionButtonsExclusionDip * monitor.Dpi / 96d)
+            : 0;
+        var excludedCaptionSpan = captionExclusionPx > 0
+            ? TopBarRevealRules.ComputeCaptionButtonExclusion(foregroundBounds, bounds, captionExclusionPx)
+            : null;
         var input = new DockAutoHideInput(
             WindowOverlapsDock: overlaps,
             ForegroundIsFullScreen: trueFullScreen,
@@ -2481,12 +2491,12 @@ public sealed partial class TopBarWindow : Window
                 cursor.X,
                 cursor.Y,
                 revealBounds,
-                IsCapsule ? bounds.Top - revealBounds.Top + revealDepth : revealDepth),
+                IsCapsule ? bounds.Top - revealBounds.Top + revealDepth : revealDepth,
+                excludedCaptionSpan),
             PointerOverDock: pointerOverBar,
             InteractionActive: _menuOpen || _capsuleExpanded
                 || _todoFlyout?.IsOpen == true || _clockFlyout?.IsOpen == true,
-            // The immediate-collapse shortcut is the dock's; the bar keeps its debounce.
-            OverlapIsMaximizedWindow: IsCapsule && zoomed);
+            OverlapIsMaximizedWindow: zoomed);
         _autoHide.Update(input, DateTimeOffset.UtcNow);
         if (_autoHide.IsShown != IsVisible)
         {

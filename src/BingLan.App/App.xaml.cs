@@ -25,11 +25,11 @@ public partial class App : System.Windows.Application
 
     protected override void OnStartup(StartupEventArgs e)
     {
-        base.OnStartup(e);
-        UseSoftwareRendering();
         RegisterCrashHandlers();
         try
         {
+            base.OnStartup(e);
+            UseSoftwareRendering();
             AccessibilityThemeManager.EnsureInitialized();
             // Every window shows the app icon in the taskbar and Alt+Tab instead of a blank one.
             var appIcon = new System.Windows.Media.Imaging.BitmapImage(
