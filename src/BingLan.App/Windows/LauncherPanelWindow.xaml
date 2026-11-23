@@ -243,13 +243,13 @@
                         <Style TargetType="TextBlock">
                             <Setter Property="Visibility" Value="Collapsed" />
                             <Style.Triggers>
-                                <MultiTrigger>
-                                <MultiTrigger.Conditions>
-                                    <Condition Property="IsSelected" Value="True" />
-                                    <Condition Property="Tag"><Condition.Value><sys:Boolean>True</sys:Boolean></Condition.Value></Condition>
-                                </MultiTrigger.Conditions>
-                                <Setter TargetName="Tile" Property="BorderBrush" Value="{DynamicResource FloatingGlassFocusBrush}" />
-                            </MultiTrigger>
+                                <MultiDataTrigger>
+                                    <MultiDataTrigger.Conditions>
+                                        <Condition Binding="{Binding IsFavorite}" Value="True" />
+                                        <Condition Binding="{Binding CanToggleFavorite}" Value="False" />
+                                    </MultiDataTrigger.Conditions>
+                                    <Setter Property="Visibility" Value="Visible" />
+                                </MultiDataTrigger>
                             </Style.Triggers>
                         </Style>
                     </TextBlock.Style>
@@ -437,7 +437,6 @@
             <Setter Property="Foreground" Value="{DynamicResource FloatingGlassInkBrush}" />
             <Setter Property="AutomationProperties.Name" Value="{Binding Name}" />
             <Setter Property="ToolTip" Value="{Binding Location}" />
-            <Setter Property="Tag" Value="{Binding Tag, RelativeSource={RelativeSource AncestorType=ListBox}}" />
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="ListBoxItem">
