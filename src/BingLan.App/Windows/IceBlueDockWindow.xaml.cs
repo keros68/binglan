@@ -950,6 +950,17 @@ public partial class IceBlueDockWindow : Window
         RenderOptions.SetBitmapScalingMode(icon, BitmapScalingMode.HighQuality);
         var iconHost = new Grid();
         iconHost.Children.Add(icon);
+        // The attention dot and unread pill live on their own layer that shares the icon's
+        // zoom transform, so they follow the icon without changing how the icon itself scales.
+        var badgeLayer = new Grid
+        {
+            Width = _effectiveIconSize,
+            Height = _effectiveIconSize,
+            HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
+            IsHitTestVisible = false,
+            RenderTransformOrigin = new Point(0.5, 1)
+        };
+        iconHost.Children.Add(badgeLayer);
         content.Children.Add(iconHost);
         // The dot under a running app: wider for several windows, blue for the current one.
         var dot = new Border
@@ -992,8 +1003,8 @@ public partial class IceBlueDockWindow : Window
                 LaunchNewInstance(current, DisplayNameOf(current));
             }
         };
-        // Scale the whole icon host so the attention dot and unread pill follow the zoom.
-        var iconScale = AddHoverZoom(button, iconHost);
+        var iconScale = AddHoverZoom(button, icon);
+        badgeLayer.RenderTransform = icon.RenderTransform;
         button.ContextMenuOpening += (_, eventArgs) => eventArgs.Handled = true;
         button.MouseRightButtonUp += (_, eventArgs) =>
         {
@@ -1048,10 +1059,8 @@ public partial class IceBlueDockWindow : Window
     {
         parts.Button.Tag = item;
         parts.Icon.Source = _visuals.TryGetValue(item.Key, out var visual) ? visual.Icon : null;
-        while (parts.IconHost.Children.Count > 1)
-        {
-            parts.IconHost.Children.RemoveAt(parts.IconHost.Children.Count - 1);
-        }
+        var badgeLayer = (Grid)parts.IconHost.Children[1];
+        badgeLayer.Children.Clear();
 
         var wantsAttention = _attention.Wants(item.Group);
         var unread = _attention.UnreadCount(item.Group);
@@ -1081,11 +1090,11 @@ public partial class IceBlueDockWindow : Window
                     VerticalAlignment = VerticalAlignment.Center
                 }
             };
-            parts.IconHost.Children.Add(pill);
+            badgeLayer.Children.Add(pill);
         }
         else if (wantsAttention)
         {
-            parts.IconHost.Children.Add(new Border
+            badgeLayer.Children.Add(new Border
             {
                 Width = 12,
                 Height = 12,
