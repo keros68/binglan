@@ -13,15 +13,6 @@
         FontFamily="{StaticResource UiFont}"
         FontSize="13">
     <Window.Resources>
-        <SolidColorBrush x:Key="TopBarSpecularRimBrush" Color="Transparent"/>
-        <SolidColorBrush x:Key="TopBarInnerShadowBrush" Color="Transparent"/>
-        <SolidColorBrush x:Key="TopBarDiagonalSheenBrush" Color="Transparent"/>
-        <SolidColorBrush x:Key="TopBarModuleHoverBrush" Color="#1EFFFFFF"/>
-        <SolidColorBrush x:Key="TopBarModulePressedBrush" Color="#28000000"/>
-        <SolidColorBrush x:Key="TopBarSearchFillBrush" Color="#26FFFFFF"/>
-        <SolidColorBrush x:Key="TopBarSearchBorderBrush" Color="#26FFFFFF"/>
-        <SolidColorBrush x:Key="TopBarSearchHoverBrush" Color="#38FFFFFF"/>
-        <SolidColorBrush x:Key="TopBarSearchPressedBrush" Color="#46FFFFFF"/>
         <Style x:Key="ModuleButton" TargetType="Button">
             <Setter Property="Background" Value="Transparent"/>
             <Setter Property="BorderBrush" Value="Transparent"/>
@@ -37,7 +28,6 @@
                     <ControlTemplate TargetType="Button">
                         <Border x:Name="Shell"
                                 Background="{TemplateBinding Background}"
-                                CornerRadius="5"
                                 Padding="{TemplateBinding Padding}"
                                 SnapsToDevicePixels="True">
                             <ContentPresenter VerticalAlignment="Center"
@@ -47,11 +37,7 @@
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
                                 <Setter TargetName="Shell" Property="Background"
-                                        Value="{DynamicResource TopBarModuleHoverBrush}"/>
-                            </Trigger>
-                            <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="Shell" Property="Background"
-                                        Value="{DynamicResource TopBarModulePressedBrush}"/>
+                                        Value="#22FFFFFF"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -59,8 +45,8 @@
             </Setter>
         </Style>
         <Style x:Key="SearchEntryButton" TargetType="Button">
-            <Setter Property="Background" Value="{DynamicResource TopBarSearchFillBrush}"/>
-            <Setter Property="BorderBrush" Value="{DynamicResource TopBarSearchBorderBrush}"/>
+            <Setter Property="Background" Value="#26FFFFFF"/>
+            <Setter Property="BorderBrush" Value="#22FFFFFF"/>
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="Foreground" Value="White"/>
             <Setter Property="Padding" Value="10,0"/>
@@ -82,10 +68,10 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Shell" Property="Background" Value="{DynamicResource TopBarSearchHoverBrush}"/>
+                                <Setter TargetName="Shell" Property="Background" Value="#38FFFFFF"/>
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="Shell" Property="Background" Value="{DynamicResource TopBarSearchPressedBrush}"/>
+                                <Setter TargetName="Shell" Property="Background" Value="#46FFFFFF"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -103,24 +89,6 @@
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="*"/>
             </Grid.RowDefinitions>
-            <!-- 静态玻璃质感层（冻结画刷，零 Effect，高对比度/无底板下自动透明） -->
-            <Border x:Name="SurfaceDiagonalSheen"
-                    Grid.RowSpan="2"
-                    IsHitTestVisible="False"
-                    CornerRadius="0"
-                    Background="{DynamicResource TopBarDiagonalSheenBrush}"/>
-            <Border x:Name="SurfaceInnerShadow"
-                    Grid.RowSpan="2"
-                    IsHitTestVisible="False"
-                    CornerRadius="0"
-                    BorderThickness="0,0,0,1"
-                    BorderBrush="{DynamicResource TopBarInnerShadowBrush}"/>
-            <Border x:Name="SurfaceSpecularRim"
-                    Grid.RowSpan="2"
-                    IsHitTestVisible="False"
-                    CornerRadius="0"
-                    BorderThickness="0,1,0,0"
-                    BorderBrush="{DynamicResource TopBarSpecularRimBrush}"/>
             <DockPanel x:Name="ModuleHeader" LastChildFill="False">
                 <StackPanel x:Name="RightModules"
                             DockPanel.Dock="Right"

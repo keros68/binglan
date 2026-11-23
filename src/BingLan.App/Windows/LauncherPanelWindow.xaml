@@ -486,11 +486,16 @@
                     <Border x:Name="WallpaperTintOverlay" />
                 </Grid>
             </Border>
-            <!-- 玻璃质感 1：左上微亮、右下微暗的对角反光渐变（动态冻结资源，高对比度/无底板自动关闭） -->
-            <Border x:Name="PanelDiagonalSheen"
-                    IsHitTestVisible="False"
-                    CornerRadius="{Binding CornerRadius, ElementName=PanelSurface}"
-                    Background="{DynamicResource FloatingGlassDiagonalSheenBrush}" />
+            <!-- 玻璃质感：左上微亮、右下微暗的对角渐变，不改变底色与可读性逻辑 -->
+            <Border IsHitTestVisible="False" CornerRadius="{Binding CornerRadius, ElementName=PanelSurface}">
+                <Border.Background>
+                    <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                        <GradientStop Color="#1AFFFFFF" Offset="0" />
+                        <GradientStop Color="#00FFFFFF" Offset="0.45" />
+                        <GradientStop Color="#0F0A1A2A" Offset="1" />
+                    </LinearGradientBrush>
+                </Border.Background>
+            </Border>
             <Grid x:Name="PanelContentGrid" Margin="26,20,26,18">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
@@ -813,18 +818,17 @@
                           AutomationProperties.Name="按入口来源筛选" SelectionChanged="OnSourceFilterChanged" />
             </Grid>
             </Grid>
-            <!-- 玻璃质感 2：内侧极淡内阴影 / 下沿暗边（与 Dock 一致） -->
-            <Border x:Name="PanelInnerShadow"
-                    IsHitTestVisible="False"
-                    BorderThickness="1"
-                    CornerRadius="{Binding CornerRadius, ElementName=PanelSurface}"
-                    BorderBrush="{DynamicResource FloatingGlassInnerShadowBrush}" />
-            <!-- 玻璃质感 3：上亮下淡的 1px 镜面高光内描边，跟随面板圆角 -->
-            <Border x:Name="PanelSpecularRim"
-                    IsHitTestVisible="False"
-                    BorderThickness="1"
-                    CornerRadius="{Binding CornerRadius, ElementName=PanelSurface}"
-                    BorderBrush="{DynamicResource FloatingGlassSpecularRimBrush}" />
+            <!-- 玻璃边缘高光：上亮下淡的 1 px 内描边，跟随面板圆角 -->
+            <Border IsHitTestVisible="False" BorderThickness="1" Margin="1"
+                    CornerRadius="{Binding CornerRadius, ElementName=PanelSurface}">
+                <Border.BorderBrush>
+                    <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                        <GradientStop Color="#4DFFFFFF" Offset="0" />
+                        <GradientStop Color="#0DFFFFFF" Offset="0.5" />
+                        <GradientStop Color="#1AFFFFFF" Offset="1" />
+                    </LinearGradientBrush>
+                </Border.BorderBrush>
+            </Border>
         </Grid>
     </Border>
 </Window>

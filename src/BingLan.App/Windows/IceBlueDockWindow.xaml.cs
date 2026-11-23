@@ -1039,27 +1039,23 @@ public partial class IceBlueDockWindow : Window
         {
             var horizontalDivider = new Border
             {
-                Width = _effectiveIconSize * 0.68,
+                Width = _effectiveIconSize * 0.8,
                 Height = 1,
                 Margin = new Thickness(0, 6, 0, 6),
-                CornerRadius = new CornerRadius(0.5),
-                SnapsToDevicePixels = true,
                 HorizontalAlignment = System.Windows.HorizontalAlignment.Center
             };
-            horizontalDivider.SetResourceReference(Border.BackgroundProperty, "DockDividerHorizontalBrush");
+            horizontalDivider.SetResourceReference(Border.BackgroundProperty, "DockSurfaceBorderBrush");
             return horizontalDivider;
         }
 
         var divider = new Border
         {
             Width = 1,
-            Height = _effectiveIconSize * 0.68,
+            Height = _effectiveIconSize * 0.8,
             Margin = new Thickness(6, 0, 6, 0),
-            CornerRadius = new CornerRadius(0.5),
-            SnapsToDevicePixels = true,
             VerticalAlignment = System.Windows.VerticalAlignment.Center
         };
-        divider.SetResourceReference(Border.BackgroundProperty, "DockDividerBrush");
+        divider.SetResourceReference(Border.BackgroundProperty, "DockSurfaceBorderBrush");
         return divider;
     }
 
@@ -1113,7 +1109,6 @@ public partial class IceBlueDockWindow : Window
                 DockEdge.Right => new Thickness(3, 0, 0, 0),
                 _ => new Thickness(0, 3, 0, 0)
             },
-            SnapsToDevicePixels = true,
             HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center
         };

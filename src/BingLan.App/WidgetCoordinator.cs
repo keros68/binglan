@@ -2335,7 +2335,6 @@ public sealed partial class WidgetCoordinator : IDisposable
         resources["DockSurfaceBrush"] = Brush(dock.Surface);
         resources["DockSurfaceBorderBrush"] = Brush(dock.Border);
         resources["DockRunningDotBrush"] = Brush(dock.RunningDot);
-        FloatingGlassPalette.ApplyDockSheenResources(resources, dock, clearMaterial: false, highContrast: false);
         FloatingGlassPalette.Apply(resources, dock);
         _launcherPanel?.ApplyAppearance();
         resources["PerformanceAccentBrush"] = Brush("#F5" + _state.Style.AccentColor.TrimStart('#'));
