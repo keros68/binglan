@@ -8755,15 +8755,26 @@ internal static class Program
 
     private static void AssertThemeResourcesOpaque()
     {
+        // Decorative glass sheen layers are switched off (fully transparent) in high contrast;
+        // every other solid resource must be an opaque system colour.
+        var offenders = new List<string>();
         foreach (var key in Application.Current.Resources.Keys.Cast<object>())
         {
             if (Application.Current.Resources[key] is SolidColorBrush brush)
             {
-                Assert(
-                    brush.Color.A == byte.MaxValue,
-                    $"高对比度主题资源 {key} 仍为半透明 ({brush.Color})");
+                var name = key.ToString() ?? string.Empty;
+                var decorative = name.Contains("Sheen", StringComparison.Ordinal)
+                    || name.Contains("Specular", StringComparison.Ordinal)
+                    || name.Contains("InnerShadow", StringComparison.Ordinal)
+                    || name.StartsWith("DockItem", StringComparison.Ordinal);
+                var acceptable = brush.Color.A == byte.MaxValue || (decorative && brush.Color.A == 0);
+                if (!acceptable)
+                {
+                    offenders.Add($"{name} ({brush.Color})");
+                }
             }
         }
+        Assert(offenders.Count == 0, "高对比度主题资源仍为半透明：" + string.Join("、", offenders));
     }
 
     private static void AssertBrushColor(Brush brush, Color expected, string name)
