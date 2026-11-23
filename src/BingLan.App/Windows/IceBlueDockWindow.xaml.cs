@@ -646,7 +646,8 @@ public partial class IceBlueDockWindow : Window
         return _attention.Flashed(
             window,
             AttentionFlashRules.EffectiveProcessId(rawProcessId, executablePath),
-            UnreadBadgeRules.ParseCount(title.ToString()));
+            UnreadBadgeRules.ParseCount(title.ToString()),
+            executablePath);
     }
 
     private bool ClearActivatedAttention(nint window)
@@ -763,7 +764,7 @@ public partial class IceBlueDockWindow : Window
         var commands = VisibleCommands;
         var edge = CurrentEdge;
         var rowSettings = $"{_effectiveIconSize}|{commands}|{_dockOverflowing}|{edge}";
-        var signature = $"{rowSettings}|{BuildSignature(items)}|{string.Join(",", items.Select(item => $"{(_attention.Wants(item.Group) ? '!' : '-')}{_attention.UnreadCount(item.Group)}"))}";
+        var signature = $"{rowSettings}|{BuildSignature(items)}|{string.Join(",", items.Select(item => $"{(_attention.Wants(item) ? '!' : '-')}{_attention.UnreadCount(item)}"))}";
         if (string.Equals(signature, _lastSignature, StringComparison.Ordinal))
         {
             return;
@@ -1244,8 +1245,7 @@ public partial class IceBlueDockWindow : Window
         foreach (var parts in _itemButtons)
         {
             if (parts.Button.Tag is not DockItem item
-                || item.Group is null
-                || !_attention.Wants(item.Group))
+                || !_attention.Wants(item))
             {
                 continue;
             }
@@ -1311,8 +1311,8 @@ public partial class IceBlueDockWindow : Window
         var badgeLayer = (Grid)parts.IconHost.Children[1];
         badgeLayer.Children.Clear();
 
-        var wantsAttention = _attention.Wants(item.Group);
-        var unread = _attention.UnreadCount(item.Group);
+        var wantsAttention = _attention.Wants(item);
+        var unread = _attention.UnreadCount(item);
         if (wantsAttention && unread > 0)
         {
             // A count the app published becomes a red pill; like macOS, "99+" past the cap.

@@ -47,6 +47,8 @@ Run("移动固定项顺序", TestDockMove);
 Run("固定状态规范化", TestDockNormalize);
 Run("Dock 自动隐藏初始为显示", TestDockAutoHideStartsShown);
 Run("无重叠时保持显示", TestDockAutoHideNoOverlapStaysShown);
+Run("托盘里的应用闪烁：固定图标显示提醒，激活后清除", TestDockAttentionForTrayApp);
+Run("固定的启动器图标匹配子目录里的真实进程，且不误吞同目录或系统程序", TestDockPinLauncherStub);
 Run("提醒弹跳：次数随动画档位、系统开关和设置变化，同一应用有间隔", TestDockBounceRules);
 Run("始终自动隐藏：无重叠也收起，指针到边缘才出现", TestDockAutoHideAlways);
 Run("重叠超过延迟后才隐藏且仅触发一次", TestDockAutoHideDelay);
@@ -1222,6 +1224,60 @@ static void TestDockAutoHideNoOverlapStaysShown()
     var changed = state.Update(new DockAutoHideInput(false, false, false, false, false, false), now);
     Assert(!changed, "无重叠时不应触发状态变化");
     Assert(state.IsShown, "无重叠时应保持显示");
+}
+
+static void TestDockAttentionForTrayApp()
+{
+    var launcher = new DockPinnedApp { DisplayName = "DingtalkLauncher", ExecutablePath = @"D:\App\GRP\DingtalkLauncher.exe" };
+    var other = new DockPinnedApp { DisplayName = "微信", ExecutablePath = @"C:\Apps\Weixin.exe" };
+    var items = DockItemComposer.Compose([launcher, other], []);
+    var attention = new DockAttention();
+
+    Assert(!attention.Wants(items[0]) && !attention.Wants(items[1]), "没有闪烁时都不应有提醒");
+
+    // The app is in the tray: no visible window, so no running group, but its hidden
+    // window flashed from the real exe below the launcher's folder.
+    Assert(attention.Flashed(900, 31352, 2, @"D:\App\GRP\main\current\GRP.exe"), "隐藏窗口的闪烁应记录");
+    Assert(attention.Wants(items[0]), "没有可见窗口时，固定的启动器图标应显示提醒");
+    Assert(attention.UnreadCount(items[0]) == 2, "固定图标应带上闪烁时发布的未读数");
+    Assert(!attention.Wants(items[1]), "其他固定图标不应被提醒");
+
+    Assert(attention.Cleared(901, 31352), "激活该进程的窗口应清除提醒");
+    Assert(!attention.Wants(items[0]), "清除后固定图标不应再显示提醒");
+
+    var sameExe = new DockPinnedApp { DisplayName = "x", ExecutablePath = @"C:\Apps\Weixin.exe" };
+    var exactItems = DockItemComposer.Compose([sameExe], []);
+    attention.Flashed(902, 77, null, @"C:\Apps\Weixin.exe");
+    Assert(attention.Wants(exactItems[0]), "同一个 exe 的闪烁应命中固定项");
+}
+
+static void TestDockPinLauncherStub()
+{
+    static WindowGroup Group(string exe) => WindowGrouping.Group(
+        [new TrackedWindow(1, 100, "t", null, exe, false, false)]).Single();
+
+    var launcher = new DockPinnedApp { DisplayName = "DingtalkLauncher", ExecutablePath = @"D:\App\GRP\DingtalkLauncher.exe" };
+    var dingTalk = Group(@"D:\App\GRP\main\current\GRP.exe");
+
+    Assert(!DockPinRules.Matches(launcher, dingTalk), "精确匹配不应命中启动器与真实进程");
+    Assert(DockPinRules.MatchesLauncherStub(launcher, dingTalk), "名为 Launcher 的固定项应匹配其子目录里的真实进程");
+
+    var items = DockItemComposer.Compose([launcher], [dingTalk]);
+    Assert(items.Count == 1 && items[0].IsPinned && items[0].IsRunning, "启动器固定项应显示为运行中，且不再多出一个单独图标");
+
+    var squirrel = new DockPinnedApp { DisplayName = "x", ExecutablePath = @"C:\Users\a\AppData\Local\X\x.exe" };
+    Assert(DockPinRules.MatchesLauncherStub(squirrel, Group(@"C:\Users\a\AppData\Local\X\app-1.2.3\x.exe")), "同名 exe 在子目录应匹配");
+    Assert(!DockPinRules.MatchesLauncherStub(squirrel, Group(@"C:\Users\a\AppData\Local\X\app-1.2.3\other.exe")), "非启动器且名字不同不应匹配");
+
+    var excel = new DockPinnedApp { DisplayName = "Excel", ExecutablePath = @"C:\Program Files\Office\EXCEL.EXE" };
+    Assert(!DockPinRules.MatchesLauncherStub(excel, Group(@"C:\Program Files\Office\WINWORD.EXE")), "同目录的另一个程序不应匹配");
+
+    var cmd = new DockPinnedApp { DisplayName = "cmd Launcher", ExecutablePath = @"C:\Windows\System32\cmd.exe" };
+    Assert(!DockPinRules.MatchesLauncherStub(cmd, Group(@"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe")), "Windows 目录下的固定项不应使用启动器匹配");
+
+    var exact = new DockPinnedApp { DisplayName = "GRP", ExecutablePath = @"D:\App\GRP\main\current\GRP.exe" };
+    var both = DockItemComposer.Compose([launcher, exact], [dingTalk]);
+    Assert(both[1].IsRunning && !both[0].IsRunning, "精确固定项应优先于启动器匹配");
 }
 
 static void TestDockBounceRules()

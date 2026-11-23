@@ -48,8 +48,10 @@ public static class DockItemComposer
 
         var items = new List<DockItem>();
         var matchedGroups = new HashSet<WindowGroup>();
-        foreach (var pinned in pinnedApps)
+        var pinnedGroups = new WindowGroup?[pinnedApps.Count];
+        for (var index = 0; index < pinnedApps.Count; index++)
         {
+            var pinned = pinnedApps[index];
             // Prefer the group with the pinned identity itself; an executable pin only
             // falls back to a group that carries its own app model ID (for example a
             // browser web app) when no plain group of that executable is running.
@@ -64,6 +66,35 @@ public static class DockItemComposer
             if (group is not null)
             {
                 matchedGroups.Add(group);
+                pinnedGroups[index] = group;
+            }
+        }
+
+        // A pin of a launcher stub (the app's launcher exe, or its unversioned exe) never
+        // runs windows itself; the app's windows come from an exe in a folder below it.
+        // Only groups no exact pin claimed are offered, so exact pins always win.
+        for (var index = 0; index < pinnedApps.Count; index++)
+        {
+            if (pinnedGroups[index] is not null)
+            {
+                continue;
+            }
+
+            var stubGroup = runningGroups.FirstOrDefault(candidate =>
+                !matchedGroups.Contains(candidate)
+                && DockPinRules.MatchesLauncherStub(pinnedApps[index], candidate));
+            if (stubGroup is not null)
+            {
+                matchedGroups.Add(stubGroup);
+                pinnedGroups[index] = stubGroup;
+            }
+        }
+
+        for (var index = 0; index < pinnedApps.Count; index++)
+        {
+            var pinned = pinnedApps[index];
+            if (pinnedGroups[index] is { } group)
+            {
                 items.Add(new DockItem(group.Key, pinned.DisplayName, pinned, group));
             }
             else
@@ -188,6 +219,91 @@ public static class DockPinRules
                 WindowGrouping.NormalizeExecutablePath(window.ExecutablePath),
                 pinnedPath,
                 StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// Whether a pin of a launcher stub stands for the running group: the pin has no
+    /// app model ID, and a window of the group comes from an exe in a folder below the
+    /// pin's own folder — either the same exe name (an unversioned stub next to
+    /// <c>app-1.2.3\app.exe</c>) or a pin named like a launcher whose real app lives in a
+    /// subfolder (<c>Launcher.exe</c> beside <c>main\current\App.exe</c>). Exes in the
+    /// same folder and anything under the Windows folder never match, so a pinned Excel
+    /// does not take Word's windows and a pinned cmd does not take PowerShell's.
+    /// </summary>
+    public static bool MatchesLauncherStub(DockPinnedApp pinned, WindowGroup group)
+    {
+        ArgumentNullException.ThrowIfNull(pinned);
+        ArgumentNullException.ThrowIfNull(group);
+
+        if (!string.IsNullOrWhiteSpace(pinned.AppUserModelId)
+            || string.IsNullOrWhiteSpace(pinned.ExecutablePath))
+        {
+            return false;
+        }
+
+        var pinnedPath = WindowGrouping.NormalizeExecutablePath(pinned.ExecutablePath);
+        var pinnedDirectory = Path.GetDirectoryName(pinnedPath);
+        if (string.IsNullOrEmpty(pinnedDirectory) || IsUnderWindowsFolder(pinnedDirectory))
+        {
+            return false;
+        }
+
+        return group.Windows.Any(window => !string.IsNullOrWhiteSpace(window.ExecutablePath)
+            && IsLauncherStubTarget(pinnedPath, pinnedDirectory, WindowGrouping.NormalizeExecutablePath(window.ExecutablePath)));
+    }
+
+    /// <summary>
+    /// Whether a process with this exe path stands for the pin: the same exe, or an exe
+    /// the launcher-stub rule of <see cref="MatchesLauncherStub"/> accepts.
+    /// </summary>
+    public static bool MatchesExecutablePath(DockPinnedApp pinned, string executablePath)
+    {
+        ArgumentNullException.ThrowIfNull(pinned);
+        if (string.IsNullOrWhiteSpace(executablePath)
+            || !string.IsNullOrWhiteSpace(pinned.AppUserModelId)
+            || string.IsNullOrWhiteSpace(pinned.ExecutablePath))
+        {
+            return false;
+        }
+
+        var pinnedPath = WindowGrouping.NormalizeExecutablePath(pinned.ExecutablePath);
+        var path = WindowGrouping.NormalizeExecutablePath(executablePath);
+        if (string.Equals(pinnedPath, path, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        var pinnedDirectory = Path.GetDirectoryName(pinnedPath);
+        return !string.IsNullOrEmpty(pinnedDirectory)
+            && !IsUnderWindowsFolder(pinnedDirectory)
+            && IsLauncherStubTarget(pinnedPath, pinnedDirectory, path);
+    }
+
+    private static bool IsLauncherStubTarget(string pinnedPath, string pinnedDirectory, string path)
+    {
+        var pinnedName = Path.GetFileName(pinnedPath);
+        var looksLikeLauncher = Path.GetFileNameWithoutExtension(pinnedName)
+            .Contains("launcher", StringComparison.OrdinalIgnoreCase);
+        var prefix = pinnedDirectory.TrimEnd('\\', '/') + Path.DirectorySeparatorChar;
+        // Strictly below the pin's folder: a separator must follow the prefix.
+        if (!path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
+            || path.IndexOf(Path.DirectorySeparatorChar, prefix.Length) < 0)
+        {
+            return false;
+        }
+
+        return looksLikeLauncher
+            || string.Equals(Path.GetFileName(path), pinnedName, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsUnderWindowsFolder(string directory)
+    {
+        var windows = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+        return !string.IsNullOrEmpty(windows)
+            && (string.Equals(directory, windows, StringComparison.OrdinalIgnoreCase)
+                || directory.StartsWith(
+                    windows.TrimEnd('\\', '/') + Path.DirectorySeparatorChar,
+                    StringComparison.OrdinalIgnoreCase));
     }
 
     public static DockPinnedApp? CreateFromGroup(WindowGroup group, string displayName)

@@ -1,4 +1,5 @@
 using System.IO;
+using BingLan.Core.Models;
 
 namespace BingLan.Core.Dock;
 
@@ -9,7 +10,7 @@ namespace BingLan.Core.Dock;
 /// </summary>
 public sealed class DockAttention
 {
-    private readonly Dictionary<nint, (uint ProcessId, int Unread)> _windows = [];
+    private readonly Dictionary<nint, (uint ProcessId, int Unread, string? ExecutablePath)> _windows = [];
 
     public int Count => _windows.Count;
 
@@ -17,7 +18,7 @@ public sealed class DockAttention
     public IReadOnlyCollection<nint> MarkedWindows => _windows.Keys;
 
     /// <summary>Records a flash request with the owning process and optional unread count.</summary>
-    public bool Flashed(nint window, uint processId, int? unread = null)
+    public bool Flashed(nint window, uint processId, int? unread = null, string? executablePath = null)
     {
         if (window == 0)
         {
@@ -29,13 +30,16 @@ public sealed class DockAttention
         {
             if (nextUnread > existing.Unread)
             {
-                _windows[window] = (existing.ProcessId != 0 ? existing.ProcessId : processId, nextUnread);
+                _windows[window] = (
+                    existing.ProcessId != 0 ? existing.ProcessId : processId,
+                    nextUnread,
+                    existing.ExecutablePath ?? executablePath);
                 return true;
             }
             return false;
         }
 
-        _windows.Add(window, (processId, nextUnread));
+        _windows.Add(window, (processId, nextUnread, executablePath));
         return true;
     }
 
@@ -72,6 +76,48 @@ public sealed class DockAttention
             _windows.ContainsKey(window.Handle)
             || (window.ProcessId != 0
                 && _windows.Values.Any(marked => marked.ProcessId == window.ProcessId)));
+
+    /// <summary>
+    /// Whether the item's app is waiting for attention. An app tucked into the tray has
+    /// no visible window and so no running group; its pinned item still stands for it
+    /// when the flash came from a process whose exe the pin matches.
+    /// </summary>
+    public bool Wants(DockItem item)
+    {
+        ArgumentNullException.ThrowIfNull(item);
+        return Wants(item.Group) || (item.Group is null && WantsPinned(item.Pinned));
+    }
+
+    /// <summary>The unread count for the item, from its windows or, with none, its pin.</summary>
+    public int UnreadCount(DockItem item)
+    {
+        ArgumentNullException.ThrowIfNull(item);
+        if (item.Group is not null)
+        {
+            return UnreadCount(item.Group);
+        }
+
+        var best = 0;
+        if (item.Pinned is { } pinned)
+        {
+            foreach (var marked in _windows.Values)
+            {
+                if (marked.ExecutablePath is { Length: > 0 } path
+                    && DockPinRules.MatchesExecutablePath(pinned, path)
+                    && marked.Unread > best)
+                {
+                    best = marked.Unread;
+                }
+            }
+        }
+
+        return best;
+    }
+
+    private bool WantsPinned(DockPinnedApp? pinned) =>
+        pinned is not null
+        && _windows.Values.Any(marked => marked.ExecutablePath is { Length: > 0 } path
+            && DockPinRules.MatchesExecutablePath(pinned, path));
 
     /// <summary>The largest unread count the app published with its flash; 0 when none did.</summary>
     public int UnreadCount(WindowGroup? group)
