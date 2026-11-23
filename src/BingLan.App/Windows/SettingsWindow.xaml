@@ -2584,6 +2584,16 @@
                                                       Checked="DockSetting_Changed"
                                                       Unchecked="DockSetting_Changed"/>
                                         </local:SettingsRow>
+                                        <local:SettingsRow x:Name="DockBounceOnAttentionRow"
+                                                           Header="有新消息时图标弹跳"
+                                                           Description="应用闪烁提醒时（如聊天软件来消息），它在 Dock 上的图标弹跳几下；Dock 已收起时，把手会闪动。遵循“动画”档位与系统动画开关，同一应用 8 秒内至多弹跳一次"
+                                                           local:SettingsSearch.Keywords="弹跳 跳动 新消息 通知 提醒 闪烁">
+                                            <CheckBox x:Name="DockBounceOnAttentionCheckBox"
+                                                      AutomationProperties.Name="有新消息时图标弹跳"
+                                                      Style="{StaticResource ToggleSwitchStyle}"
+                                                      Checked="DockSetting_Changed"
+                                                      Unchecked="DockSetting_Changed"/>
+                                        </local:SettingsRow>
                                         <local:SettingsRow x:Name="DockRevealOnAttentionRow"
                                                            Header="有新消息时临时弹出 Dock"
                                                            Description="仅智能隐藏下有效。开启后，应用闪烁提醒时（如聊天软件来消息）已收起的 Dock 会弹出几秒；关闭时标记只显示在图标上，下次出现 Dock 时可见"

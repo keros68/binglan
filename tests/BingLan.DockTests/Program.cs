@@ -47,6 +47,7 @@ Run("移动固定项顺序", TestDockMove);
 Run("固定状态规范化", TestDockNormalize);
 Run("Dock 自动隐藏初始为显示", TestDockAutoHideStartsShown);
 Run("无重叠时保持显示", TestDockAutoHideNoOverlapStaysShown);
+Run("提醒弹跳：次数随动画档位、系统开关和设置变化，同一应用有间隔", TestDockBounceRules);
 Run("始终自动隐藏：无重叠也收起，指针到边缘才出现", TestDockAutoHideAlways);
 Run("重叠超过延迟后才隐藏且仅触发一次", TestDockAutoHideDelay);
 Run("指针进入唤出区域应立即显示并重置计时器", TestDockAutoHidePointerRevealResetsTimer);
@@ -1221,6 +1222,28 @@ static void TestDockAutoHideNoOverlapStaysShown()
     var changed = state.Update(new DockAutoHideInput(false, false, false, false, false, false), now);
     Assert(!changed, "无重叠时不应触发状态变化");
     Assert(state.IsShown, "无重叠时应保持显示");
+}
+
+static void TestDockBounceRules()
+{
+    Assert(DockBounceRules.BounceCount(true, MotionLevel.Standard, true) == 3, "标准动画应弹跳 3 次");
+    Assert(DockBounceRules.BounceCount(true, MotionLevel.Reduced, true) == 1, "减弱动画应只弹跳 1 次");
+    Assert(DockBounceRules.BounceCount(true, MotionLevel.Off, true) == 0, "关闭动画不应弹跳");
+    Assert(DockBounceRules.BounceCount(false, MotionLevel.Standard, true) == 0, "设置关闭时不应弹跳");
+    Assert(DockBounceRules.BounceCount(true, MotionLevel.Standard, false) == 0, "系统动画关闭时不应弹跳");
+
+    Assert(DockBounceRules.AmplitudeDip(10, MotionLevel.Standard) == DockBounceRules.MinAmplitudeDip, "小图标振幅应取下限");
+    Assert(DockBounceRules.AmplitudeDip(200, MotionLevel.Standard) == DockBounceRules.MaxAmplitudeDip, "大图标振幅应取上限");
+    Assert(
+        DockBounceRules.AmplitudeDip(40, MotionLevel.Reduced) < DockBounceRules.AmplitudeDip(40, MotionLevel.Standard),
+        "减弱动画的振幅应更小");
+
+    var now = DateTimeOffset.UtcNow;
+    Assert(DockBounceRules.IntervalElapsed(null, now), "从未弹跳过应允许");
+    Assert(!DockBounceRules.IntervalElapsed(now - TimeSpan.FromSeconds(3), now), "间隔未到不应再次弹跳");
+    Assert(DockBounceRules.IntervalElapsed(now - DockBounceRules.MinInterval, now), "间隔已到应允许");
+    Assert(DockBounceRules.IntervalElapsed(now + TimeSpan.FromMinutes(1), now), "时钟回拨后应允许");
+    Assert(new DockState().BounceOnAttention, "弹跳提醒默认应开启");
 }
 
 static void TestDockAutoHideAlways()

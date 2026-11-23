@@ -62,6 +62,8 @@ public partial class IceBlueDockWindow : Window
     private IReadOnlyList<DockItem> _items = [];
     private IReadOnlyList<string> _groupOrder = [];
     private readonly List<DockButtonParts> _itemButtons = [];
+    private readonly Dictionary<string, DateTimeOffset> _lastBounce = [];
+    private bool _bounceRequested;
     private string _lastSignature = string.Empty;
     private string _lastStructureKey = string.Empty;
     private (bool Start, bool Launcher, bool Desktop) _renderedCommandButtons;
@@ -586,6 +588,11 @@ public partial class IceBlueDockWindow : Window
             HshellWindowDestroyed => _attention.Closed(lParam),
             _ => false
         };
+        if ((int)wParam == HshellFlash && !changed)
+        {
+            // Already marked: the buttons are current, so bounce now.
+            BounceFlashedItems();
+        }
         if (changed)
         {
             if ((int)wParam == HshellFlash && UsesSmartHide && _state.RevealOnAttention)
@@ -631,6 +638,9 @@ public partial class IceBlueDockWindow : Window
             return false;
         }
 
+        // A chat app keeps flashing while it is marked, and the mark then does not change;
+        // each accepted flash still asks for a bounce (the per-app interval limits it).
+        _bounceRequested = true;
         var title = new StringBuilder(256);
         DockNativeMethods.GetWindowTextW(window, title, title.Capacity);
         return _attention.Flashed(
@@ -728,6 +738,7 @@ public partial class IceBlueDockWindow : Window
                     return;
                 }
                 ApplyItems(items);
+                BounceFlashedItems();
             }
             while (_refreshQueued);
         }
@@ -1083,7 +1094,8 @@ public partial class IceBlueDockWindow : Window
             VerticalAlignment = VerticalAlignment.Center
         };
         RenderOptions.SetBitmapScalingMode(icon, BitmapScalingMode.HighQuality);
-        var iconHost = new Grid();
+        // The attention bounce moves icon and marks together, apart from the hover zoom.
+        var iconHost = new Grid { RenderTransform = new TranslateTransform() };
         iconHost.Children.Add(icon);
         // The attention dot and unread pill live on their own layer that shares the icon's
         // zoom transform, so they follow the icon without changing how the icon itself scales.
@@ -1206,6 +1218,90 @@ public partial class IceBlueDockWindow : Window
         };
         UpdateItemButton(parts, item);
         return parts;
+    }
+
+    // Hops the icons of apps that are asking for attention. A hidden dock cannot show them,
+    // so its handle pulses instead.
+    private void BounceFlashedItems()
+    {
+        if (!_bounceRequested)
+        {
+            return;
+        }
+
+        _bounceRequested = false;
+        var count = DockBounceRules.BounceCount(
+            _state.BounceOnAttention,
+            Motion,
+            SystemParameters.ClientAreaAnimation);
+        if (count == 0 || _closing || _trueFullScreenForeground || _suppressedBySystemMenu)
+        {
+            return;
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        var bounced = false;
+        foreach (var parts in _itemButtons)
+        {
+            if (parts.Button.Tag is not DockItem item
+                || item.Group is null
+                || !_attention.Wants(item.Group))
+            {
+                continue;
+            }
+
+            DateTimeOffset? last = _lastBounce.TryGetValue(item.Key, out var previous) ? previous : null;
+            if (!DockBounceRules.IntervalElapsed(last, now))
+            {
+                continue;
+            }
+
+            _lastBounce[item.Key] = now;
+            bounced = true;
+            StartBounce(parts, count);
+        }
+
+        if (bounced && UsesSmartHide && !_autoHide.IsShown && _handleAllowed)
+        {
+            _handleWindow?.PulseAttention(count);
+        }
+    }
+
+    private void StartBounce(DockButtonParts parts, int count)
+    {
+        if (parts.IconHost.RenderTransform is not TranslateTransform translate)
+        {
+            return;
+        }
+
+        var edge = CurrentEdge;
+        var amplitude = DockBounceRules.AmplitudeDip(_effectiveIconSize, Motion);
+        // Away from the screen edge the dock sits on.
+        var (property, peak) = edge switch
+        {
+            DockEdge.Left => (TranslateTransform.XProperty, amplitude),
+            DockEdge.Right => (TranslateTransform.XProperty, -amplitude),
+            _ => (TranslateTransform.YProperty, -amplitude)
+        };
+        var hop = new DoubleAnimationUsingKeyFrames();
+        var time = TimeSpan.Zero;
+        for (var index = 0; index < count; index++)
+        {
+            time += DockBounceRules.RiseDuration;
+            hop.KeyFrames.Add(new EasingDoubleKeyFrame(peak, KeyTime.FromTimeSpan(time))
+            {
+                EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut }
+            });
+            time += DockBounceRules.FallDuration;
+            hop.KeyFrames.Add(new EasingDoubleKeyFrame(0d, KeyTime.FromTimeSpan(time))
+            {
+                EasingFunction = new BounceEase { Bounces = 1, Bounciness = 3, EasingMode = EasingMode.EaseOut }
+            });
+        }
+        hop.Duration = new Duration(time);
+        // Back to rest when it ends, with nothing held by the animation.
+        hop.FillBehavior = FillBehavior.Stop;
+        translate.BeginAnimation(property, hop);
     }
 
     private void UpdateItemButton(DockButtonParts parts, DockItem item)
@@ -2918,8 +3014,10 @@ public partial class IceBlueDockWindow : Window
             return;
         }
 
-        // The row has fully disappeared into the handle: restore the strip placement
-        // invisibly, hide the window, and let the handle bounce once to land it.
+        // The row has fully disappeared into the handle: hide the window, restore the
+        // strip placement on it while hidden, and let the handle bounce once to land it.
+        // Restoring first would reset the surface and move the window while still shown.
+        HideFromApp();
         if (_handleExpanded)
         {
             CollapseHandleExpansion();
@@ -2928,7 +3026,6 @@ public partial class IceBlueDockWindow : Window
         {
             _appBar?.SetFloatingOverride(null);
         }
-        HideFromApp();
         if (!_trueFullScreenForeground && _handleAllowed && !_suppressedBySystemMenu)
         {
             _handleWindow?.Pulse();

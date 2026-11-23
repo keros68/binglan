@@ -134,6 +134,13 @@ public sealed class DockState
     /// </summary>
     public bool RevealOnAttention { get; set; }
 
+    /// <summary>
+    /// Whether an app's dock icon bounces a few times when the app flashes for attention
+    /// (a chat message). Follows the motion level and the system's animation switch; a
+    /// hidden dock pulses its handle instead.
+    /// </summary>
+    public bool BounceOnAttention { get; set; } = true;
+
     public DockRevealMode RevealMode { get; set; } = DockRevealMode.EdgeAndHandle;
 
     /// <summary>

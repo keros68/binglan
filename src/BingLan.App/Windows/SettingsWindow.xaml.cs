@@ -2979,6 +2979,7 @@ public partial class SettingsWindow : Window
                 _dockState.VisibilityMode == DockVisibilityMode.ReserveWorkArea;
             DockAutoHideAlwaysCheckBox.IsChecked = _dockState.AutoHideAlways;
             DockRevealOnAttentionCheckBox.IsChecked = _dockState.RevealOnAttention;
+            DockBounceOnAttentionCheckBox.IsChecked = _dockState.BounceOnAttention;
             DockAutoHideAlwaysRow.IsEnabled = DockRevealOnAttentionRow.IsEnabled =
                 _dockState.VisibilityMode == DockVisibilityMode.SmartHide;
             DockRevealModeComboBox.SelectedItem = DockRevealModeComboBox.Items
@@ -3057,7 +3058,8 @@ public partial class SettingsWindow : Window
     private void DockSetting_Changed(object sender, RoutedEventArgs e)
     {
         if (_loadingDock || DockEnabledCheckBox is null || DockMonitorComboBox is null || DockMaximizeReleaseRow is null
-            || DockAutoHideAlwaysCheckBox is null || DockRevealOnAttentionCheckBox is null)
+            || DockAutoHideAlwaysCheckBox is null || DockRevealOnAttentionCheckBox is null
+            || DockBounceOnAttentionCheckBox is null)
         {
             return;
         }
@@ -3088,6 +3090,7 @@ public partial class SettingsWindow : Window
             _dockState.VisibilityMode == DockVisibilityMode.ReserveWorkArea;
         _dockState.AutoHideAlways = DockAutoHideAlwaysCheckBox.IsChecked == true;
         _dockState.RevealOnAttention = DockRevealOnAttentionCheckBox.IsChecked == true;
+        _dockState.BounceOnAttention = DockBounceOnAttentionCheckBox.IsChecked == true;
         DockAutoHideAlwaysRow.IsEnabled = DockRevealOnAttentionRow.IsEnabled =
             _dockState.VisibilityMode == DockVisibilityMode.SmartHide;
         if (DockRevealModeComboBox?.SelectedItem is ComboBoxItem { Tag: string revealTag }

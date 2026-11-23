@@ -346,5 +346,34 @@ public partial class DockHandleWindow : Window
         HandleGlyphScale.BeginAnimation(System.Windows.Media.ScaleTransform.ScaleYProperty, pulse);
     }
 
+    /// <summary>
+    /// A few pulses of the handle while the dock is tucked away and an app asks for
+    /// attention, so the hidden dock still says something happened.
+    /// </summary>
+    internal void PulseAttention(int count)
+    {
+        if (!SystemParameters.ClientAreaAnimation || count <= 0)
+        {
+            return;
+        }
+
+        var duration = DockMorphMotion.HandlePulseDuration;
+        var pulse = new DoubleAnimationUsingKeyFrames
+        {
+            Duration = new Duration(duration),
+            RepeatBehavior = new RepeatBehavior(count)
+        };
+        pulse.KeyFrames.Add(new EasingDoubleKeyFrame(1.35d, KeyTime.FromTimeSpan(duration / 2))
+        {
+            EasingFunction = new QuadraticEase()
+        });
+        pulse.KeyFrames.Add(new EasingDoubleKeyFrame(1d, KeyTime.FromTimeSpan(duration))
+        {
+            EasingFunction = new QuadraticEase()
+        });
+        HandleGlyphScale.BeginAnimation(System.Windows.Media.ScaleTransform.ScaleXProperty, pulse);
+        HandleGlyphScale.BeginAnimation(System.Windows.Media.ScaleTransform.ScaleYProperty, pulse);
+    }
+
     private readonly record struct PixelPoint(int X, int Y);
 }

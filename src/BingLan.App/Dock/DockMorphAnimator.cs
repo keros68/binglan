@@ -200,6 +200,10 @@ internal sealed class DockMorphAnimator
         // stale Completed, which must not raise CollapseCompleted twice.
         _flight++;
         _active = DockMorphKind.None;
+        // The owner hides the window while the surface is still fully collapsed. Restoring
+        // the resting surface first would show the whole row (and its glass backdrop) for a
+        // frame before the hide, as a flash at the end of the shrink.
+        CollapseCompleted?.Invoke();
         _scale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
         _scale.BeginAnimation(ScaleTransform.ScaleYProperty, null);
         _surface.BeginAnimation(UIElement.OpacityProperty, null);
@@ -207,6 +211,5 @@ internal sealed class DockMorphAnimator
         _scale.ScaleY = 1d;
         _surface.Opacity = 1d;
         StateChanged?.Invoke();
-        CollapseCompleted?.Invoke();
     }
 }
