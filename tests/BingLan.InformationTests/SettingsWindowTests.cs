@@ -394,7 +394,7 @@ internal static class SettingsWindowTests
             Assert(Math.Abs(topBar.Height - 40d) < 0.001d, "高度应写入状态");
 
             var topBarLookSummary = Require<SettingsRow>(window, "TopBarLookSummaryRow");
-            Assert(topBarLookSummary.Header == "外观：跟随全局", "顶部信息条页应显示外观跟随全局单行摘要");
+            Assert(topBarLookSummary.Header == "外观：跟随全局", $"顶部信息条页应显示外观跟随全局单行摘要：实际「{topBarLookSummary.Header}」，跟随 {topBar.FollowCardLook}");
             Click(Require<Button>(window, "TopBarLookJumpButton"));
             Assert(Require<FrameworkElement>(window, "AppearancePage").IsVisible
                 && Require<FrameworkElement>(window, "AppearanceTopBarPartEditor").IsVisible,
