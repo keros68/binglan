@@ -760,6 +760,13 @@ internal static class LauncherPanelWindowTests
         }
     }
 
+    private static string RetoggleTag(ListBox list, Border tile)
+    {
+        list.Tag = false;
+        list.Tag = true;
+        return tile.BorderBrush.ToString() ?? "空";
+    }
+
     private static string AncestorListInfo(DependencyObject item)
     {
         DependencyObject? current = item;
@@ -794,7 +801,7 @@ internal static class LauncherPanelWindowTests
             Press(panel, Key.Down);
             until(() => selected.IsSelected && Equals(list.Tag, true), "浏览模式按向下键应选中首个项目");
             Assert(IsClear(selectedTile) && IsClear(adjacentTile) && selectedTile.BorderBrush is SolidColorBrush { Color.A: > 0 },
-                $"移出项目后应移除底纹，键盘选中项仅保留描边：选中底纹 {selectedTile.Background}，相邻底纹 {adjacentTile.Background}，选中描边 {selectedTile.BorderBrush}，选中悬停 {selected.IsMouseOver}，相邻悬停 {adjacent.IsMouseOver}，焦点画刷资源 {panel.TryFindResource("FloatingGlassFocusBrush")}，选中项键盘焦点 {selected.IsKeyboardFocused}，列表标记 {list.Tag}，已选 {selected.IsSelected}，祖先列表 {AncestorListInfo(selected)}，描边来源 {System.Windows.DependencyPropertyHelper.GetValueSource(selectedTile, Border.BorderBrushProperty).BaseValueSource}，模板 {selected.Template?.GetHashCode()}");
+                $"移出项目后应移除底纹，键盘选中项仅保留描边：选中底纹 {selectedTile.Background}，相邻底纹 {adjacentTile.Background}，选中描边 {selectedTile.BorderBrush}，选中悬停 {selected.IsMouseOver}，相邻悬停 {adjacent.IsMouseOver}，焦点画刷资源 {panel.TryFindResource("FloatingGlassFocusBrush")}，选中项键盘焦点 {selected.IsKeyboardFocused}，列表标记 {list.Tag}，已选 {selected.IsSelected}，祖先列表 {AncestorListInfo(selected)}，描边来源 {System.Windows.DependencyPropertyHelper.GetValueSource(selectedTile, Border.BorderBrushProperty).BaseValueSource}，模板触发器 {selected.Template?.Triggers.Count}，瓦片取画刷 {selectedTile.TryFindResource("FloatingGlassFocusBrush")}，重切标记后描边 {RetoggleTag(list, selectedTile)}");
         }
         finally
         {
