@@ -101,6 +101,8 @@ internal sealed class TopBarAppBarController : IDisposable
 
     internal event Action? ExplorerRestarted;
 
+    internal event Action? ExplorerNotified;
+
     internal event Action? ReservationFallbackTriggered;
 
     internal PixelRect Bounds { get; private set; }
@@ -393,6 +395,7 @@ internal sealed class TopBarAppBarController : IDisposable
 
             _setPositionApplied = true;
             _reservedStrip = actual;
+            ExplorerNotified?.Invoke();
         }
         else if (!TopBarReserveRules.IsWorkAreaReserved(liveWorkArea, _reservedStrip))
         {
@@ -463,7 +466,11 @@ internal sealed class TopBarAppBarController : IDisposable
                     activationState != DockNativeMethods.WaInactive ? 1 : 0);
                 break;
             case DockNativeMethods.WmWindowPosChanged
-                when AppBarPositionGuard.ShouldNotifyWindowPosChanged(_reservation.IsRegistered, _positioning, _updatingLayer):
+                when AppBarPositionGuard.ShouldNotifyWindowPosChanged(
+                    _reservation.IsRegistered,
+                    _positioning,
+                    _updatingLayer,
+                    IsZOrderOnlyWindowPosChanged(lParam)):
                 NotifyAppBar(DockNativeMethods.AbmWindowPosChanged, 0);
                 break;
             // A work-area change can leave Explorer holding a stale strip for the bar,
@@ -569,6 +576,18 @@ internal sealed class TopBarAppBarController : IDisposable
         var data = CreateData();
         data.Parameter = parameter;
         DockNativeMethods.SHAppBarMessage(message, ref data);
+        ExplorerNotified?.Invoke();
+    }
+
+    private static bool IsZOrderOnlyWindowPosChanged(nint lParam)
+    {
+        if (lParam == 0)
+        {
+            return false;
+        }
+        var flags = Marshal.PtrToStructure<NativeMethods.WindowPos>(lParam).Flags;
+        const uint noMoveOrSize = NativeMethods.SwpNoMove | NativeMethods.SwpNoSize;
+        return (flags & noMoveOrSize) == noMoveOrSize;
     }
 
     // A reserved bar behaves like the taskbar: above normal windows, below a full-screen

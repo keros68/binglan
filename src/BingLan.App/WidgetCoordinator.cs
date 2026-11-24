@@ -141,6 +141,7 @@ public sealed partial class WidgetCoordinator : IDisposable
         _dock.ResolvePanelForeground = ResolveLauncherForeground;
         _dock.ResolveTopBarReservedBottomPx = ResolveTopBarBottomForMonitor;
         _dock.ShellRecovered += _desktopSurfaceWatcher.ScheduleCheck;
+        _dock.ExplorerNotified += _cornerReveal.ScheduleZOrderCheck;
         _dock.ShowDesktopTriggered += _desktopSurfaceWatcher.ScheduleToggleDesktopCheck;
         _taskbar = new TaskbarAdapter(TaskbarCheckpointPath(_store.DataDirectory));
         _taskbar.StatusChanged += OnTaskbarStatusChanged;
@@ -161,6 +162,7 @@ public sealed partial class WidgetCoordinator : IDisposable
                 message,
                 TrayTipKind.Info));
         _topBar.ShellRecovered += _desktopSurfaceWatcher.ScheduleCheck;
+        _topBar.ExplorerNotified += _cornerReveal.ScheduleZOrderCheck;
         StartupLog.Open(_store.DataDirectory);
         UiDiagnostics.Start(
             Dispatcher.CurrentDispatcher,

@@ -159,8 +159,16 @@ static void TestLauncherAppCategories()
 {
     Assert(LauncherAppCategoryRules.Classify("办公", @"C:\Program Files\Microsoft Office\WINWORD.EXE", null)
         == LauncherAppCategory.Office, "已知程序应按文件名分类并忽略大小写");
+    Assert(LauncherAppCategoryRules.Classify("Cursor", @"C:\Apps\Cursor.exe", null)
+        == LauncherAppCategory.Ai
+        && LauncherAppCategoryRules.Classify("Gemini", @"C:\Program Files\Google\Chrome\Application\chrome_proxy.exe", "--app-id=abc")
+        == LauncherAppCategory.Ai
+        && LauncherAppCategoryRules.Classify("ChatGPT", "shell:AppsFolder\\OpenAI.Codex_2p2nqsd0c76g0!App", null)
+        == LauncherAppCategory.Ai, "AI 客户端、AI 编程工具与 PWA/商店 AI 入口应归入 AI");
     Assert(LauncherAppCategoryRules.Classify("设计", @"C:\Apps\Photoshop.exe", null)
-        == LauncherAppCategory.Design, "Photoshop 应进入设计与创作");
+        == LauncherAppCategory.Design
+        && LauncherAppCategoryRules.Classify("AutoCAD 2026", @"C:\Autodesk\acad.exe", null)
+        == LauncherAppCategory.Design, "Photoshop 与制图软件应进入设计创作");
     Assert(LauncherAppCategoryRules.Classify("影音", @"C:\Apps\vlc.exe", null)
         == LauncherAppCategory.MediaAndEntertainment, "VLC 应进入影音娱乐");
     Assert(LauncherAppCategoryRules.Classify("网盘", @"C:\Apps\baidunetdisk.exe", null)
@@ -168,13 +176,21 @@ static void TestLauncherAppCategories()
     Assert(LauncherAppCategoryRules.Classify("开发", @"C:/Tools/Code.exe", "--profile personal")
         == LauncherAppCategory.Development, "正斜杠路径与启动参数应保留用途分类");
     Assert(LauncherAppCategoryRules.Classify("游戏", @"C:\Games\Steam.exe", null)
-        == LauncherAppCategory.Games, "已知游戏入口应归类");
+        == LauncherAppCategory.Games
+        && LauncherAppCategoryRules.Classify("小黑盒", @"C:\Apps\custom.exe", null)
+        == LauncherAppCategory.Games, "已知游戏平台与游戏助手应归入游戏");
     Assert(LauncherAppCategoryRules.Classify("卸载 Chrome", @"C:\Apps\chrome.exe", null)
         == LauncherAppCategory.Auxiliary
         && LauncherAppCategoryRules.Classify("Chrome", @"C:\Apps\chrome.exe", "--uninstall")
         == LauncherAppCategory.Auxiliary, "维护入口应优先于程序本身的用途");
     Assert(LauncherAppCategoryRules.Classify("Visual Studio Installer", @"C:\Tools\vs_installer.exe", null)
-        == LauncherAppCategory.Auxiliary, "独立安装器应进入辅助入口");
+        == LauncherAppCategory.Auxiliary
+        && LauncherAppCategoryRules.Classify("Inno Setup Documentation", @"C:\Inno\ISetup.chm", null)
+        == LauncherAppCategory.Auxiliary
+        && LauncherAppCategoryRules.Classify("Git Release Notes", @"C:\Git\ReleaseNotes.html", null)
+        == LauncherAppCategory.Auxiliary
+        && LauncherAppCategoryRules.Classify("帮助文档", @"C:\Apps\doc.exe", null)
+        == LauncherAppCategory.Auxiliary, "安装器、帮助文档与发行说明应进入辅助入口");
     Assert(LauncherAppCategoryRules.Classify("检查更新", @"C:\Tools\Updater.exe", null)
         == LauncherAppCategory.Auxiliary
         && LauncherAppCategoryRules.Classify("Discord", @"C:\Tools\Update.exe", "--processStart Discord.exe")
@@ -188,9 +204,13 @@ static void TestLauncherAppCategories()
         == LauncherAppCategory.Unclassified, "泛化名称与近似文件夹不能决定用途");
     Assert(LauncherAppCategoryRules.Classify("未知", "bad\0target", null)
         == LauncherAppCategory.Unclassified, "无效路径应安全保留为其他");
-    Assert(LauncherAppCategoryRules.DisplayName(LauncherAppCategory.Unclassified) == "其他"
-        && LauncherAppCategoryRules.DisplayName(LauncherAppCategory.Office) == "效率办公"
-        && LauncherAppCategoryRules.DisplayName(LauncherAppCategory.Design) == "设计与创作"
+    Assert(LauncherAppCategoryRules.DisplayName(LauncherAppCategory.Unclassified) == "其他应用"
+        && LauncherAppCategoryRules.DisplayName(LauncherAppCategory.Office) == "办公学习"
+        && LauncherAppCategoryRules.DisplayName(LauncherAppCategory.Ai) == "AI 应用"
+        && LauncherAppCategoryRules.DisplayName(LauncherAppCategory.WebAndCommunication) == "聊天上网"
+        && LauncherAppCategoryRules.DisplayName(LauncherAppCategory.Games) == "游戏休闲"
+        && LauncherAppCategoryRules.DisplayName(LauncherAppCategory.Design) == "设计创作"
+        && LauncherAppCategoryRules.DisplayName(LauncherAppCategory.SystemTools) == "系统工具"
         && LauncherAppCategoryRules.DisplayName(LauncherAppCategory.Auxiliary) == "辅助入口",
         "分类标题应使用统一显示名称");
 

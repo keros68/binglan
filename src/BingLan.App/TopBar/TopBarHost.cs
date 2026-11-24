@@ -37,6 +37,8 @@ internal sealed class TopBarHost : IDisposable
 
     internal event Action? ShellRecovered;
 
+    internal event Action? ExplorerNotified;
+
     internal void RefreshTodoSummary() => _window?.RefreshTodoSummary();
 
     internal IEnumerable<nint> ActiveDesktopHandles() =>
@@ -93,6 +95,7 @@ internal sealed class TopBarHost : IDisposable
     {
         var window = new TopBarWindow(_state, _style, _environment, _sampler);
         window.ShellRecovered += () => ShellRecovered?.Invoke();
+        window.ExplorerNotified += () => ExplorerNotified?.Invoke();
         window.Closed += (_, _) =>
         {
             if (ReferenceEquals(_window, window))

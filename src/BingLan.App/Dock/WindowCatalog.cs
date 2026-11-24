@@ -314,6 +314,27 @@ internal sealed class WindowCatalog
         }
     }
 
+    internal static string? AppUserModelIdOf(uint processId)
+    {
+        var process = DockNativeMethods.OpenProcess(
+            DockNativeMethods.ProcessQueryLimitedInformation,
+            false,
+            processId);
+        if (process == 0)
+        {
+            return null;
+        }
+
+        try
+        {
+            return TryGetAppUserModelId(process);
+        }
+        finally
+        {
+            DockNativeMethods.CloseHandle(process);
+        }
+    }
+
     private static string? TryGetExecutablePath(nint process)
     {
         var buffer = new StringBuilder(512);

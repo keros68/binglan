@@ -311,6 +311,8 @@ public partial class IceBlueDockWindow : Window
 
     internal event Action? ShellRecovered;
 
+    internal event Action? ExplorerNotified;
+
     internal event Action? ShowDesktopTriggered;
 
     internal event Action<string>? CommandFailed;
@@ -516,6 +518,7 @@ public partial class IceBlueDockWindow : Window
 
         _appBar = new DockAppBarController(this);
         _appBar.EnvironmentChanged += ApplyState;
+        _appBar.ExplorerNotified += () => ExplorerNotified?.Invoke();
         _appBar.ExplorerRestarted += () =>
         {
             ApplyState();
@@ -1908,6 +1911,16 @@ public partial class IceBlueDockWindow : Window
         scale.BeginAnimation(ScaleTransform.ScaleYProperty, animationY);
     }
 
+    private async Task QuitItemFromMenuAsync(DockItem item, string name)
+    {
+        var result = await WindowCommandService.QuitAsync(item, name);
+        Report(result);
+        if (!_closing && result.Succeeded)
+        {
+            RefreshWindows();
+        }
+    }
+
     private void Report(WindowCommandResult result)
     {
         if (!result.Succeeded)
@@ -1943,6 +1956,14 @@ public partial class IceBlueDockWindow : Window
             menu.AddItem(
                 item.HasMultipleWindows ? $"关闭全部 {item.WindowCount} 个窗口" : "关闭窗口",
                 () => Report(WindowCommandService.Close(group.Windows)));
+            if (DockQuitRules.CanOfferQuit(item))
+            {
+                menu.AddItem("结束应用", () => _ = QuitItemFromMenuAsync(item, name));
+            }
+        }
+        else if (DockQuitRules.CanOfferQuit(item))
+        {
+            menu.AddItem("结束后台应用", () => _ = QuitItemFromMenuAsync(item, name));
         }
 
         var isPathPin = item.Pinned is { } pathPin && DockPinRules.IsPathPin(pathPin);

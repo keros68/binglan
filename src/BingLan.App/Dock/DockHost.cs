@@ -31,6 +31,8 @@ internal sealed class DockHost : IDisposable
 
     internal event Action? ShellRecovered;
 
+    internal event Action? ExplorerNotified;
+
     internal event Action? ShowDesktopTriggered;
 
     internal event Action? LauncherRequested;
@@ -117,6 +119,7 @@ internal sealed class DockHost : IDisposable
         window.SettingsRequested += _openSettings;
         window.CommandFailed += _notify;
         window.ShellRecovered += () => ShellRecovered?.Invoke();
+        window.ExplorerNotified += () => ExplorerNotified?.Invoke();
         window.ShowDesktopTriggered += () => ShowDesktopTriggered?.Invoke();
         window.HideRequested += () =>
         {

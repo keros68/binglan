@@ -56,6 +56,7 @@ public sealed class AppBarPositionGuard
     public static bool ShouldNotifyWindowPosChanged(
         bool isRegistered,
         bool isPositioning,
-        bool isUpdatingLayer) =>
-        isRegistered && !isPositioning && !isUpdatingLayer;
+        bool isUpdatingLayer,
+        bool isZOrderOnly = false) =>
+        isRegistered && !isPositioning && !isUpdatingLayer && !isZOrderOnly;
 }

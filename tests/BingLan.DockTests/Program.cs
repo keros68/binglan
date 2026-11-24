@@ -48,6 +48,7 @@ Run("固定状态规范化", TestDockNormalize);
 Run("Dock 自动隐藏初始为显示", TestDockAutoHideStartsShown);
 Run("无重叠时保持显示", TestDockAutoHideNoOverlapStaysShown);
 Run("托盘里的应用闪烁：固定图标显示提醒，激活后清除", TestDockAttentionForTrayApp);
+Run("Dock 结束应用：保护系统与自身进程，匹配普通/子目录启动器与打包应用", TestDockQuitRules);
 Run("固定的启动器图标匹配子目录里的真实进程，且不误吞同目录或系统程序", TestDockPinLauncherStub);
 Run("提醒弹跳：次数随动画档位、系统开关和设置变化，同一应用有间隔", TestDockBounceRules);
 Run("始终自动隐藏：无重叠也收起，指针到边缘才出现", TestDockAutoHideAlways);
@@ -1004,6 +1005,9 @@ static void TestAppBarReservation()
     Assert(
         !AppBarPositionGuard.ShouldNotifyWindowPosChanged(isRegistered: false, isPositioning: false, isUpdatingLayer: false),
         "未注册 AppBar 时不应发送 ABM_WINDOWPOSCHANGED");
+    Assert(
+        !AppBarPositionGuard.ShouldNotifyWindowPosChanged(isRegistered: true, isPositioning: false, isUpdatingLayer: false, isZOrderOnly: true),
+        "位置与尺寸未变化（SWP_NOMOVE | SWP_NOSIZE）的纯 Z 序消息不应发送 ABM_WINDOWPOSCHANGED");
 }
 
 static void TestDockPinIdentityKey()
@@ -2774,6 +2778,41 @@ static void TestDockSideDocking()
             Directory.Delete(temp, true);
         }
     }
+}
+
+static void TestDockQuitRules()
+{
+    Assert(DockQuitRules.IsProtectedExecutable(@"C:\Windows\explorer.exe"), "不能允许结束 explorer.exe");
+    Assert(DockQuitRules.IsProtectedExecutable(@"C:\Windows\System32\ApplicationFrameHost.exe"), "不能允许结束 ApplicationFrameHost.exe");
+    Assert(DockQuitRules.IsProtectedExecutable(@"C:\Users\demo\AppData\Local\Programs\BingLan\BingLan.exe"), "不能允许结束冰蓝桌面自身");
+    Assert(!DockQuitRules.IsProtectedExecutable(@"D:\App\Weixin\Weixin.exe"), "普通桌面应用不应被保护拦截");
+
+    var explorerPin = new DockPinnedApp { DisplayName = "资源管理器", ExecutablePath = @"C:\Windows\explorer.exe" };
+    Assert(!DockQuitRules.CanOfferQuit(new DockItem("exe:explorer", "资源管理器", explorerPin, null)),
+        "资源管理器不应显示结束应用入口");
+
+    var pathPin = new DockPinnedApp { DisplayName = "下载", TargetPath = @"C:\Users\demo\Downloads" };
+    Assert(!DockQuitRules.CanOfferQuit(new DockItem("path:dl", "下载", pathPin, null)),
+        "固定文件/文件夹不应显示结束应用入口");
+
+    var wechatPin = new DockPinnedApp { DisplayName = "微信", ExecutablePath = @"D:\App\Weixin\Weixin.exe" };
+    Assert(DockQuitRules.CanOfferQuit(new DockItem("exe:weixin", "微信", wechatPin, null)),
+        "固定在 Dock 的普通应用即使收进托盘也应提供结束后台应用入口");
+
+    var dingTalkPin = new DockPinnedApp { DisplayName = "钉钉", ExecutablePath = @"D:\App\GRP\DingtalkLauncher.exe" };
+    var emptySet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    Assert(DockQuitRules.MatchesProcess(dingTalkPin, emptySet, emptySet, @"D:\App\GRP\main\current\GRP.exe", null),
+        "启动器固定项应能匹配子目录中的真实进程");
+    Assert(!DockQuitRules.MatchesProcess(dingTalkPin, emptySet, emptySet, @"C:\Windows\explorer.exe", null),
+        "保护列表中的进程无论如何不得被匹配");
+
+    var uwpPin = new DockPinnedApp { DisplayName = "ChatGPT", AppUserModelId = "OpenAI.Codex_2p2nqsd0c76g0!App" };
+    Assert(DockQuitRules.CanOfferQuit(new DockItem("aumid:codex", "ChatGPT", uwpPin, null)),
+        "普通商店/UWP 应用应允许提供结束应用入口");
+    Assert(DockQuitRules.MatchesProcess(uwpPin, emptySet, emptySet, @"C:\Program Files\WindowsApps\OpenAI\Codex.exe", "OpenAI.Codex_2p2nqsd0c76g0!App"),
+        "商店应用应按 AUMID 匹配真实进程而非宿主");
+    Assert(!DockQuitRules.MatchesProcess(uwpPin, emptySet, emptySet, @"C:\Windows\System32\ApplicationFrameHost.exe", "OpenAI.Codex_2p2nqsd0c76g0!App"),
+        "不得匹配 ApplicationFrameHost.exe 共享宿主");
 }
 
 static void Assert(bool condition, string message)

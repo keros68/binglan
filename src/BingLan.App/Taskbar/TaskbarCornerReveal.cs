@@ -26,9 +26,14 @@ internal sealed class TaskbarCornerReveal : IDisposable
     private static readonly TimeSpan CheckInterval = TimeSpan.FromSeconds(2);
     // With taskbar events hooked the poll is only a fallback and the auto-hide check.
     private static readonly TimeSpan HookedCheckInterval = TimeSpan.FromSeconds(5);
-    private static readonly TimeSpan SettleDelay = TimeSpan.FromMilliseconds(80);
+    // Cheap Z-order-only check (walks topmost HWNDs above the strip) catches silent Explorer
+    // Z-order bumps (notifications, tray updates, Start menu close animations) within 0.4 s.
+    private static readonly TimeSpan ZOrderWatchInterval = TimeSpan.FromMilliseconds(400);
+    private static readonly TimeSpan SettleDelay = TimeSpan.FromMilliseconds(120);
     private readonly Dictionary<string, EdgeStrip> _strips = new(StringComparer.OrdinalIgnoreCase);
+    private readonly System.Text.StringBuilder _classNameBuffer = new(32);
     private readonly DispatcherTimer _timer;
+    private readonly DispatcherTimer _zOrderTimer;
     private readonly DispatcherTimer _settle;
     private readonly DockNativeMethods.WinEventProc _taskbarEventCallback;
     private nint _showHook;
@@ -39,6 +44,7 @@ internal sealed class TaskbarCornerReveal : IDisposable
     private TaskbarEdgeRevealMode _mode = TaskbarEdgeRevealMode.AnyEdge;
     private bool _suspended;
     private bool _raising;
+    private bool _settleForceRaise;
 
     internal TaskbarCornerReveal()
     {
@@ -47,12 +53,24 @@ internal sealed class TaskbarCornerReveal : IDisposable
         // auto-hide being switched on or off.
         _timer = new DispatcherTimer(DispatcherPriority.Background) { Interval = CheckInterval };
         _timer.Tick += (_, _) => Update();
-        // The slide moves the bar several times; raise once more after the last move.
+        _zOrderTimer = new DispatcherTimer(DispatcherPriority.Background) { Interval = ZOrderWatchInterval };
+        _zOrderTimer.Tick += (_, _) => RaiseIfBehindTaskbar();
+        // The slide moves the bar several times, and Explorer may re-raise Shell_TrayWnd
+        // slightly after foreground switches or AppBar notifications.
         _settle = new DispatcherTimer(DispatcherPriority.Input) { Interval = SettleDelay };
         _settle.Tick += (_, _) =>
         {
             _settle.Stop();
-            Raise();
+            var force = _settleForceRaise;
+            _settleForceRaise = false;
+            if (force)
+            {
+                Raise();
+            }
+            else
+            {
+                RaiseIfBehindTaskbar();
+            }
         };
         _taskbarEventCallback = OnTaskbarEvent;
     }
@@ -72,7 +90,9 @@ internal sealed class TaskbarCornerReveal : IDisposable
         else
         {
             _timer.Stop();
+            _zOrderTimer.Stop();
             _settle.Stop();
+            _settleForceRaise = false;
         }
         Update();
     }
@@ -128,10 +148,14 @@ internal sealed class TaskbarCornerReveal : IDisposable
         if (_strips.Count > 0)
         {
             WatchTaskbar();
+            if (!_zOrderTimer.IsEnabled) _zOrderTimer.Start();
             NotifyRaised();
         }
         else
         {
+            _zOrderTimer.Stop();
+            _settle.Stop();
+            _settleForceRaise = false;
             Unhook();
         }
     }
@@ -188,12 +212,26 @@ internal sealed class TaskbarCornerReveal : IDisposable
         if (eventType == DockNativeMethods.EventSystemForeground)
         {
             if (Environment.TickCount64 - _lastRaise >= RaiseThrottleMs) RaiseIfBehindTaskbar();
+            // Explorer often re-asserts Shell_TrayWnd Z-order slightly after the foreground switch.
+            ScheduleZOrderCheck();
             return;
         }
-        var className = new System.Text.StringBuilder(32);
-        DockNativeMethods.GetClassNameW(hwnd, className, className.Capacity);
-        if (!IsTaskbarClass(className.ToString())) return;
+        _classNameBuffer.Clear();
+        DockNativeMethods.GetClassNameW(hwnd, _classNameBuffer, _classNameBuffer.Capacity);
+        if (!IsTaskbarClass(_classNameBuffer.ToString())) return;
         if (Environment.TickCount64 - _lastRaise >= RaiseThrottleMs) Raise();
+        _settleForceRaise = true;
+        _settle.Stop();
+        _settle.Start();
+    }
+
+    /// <summary>Schedules a short follow-up Z-order check after foreground switches or AppBar Explorer calls.</summary>
+    internal void ScheduleZOrderCheck()
+    {
+        if (_strips.Count == 0)
+        {
+            return;
+        }
         _settle.Stop();
         _settle.Start();
     }
@@ -210,7 +248,6 @@ internal sealed class TaskbarCornerReveal : IDisposable
 
     private bool IsAnyTaskbarAboveStrips()
     {
-        var className = new System.Text.StringBuilder(32);
         foreach (var strip in _strips.Values)
         {
             var handle = new WindowInteropHelper(strip).Handle;
@@ -218,7 +255,7 @@ internal sealed class TaskbarCornerReveal : IDisposable
             {
                 continue;
             }
-            if (!NativeMethods.IsWindowVisible(handle))
+            if (!NativeMethods.IsWindowVisible(handle) || !NativeMethods.IsTopmostWindow(handle))
             {
                 return true;
             }
@@ -226,9 +263,9 @@ internal sealed class TaskbarCornerReveal : IDisposable
             var steps = 0;
             while (cursor != 0 && steps++ < 64)
             {
-                className.Clear();
-                if (DockNativeMethods.GetClassNameW(cursor, className, className.Capacity) > 0
-                    && IsTaskbarClass(className.ToString()))
+                _classNameBuffer.Clear();
+                if (DockNativeMethods.GetClassNameW(cursor, _classNameBuffer, _classNameBuffer.Capacity) > 0
+                    && IsTaskbarClass(_classNameBuffer.ToString()))
                 {
                     return true;
                 }
@@ -273,7 +310,9 @@ internal sealed class TaskbarCornerReveal : IDisposable
     public void Dispose()
     {
         _timer.Stop();
+        _zOrderTimer.Stop();
         _settle.Stop();
+        _settleForceRaise = false;
         Unhook();
         foreach (var strip in _strips.Values)
         {

@@ -345,6 +345,129 @@ internal static class WindowCommandService
         return new WindowCommandResult(count > 0, $"已请求关闭 {count} 个窗口");
     }
 
+    internal static Task<WindowCommandResult> QuitAsync(DockItem item, string displayName)
+    {
+        if (!DockQuitRules.CanOfferQuit(item))
+        {
+            return Task.FromResult(new WindowCommandResult(false, $"不能从 Dock 结束 {displayName}"));
+        }
+
+        return Task.Run(() => QuitCore(item, displayName));
+    }
+
+    private static WindowCommandResult QuitCore(DockItem item, string displayName)
+    {
+        var selfPid = Environment.ProcessId;
+        var groupPids = new HashSet<int>();
+        var groupExecutablePaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var groupAumids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        if (item.Group is { } group)
+        {
+            foreach (var window in group.Windows)
+            {
+                if (!string.IsNullOrWhiteSpace(window.ExecutablePath)
+                    && !DockQuitRules.IsProtectedExecutable(window.ExecutablePath))
+                {
+                    groupExecutablePaths.Add(WindowGrouping.NormalizeExecutablePath(window.ExecutablePath));
+                    if (window.ProcessId > 4 && window.ProcessId != selfPid)
+                    {
+                        groupPids.Add((int)window.ProcessId);
+                    }
+                }
+                if (!string.IsNullOrWhiteSpace(window.AppUserModelId)
+                    && !DockQuitRules.IsProtectedAumid(window.AppUserModelId))
+                {
+                    groupAumids.Add(window.AppUserModelId.Trim());
+                }
+            }
+        }
+
+        var checkAumid = !string.IsNullOrWhiteSpace(item.Pinned?.AppUserModelId) || groupAumids.Count > 0;
+        var targetPids = new HashSet<int>(groupPids);
+        foreach (var process in Process.GetProcesses())
+        {
+            using (process)
+            {
+                var pid = process.Id;
+                if (pid <= 4 || pid == selfPid)
+                {
+                    continue;
+                }
+
+                var exe = WindowCatalog.ExecutablePathOf((uint)pid);
+                if (DockQuitRules.IsProtectedExecutable(exe))
+                {
+                    targetPids.Remove(pid);
+                    continue;
+                }
+
+                var aumid = checkAumid ? WindowCatalog.AppUserModelIdOf((uint)pid) : null;
+                if (DockQuitRules.MatchesProcess(item.Pinned, groupExecutablePaths, groupAumids, exe, aumid))
+                {
+                    targetPids.Add(pid);
+                }
+            }
+        }
+
+        if (targetPids.Count == 0)
+        {
+            return new WindowCommandResult(false, $"{displayName} 当前未在运行");
+        }
+
+        var terminated = 0;
+        var accessDenied = false;
+        foreach (var pid in targetPids)
+        {
+            if (pid <= 4 || pid == selfPid)
+            {
+                continue;
+            }
+
+            try
+            {
+                using var process = Process.GetProcessById(pid);
+                // Re-check right before termination to guard against PID reuse.
+                if (DockQuitRules.IsProtectedExecutable(WindowCatalog.ExecutablePathOf((uint)pid)))
+                {
+                    continue;
+                }
+
+                try
+                {
+                    process.Kill(entireProcessTree: true);
+                }
+                catch (Exception exception) when (exception is NotSupportedException or Win32Exception)
+                {
+                    process.Kill();
+                }
+                terminated++;
+            }
+            catch (Exception exception) when (exception is ArgumentException or InvalidOperationException)
+            {
+                terminated++;
+            }
+            catch (Exception exception) when (exception is Win32Exception or UnauthorizedAccessException)
+            {
+                accessDenied = true;
+            }
+        }
+
+        if (terminated == 0 && accessDenied)
+        {
+            return new WindowCommandResult(
+                false,
+                $"{displayName} 正在以管理员身份运行，Windows 不允许普通权限的 Dock 结束它。");
+        }
+        if (accessDenied)
+        {
+            return new WindowCommandResult(
+                false,
+                $"已结束 {displayName} 的部分进程，其余进程需要管理员权限。");
+        }
+        return new WindowCommandResult(true, $"已结束 {displayName}");
+    }
+
     internal static WindowCommandResult OpenFileLocation(string executablePath)
     {
         if (!File.Exists(executablePath) && !Directory.Exists(executablePath))

@@ -101,6 +101,8 @@ internal sealed class DockAppBarController : IDisposable
 
     internal event Action? ExplorerRestarted;
 
+    internal event Action? ExplorerNotified;
+
     internal PixelRect Bounds { get; private set; }
 
     internal DockEdge Edge => _edge;
@@ -433,6 +435,7 @@ internal sealed class DockAppBarController : IDisposable
 
             _positionGuard.Submitted(adjusted);
             _reservedStrip = actual;
+            ExplorerNotified?.Invoke();
         }
 
         return AppBarReservationState.IsValidStrip(_reservedStrip, monitor.Bounds, thicknessPixels, _edge)
@@ -498,7 +501,11 @@ internal sealed class DockAppBarController : IDisposable
                     activationState != DockNativeMethods.WaInactive ? 1 : 0);
                 break;
             case DockNativeMethods.WmWindowPosChanged
-                when AppBarPositionGuard.ShouldNotifyWindowPosChanged(_reservation.IsRegistered, _positioning, _updatingLayer):
+                when AppBarPositionGuard.ShouldNotifyWindowPosChanged(
+                    _reservation.IsRegistered,
+                    _positioning,
+                    _updatingLayer,
+                    IsZOrderOnlyWindowPosChanged(lParam)):
                 NotifyAppBar(DockNativeMethods.AbmWindowPosChanged, 0);
                 break;
             // A work-area change can leave Explorer holding a stale strip for the dock;
@@ -623,6 +630,18 @@ internal sealed class DockAppBarController : IDisposable
         var data = CreateData();
         data.Parameter = parameter;
         DockNativeMethods.SHAppBarMessage(message, ref data);
+        ExplorerNotified?.Invoke();
+    }
+
+    private static bool IsZOrderOnlyWindowPosChanged(nint lParam)
+    {
+        if (lParam == 0)
+        {
+            return false;
+        }
+        var flags = Marshal.PtrToStructure<NativeMethods.WindowPos>(lParam).Flags;
+        const uint noMoveOrSize = NativeMethods.SwpNoMove | NativeMethods.SwpNoSize;
+        return (flags & noMoveOrSize) == noMoveOrSize;
     }
 
     internal void EnsureLayer() => UpdateWindowLayer();

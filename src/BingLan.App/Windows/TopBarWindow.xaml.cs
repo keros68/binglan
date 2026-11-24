@@ -328,6 +328,7 @@ public sealed partial class TopBarWindow : Window
 
         _appBar = new TopBarAppBarController(this, _state.Height);
         _appBar.EnvironmentChanged += ApplyState;
+        _appBar.ExplorerNotified += () => ExplorerNotified?.Invoke();
         _appBar.ExplorerRestarted += RenderModules;
         _appBar.ReservationFallbackTriggered += UpdateForForeground;
         ApplyAcrylicBackdrop();
@@ -335,6 +336,8 @@ public sealed partial class TopBarWindow : Window
     }
 
     internal event Action? ShellRecovered;
+
+    internal event Action? ExplorerNotified;
 
     internal IEnumerable<nint> ActiveDesktopHandles()
     {

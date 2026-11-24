@@ -593,11 +593,11 @@ internal static class LauncherPanelWindowTests
             Assert(Require<ScrollViewer>(panel, "BrowseNavigation").IsVisible, "浏览时应显示用途导航");
             Assert(!Require<Button>(panel, "TabAllButton").IsVisible, "空查询应收起顶部全部标签");
 
-            // 仅 1 项的自动类别应折叠进「其他」，满 3 项的「效率办公」保持独立
-            SelectPurpose(panel, "效率办公");
+            // 仅 1 项的自动类别应折叠进「其他」，满 3 项的「办公学习」保持独立
+            SelectPurpose(panel, "办公学习");
             until(() => panel.VisibleEntries.Count == 3 && panel.VisibleEntries.Any(e => e.Key == office.Key),
                 "满 3 项的用途分类应独立显示");
-            SelectPurpose(panel, "其他");
+            SelectPurpose(panel, "其他应用");
             until(() => panel.VisibleEntries.Count == 2 && panel.VisibleEntries.Any(e => e.Key == sparseDesign.Key),
                 "不足 3 项的自动分类应折叠到其他");
 
@@ -629,20 +629,20 @@ internal static class LauncherPanelWindowTests
             pump();
             var menu = OpenMenu(panel);
             var change = menu.Items.OfType<MenuItem>().Single(item => Equals(item.Header, "更改类别"));
-            change.Items.OfType<MenuItem>().Single(item => Equals(item.Header, "设计与创作"))
+            change.Items.OfType<MenuItem>().Single(item => Equals(item.Header, "设计创作"))
                 .RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
             menu.IsOpen = false;
             until(() => overrides.TryGetValue(unknown.Key, out var category) && category == LauncherAppCategory.Design,
                 "手动归类应保存用户选择");
             Assert(saves > 0, "手动归类应触发持久化");
-            SelectPurpose(panel, "设计与创作");
+            SelectPurpose(panel, "设计创作");
             until(() => panel.VisibleEntries.Count == 2, "手动类别应立即独立显示并包含同类项");
             panel.Close();
 
             panel = NewPanel();
             show(panel);
             until(() => panel.VisibleEntries.Count == 5, "重新打开后概览未载入");
-            SelectPurpose(panel, "设计与创作");
+            SelectPurpose(panel, "设计创作");
             until(() => panel.VisibleEntries.Count == 2, "重新打开后应继续采用手动类别");
             SelectResult(panel, unknown);
             Press(panel, Key.Apps);
