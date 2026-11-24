@@ -577,9 +577,10 @@ public static class DesktopStyleRules
     };
 
     /// <summary>
-    /// The colours the shared material gives one built-in card. Time, date and greeting
-    /// are text straight on the wallpaper; on a clear desktop the quick-launch strip keeps
-    /// a light frosted bar at <paramref name="clearBarOpacity"/> so its line icons stay visible.
+    /// The colours the shared material gives one built-in card. Greeting stays text straight
+    /// on the wallpaper, while TimeDate follows the shared card glass and text ink like other
+    /// desktop cards; on a clear desktop the quick-launch strip keeps a light frosted bar at
+    /// <paramref name="clearBarOpacity"/> so its line icons stay visible.
     /// </summary>
     public static ComponentGlass ComponentLook(
         DesktopComponentKind kind,
@@ -593,7 +594,7 @@ public static class DesktopStyleRules
         {
             return new ComponentGlass("#FFFFFF", clearBarOpacity, nakedText);
         }
-        return kind is DesktopComponentKind.TimeDate or DesktopComponentKind.Greeting
+        return kind == DesktopComponentKind.Greeting
             ? new ComponentGlass(glass.BackgroundColor, WidgetAppearanceRules.MinimumBackgroundOpacity, nakedText)
             : new ComponentGlass(glass.BackgroundColor, glass.BackgroundOpacity, glass.TextColor);
     }
@@ -745,6 +746,12 @@ public static class DesktopStyleRules
             previousStyle,
             nextStyle,
             clearBarOpacity);
+        if (component.Kind == DesktopComponentKind.TimeDate
+            && look.BackgroundOpacity >= 0.05d
+            && component.CornerRadius <= 0.001d)
+        {
+            component.CornerRadius = WidgetAppearanceRules.DefaultCornerRadius;
+        }
         if (component.Kind == DesktopComponentKind.Todo)
         {
             var glass = Appearance(nextStyle);

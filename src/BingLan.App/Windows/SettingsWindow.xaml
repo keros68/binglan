@@ -1560,6 +1560,16 @@
                                                       Checked="DisplaySettings_Changed"
                                                       Unchecked="DisplaySettings_Changed"/>
                                         </local:SettingsRow>
+                                        <local:SettingsRow x:Name="ShowClockLunarDateRow"
+                                                           Header="显示农历"
+                                                           Description="在日期旁显示农历月份与日期"
+                                                           local:SettingsSearch.Keywords="时间 时钟 日期 农历 阴历">
+                                            <CheckBox x:Name="ShowClockLunarDateCheckBox"
+                                                      AutomationProperties.Name="显示农历"
+                                                      Style="{StaticResource ToggleSwitchStyle}"
+                                                      Checked="DisplaySettings_Changed"
+                                                      Unchecked="DisplaySettings_Changed"/>
+                                        </local:SettingsRow>
                                         <local:SettingsRow x:Name="ClockLayoutRow"
                                                            Header="时钟版式"
                                                            Description="选择时钟排版样式；已手动选择的字体、字号与文字颜色会继续保留"

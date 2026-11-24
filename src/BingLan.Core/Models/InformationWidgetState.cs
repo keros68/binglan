@@ -13,6 +13,7 @@ public sealed class InformationWidgetState
     public string GreetingName { get; set; } = "";
     public bool Use24HourClock { get; set; } = true;
     public bool ShowDate { get; set; } = true;
+    public bool ShowLunarDate { get; set; } = true;
     public ClockLayoutPreset ClockLayout
     {
         get => _clockLayout;

@@ -119,11 +119,26 @@ internal static class ThemeStyleTests
         todo.Appearance.HeaderColor = WidgetAppearanceRules.DefaultHeaderColor;
         Check(DesktopStyleRules.FollowsSharedLook(todo, style, clearBar), "恢复默认标题栏颜色后应回到跟随全局外观");
 
+        var lightTime = DesktopStyleRules.ComponentLook(DesktopComponentKind.TimeDate, style, clearBar);
+        Check(Math.Abs(lightTime.BackgroundOpacity - style.GlassDensity) < 0.001d
+            && lightTime.TextColor == WidgetAppearanceRules.DefaultTextColor,
+            "浅色玻璃下时间日期卡片应跟随全局卡片材质与字色");
+
+        style.Glass = GlassMode.Dark;
+        var darkTime = DesktopStyleRules.ComponentLook(DesktopComponentKind.TimeDate, style, clearBar);
+        Check(darkTime.BackgroundColor == "#16202C"
+            && Math.Abs(darkTime.BackgroundOpacity - style.GlassDensity) < 0.001d
+            && darkTime.TextColor == "#FFFFFF",
+            "深色玻璃下时间日期卡片应跟随全局深色玻璃与白色文字");
+
         style.Glass = GlassMode.Clear;
         var time = DesktopStyleRules.ComponentLook(DesktopComponentKind.TimeDate, style, clearBar);
+        var greetingLook = DesktopStyleRules.ComponentLook(DesktopComponentKind.Greeting, style, clearBar);
         var strip = DesktopStyleRules.ComponentLook(DesktopComponentKind.QuickLaunch, style, clearBar);
         Check(time.BackgroundOpacity == WidgetAppearanceRules.MinimumBackgroundOpacity && time.TextColor == "#FFFFFF",
-            "时间日期始终是壁纸上的裸文字");
+            "无底板模式下时间日期应切换为壁纸裸文字");
+        Check(greetingLook.BackgroundOpacity == WidgetAppearanceRules.MinimumBackgroundOpacity && greetingLook.TextColor == "#FFFFFF",
+            "问候语始终保持壁纸裸文字");
         Check(strip.BackgroundColor == "#FFFFFF" && strip.BackgroundOpacity == clearBar,
             "无底板时快捷入口保留浅色细条");
         Check(!DesktopStyleRules.FollowsSharedLook(weather, style, clearBar), "整体材质变化后未重新应用的卡片不再算跟随");
@@ -775,6 +790,8 @@ internal static class ThemeStyleTests
         foreach (var nakedKind in new[] { DesktopComponentKind.TimeDate, DesktopComponentKind.Greeting })
         {
             var nakedComponent = DesktopExperienceRules.CreateDefaultComponent(nakedKind);
+            nakedComponent.Appearance.BackgroundOpacity = WidgetAppearanceRules.MinimumBackgroundOpacity;
+            nakedComponent.Appearance.TextColor = "#FFFFFF";
             Check(
                 DesktopStyleRules.ResolveRenderedCard(
                     nakedComponent,
@@ -1078,8 +1095,11 @@ internal static class ThemeStyleTests
                 DesktopComponentKind.Weather, "#AA2244", prev, next, 0.18d) == "#AA2244",
             "用户自定义的天气文字颜色在切换全局材质后必须保留");
         Check(DesktopStyleRules.ResolveComponentTransitionTextColor(
-                DesktopComponentKind.TimeDate, "#FFFFFF", prev, next, 0.18d) == "#FFFFFF",
-            "默认白色的裸时钟保持白色");
+                DesktopComponentKind.TimeDate, WidgetAppearanceRules.DefaultTextColor, prev, next, 0.18d) == "#FFFFFF",
+            "未自定义的时间日期组件在浅色切深色玻璃时应跟随切换为白色");
+        Check(DesktopStyleRules.ResolveComponentTransitionTextColor(
+                DesktopComponentKind.Greeting, "#FFFFFF", prev, next, 0.18d) == "#FFFFFF",
+            "默认白色的裸问候语保持白色");
     }
 
     internal static void TestWeatherIconMapping()
@@ -1319,13 +1339,22 @@ internal static class ThemeStyleTests
 
             var shown24 = ClockLayoutRules.FormatClockParts(afternoon, preset, use24HourClock: true, showDate: true);
             var shown12 = ClockLayoutRules.FormatClockParts(afternoon, preset, use24HourClock: false, showDate: true);
-            var hiddenDate = ClockLayoutRules.FormatClockParts(morning, preset, use24HourClock: true, showDate: false);
+            var shownLunar = ClockLayoutRules.FormatClockParts(afternoon, preset, use24HourClock: true, showDate: true, showLunarDate: true);
+            var hiddenDate = ClockLayoutRules.FormatClockParts(morning, preset, use24HourClock: true, showDate: false, showLunarDate: true);
             Check(!string.IsNullOrWhiteSpace(shown24.TimeText)
                 && !string.IsNullOrWhiteSpace(shown24.DateText)
                 && shown24.TimeText != shown12.TimeText
+                && shownLunar.DateText.Contains("农历", StringComparison.Ordinal)
                 && string.IsNullOrEmpty(hiddenDate.DateText),
-                $"版式 {preset} 下 12/24 小时制与显示日期开关都必须生效");
+                $"版式 {preset} 下 12/24 小时制、显示日期与显示农历开关都必须生效");
         }
+
+        Check(LunarDayText.FullDate(new DateTime(2026, 2, 17)) == "农历正月初一",
+            "农历正月初一格式化应正确");
+        Check(LunarDayText.FullDate(new DateTime(2025, 7, 25)) == "农历闰六月初一",
+            "闰月农历格式化应带闰字前缀");
+        Check(LunarDayText.FullDate(new DateTime(1899, 1, 1)) == string.Empty,
+            "超出农历历法范围的日期应安全返回空串");
 
         var temp = Path.Combine(Path.GetTempPath(), $"binglan-wp8-clock-{Guid.NewGuid():N}");
         Directory.CreateDirectory(temp);
@@ -1400,7 +1429,44 @@ internal static class ThemeStyleTests
                     $"未知时钟版式 {rawValue} 应安全回退为经典版式并保留其余字段");
             }
 
-            // 3) Simulate downgrade to 0.2.66 (SchemaVersion 45) saving state back without v47 ClockLayout/ShowDate properties.
+            // 3) Schema v60 -> v61 upgrades untouched naked TimeDate to follow global glass and defaults ShowLunarDate = true.
+            File.WriteAllText(
+                store.StatePath,
+                """
+                {
+                  "SchemaVersion": 60,
+                  "Style": {
+                    "Glass": 1,
+                    "GlassDensity": 0.72,
+                    "TextInk": 0
+                  },
+                  "InformationWidgets": [
+                    { "ShowDate": true }
+                  ],
+                  "DesktopExperience": {
+                    "Components": [
+                      {
+                        "Kind": 0,
+                        "CornerRadius": 0,
+                        "Appearance": {
+                          "BackgroundColor": "#16202C",
+                          "BackgroundOpacity": 0.01,
+                          "TextColor": "#FFFFFF"
+                        }
+                      }
+                    ]
+                  }
+                }
+                """);
+            var v61Migrated = store.Load();
+            var v61TimeDate = v61Migrated.DesktopExperience.GetComponent(DesktopComponentKind.TimeDate);
+            Check(Math.Abs(v61TimeDate.Appearance.BackgroundOpacity - 0.72d) < 0.001d
+                && Math.Abs(v61TimeDate.CornerRadius - WidgetAppearanceRules.DefaultCornerRadius) < 0.001d
+                && DesktopStyleRules.FollowsSharedLook(v61TimeDate, v61Migrated.Style, 0.18d)
+                && v61Migrated.InformationWidgets.Single().ShowLunarDate,
+                "v60 升级到 v61 时未自定义的时间日期应跟随全局玻璃外观并默认显示农历");
+
+            // 4) Simulate downgrade to 0.2.66 (SchemaVersion 45) saving state back without v47 ClockLayout/ShowDate properties.
             info.ClockLayout = ClockLayoutPreset.DatePoster;
             info.ShowDate = false;
             store.Save(migrated);

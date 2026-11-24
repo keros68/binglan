@@ -716,7 +716,8 @@ public partial class InformationWidgetWindow : WidgetWindowBase
             now,
             State.ClockLayout,
             State.Use24HourClock,
-            State.ShowDate);
+            State.ShowDate,
+            State.ShowLunarDate);
 
         TimeText.Text = parts.TimeText;
         TimeText.Visibility = showTimeDate ? Visibility.Visible : Visibility.Collapsed;

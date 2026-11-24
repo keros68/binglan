@@ -1869,6 +1869,9 @@ internal static class Program
                 "浅色玻璃默认深色图标不应带独立硬编码阴影");
 
             var nakedExperience = DesktopExperienceRules.CreateDefault();
+            var clearTimeDate = nakedExperience.GetComponent(DesktopComponentKind.TimeDate);
+            clearTimeDate.Appearance.BackgroundOpacity = WidgetAppearanceRules.MinimumBackgroundOpacity;
+            clearTimeDate.Appearance.TextColor = "#FFFFFF";
             using var sampler = new WindowsPerformanceSamplingService();
             var timeWindow = new InformationWidgetWindow(
                 new InformationWidgetState(),

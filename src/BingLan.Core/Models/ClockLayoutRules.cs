@@ -164,15 +164,22 @@ public static class ClockLayoutRules
         DateTime localTime,
         ClockLayoutPreset preset,
         bool use24HourClock,
-        bool showDate)
+        bool showDate,
+        bool showLunarDate = false)
     {
         var safePreset = CoercePreset(preset);
+        var lunar = showDate && showLunarDate ? LunarDayText.FullDate(localTime) : string.Empty;
         if (safePreset == ClockLayoutPreset.Classic)
         {
+            var classicDate = showDate
+                ? string.IsNullOrEmpty(lunar)
+                    ? GreetingService.FormatDate(localTime)
+                    : $"{GreetingService.FormatDate(localTime)} · {lunar}"
+                : string.Empty;
             return new ClockFormattedParts(
                 GreetingService.FormatTime(localTime, use24HourClock),
                 null,
-                showDate ? GreetingService.FormatDate(localTime) : string.Empty);
+                classicDate);
         }
 
         var hour = use24HourClock
@@ -188,19 +195,35 @@ public static class ClockLayoutRules
             ClockLayoutPreset.MinimalDigits => new ClockFormattedParts(
                 $"{hour:D2}:{localTime.Minute:D2}",
                 period,
-                showDate ? $"{localTime.Year}.{localTime.Month:D2}.{localTime.Day:D2}  {weekday}" : string.Empty),
+                showDate
+                    ? string.IsNullOrEmpty(lunar)
+                        ? $"{localTime.Year}.{localTime.Month:D2}.{localTime.Day:D2}  {weekday}"
+                        : $"{localTime.Year}.{localTime.Month:D2}.{localTime.Day:D2}  {weekday}  {lunar}"
+                    : string.Empty),
             ClockLayoutPreset.DatePoster => new ClockFormattedParts(
                 $"{hour:D2}:{localTime.Minute:D2}",
                 period,
-                showDate ? $"{localTime.Month}月{localTime.Day}日 · {weekday}" : string.Empty),
+                showDate
+                    ? string.IsNullOrEmpty(lunar)
+                        ? $"{localTime.Month}月{localTime.Day}日 · {weekday}"
+                        : $"{localTime.Month}月{localTime.Day}日 · {weekday} · {lunar}"
+                    : string.Empty),
             ClockLayoutPreset.VerticalDigits => new ClockFormattedParts(
                 $"{hour:D2}\n{localTime.Minute:D2}",
                 period,
-                showDate ? $"{localTime.Month}月{localTime.Day}日\n{weekday}" : string.Empty),
+                showDate
+                    ? string.IsNullOrEmpty(lunar)
+                        ? $"{localTime.Month}月{localTime.Day}日\n{weekday}"
+                        : $"{localTime.Month}月{localTime.Day}日\n{weekday}\n{lunar}"
+                    : string.Empty),
             _ => new ClockFormattedParts(
                 GreetingService.FormatTime(localTime, use24HourClock),
                 null,
-                showDate ? GreetingService.FormatDate(localTime) : string.Empty)
+                showDate
+                    ? string.IsNullOrEmpty(lunar)
+                        ? GreetingService.FormatDate(localTime)
+                        : $"{GreetingService.FormatDate(localTime)} · {lunar}"
+                    : string.Empty)
         };
     }
 

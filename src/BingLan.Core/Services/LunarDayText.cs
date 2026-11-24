@@ -43,4 +43,25 @@ public static class LunarDayText
             return "";
         }
     }
+
+    /// <summary>
+    /// Full lunar month and day label for a standalone date display (for example
+    /// "农历十月十六" or "农历闰六月初一"). Empty when outside the supported range.
+    /// </summary>
+    public static string FullDate(DateTime date)
+    {
+        try
+        {
+            var month = Calendar.GetMonth(date);
+            var day = Calendar.GetDayOfMonth(date);
+            var leapMonth = Calendar.GetLeapMonth(Calendar.GetYear(date));
+            var monthIndex = leapMonth > 0 && month >= leapMonth ? month - 1 : month;
+            var isLeapMonth = leapMonth > 0 && month == leapMonth;
+            return $"农历{(isLeapMonth ? "闰" : "")}{MonthNames[monthIndex - 1]}{DayNames[day - 1]}";
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            return "";
+        }
+    }
 }

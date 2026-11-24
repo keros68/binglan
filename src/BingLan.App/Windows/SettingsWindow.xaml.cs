@@ -187,6 +187,8 @@ public partial class SettingsWindow : Window
         GreetingNameEditor.Text = state.GreetingName;
         Use24HourClockCheckBox.IsChecked = state.Use24HourClock;
         ShowClockDateCheckBox.IsChecked = state.ShowDate;
+        ShowClockLunarDateCheckBox.IsChecked = state.ShowLunarDate;
+        ShowClockLunarDateCheckBox.IsEnabled = state.ShowDate;
         SelectByTag(ClockLayoutSelector, state.ClockLayout.ToString());
         _loadingDisplaySettings = false;
         UpdateCurrentCity(state.WeatherCity);
@@ -571,11 +573,14 @@ public partial class SettingsWindow : Window
                 : Visibility.Collapsed;
             var isTimeDate = kind == DesktopComponentKind.TimeDate;
             ShowClockDateRow.Visibility = isTimeDate ? Visibility.Visible : Visibility.Collapsed;
+            ShowClockLunarDateRow.Visibility = isTimeDate ? Visibility.Visible : Visibility.Collapsed;
             ClockLayoutRow.Visibility = isTimeDate ? Visibility.Visible : Visibility.Collapsed;
             ClockDividerRow.Visibility = isTimeDate ? Visibility.Visible : Visibility.Collapsed;
             ComponentMoreFold.Visibility = isTimeDate ? Visibility.Visible : Visibility.Collapsed;
             _loadingDisplaySettings = true;
             ShowClockDateCheckBox.IsChecked = _informationState.ShowDate;
+            ShowClockLunarDateCheckBox.IsChecked = _informationState.ShowLunarDate;
+            ShowClockLunarDateCheckBox.IsEnabled = _informationState.ShowDate;
             SelectByTag(ClockLayoutSelector, ClockLayoutRules.CoercePreset(_informationState.ClockLayout).ToString());
             _loadingDisplaySettings = false;
             _loadingDivider = true;
@@ -1170,6 +1175,8 @@ public partial class SettingsWindow : Window
         _informationState.GreetingName = greetingName;
         _informationState.Use24HourClock = use24HourClock;
         _informationState.ShowDate = ShowClockDateCheckBox.IsChecked == true;
+        _informationState.ShowLunarDate = ShowClockLunarDateCheckBox.IsChecked == true;
+        ShowClockLunarDateCheckBox.IsEnabled = _informationState.ShowDate;
         if (ClockLayoutSelector.SelectedItem is ComboBoxItem { Tag: string layoutTag }
             && Enum.TryParse<ClockLayoutPreset>(layoutTag, out var clockLayout))
         {
@@ -1422,6 +1429,12 @@ public partial class SettingsWindow : Window
         component.Appearance.BackgroundColor = look.BackgroundColor;
         component.Appearance.BackgroundOpacity = look.BackgroundOpacity;
         component.Appearance.TextColor = look.TextColor;
+        if (kind == DesktopComponentKind.TimeDate
+            && look.BackgroundOpacity >= 0.05d
+            && component.CornerRadius <= 0.001d)
+        {
+            component.CornerRadius = WidgetAppearanceRules.DefaultCornerRadius;
+        }
         if (kind == DesktopComponentKind.Todo)
         {
             var glass = DesktopStyleRules.Appearance(_maintenance.Style);

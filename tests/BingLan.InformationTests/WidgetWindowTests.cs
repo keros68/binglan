@@ -809,8 +809,10 @@ internal static class WidgetWindowTests
     {
         var experience = DesktopExperienceRules.CreateDefault();
         var timeDate = experience.GetComponent(DesktopComponentKind.TimeDate);
-        AssertEqual("#FFFFFF", timeDate.Appearance.TextColor,
-            "时间日期默认文字色应为白色");
+        AssertEqual(WidgetAppearanceRules.DefaultTextColor, timeDate.Appearance.TextColor,
+            "时间日期默认文字色应跟随全局浅色玻璃");
+        AssertEqual(WidgetAppearanceRules.DefaultBackgroundOpacity, timeDate.Appearance.BackgroundOpacity,
+            "时间日期默认底板不透明度应跟随全局浅色玻璃");
         AssertEqual("#FFFFFF",
             experience.GetComponent(DesktopComponentKind.Greeting).Appearance.TextColor,
             "问候默认文字色应为白色");
@@ -826,12 +828,20 @@ internal static class WidgetWindowTests
         try
         {
             var timeText = Require<TextBlock>(window, "TimeText");
+            Assert(timeText.Effect is null, "有玻璃底板时时间文字不应叠加裸文字阴影");
+
+            // Switching TimeDate to Clear/unbacked applies single-layer naked contrast shadow.
+            timeDate.Appearance.BackgroundOpacity = WidgetAppearanceRules.MinimumBackgroundOpacity;
+            timeDate.Appearance.TextColor = "#FFFFFF";
+            window.ApplyDesktopExperience(experience);
+            Pump();
+
             Assert(timeText.Effect is System.Windows.Media.Effects.DropShadowEffect,
-                "时间文字缺少对比度阴影");
+                "无底板时间文字缺少对比度阴影");
             Assert(
                 Require<TextBlock>(window, "DateText").Effect
                     is System.Windows.Media.Effects.DropShadowEffect,
-                "日期文字缺少对比度阴影");
+                "无底板日期文字缺少对比度阴影");
             Assert(
                 Require<TextBlock>(window, "GreetingText").Effect
                     is System.Windows.Media.Effects.DropShadowEffect,
@@ -844,7 +854,7 @@ internal static class WidgetWindowTests
                 {
                     Color: { R: 255, G: 255, B: 255 }
                 },
-                "时间文字未使用白色默认前景");
+                "无底板时间文字未使用白色前景");
         }
         finally
         {
@@ -982,6 +992,7 @@ internal static class WidgetWindowTests
 
             var selector = Require<ComboBox>(settings, "ClockLayoutSelector");
             var showDateBox = Require<CheckBox>(settings, "ShowClockDateCheckBox");
+            var showLunarBox = Require<CheckBox>(settings, "ShowClockLunarDateCheckBox");
             var use24Box = Require<CheckBox>(settings, "Use24HourClockCheckBox");
             var timeText = Require<TextBlock>(window, "TimeText");
             var dateText = Require<TextBlock>(window, "DateText");
@@ -994,25 +1005,17 @@ internal static class WidgetWindowTests
                 Pump();
             }
 
-            // Classic: time sits above date.
+            // Classic: time sits above date, and lunar text shows by default when enabled.
             SelectLayout(ClockLayoutPreset.Classic);
             AssertEqual(ClockLayoutPreset.Classic, state.ClockLayout, "设置页选中经典版式应写入状态");
+            Assert(dateText.Text.Contains("农历", StringComparison.Ordinal), "默认开启显示农历时日期应包含农历文本");
             var timeRect = timeText.TransformToAncestor(window).TransformBounds(new Rect(0, 0, timeText.ActualWidth, timeText.ActualHeight));
             var dateRect = dateText.TransformToAncestor(window).TransformBounds(new Rect(0, 0, dateText.ActualWidth, dateText.ActualHeight));
             Assert(timeRect.Top < dateRect.Top, "经典版式时间应位于日期上方");
 
-            // MinimalDigits: centered horizontal alignment + large numerals; unbacked lifts weight to Light and uses primary ink for date.
+            // MinimalDigits with default glass card backing keeps ExtraLight and secondary-ink date.
             SelectLayout(ClockLayoutPreset.MinimalDigits);
             AssertEqual(TextAlignment.Center, timeText.TextAlignment, "极简大数字应居中排版");
-            Assert(timeText.FontSize >= 60d && timeText.FontWeight == FontWeights.Light,
-                "无底板下极简大数字应将数字字重提高一档为 Light");
-            AssertEqual(byte.MaxValue, ((System.Windows.Media.SolidColorBrush)dateText.Foreground).Color.A,
-                "无底板下极简大数字日期应使用主墨色");
-
-            // With visible card backing, MinimalDigits keeps ExtraLight and secondary-ink date, while VerticalDigits keeps secondary-ink date.
-            clockComponent.Appearance.BackgroundOpacity = 0.66d;
-            window.ApplyDesktopExperience(experience);
-            Pump();
             AssertEqual(FontWeights.ExtraLight, timeText.FontWeight,
                 "有底板时极简大数字应保持 ExtraLight 字重");
             Assert(((System.Windows.Media.SolidColorBrush)dateText.Foreground).Color.A < byte.MaxValue,
@@ -1022,9 +1025,17 @@ internal static class WidgetWindowTests
             Assert(((System.Windows.Media.SolidColorBrush)dateText.Foreground).Color.A < byte.MaxValue,
                 "有底板时纵向数字日期应保留次级墨色");
 
+            // Switching to unbacked lifts MinimalDigits weight to Light and uses primary ink for date.
             clockComponent.Appearance.BackgroundOpacity = WidgetAppearanceRules.MinimumBackgroundOpacity;
+            clockComponent.Appearance.TextColor = "#FFFFFF";
             window.ApplyDesktopExperience(experience);
             Pump();
+
+            SelectLayout(ClockLayoutPreset.MinimalDigits);
+            Assert(timeText.FontSize >= 60d && timeText.FontWeight == FontWeights.Light,
+                "无底板下极简大数字应将数字字重提高一档为 Light");
+            AssertEqual(byte.MaxValue, ((System.Windows.Media.SolidColorBrush)dateText.Foreground).Color.A,
+                "无底板下极简大数字日期应使用主墨色");
 
             // DatePoster: date sits above time; 12h period renders beside date.
             SelectLayout(ClockLayoutPreset.DatePoster);
@@ -1044,13 +1055,25 @@ internal static class WidgetWindowTests
             dateRect = dateText.TransformToAncestor(window).TransformBounds(new Rect(0, 0, dateText.ActualWidth, dateText.ActualHeight));
             Assert(timeRect.Left < dateRect.Left, "纵向数字版式日期应位于纵向数字右侧");
 
+            // ShowLunarDate toggle turns lunar date off/on, and ShowDate disables the lunar switch.
+            showLunarBox.IsChecked = false;
+            Pump();
+            Assert(!state.ShowLunarDate && !dateText.Text.Contains("农历", StringComparison.Ordinal),
+                "关闭显示农历后日期文本应去掉农历");
+            showLunarBox.IsChecked = true;
+            Pump();
+            Assert(state.ShowLunarDate && dateText.Text.Contains("农历", StringComparison.Ordinal),
+                "重新开启显示农历后日期文本应恢复农历");
+
             // ShowDate toggle hides DateText across presets without hiding time.
             showDateBox.IsChecked = false;
             Pump();
+            Assert(!showLunarBox.IsEnabled, "关闭显示日期后显示农历开关应置灰");
             AssertEqual(Visibility.Collapsed, dateText.Visibility, "关闭显示日期后日期文本应隐藏");
             AssertEqual(Visibility.Visible, timeText.Visibility, "关闭显示日期后时间仍应显示");
             showDateBox.IsChecked = true;
             Pump();
+            Assert(showLunarBox.IsEnabled, "重新开启显示日期后显示农历开关应恢复可用");
             AssertEqual(Visibility.Visible, dateText.Visibility, "重新开启显示日期后日期应恢复显示");
 
             // Switching clock layout keeps user custom FontFamily, FontScale, and TextColor intact.

@@ -133,7 +133,7 @@ public static class DesktopExperienceRules
                 _ => new WindowPlacement()
             }
         };
-        if (kind is DesktopComponentKind.TimeDate or DesktopComponentKind.Greeting)
+        if (kind == DesktopComponentKind.Greeting)
         {
             state.Appearance.BackgroundOpacity = WidgetAppearanceRules.MinimumBackgroundOpacity;
             state.Appearance.HeaderOpacity = 0d;

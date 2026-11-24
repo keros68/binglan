@@ -1003,6 +1003,28 @@ public sealed class LocalStateStore
             state.Dock.BounceOnAttention = false;
             state.SchemaVersion = 60;
         }
+        if (state.SchemaVersion < 61)
+        {
+            // TimeDate now follows the shared desktop card look instead of being pinned to
+            // unbacked naked text; upgrade untouched TimeDate defaults while keeping custom colours.
+            var timeDate = state.DesktopExperience.GetComponent(DesktopComponentKind.TimeDate);
+            var oldGlass = DesktopStyleRules.Appearance(state.Style);
+            var oldNakedText = DesktopStyleRules.NakedTextColor(state.Style);
+            if (timeDate.Appearance.BackgroundOpacity <= WidgetAppearanceRules.MinimumBackgroundOpacity + 0.005d
+                && string.Equals(timeDate.Appearance.BackgroundColor, oldGlass.BackgroundColor, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(timeDate.Appearance.TextColor, oldNakedText, StringComparison.OrdinalIgnoreCase))
+            {
+                var nextLook = DesktopStyleRules.ComponentLook(DesktopComponentKind.TimeDate, state.Style, 0.18d);
+                timeDate.Appearance.BackgroundColor = nextLook.BackgroundColor;
+                timeDate.Appearance.BackgroundOpacity = nextLook.BackgroundOpacity;
+                timeDate.Appearance.TextColor = nextLook.TextColor;
+                if (nextLook.BackgroundOpacity >= 0.05d && timeDate.CornerRadius <= 0.001d)
+                {
+                    timeDate.CornerRadius = WidgetAppearanceRules.DefaultCornerRadius;
+                }
+            }
+            state.SchemaVersion = 61;
+        }
         if (!Enum.IsDefined(state.Taskbar.Mode))
         {
             state.Taskbar.Mode = TaskbarMode.SystemDefault;

@@ -413,7 +413,7 @@ public sealed partial class WidgetCoordinator : IDisposable
         if (color is not null && style.Glass != GlassMode.Clear)
         {
             foreach (var component in _state.DesktopExperience.Components.Where(component =>
-                         component.Kind is not (DesktopComponentKind.TimeDate or DesktopComponentKind.Greeting)))
+                         component.Kind != DesktopComponentKind.Greeting))
             {
                 component.Appearance.BackgroundColor = color;
             }
