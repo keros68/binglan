@@ -991,6 +991,19 @@ static void TestAppBarReservation()
     Assert(
         AppBarReservationState.HasMonitorTargetChanged(@"\\.\DISPLAY1", externalBounds, 144, @"\\.\DISPLAY1", externalBounds, 168),
         "单屏切换复用同一设备名但有效 DPI 变化时应触发重注册");
+
+    Assert(
+        AppBarPositionGuard.ShouldNotifyWindowPosChanged(isRegistered: true, isPositioning: false, isUpdatingLayer: false),
+        "已注册 AppBar 收到外部窗口位置变化时应通知 Explorer");
+    Assert(
+        !AppBarPositionGuard.ShouldNotifyWindowPosChanged(isRegistered: true, isPositioning: false, isUpdatingLayer: true),
+        "仅重申 Z 序（UpdateWindowLayer）时不得发送 ABM_WINDOWPOSCHANGED，避免 Explorer 把 Shell_TrayWnd 重新抬到任务栏底边挡板之上");
+    Assert(
+        !AppBarPositionGuard.ShouldNotifyWindowPosChanged(isRegistered: true, isPositioning: true, isUpdatingLayer: false),
+        "Position 主动移动期间不应重复发送 ABM_WINDOWPOSCHANGED");
+    Assert(
+        !AppBarPositionGuard.ShouldNotifyWindowPosChanged(isRegistered: false, isPositioning: false, isUpdatingLayer: false),
+        "未注册 AppBar 时不应发送 ABM_WINDOWPOSCHANGED");
 }
 
 static void TestDockPinIdentityKey()

@@ -40,6 +40,7 @@ internal sealed class TopBarAppBarController : IDisposable
     private bool _reserveWorkArea;
     private bool _fullScreenDetected;
     private bool _positioning;
+    private bool _updatingLayer;
     private bool _refreshNativeTaskbarLayout;
     private bool _transientRecovering;
     private bool _reserveFallbackLatched;
@@ -461,7 +462,8 @@ internal sealed class TopBarAppBarController : IDisposable
                     DockNativeMethods.AbmActivate,
                     activationState != DockNativeMethods.WaInactive ? 1 : 0);
                 break;
-            case DockNativeMethods.WmWindowPosChanged when _reservation.IsRegistered && !_positioning:
+            case DockNativeMethods.WmWindowPosChanged
+                when AppBarPositionGuard.ShouldNotifyWindowPosChanged(_reservation.IsRegistered, _positioning, _updatingLayer):
                 NotifyAppBar(DockNativeMethods.AbmWindowPosChanged, 0);
                 break;
             // A work-area change can leave Explorer holding a stale strip for the bar,
@@ -576,14 +578,23 @@ internal sealed class TopBarAppBarController : IDisposable
         var insertAfter = _reservation.IsRegistered && _fullScreenDetected
             ? DockNativeMethods.HwndBottom
             : DockNativeMethods.HwndTopmost;
-        NativeMethods.SetWindowPos(
-            _handle,
-            insertAfter,
-            0,
-            0,
-            0,
-            0,
-            NativeMethods.SwpNoMove | NativeMethods.SwpNoSize | NativeMethods.SwpNoActivate);
+        var previous = _updatingLayer;
+        _updatingLayer = true;
+        try
+        {
+            NativeMethods.SetWindowPos(
+                _handle,
+                insertAfter,
+                0,
+                0,
+                0,
+                0,
+                NativeMethods.SwpNoMove | NativeMethods.SwpNoSize | NativeMethods.SwpNoActivate);
+        }
+        finally
+        {
+            _updatingLayer = previous;
+        }
     }
 
     private DockNativeMethods.AppBarData CreateData() => new()

@@ -204,6 +204,17 @@ public static class TaskbarCornerRules
             hasStandardWindowChrome: !isApplicationFrameWindow && hasCaptionAndThickFrame,
             isToolOrOverlayWindow: isToolOrOverlayWindow,
             isTopmost: isTopmost);
+
+    /// <summary>
+    /// Whether applying taskbar settings must re-run the native taskbar mode adapter.
+    /// Changing only <see cref="TaskbarEdgeRevealMode"/> while the requested mode is already
+    /// held cleanly should not tear down and re-enable Windows auto-hide.
+    /// </summary>
+    public static bool NeedsModeReapply(
+        TaskbarMode activeMode,
+        TaskbarMode requestedMode,
+        string? activeProblem) =>
+        activeMode != requestedMode || !string.IsNullOrEmpty(activeProblem);
 }
 
 /// <summary>

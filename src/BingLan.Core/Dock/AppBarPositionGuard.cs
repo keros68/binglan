@@ -45,4 +45,17 @@ public sealed class AppBarPositionGuard
 
     /// <summary>Forget the held strip after the AppBar is registered again or released.</summary>
     public void Reset() => _submitted = null;
+
+    /// <summary>
+    /// Whether <c>WM_WINDOWPOSCHANGED</c> should notify Explorer via <c>ABM_WINDOWPOSCHANGED</c>.
+    /// Self-initiated positioning or Z-order-only layer reassertions (for example keeping the Dock
+    /// above the taskbar edge-reveal strip) must not notify Explorer, because Explorer responds
+    /// to <c>ABM_WINDOWPOSCHANGED</c> by re-raising <c>Shell_TrayWnd</c> to the top of the
+    /// topmost Z-order.
+    /// </summary>
+    public static bool ShouldNotifyWindowPosChanged(
+        bool isRegistered,
+        bool isPositioning,
+        bool isUpdatingLayer) =>
+        isRegistered && !isPositioning && !isUpdatingLayer;
 }

@@ -147,7 +147,7 @@
 2. **Dock「只用屏幕底边」与「底边和把手」唤出（Z 序协调，无回路）**
    - Dock 底边唤出通过 `GetCursorPos` + `DockRevealRules.IsInRevealZone` 判定屏幕坐标，不依赖命中任务栏窗口，因此 2 px 挡板不会阻止 Dock 底边唤出；不能在 Dock 隐藏时挖空挡板，否则唤出 Dock 时原生任务栏会同时弹出。
    - Z 序调整：显示桌面时先抬挡板再抬 Dock；`TaskbarCornerReveal` 每次重排或置顶后触发 `Raised` 事件，由 `WidgetCoordinator` 调用 `_dock.EnsureAboveDesktop()` 保持可见 Dock 与把手位于挡板之上。
-   - **防回环依据**：`IceBlueDockWindow.EnsureAboveDesktop()` 仅对本进程自己的 Dock HWND（`DockAppBarController.UpdateWindowLayer`：`SetWindowPos(..., SwpNoMove | SwpNoSize | SwpNoActivate)`）和把手 HWND（`DockHandleWindow.EnsureAboveDesktop`：`SetWindowPos(..., SwpNoMove | SwpNoSize | SwpNoActivate)`）重申 Z 序，不触碰任务栏也不调用 `SHAppBarMessage`；`TaskbarCornerReveal` 的两个 `SetWinEventHook` 严格按 `explorer.exe` PID 且按类名过滤 `Shell_TrayWnd`/`Shell_SecondaryTrayWnd`，不会因本进程窗口 Z 序变化被唤醒；此外 `TaskbarCornerReveal` 内部仍加了 `_raising` 重入卫士兜底。
+   - **防回环与 Z 序保障**：`IceBlueDockWindow.EnsureAboveDesktop()` 仅对本进程自己的 Dock HWND（`DockAppBarController.UpdateWindowLayer`：`SetWindowPos(..., SwpNoMove | SwpNoSize | SwpNoActivate)`）和把手 HWND（`DockHandleWindow.EnsureAboveDesktop`：`SetWindowPos(..., SwpNoMove | SwpNoSize | SwpNoActivate)`）重申 Z 序；`DockAppBarController.UpdateWindowLayer` 与 `TopBarAppBarController.UpdateWindowLayer` 在 `SetWindowPos` 期间置位 `_updatingLayer`，阻断同步回流的 `WM_WINDOWPOSCHANGED → SHAppBarMessage(ABM_WINDOWPOSCHANGED)`（此前常显预留空间模式下会触发 Explorer 把 `Shell_TrayWnd` 重新抬到挡板之上，导致三档选项无差别）；`TaskbarCornerReveal` 另通过 `EVENT_SYSTEM_FOREGROUND` 仅在检测到任务栏位于细条之上时复位，且内部保留 `_raising` 重入卫士。
 3. **全屏切回与 Explorer 重启**
    - `TaskbarCornerReveal.SetSuspended(false)` 恢复后立即补一次 `Raise()`；`TaskbarAdapter` 收到 `TaskbarCreated` 后触发 `ExplorerRestarted`，立即重建挡板与新 Explorer PID 的 `WinEventHook`（不再等待 5 秒轮询）。
 
@@ -174,6 +174,12 @@
 - 光标进入最底 2 行像素（`y ≥ 屏高 - 2`）即会触发弹出；停在 `屏高 - 3` 不触发。
 - 曾评估用低级鼠标钩子把光标夹在 `屏高 - 3`：同样有效，但会让每次鼠标移动经过本程序，界面卡顿时影响全系统输入，且被系统摘除后需重装；因挡板已满足需求而未采用。
 - 未覆盖：多显示器、混合 DPI、Explorer 重启后的挡板重建，仍按上表由用户核对。
+
+### 4. 2026-11-24 回归验证（Windows 11 Build 26300.9974，3840×2160 单屏，Dock 始终显示并保留底部空间）
+
+- 复现背景：正式版 `0.4.3` 在 Dock 设为“始终显示并保留屏幕底部空间”时，[DockAppBarController.cs](../src/BingLan.App/Dock/DockAppBarController.cs) 的 `UpdateWindowLayer` 回流触发 `ABM_WINDOWPOSCHANGED`，导致 Explorer 把 `Shell_TrayWnd` 压回 2 px 挡板上方，三档“鼠标触边唤出”选项无差别。
+- 修复后在 `%LOCALAPPDATA%\BingLan-Preview` 预览版实测通过：常显预留空间 Dock + 任务栏自动隐藏下，三档“鼠标触边唤出”切换生效。
+- 仍未覆盖：多显示器、混合 DPI、Explorer 重启与全屏切回后的长期回归。
 
 ## 原有窗口材质后端的限制
 

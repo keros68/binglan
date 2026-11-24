@@ -33,6 +33,7 @@ internal sealed class TaskbarCornerReveal : IDisposable
     private readonly DockNativeMethods.WinEventProc _taskbarEventCallback;
     private nint _showHook;
     private nint _locationHook;
+    private nint _foregroundHook;
     private uint _explorerProcessId;
     private long _lastRaise;
     private TaskbarEdgeRevealMode _mode = TaskbarEdgeRevealMode.AnyEdge;
@@ -148,7 +149,7 @@ internal sealed class TaskbarCornerReveal : IDisposable
         }
         // Explorer restarts with a new process; re-hook when it changed.
         DockNativeMethods.GetWindowThreadProcessId(tray, out var processId);
-        if (processId == _explorerProcessId && _showHook != 0 && _locationHook != 0) return;
+        if (processId == _explorerProcessId && _showHook != 0 && _locationHook != 0 && _foregroundHook != 0) return;
         Unhook();
         _explorerProcessId = processId;
         // Two single-event hooks instead of a range keep unrelated Explorer events out.
@@ -156,6 +157,16 @@ internal sealed class TaskbarCornerReveal : IDisposable
             _taskbarEventCallback, processId, 0, DockNativeMethods.WineventOutOfContext);
         _locationHook = DockNativeMethods.SetWinEventHook(EventObjectLocationChange, EventObjectLocationChange, 0,
             _taskbarEventCallback, processId, 0, DockNativeMethods.WineventOutOfContext);
+        // Catch Z-order-only taskbar reassertions (which do not fire show/location events)
+        // after Start menu, popups, or window switches.
+        _foregroundHook = DockNativeMethods.SetWinEventHook(
+            DockNativeMethods.EventSystemForeground,
+            DockNativeMethods.EventSystemForeground,
+            0,
+            _taskbarEventCallback,
+            0,
+            0,
+            DockNativeMethods.WineventOutOfContext);
         _timer.Interval = _showHook != 0 && _locationHook != 0 ? HookedCheckInterval : CheckInterval;
     }
 
@@ -163,8 +174,10 @@ internal sealed class TaskbarCornerReveal : IDisposable
     {
         if (_showHook != 0) DockNativeMethods.UnhookWinEvent(_showHook);
         if (_locationHook != 0) DockNativeMethods.UnhookWinEvent(_locationHook);
+        if (_foregroundHook != 0) DockNativeMethods.UnhookWinEvent(_foregroundHook);
         _showHook = 0;
         _locationHook = 0;
+        _foregroundHook = 0;
         _explorerProcessId = 0;
         _timer.Interval = CheckInterval;
     }
@@ -172,12 +185,57 @@ internal sealed class TaskbarCornerReveal : IDisposable
     private void OnTaskbarEvent(nint hook, uint eventType, nint hwnd, int objectId, int childId, uint thread, uint time)
     {
         if (_strips.Count == 0 || objectId != DockNativeMethods.ObjidWindow || childId != 0 || hwnd == 0) return;
+        if (eventType == DockNativeMethods.EventSystemForeground)
+        {
+            if (Environment.TickCount64 - _lastRaise >= RaiseThrottleMs) RaiseIfBehindTaskbar();
+            return;
+        }
         var className = new System.Text.StringBuilder(32);
         DockNativeMethods.GetClassNameW(hwnd, className, className.Capacity);
         if (!IsTaskbarClass(className.ToString())) return;
         if (Environment.TickCount64 - _lastRaise >= RaiseThrottleMs) Raise();
         _settle.Stop();
         _settle.Start();
+    }
+
+    /// <summary>Raises strips only if a taskbar window sits above any strip or a strip was hidden.</summary>
+    internal void RaiseIfBehindTaskbar()
+    {
+        if (_strips.Count == 0 || _raising || !IsAnyTaskbarAboveStrips())
+        {
+            return;
+        }
+        Raise();
+    }
+
+    private bool IsAnyTaskbarAboveStrips()
+    {
+        var className = new System.Text.StringBuilder(32);
+        foreach (var strip in _strips.Values)
+        {
+            var handle = new WindowInteropHelper(strip).Handle;
+            if (handle == 0)
+            {
+                continue;
+            }
+            if (!NativeMethods.IsWindowVisible(handle))
+            {
+                return true;
+            }
+            var cursor = NativeMethods.GetWindow(handle, NativeMethods.GwHwndPrev);
+            var steps = 0;
+            while (cursor != 0 && steps++ < 64)
+            {
+                className.Clear();
+                if (DockNativeMethods.GetClassNameW(cursor, className, className.Capacity) > 0
+                    && IsTaskbarClass(className.ToString()))
+                {
+                    return true;
+                }
+                cursor = NativeMethods.GetWindow(cursor, NativeMethods.GwHwndPrev);
+            }
+        }
+        return false;
     }
 
     /// <summary>Puts the existing strips back above the taskbar without re-reading monitors.</summary>
@@ -240,6 +298,10 @@ internal sealed class TaskbarCornerReveal : IDisposable
             ShowActivated = false;
             Topmost = true;
             Focusable = false;
+            Left = -10000;
+            Top = -10000;
+            Width = 1;
+            Height = 1;
             Title = "冰蓝任务栏边缘";
             SourceInitialized += (_, _) =>
             {
@@ -252,25 +314,41 @@ internal sealed class TaskbarCornerReveal : IDisposable
             };
         }
 
-        internal void Place(PixelRect bounds) =>
+        internal void Place(PixelRect bounds)
+        {
+            var handle = new WindowInteropHelper(this).Handle;
+            var flags = NativeMethods.SwpNoActivate;
+            if (!NativeMethods.IsWindowVisible(handle))
+            {
+                flags |= NativeMethods.SwpShowWindow;
+            }
             NativeMethods.SetWindowPos(
-                new WindowInteropHelper(this).Handle,
+                handle,
                 DockNativeMethods.HwndTopmost,
                 bounds.Left,
                 bounds.Top,
                 bounds.Width,
                 bounds.Height,
-                NativeMethods.SwpNoActivate);
+                flags);
+        }
 
-        internal void Raise() =>
+        internal void Raise()
+        {
+            var handle = new WindowInteropHelper(this).Handle;
+            var flags = NativeMethods.SwpNoMove | NativeMethods.SwpNoSize | NativeMethods.SwpNoActivate;
+            if (!NativeMethods.IsWindowVisible(handle))
+            {
+                flags |= NativeMethods.SwpShowWindow;
+            }
             NativeMethods.SetWindowPos(
-                new WindowInteropHelper(this).Handle,
+                handle,
                 DockNativeMethods.HwndTopmost,
                 0,
                 0,
                 0,
                 0,
-                NativeMethods.SwpNoMove | NativeMethods.SwpNoSize | NativeMethods.SwpNoActivate);
+                flags);
+        }
 
         private static SolidColorBrush CreateNearlyClear()
         {

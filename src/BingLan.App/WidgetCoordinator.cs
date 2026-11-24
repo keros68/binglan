@@ -1763,6 +1763,7 @@ public sealed partial class WidgetCoordinator : IDisposable
     {
         ApplyItemSurface();
         _dock.Apply();
+        _cornerReveal.RaiseIfBehindTaskbar();
         SaveNow();
     }
 
@@ -1792,6 +1793,7 @@ public sealed partial class WidgetCoordinator : IDisposable
         {
             _dock.Apply();
         }
+        _cornerReveal.RaiseIfBehindTaskbar();
         SyncGlobalHotkeys();
         UpdateSamplingMode();
         ScheduleSave();
@@ -2362,7 +2364,13 @@ public sealed partial class WidgetCoordinator : IDisposable
 
     private void ApplyTaskbar()
     {
-        _ = ApplyTaskbarModeAsync();
+        if (Core.Taskbar.TaskbarCornerRules.NeedsModeReapply(
+                _taskbar.ActiveMode,
+                _state.Taskbar.Mode,
+                _taskbar.Problem))
+        {
+            _ = ApplyTaskbarModeAsync();
+        }
         _cornerReveal.SetMode(_state.Taskbar.EdgeRevealMode);
         SaveNow();
     }
@@ -2381,6 +2389,10 @@ public sealed partial class WidgetCoordinator : IDisposable
         finally
         {
             _isApplyingTaskbar = false;
+        }
+        if (!_isExiting)
+        {
+            _cornerReveal.SetMode(_state.Taskbar.EdgeRevealMode);
         }
     }
 

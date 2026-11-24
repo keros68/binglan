@@ -11,6 +11,7 @@ internal static class TaskbarEdgeGuardTests
         TestStripGeometryPerMode();
         TestMiddleStripAcrossDpis();
         TestGameLikeFullScreenSuspensionRules();
+        TestNeedsModeReapply();
     }
 
     private static void TestStripGeometryPerMode()
@@ -108,6 +109,16 @@ internal static class TaskbarEdgeGuardTests
                 isToolOrOverlayWindow: false,
                 isTopmost: false),
             "未铺满显示器的窗口不应暂停挡板");
+    }
+
+    private static void TestNeedsModeReapply()
+    {
+        Assert(!TaskbarCornerRules.NeedsModeReapply(TaskbarMode.SmartHide, TaskbarMode.SmartHide, string.Empty),
+            "已在自动隐藏且无异常时仅修改触边唤出方式不应拆解并重设任务栏模式");
+        Assert(TaskbarCornerRules.NeedsModeReapply(TaskbarMode.SystemDefault, TaskbarMode.SmartHide, string.Empty),
+            "模式变化时必须重新应用任务栏模式");
+        Assert(TaskbarCornerRules.NeedsModeReapply(TaskbarMode.SmartHide, TaskbarMode.SmartHide, "Windows 没有接受"),
+            "当前模式带有异常提示时应允许重新应用");
     }
 
     private static void Assert(bool condition, string message)
