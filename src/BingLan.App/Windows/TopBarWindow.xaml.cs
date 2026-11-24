@@ -209,18 +209,18 @@ public sealed partial class TopBarWindow : Window
             Dispatcher);
         _minuteTimer = new DispatcherTimer(DispatcherPriority.Background, Dispatcher);
         _minuteTimer.Tick += (_, _) => OnMinuteTick();
-        _nudgeRecheckTimer = new DispatcherTimer(
-            TimeSpan.FromMilliseconds(120),
-            DispatcherPriority.Background,
-            (_, _) =>
+        _nudgeRecheckTimer = new DispatcherTimer(DispatcherPriority.Background, Dispatcher)
+        {
+            Interval = TimeSpan.FromMilliseconds(120)
+        };
+        _nudgeRecheckTimer.Tick += (_, _) =>
+        {
+            _nudgeRecheckTimer.Stop();
+            if (!_closing)
             {
-                _nudgeRecheckTimer.Stop();
-                if (!_closing)
-                {
-                    UpdateForForeground();
-                }
-            },
-            Dispatcher);
+                UpdateForForeground();
+            }
+        };
         _sampler.Sampled += OnSampled;
         // A network address change is the one system fact with an event source; the
         // others ride the sampling or ambient tick.
