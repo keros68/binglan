@@ -915,6 +915,39 @@ public static class TopBarTests
         var leftDock = new PixelRect(20, 400, 96, 1200);
         var leftStrip = BarAdaptiveInkRules.ComputeDockSampleStrip(leftDock, monitor, DockEdge.Left);
         Assert(leftStrip is { Width: 1, Left: < 20 }, "左侧 Dock 应在胶囊外侧采样");
+
+        // 11. Top bar clock formatting: weekday carries "周", follows ShowDate and ShowLunarDate.
+        var sampleDay = new DateTime(2026, 11, 24, 20, 24, 0); // Tuesday
+        var withLunar = TopBarModuleRules.FormatClock(sampleDay, use24HourClock: true, showDate: true, showLunarDate: true);
+        var shortLunar = LunarDayText.ShortMonthDay(sampleDay);
+        Assert(!string.IsNullOrEmpty(shortLunar) && !shortLunar.StartsWith("农历", StringComparison.Ordinal),
+            "顶栏短农历不应带冗余“农历”前缀");
+        Assert(withLunar == $"11月24日 周二 {shortLunar}  20:24",
+            $"顶栏开启农历时应带周几“周”字与短农历，实际：{withLunar}");
+
+        var dateOnly = TopBarModuleRules.FormatClock(sampleDay, use24HourClock: true, showDate: true, showLunarDate: false);
+        Assert(dateOnly == "11月24日 周二  20:24",
+            $"顶栏关闭农历时应显示带“周”字的公历与时间，实际：{dateOnly}");
+
+        var timeOnly = TopBarModuleRules.FormatClock(sampleDay, use24HourClock: true, showDate: false, showLunarDate: true);
+        Assert(timeOnly == "20:24",
+            $"顶栏隐藏日期时应仅显示时间，实际：{timeOnly}");
+
+        // 12. File box cross-box CopyMapping keeps source item, clones title, and skips duplicates.
+        var boxA = new FileBoxState { Title = "盒A" };
+        var boxB = new FileBoxState { Title = "盒B" };
+        var mapping = new FileMappingState { Path = @"C:\Demo\report.docx", Title = "周报" };
+        boxA.Items.Add(mapping);
+        Assert(FileMappingService.CopyMapping(boxA, boxB, mapping.Id, out var copied)
+            && copied is not null
+            && copied.Id != mapping.Id
+            && copied.Path == mapping.Path
+            && copied.Title == "周报"
+            && boxA.Items.Count == 1
+            && boxB.Items.Count == 1,
+            "跨盒复制映射应保留源盒项、复制路径与自定义标题并分配新 Id");
+        Assert(!FileMappingService.CopyMapping(boxA, boxB, mapping.Id, out _),
+            "目标盒已存在同路径映射时应跳过复制");
     }
 
     [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]

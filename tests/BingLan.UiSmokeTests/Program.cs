@@ -3161,8 +3161,8 @@ internal static class Program
                 throw new InvalidOperationException("文件项容器没有生成");
             var tile = FindVisualChildren<Border>(presenter)
                 .Single(x => Equals(x.Tag, "Interactive"));
-            Assert(tile.ActualWidth >= 70d && Near(tile.Height, 92d),
-                "文件网格没有采用 Pogget 单元尺寸");
+            Assert(tile.ActualWidth >= 60d && Near(tile.Height, 82d),
+                "文件网格没有采用紧凑单元尺寸");
             Assert(tile.Background == Brushes.Transparent,
                 "文件项仍叠加常驻白色卡片");
             Assert(

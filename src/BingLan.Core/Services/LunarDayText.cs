@@ -50,6 +50,16 @@ public static class LunarDayText
     /// </summary>
     public static string FullDate(DateTime date)
     {
+        var shortText = ShortMonthDay(date);
+        return string.IsNullOrEmpty(shortText) ? "" : $"农历{shortText}";
+    }
+
+    /// <summary>
+    /// Compact lunar month and day label without the "农历" prefix (for example
+    /// "十月十六" or "闰六月初一"), suitable for compact surfaces such as the top bar.
+    /// </summary>
+    public static string ShortMonthDay(DateTime date)
+    {
         try
         {
             var month = Calendar.GetMonth(date);
@@ -57,7 +67,7 @@ public static class LunarDayText
             var leapMonth = Calendar.GetLeapMonth(Calendar.GetYear(date));
             var monthIndex = leapMonth > 0 && month >= leapMonth ? month - 1 : month;
             var isLeapMonth = leapMonth > 0 && month == leapMonth;
-            return $"农历{(isLeapMonth ? "闰" : "")}{MonthNames[monthIndex - 1]}{DayNames[day - 1]}";
+            return $"{(isLeapMonth ? "闰" : "")}{MonthNames[monthIndex - 1]}{DayNames[day - 1]}";
         }
         catch (ArgumentOutOfRangeException)
         {

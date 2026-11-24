@@ -3014,8 +3014,8 @@
                                           Width="200"
                                           AutomationProperties.Name="任务栏鼠标触边唤出方式"
                                           SelectionChanged="TaskbarEdgeReveal_SelectionChanged">
-                                    <ComboBoxItem Content="底部任意位置（默认）" Tag="AnyEdge"/>
-                                    <ComboBoxItem Content="仅底部两角" Tag="CornersOnly"/>
+                                    <ComboBoxItem Content="底部任意位置" Tag="AnyEdge"/>
+                                    <ComboBoxItem Content="仅底部两角（默认）" Tag="CornersOnly"/>
                                     <ComboBoxItem Content="禁止鼠标触边唤出" Tag="Disabled"/>
                                 </ComboBox>
                             </local:SettingsRow>

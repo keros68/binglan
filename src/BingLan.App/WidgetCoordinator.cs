@@ -557,6 +557,7 @@ public sealed partial class WidgetCoordinator : IDisposable
             information.ApplyDesktopExperience(_state.DesktopExperience);
             information.RefreshConfiguredValues(false);
         }
+        _topBar?.RefreshClock();
         SaveNow();
     }
 
@@ -1636,6 +1637,7 @@ public sealed partial class WidgetCoordinator : IDisposable
         {
             _isApplyingDesktopExperience = false;
         }
+        _topBar?.RefreshClock();
     }
 
     private void ApplyDesktopExperienceCore(DesktopExperienceState experience, bool saveImmediate)
@@ -3289,6 +3291,10 @@ public sealed partial class WidgetCoordinator : IDisposable
         private volatile bool _weatherInFlight;
 
         public bool Use24HourClock => owner.InformationState().Use24HourClock;
+
+        public bool ShowDate => owner.InformationState().ShowDate;
+
+        public bool ShowLunarDate => owner.InformationState().ShowLunarDate;
 
         public WeatherSnapshot? ReadWeather()
         {

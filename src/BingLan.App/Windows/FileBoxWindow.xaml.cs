@@ -693,8 +693,31 @@ public partial class FileBoxWindow : WidgetWindowBase
         State.Items = _items.Select(x => x.Mapping).ToList();
     }
 
+    private const string InternalBoxDragFormat = "BingLan.FileBoxMappings";
+
+    private sealed record InternalBoxDragPayload(Guid SourceBoxId, Guid[] MappingIds);
+
     private void Window_DragOver(object sender, System.Windows.DragEventArgs e)
     {
+        if (e.Data.GetDataPresent(InternalBoxDragFormat)
+            && e.Data.GetData(InternalBoxDragFormat) is InternalBoxDragPayload payload)
+        {
+            if (payload.SourceBoxId == State.Id || payload.MappingIds.Length == 0)
+            {
+                e.Effects = System.Windows.DragDropEffects.None;
+                e.Handled = true;
+                return;
+            }
+
+            // Plain drag between boxes transfers the mapping; holding Ctrl copies the mapping
+            // while keeping it in the source box. Originals on disk are never touched.
+            e.Effects = (e.KeyStates & System.Windows.DragDropKeyStates.ControlKey) != 0
+                ? System.Windows.DragDropEffects.Copy
+                : System.Windows.DragDropEffects.Link;
+            e.Handled = true;
+            return;
+        }
+
         // A tile dragged within its own box is not a new item.
         if (e.Data.GetData(System.Windows.DataFormats.FileDrop) is string[] dragged
             && dragged.All(path => _items.Any(tile => string.Equals(tile.Path, path, StringComparison.OrdinalIgnoreCase))))
@@ -717,7 +740,25 @@ public partial class FileBoxWindow : WidgetWindowBase
         var restoreCollapse = _expandedForExternalDrag;
         _expandedForExternalDrag = false;
         RefreshAutoCollapseTimer();
-        if (e.Data.GetData(System.Windows.DataFormats.FileDrop) is string[] paths)
+        if (e.Data.GetDataPresent(InternalBoxDragFormat)
+            && e.Data.GetData(InternalBoxDragFormat) is InternalBoxDragPayload payload
+            && payload.SourceBoxId != State.Id)
+        {
+            var sourceBox = OtherBoxes().FirstOrDefault(other => other.State.Id == payload.SourceBoxId);
+            if (sourceBox is not null)
+            {
+                var copyOnly = (e.KeyStates & System.Windows.DragDropKeyStates.ControlKey) != 0;
+                if (copyOnly)
+                {
+                    CopyMappingsFrom(sourceBox, payload.MappingIds);
+                }
+                else
+                {
+                    sourceBox.TransferMappingsByIdsTo(payload.MappingIds, this);
+                }
+            }
+        }
+        else if (e.Data.GetData(System.Windows.DataFormats.FileDrop) is string[] paths)
         {
             await AddMappingsWithStatusAsync(paths);
         }
@@ -729,17 +770,14 @@ public partial class FileBoxWindow : WidgetWindowBase
 
     private System.Windows.Point? _tileDragStart;
 
-    // A tile can be dragged out, for example onto the dock to pin an app. Only a link is
-    // offered, so a drop elsewhere creates a shortcut and never copies or moves the file.
-    // When the dragged tile belongs to a multi-selection, every selected tile that can be
-    // dragged leaves with it, like dragging several files at once in Explorer.
+    // A tile can be dragged out to external apps/Dock (copy or link only; Move is never
+    // offered so dragging out cannot move original files on disk), or dropped onto another
+    // BingLan file box to transfer (or Ctrl-drag to copy) its mapping directly.
     private void FileTile_PreviewMouseMove(object sender, System.Windows.Input.MouseEventArgs e)
     {
         if (_tileDragStart is not { } start
             || e.LeftButton != MouseButtonState.Pressed
-            || sender is not Button { DataContext: FileTile tile } button
-            || tile.IsShellEntry
-            || tile.IsMissing)
+            || sender is not Button { DataContext: FileTile tile } button)
         {
             return;
         }
@@ -751,14 +789,28 @@ public partial class FileBoxWindow : WidgetWindowBase
             return;
         }
 
-        var paths = tile.IsSelected
+        var draggedTiles = tile.IsSelected
             ? _items
-                .Where(item => item.IsSelected && !item.IsShellEntry && !item.IsMissing)
-                .Select(item => item.Path)
-                .Append(tile.Path)
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToArray()
-            : [tile.Path];
+                .Where(item => item.IsSelected)
+                .Append(tile)
+                .Distinct()
+                .ToList()
+            : new List<FileTile> { tile };
+
+        var externalPaths = draggedTiles
+            .Where(item => !item.IsShellEntry && !item.IsMissing)
+            .Select(item => item.Path)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        var data = new System.Windows.DataObject();
+        data.SetData(
+            InternalBoxDragFormat,
+            new InternalBoxDragPayload(State.Id, draggedTiles.Select(item => item.Mapping.Id).ToArray()));
+        if (externalPaths.Length > 0)
+        {
+            data.SetData(System.Windows.DataFormats.FileDrop, externalPaths);
+        }
 
         _tileDragStart = null;
         _singleClickFileTiles.Remove(button);
@@ -769,7 +821,7 @@ public partial class FileBoxWindow : WidgetWindowBase
         {
             DragDrop.DoDragDrop(
                 button,
-                new System.Windows.DataObject(System.Windows.DataFormats.FileDrop, paths),
+                data,
                 // Copy lets a folder or chat window receive the file itself; Move is never
                 // offered, so dragging out cannot take the original away.
                 System.Windows.DragDropEffects.Copy | System.Windows.DragDropEffects.Link);
@@ -1370,6 +1422,33 @@ public partial class FileBoxWindow : WidgetWindowBase
             return;
         }
 
+        if (e.Key == Key.V && Keyboard.Modifiers == ModifierKeys.Control)
+        {
+            string[]? clipboardPaths = null;
+            try
+            {
+                if (System.Windows.Clipboard.ContainsFileDropList())
+                {
+                    var list = System.Windows.Clipboard.GetFileDropList();
+                    if (list is { Count: > 0 })
+                    {
+                        clipboardPaths = list.Cast<string>().Where(path => !string.IsNullOrWhiteSpace(path)).ToArray();
+                    }
+                }
+            }
+            catch
+            {
+                // Clipboard may be briefly locked by another application; stay quiet.
+            }
+
+            if (clipboardPaths is { Length: > 0 })
+            {
+                e.Handled = true;
+                await AddMappingsWithStatusAsync(clipboardPaths);
+                return;
+            }
+        }
+
         if (e.Key != Key.Delete
             || Keyboard.Modifiers != ModifierKeys.None
             || !IsDeleteOriginalsEnabled()
@@ -1461,6 +1540,64 @@ public partial class FileBoxWindow : WidgetWindowBase
         RefreshCount();
         NotifyStateChanged();
         StatusText.Text = $"已移除 {selected.Count} 项映射";
+    }
+
+    internal void TransferMappingsByIdsTo(IReadOnlyList<Guid> mappingIds, FileBoxWindow target)
+    {
+        var idSet = mappingIds.ToHashSet();
+        var tiles = _items.Where(tile => idSet.Contains(tile.Mapping.Id)).ToList();
+        if (tiles.Count == 0)
+        {
+            return;
+        }
+        if (tiles.Count == 1)
+        {
+            TransferMapping(tiles[0], target);
+            target.StatusText.Text = $"已从“{State.Title}”转入 1 项";
+            return;
+        }
+        BatchTransferMappings(target, tiles);
+        target.StatusText.Text = $"已从“{State.Title}”转入映射";
+    }
+
+    internal void CopyMappingsFrom(FileBoxWindow sourceBox, IReadOnlyList<Guid> mappingIds)
+    {
+        var idSet = mappingIds.ToHashSet();
+        var tiles = sourceBox._items.Where(tile => idSet.Contains(tile.Mapping.Id)).ToList();
+        if (tiles.Count == 0)
+        {
+            return;
+        }
+
+        CaptureState();
+        var added = 0;
+        var skipped = 0;
+        foreach (var tile in tiles)
+        {
+            if (!FileMappingService.CopyMapping(sourceBox.State, State, tile.Mapping.Id, out var clone)
+                || clone is null)
+            {
+                skipped++;
+                continue;
+            }
+
+            var copyTile = CreateTile(clone, tile.Icon);
+            copyTile.IsMissing = tile.IsMissing;
+            _items.Add(copyTile);
+            added++;
+        }
+
+        if (added > 0)
+        {
+            RefreshCount();
+            NotifyStateChanged();
+        }
+
+        StatusText.Text = added > 0
+            ? (skipped > 0
+                ? $"已从“{sourceBox.State.Title}”复制 {added} 项映射（跳过 {skipped} 项重复）"
+                : $"已从“{sourceBox.State.Title}”复制 {added} 项映射")
+            : "所选项目已在此收纳盒中";
     }
 
     private void BatchTransferMappings(FileBoxWindow target, IReadOnlyList<FileTile> selected)

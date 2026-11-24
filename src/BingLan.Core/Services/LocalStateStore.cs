@@ -981,11 +981,11 @@ public sealed class LocalStateStore
         state.Taskbar ??= new TaskbarState();
         if (state.SchemaVersion < 57)
         {
-            if (state.Taskbar.EdgeRevealMode == TaskbarEdgeRevealMode.AnyEdge
-                && state.Taskbar.RevealOnlyAtCorners)
-            {
-                state.Taskbar.EdgeRevealMode = TaskbarEdgeRevealMode.CornersOnly;
-            }
+            // Legacy v56 configs only carried RevealOnlyAtCorners; preserve their explicit
+            // choice instead of letting the newer CornersOnly property default overwrite it.
+            state.Taskbar.EdgeRevealMode = state.Taskbar.RevealOnlyAtCorners
+                ? TaskbarEdgeRevealMode.CornersOnly
+                : TaskbarEdgeRevealMode.AnyEdge;
             state.SchemaVersion = 57;
         }
         if (state.SchemaVersion < 58)
@@ -1035,7 +1035,7 @@ public sealed class LocalStateStore
         }
         if (!Enum.IsDefined(state.Taskbar.EdgeRevealMode))
         {
-            state.Taskbar.EdgeRevealMode = TaskbarEdgeRevealMode.AnyEdge;
+            state.Taskbar.EdgeRevealMode = TaskbarEdgeRevealMode.CornersOnly;
         }
         state.Taskbar.RevealOnlyAtCorners =
             state.Taskbar.EdgeRevealMode == TaskbarEdgeRevealMode.CornersOnly;

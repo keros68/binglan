@@ -43,6 +43,11 @@ public static class DesktopModeRules
                 dock.VisibilityMode = DockVisibilityMode.ReserveWorkArea;
                 dock.ReleaseWhenMaximized = false;
                 taskbar.Mode = TaskbarMode.SmartHide;
+                if (taskbar.EdgeRevealMode == TaskbarEdgeRevealMode.AnyEdge)
+                {
+                    taskbar.EdgeRevealMode = TaskbarEdgeRevealMode.CornersOnly;
+                    taskbar.RevealOnlyAtCorners = true;
+                }
                 break;
             default:
                 dock.IsEnabled = false;

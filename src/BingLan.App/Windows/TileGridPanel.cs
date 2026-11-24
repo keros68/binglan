@@ -12,7 +12,7 @@ namespace BingLan.App.Windows;
 public sealed class TileGridPanel : Panel
 {
     /// <summary>The narrowest a tile, including its margin, may become.</summary>
-    public double MinTileWidth { get; set; } = 76d;
+    public double MinTileWidth { get; set; } = 66d;
 
     private int Columns(double width) =>
         double.IsInfinity(width) || width <= 0d

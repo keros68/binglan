@@ -42,6 +42,10 @@ internal interface ITopBarEnvironment
 {
     bool Use24HourClock { get; }
 
+    bool ShowDate => true;
+
+    bool ShowLunarDate => true;
+
     /// <summary>The cached weather, or null while there is no city or no data yet.</summary>
     WeatherSnapshot? ReadWeather();
 
@@ -2505,7 +2509,7 @@ public sealed partial class TopBarWindow : Window
         }
         if (ModuleText(TopBarModuleKind.Clock) is { } clock)
         {
-            clock.Text = FormatClock(_environment.Use24HourClock);
+            clock.Text = FormatClock(_environment.Use24HourClock, _environment.ShowDate, _environment.ShowLunarDate);
         }
         if (ModuleText(TopBarModuleKind.TodoSummary) is { } todo)
         {
@@ -2674,13 +2678,16 @@ public sealed partial class TopBarWindow : Window
         return string.Join("\n", lines);
     }
 
-    private static string FormatClock(bool use24HourClock)
+    internal void RefreshClock()
     {
-        var now = DateTime.Now;
-        var date = $"{now.Month}月{now.Day}日 {"日一二三四五六"[(int)now.DayOfWeek]}";
-        var time = use24HourClock ? now.ToString("HH:mm") : now.ToString("hh:mm tt");
-        return $"{date}  {time}";
+        if (!_closing && IsLoaded && IsVisible)
+        {
+            RenderModules();
+        }
     }
+
+    private static string FormatClock(bool use24HourClock, bool showDate, bool showLunarDate) =>
+        TopBarModuleRules.FormatClock(DateTime.Now, use24HourClock, showDate, showLunarDate);
 
     private void RefreshAttention()
     {

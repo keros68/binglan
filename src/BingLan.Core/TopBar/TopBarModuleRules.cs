@@ -385,4 +385,34 @@ public static class TopBarModuleRules
     /// <summary>Volume as a whole percent; the API reports a 0–1 float.</summary>
     public static int VolumePercentFromScalar(float scalar) =>
         double.IsNaN(scalar) || scalar < 0 ? 0 : Math.Clamp((int)Math.Round(scalar * 100d), 0, 100);
+
+    /// <summary>
+    /// Formats the top bar clock readout, following the time/date widget's 12/24-hour,
+    /// date visibility and lunar date preferences while prefixing weekdays with "周".
+    /// </summary>
+    public static string FormatClock(
+        DateTime now,
+        bool use24HourClock,
+        bool showDate = true,
+        bool showLunarDate = false)
+    {
+        var time = use24HourClock
+            ? now.ToString("HH:mm", CultureInfo.InvariantCulture)
+            : now.ToString("hh:mm tt", CultureInfo.CurrentCulture);
+        if (!showDate)
+        {
+            return time;
+        }
+
+        var date = $"{now.Month}月{now.Day}日 周{"日一二三四五六"[(int)now.DayOfWeek]}";
+        if (showLunarDate)
+        {
+            var lunar = LunarDayText.ShortMonthDay(now);
+            if (!string.IsNullOrEmpty(lunar))
+            {
+                return $"{date} {lunar}  {time}";
+            }
+        }
+        return $"{date}  {time}";
+    }
 }

@@ -402,6 +402,36 @@ public static class FileMappingService
         return true;
     }
 
+    /// <summary>
+    /// Copies one mapping from <paramref name="source"/> into <paramref name="target"/> while
+    /// keeping the source box and original file on disk untouched.
+    /// </summary>
+    public static bool CopyMapping(
+        FileBoxState source,
+        FileBoxState target,
+        Guid itemId,
+        out FileMappingState? copied)
+    {
+        copied = null;
+        var item = source.Items.FirstOrDefault(x => x.Id == itemId);
+        if (item is null ||
+            ReferenceEquals(source, target) ||
+            target.Items.Any(other => StringComparer.OrdinalIgnoreCase.Equals(other.Path, item.Path)))
+        {
+            return false;
+        }
+
+        copied = new FileMappingState
+        {
+            Path = item.Path,
+            Title = item.Title,
+            Order = target.Items.Count
+        };
+        target.Items.Add(copied);
+        Normalize(target);
+        return true;
+    }
+
     public static IReadOnlyDictionary<DesktopGroupCategory, IReadOnlyList<string>>
         ClassifyDesktopEntries(IEnumerable<string> paths)
     {

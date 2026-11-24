@@ -299,8 +299,29 @@ internal static class ThemeStyleTests
         var temp = Path.Combine(Path.GetTempPath(), $"BingLan-taskbar-edge-{Guid.NewGuid():N}");
         try
         {
+            var fresh = LocalStateStore.CreateDefault();
+            Check(fresh.Taskbar.EdgeRevealMode == TaskbarEdgeRevealMode.CornersOnly && fresh.Taskbar.RevealOnlyAtCorners,
+                "全新默认状态应默认采用仅底部两角唤出，减少底边 Dock 误触弹出任务栏");
+
+            var appleDock = new DockState();
+            var appleTaskbar = new TaskbarState { EdgeRevealMode = TaskbarEdgeRevealMode.AnyEdge, RevealOnlyAtCorners = false };
+            DesktopModeRules.Apply(DesktopMode.AppleStyle, appleDock, appleTaskbar);
+            Check(appleTaskbar.EdgeRevealMode == TaskbarEdgeRevealMode.CornersOnly && appleTaskbar.RevealOnlyAtCorners,
+                "切换苹果式桌面方案时应将任意位置唤出调整为仅底部两角");
+
+            appleTaskbar.EdgeRevealMode = TaskbarEdgeRevealMode.Disabled;
+            appleTaskbar.RevealOnlyAtCorners = false;
+            DesktopModeRules.Apply(DesktopMode.AppleStyle, appleDock, appleTaskbar);
+            Check(appleTaskbar.EdgeRevealMode == TaskbarEdgeRevealMode.Disabled,
+                "切换苹果式桌面方案时应保留已设定的禁止鼠标触边唤出");
+
             var store = new LocalStateStore(temp);
             Directory.CreateDirectory(temp);
+            File.WriteAllText(store.StatePath, """{ "SchemaVersion": 56, "Taskbar": { "Mode": 2, "RevealOnlyAtCorners": false } }""");
+            var legacyAnyEdge = store.Load();
+            Check(legacyAnyEdge.Taskbar.EdgeRevealMode == TaskbarEdgeRevealMode.AnyEdge && !legacyAnyEdge.Taskbar.RevealOnlyAtCorners,
+                "v56 的 RevealOnlyAtCorners=false 迁移后应保持 AnyEdge，不静默覆盖老用户选择");
+
             File.WriteAllText(store.StatePath, """{ "SchemaVersion": 56, "Taskbar": { "Mode": 2, "RevealOnlyAtCorners": true } }""");
             var migrated = store.Load();
             Check(migrated.SchemaVersion == AppState.CurrentSchemaVersion
