@@ -104,6 +104,7 @@ Run("设置首页「我想…」任务入口定义与目标校验", SettingsQuic
 Run("设置中心与全应用术语通俗化映射与搜索同义词校验", UserFacingTermsTests.Run);
 Run("卡片默认名称、重命名提交与组件列表溢出计数规则", WidgetTitleAndListRulesTests.Run);
 Run("时钟排版预设、Schema v47 迁移与 0.2.66 降级缺字段回退", ThemeStyleTests.TestClockLayoutPresetsAndMigration);
+Run("时钟水平对齐跟随、覆盖与旧配置迁移", ThemeStyleTests.TestClockHorizontalAlignment);
 Run("分组盒鼠标离开 5 秒自动收起规则与 Schema v48 迁移", ThemeStyleTests.TestFileBoxAutoCollapseRulesAndSchemaV48Migration);
 Run("全局统一外观摘要文本", ThemeStyleTests.TestDescribeSharedLookSummary);
 Run("无底板与接近透明时钟预设的日期与数字可读性", ThemeStyleTests.TestUnbackedClockReadability);

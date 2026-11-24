@@ -991,6 +991,7 @@ internal static class WidgetWindowTests
             Pump();
 
             var selector = Require<ComboBox>(settings, "ClockLayoutSelector");
+            var alignmentSelector = Require<ComboBox>(settings, "ClockAlignmentSelector");
             var showDateBox = Require<CheckBox>(settings, "ShowClockDateCheckBox");
             var showLunarBox = Require<CheckBox>(settings, "ShowClockLunarDateCheckBox");
             var use24Box = Require<CheckBox>(settings, "Use24HourClockCheckBox");
@@ -1003,6 +1004,14 @@ internal static class WidgetWindowTests
                 selector.SelectedItem = selector.Items.OfType<ComboBoxItem>()
                     .Single(item => Equals(item.Tag, preset.ToString()));
                 Pump();
+            }
+
+            void SelectAlignment(ClockHorizontalAlignment alignment)
+            {
+                alignmentSelector.SelectedItem = alignmentSelector.Items.OfType<ComboBoxItem>()
+                    .Single(item => Equals(item.Tag, alignment.ToString()));
+                Pump();
+                AssertEqual(alignment, state.ClockAlignment, "设置页应保存时钟水平对齐选项");
             }
 
             // Classic: time sits above date, and lunar text shows by default when enabled.
@@ -1045,6 +1054,21 @@ internal static class WidgetWindowTests
             dateRect = dateText.TransformToAncestor(window).TransformBounds(new Rect(0, 0, dateText.ActualWidth, dateText.ActualHeight));
             Assert(dateRect.Top < timeRect.Top, "日期海报版式日期应位于时间上方");
             AssertEqual(Visibility.Visible, periodText.Visibility, "非经典版式在 12 小时制下应显示上午/下午标记");
+            AssertEqual(TextAlignment.Left, timeText.TextAlignment, "日期海报默认在普通桌面布局下左对齐");
+
+            SelectAlignment(ClockHorizontalAlignment.Center);
+            AssertEqual(TextAlignment.Center, timeText.TextAlignment, "日期海报应可在普通桌面布局下直接居中");
+            AssertEqual(TextAlignment.Center, dateText.TextAlignment, "日期应与时间采用同一水平对齐");
+            AssertEqual(DesktopLayoutPreset.QuietInformation, experience.ActivePreset, "时钟对齐设置应保留整桌布局");
+
+            experience.ActivePreset = DesktopLayoutPreset.CenterClock;
+            window.ApplyDesktopExperience(experience);
+            SelectAlignment(ClockHorizontalAlignment.Left);
+            AssertEqual(TextAlignment.Left, timeText.TextAlignment, "日期海报应可在居中时钟布局下左对齐");
+            SelectAlignment(ClockHorizontalAlignment.FollowLayout);
+            AssertEqual(TextAlignment.Center, timeText.TextAlignment, "恢复跟随布局时，日期海报应重新居中");
+            experience.ActivePreset = DesktopLayoutPreset.QuietInformation;
+            window.ApplyDesktopExperience(experience);
 
             // VerticalDigits: stacked HH/MM digits sit left of date block and use primary ink when unbacked.
             SelectLayout(ClockLayoutPreset.VerticalDigits);

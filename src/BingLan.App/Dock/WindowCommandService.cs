@@ -51,14 +51,17 @@ internal static class WindowCommandService
             DockNativeMethods.IsIconic(target.Handle));
         if (action == DockClickAction.MinimizeForeground)
         {
-            var minimized = DockNativeMethods.ShowWindowAsync(foregroundInGroup!.Handle, DockNativeMethods.SwMinimize);
-            if (!minimized && ShellSurfaceNativeMethods.IsWindowElevated(foregroundInGroup.Handle))
+            var handle = foregroundInGroup!.Handle;
+            if (!DockNativeMethods.ShowWindowAsync(handle, DockNativeMethods.SwMinimize))
             {
+                var reason = ShellSurfaceNativeMethods.IsWindowElevated(handle)
+                    ? $"{name} 以管理员权限运行，Dock 无法最小化它。"
+                    : $"Dock 无法最小化 {name}。";
                 return new WindowCommandResult(
                     false,
-                    $"{name} 正在以管理员身份运行，Windows 不允许普通权限的 Dock 最小化它。");
+                    $"{reason}请使用该窗口的最小化按钮。");
             }
-            cooldown.MarkMinimized(foregroundInGroup.Handle);
+            cooldown.MarkMinimized(handle);
             return new WindowCommandResult(true, $"已最小化 {name}");
         }
 

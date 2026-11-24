@@ -7,6 +7,7 @@ public sealed class InformationWidgetState
 {
     private double _cornerRadius = WidgetAppearanceRules.DefaultCornerRadius;
     private ClockLayoutPreset _clockLayout = ClockLayoutPreset.Classic;
+    private ClockHorizontalAlignment _clockAlignment = ClockHorizontalAlignment.FollowLayout;
 
     public Guid Id { get; set; } = Guid.NewGuid();
     public string Title { get; set; } = "桌面信息";
@@ -18,6 +19,11 @@ public sealed class InformationWidgetState
     {
         get => _clockLayout;
         set => _clockLayout = ClockLayoutRules.CoercePreset(value);
+    }
+    public ClockHorizontalAlignment ClockAlignment
+    {
+        get => _clockAlignment;
+        set => _clockAlignment = Enum.IsDefined(value) ? value : ClockHorizontalAlignment.FollowLayout;
     }
 
     // 城市与坐标只能来自用户手动选择的结果，不允许任何自动定位来源写入。

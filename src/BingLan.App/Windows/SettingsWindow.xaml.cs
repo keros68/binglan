@@ -190,6 +190,7 @@ public partial class SettingsWindow : Window
         ShowClockLunarDateCheckBox.IsChecked = state.ShowLunarDate;
         ShowClockLunarDateCheckBox.IsEnabled = state.ShowDate;
         SelectByTag(ClockLayoutSelector, state.ClockLayout.ToString());
+        SelectByTag(ClockAlignmentSelector, state.ClockAlignment.ToString());
         _loadingDisplaySettings = false;
         UpdateCurrentCity(state.WeatherCity);
         LoadDesktopExperience();
@@ -589,6 +590,7 @@ public partial class SettingsWindow : Window
             ShowClockDateRow.Visibility = isTimeDate ? Visibility.Visible : Visibility.Collapsed;
             ShowClockLunarDateRow.Visibility = isTimeDate ? Visibility.Visible : Visibility.Collapsed;
             ClockLayoutRow.Visibility = isTimeDate ? Visibility.Visible : Visibility.Collapsed;
+            ClockAlignmentRow.Visibility = isTimeDate ? Visibility.Visible : Visibility.Collapsed;
             ClockDividerRow.Visibility = isTimeDate ? Visibility.Visible : Visibility.Collapsed;
             ComponentMoreFold.Visibility = isTimeDate ? Visibility.Visible : Visibility.Collapsed;
             _loadingDisplaySettings = true;
@@ -596,6 +598,7 @@ public partial class SettingsWindow : Window
             ShowClockLunarDateCheckBox.IsChecked = _informationState.ShowLunarDate;
             ShowClockLunarDateCheckBox.IsEnabled = _informationState.ShowDate;
             SelectByTag(ClockLayoutSelector, ClockLayoutRules.CoercePreset(_informationState.ClockLayout).ToString());
+            SelectByTag(ClockAlignmentSelector, _informationState.ClockAlignment.ToString());
             _loadingDisplaySettings = false;
             _loadingDivider = true;
             var clock = _desktopExperience.GetComponent(DesktopComponentKind.TimeDate);
@@ -951,7 +954,7 @@ public partial class SettingsWindow : Window
         }
     }
 
-    private void ClockLayout_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    private void ClockSettings_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (!IsLoaded || _loadingDisplaySettings)
         {
@@ -1195,6 +1198,11 @@ public partial class SettingsWindow : Window
             && Enum.TryParse<ClockLayoutPreset>(layoutTag, out var clockLayout))
         {
             _informationState.ClockLayout = ClockLayoutRules.CoercePreset(clockLayout);
+        }
+        if (ClockAlignmentSelector.SelectedItem is ComboBoxItem { Tag: string alignmentTag }
+            && Enum.TryParse<ClockHorizontalAlignment>(alignmentTag, out var alignment))
+        {
+            _informationState.ClockAlignment = alignment;
         }
 
         _applyDisplaySettings(greetingName, use24HourClock);

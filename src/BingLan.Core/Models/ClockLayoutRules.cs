@@ -16,6 +16,13 @@ public enum ClockLayoutPreset
     VerticalDigits = 3
 }
 
+public enum ClockHorizontalAlignment
+{
+    FollowLayout = 0,
+    Left = 1,
+    Center = 2
+}
+
 /// <summary>
 /// Spatial relationship between time digits and date metadata for a clock preset.
 /// </summary>
@@ -135,7 +142,8 @@ public static class ClockLayoutRules
         string textColor,
         bool centerClockPreset = false,
         bool lowChrome = true,
-        double backgroundOpacity = DesktopStyleRules.DefaultGlassDensity)
+        double backgroundOpacity = DesktopStyleRules.DefaultGlassDensity,
+        ClockHorizontalAlignment alignment = ClockHorizontalAlignment.FollowLayout)
     {
         var safePreset = CoercePreset(preset);
         var scale = DesktopExperienceRules.CoerceFontScale(fontScale);
@@ -147,7 +155,7 @@ public static class ClockLayoutRules
         var isUnbacked = safeOpacity < DesktopStyleRules.MinimumGlassDensity;
         var lowBackingPrimaryDate = ColorContrastRules.SecondaryTextUsesPrimaryInk(safeOpacity);
 
-        return safePreset switch
+        var typography = safePreset switch
         {
             ClockLayoutPreset.MinimalDigits => BuildMinimalDigits(
                 customFont, scale, effectiveColor, centerClockPreset, isUnbacked, lowBackingPrimaryDate),
@@ -157,6 +165,12 @@ public static class ClockLayoutRules
                 customFont, scale, effectiveColor, centerClockPreset, lowBackingPrimaryDate),
             _ => BuildClassic(
                 customFont, scale, effectiveColor, centerClockPreset, lowChrome)
+        };
+        return alignment switch
+        {
+            ClockHorizontalAlignment.Left => typography with { CenterHorizontally = false },
+            ClockHorizontalAlignment.Center => typography with { CenterHorizontally = true },
+            _ => typography
         };
     }
 

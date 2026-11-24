@@ -331,7 +331,8 @@ public partial class InformationWidgetWindow : WidgetWindowBase
             timeDate.Appearance.TextColor,
             bigClock,
             lowChrome,
-            effectiveBackgroundOpacity);
+            effectiveBackgroundOpacity,
+            State.ClockAlignment);
         var hasCustomFont = !string.IsNullOrWhiteSpace(timeDate.FontFamily);
 
         ApplyClockElementFont(TimeText, spec.EffectiveTimeFontFamily, hasCustomFont, spec.TimeFontWeightOpenType, allowUiFallback: false);
@@ -361,45 +362,44 @@ public partial class InformationWidgetWindow : WidgetWindowBase
         DateText.Effect = textShadow;
         TimePeriodText.Effect = textShadow;
 
+        var textAlignment = spec.CenterHorizontally ? TextAlignment.Center : TextAlignment.Left;
+        var horizontalAlignment = spec.CenterHorizontally
+            ? System.Windows.HorizontalAlignment.Center
+            : System.Windows.HorizontalAlignment.Left;
         switch (spec.Arrangement)
         {
             case ClockDateArrangement.MinimalCentered:
                 ClockLayoutGrid.HorizontalAlignment = System.Windows.HorizontalAlignment.Stretch;
                 SetClockGridCell(TimeText, row: 0, rowSpan: 1, column: 0, columnSpan: 2);
-                TimeText.TextAlignment = TextAlignment.Center;
+                TimeText.TextAlignment = textAlignment;
                 TimeText.VerticalAlignment = System.Windows.VerticalAlignment.Top;
 
                 SetClockGridCell(DateMetaPanel, row: 1, rowSpan: 1, column: 0, columnSpan: 2);
                 System.Windows.Controls.DockPanel.SetDock(TimePeriodText, System.Windows.Controls.Dock.Left);
-                DateMetaPanel.HorizontalAlignment = System.Windows.HorizontalAlignment.Center;
+                DateMetaPanel.HorizontalAlignment = horizontalAlignment;
                 DateMetaPanel.VerticalAlignment = System.Windows.VerticalAlignment.Top;
                 DateMetaPanel.Margin = new Thickness(0d, 4d, 0d, 0d);
-                DateText.TextAlignment = TextAlignment.Center;
-                TimePeriodText.TextAlignment = TextAlignment.Center;
+                DateText.TextAlignment = textAlignment;
+                TimePeriodText.TextAlignment = textAlignment;
                 break;
 
             case ClockDateArrangement.DateAboveTime:
                 ClockLayoutGrid.HorizontalAlignment = System.Windows.HorizontalAlignment.Stretch;
                 SetClockGridCell(DateMetaPanel, row: 0, rowSpan: 1, column: 0, columnSpan: 2);
                 System.Windows.Controls.DockPanel.SetDock(TimePeriodText, System.Windows.Controls.Dock.Left);
-                DateMetaPanel.HorizontalAlignment = spec.CenterHorizontally
-                    ? System.Windows.HorizontalAlignment.Center
-                    : System.Windows.HorizontalAlignment.Left;
+                DateMetaPanel.HorizontalAlignment = horizontalAlignment;
                 DateMetaPanel.VerticalAlignment = System.Windows.VerticalAlignment.Top;
                 DateMetaPanel.Margin = new Thickness(0d, 0d, 0d, 2d);
 
                 SetClockGridCell(TimeText, row: 1, rowSpan: 1, column: 0, columnSpan: 2);
-                var posterAlign = spec.CenterHorizontally ? TextAlignment.Center : TextAlignment.Left;
-                TimeText.TextAlignment = posterAlign;
+                TimeText.TextAlignment = textAlignment;
                 TimeText.VerticalAlignment = System.Windows.VerticalAlignment.Top;
-                DateText.TextAlignment = posterAlign;
-                TimePeriodText.TextAlignment = posterAlign;
+                DateText.TextAlignment = textAlignment;
+                TimePeriodText.TextAlignment = textAlignment;
                 break;
 
             case ClockDateArrangement.VerticalSideBySide:
-                ClockLayoutGrid.HorizontalAlignment = spec.CenterHorizontally
-                    ? System.Windows.HorizontalAlignment.Center
-                    : System.Windows.HorizontalAlignment.Left;
+                ClockLayoutGrid.HorizontalAlignment = horizontalAlignment;
                 SetClockGridCell(TimeText, row: 0, rowSpan: 2, column: 0, columnSpan: 1);
                 TimeText.TextAlignment = TextAlignment.Center;
                 TimeText.VerticalAlignment = System.Windows.VerticalAlignment.Center;
@@ -416,19 +416,16 @@ public partial class InformationWidgetWindow : WidgetWindowBase
             default:
                 ClockLayoutGrid.HorizontalAlignment = System.Windows.HorizontalAlignment.Stretch;
                 SetClockGridCell(TimeText, row: 0, rowSpan: 1, column: 0, columnSpan: 2);
-                var classicAlign = spec.CenterHorizontally ? TextAlignment.Center : TextAlignment.Left;
-                TimeText.TextAlignment = classicAlign;
+                TimeText.TextAlignment = textAlignment;
                 TimeText.VerticalAlignment = System.Windows.VerticalAlignment.Top;
 
                 SetClockGridCell(DateMetaPanel, row: 1, rowSpan: 1, column: 0, columnSpan: 2);
                 System.Windows.Controls.DockPanel.SetDock(TimePeriodText, System.Windows.Controls.Dock.Top);
-                DateMetaPanel.HorizontalAlignment = spec.CenterHorizontally
-                    ? System.Windows.HorizontalAlignment.Center
-                    : System.Windows.HorizontalAlignment.Left;
+                DateMetaPanel.HorizontalAlignment = horizontalAlignment;
                 DateMetaPanel.VerticalAlignment = System.Windows.VerticalAlignment.Top;
                 DateMetaPanel.Margin = new Thickness(0d);
-                DateText.TextAlignment = classicAlign;
-                TimePeriodText.TextAlignment = classicAlign;
+                DateText.TextAlignment = textAlignment;
+                TimePeriodText.TextAlignment = textAlignment;
                 break;
         }
 

@@ -1526,6 +1526,48 @@ internal static class ThemeStyleTests
         }
     }
 
+    public static void TestClockHorizontalAlignment()
+    {
+        var standardPoster = ClockLayoutRules.ResolveTypography(ClockLayoutPreset.DatePoster, null, 1d, "#FFFFFF");
+        var largePoster = ClockLayoutRules.ResolveTypography(ClockLayoutPreset.DatePoster, null, 1d, "#FFFFFF",
+            centerClockPreset: true);
+        Check(!standardPoster.CenterHorizontally && largePoster.CenterHorizontally,
+            "日期海报跟随布局时应保留原对齐方式");
+        var centered = ClockLayoutRules.ResolveTypography(ClockLayoutPreset.DatePoster, null, 1d, "#FFFFFF",
+            alignment: ClockHorizontalAlignment.Center);
+        var left = ClockLayoutRules.ResolveTypography(ClockLayoutPreset.DatePoster, null, 1d, "#FFFFFF",
+            centerClockPreset: true, alignment: ClockHorizontalAlignment.Left);
+        Check(centered == (standardPoster with { CenterHorizontally = true })
+            && left == (largePoster with { CenterHorizontally = false }),
+            "手动对齐应覆盖整桌布局的对齐规则并保留排版尺寸和字体");
+
+        var temp = Directory.CreateTempSubdirectory("BingLan-clock-alignment-");
+        try
+        {
+            var store = new LocalStateStore(temp.FullName);
+            File.WriteAllText(store.StatePath, """
+                {"SchemaVersion":62,"InformationWidgets":[{"ClockLayout":2,"Use24HourClock":false}]}
+                """);
+            var app = store.Load();
+            var clock = app.InformationWidgets.Single();
+            Check(app.SchemaVersion == AppState.CurrentSchemaVersion
+                && clock.ClockAlignment == ClockHorizontalAlignment.FollowLayout
+                && clock.ClockLayout == ClockLayoutPreset.DatePoster && !clock.Use24HourClock,
+                "旧配置缺少水平对齐字段时应跟随布局，并保留原版式和小时制");
+            clock.ClockAlignment = ClockHorizontalAlignment.Center;
+            store.Save(app);
+            Check(store.Load().InformationWidgets.Single().ClockAlignment == ClockHorizontalAlignment.Center,
+                "独立对齐选项应在保存和重启后保留");
+            clock.ClockAlignment = (ClockHorizontalAlignment)999;
+            Check(clock.ClockAlignment == ClockHorizontalAlignment.FollowLayout,
+                "未知对齐值应回退为跟随布局");
+        }
+        finally
+        {
+            temp.Delete(recursive: true);
+        }
+    }
+
     public static void TestUnbackedClockReadability()
     {
         foreach (var lowBackingOpacity in new[] { WidgetAppearanceRules.MinimumBackgroundOpacity, 0.05d, 0.15d })

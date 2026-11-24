@@ -20,7 +20,7 @@
 
 ## 功能
 
-- **桌面信息**：时间日期、问候语、天气、CPU / RAM / 网络为独立卡片，字体、字号、颜色和位置可分别调整；时间日期提供经典、极简大数字、日期海报、纵向数字四种排版预设以及 12/24 小时制和日期显示开关。卡片固定在桌面层，不会盖住其他程序窗口，Win+D 后仍保持可见。
+- **桌面信息**：时间日期、问候语、天气、CPU / RAM / 网络为独立卡片，字体、字号、颜色和位置可分别调整；时间日期提供经典、极简大数字、日期海报、纵向数字四种排版预设，可调整水平对齐、12/24 小时制与日期显示。卡片固定在桌面层，不会盖住其他程序窗口，Win+D 后仍保持可见。
 - **待办与便签**：待办卡片可在今日列表和多周日历（1–5 周，带农历）之间切换，两者共用同一批任务，并可折叠为带未完成数量摘要（全部完成时显示“已全部完成”）的标题栏。支持截止日期与时间、行程、倒数日，以及关联文件，临近截止的事项自动高亮。便签支持多行文字。
 - **文件收纳盒**：把桌面上的常用文件、文件夹和软件归类映射进盒子，按类型自动整理，支持手动调整及按名称、按类型、按修改时间（新的在前）排序，可折叠为带条目数量摘要的标题栏（收起状态下把文件拖到标题条可临时展开放入）；支持逐盒开启鼠标离开 5 秒自动收起、右键“贴边隐藏”（吸附屏幕左右外侧边为 6 DIP 标签色条，透明余量点击穿透；鼠标贴屏幕最外侧边悬停约 250 ms 或从外部拖文件靠近约 80 ms 滑出、离开自动收回，多屏排除内边、全屏暂停）与临时“保持展开”图钉、多选、批量移除和转移、空格预览（兼容本机已运行的 QuickLook），以及全局快捷键（默认 `Ctrl+Alt+Space`）**不回桌面临时浮起文件收纳盒并直接拖出文件**。只记路径，不搬原文件；删除原文件为默认关闭的可选功能，移入回收站前每次确认。
 - **快捷入口**：一排线条图标，默认为此电脑、桌面、文档、下载、图片、回收站，图标、名称和位置均可自定义。在“桌面卡片”页关闭后，重启仍保持隐藏。
@@ -46,7 +46,7 @@
 
 ## 快速开始
 
-稳定版：[v0.4.8](https://github.com/keros68/binglan/releases/tag/v0.4.8) · [安装版](https://github.com/keros68/binglan/releases/download/v0.4.8/BingLan-Setup-0.4.8.exe) · [免安装版](https://github.com/keros68/binglan/releases/download/v0.4.8/BingLan-0.4.8-portable.zip)。另附[兼容性验收工具](https://github.com/keros68/binglan/releases/download/v0.2.52/BingLan-0.2.52-tray-preview.zip)，使用步骤见[托盘验收说明](docs/TRAY-PREVIEW.md)。
+稳定版：[v0.4.9](https://github.com/keros68/binglan/releases/tag/v0.4.9) · [安装版](https://github.com/keros68/binglan/releases/download/v0.4.9/BingLan-Setup-0.4.9.exe) · [免安装版](https://github.com/keros68/binglan/releases/download/v0.4.9/BingLan-0.4.9-portable.zip)。另附[兼容性验收工具](https://github.com/keros68/binglan/releases/download/v0.2.52/BingLan-0.2.52-tray-preview.zip)，使用步骤见[托盘验收说明](docs/TRAY-PREVIEW.md)。
 
 1. 打开 [Releases](https://github.com/keros68/binglan/releases/latest)，下载 `BingLan-Setup-*.exe`（安装版）或 `BingLan-*-portable.zip`（免安装版）。
 2. 安装版运行安装包，按当前用户安装，不需要管理员权限；免安装版解压到任意文件夹后运行其中的 `BingLan.exe`。两者均自带 .NET 运行时，尚未加入代码签名，首次运行需按 Windows 提示手动放行。
@@ -70,7 +70,7 @@
 ```powershell
 dotnet build .\BingLan.slnx -c Release
 dotnet run --project .\tests\BingLan.SmokeTests\BingLan.SmokeTests.csproj -c Release
-pwsh -NoProfile -File .\installer\build.ps1 -Version 0.4.8
+pwsh -NoProfile -File .\installer\build.ps1 -Version 0.4.9
 ```
 
 完整测试命令、技术方案和当前实现见[开发说明](docs/DEVELOPMENT.md)，安装包细节见[安装包](docs/INSTALLER.md)。
