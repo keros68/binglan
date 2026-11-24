@@ -40,27 +40,29 @@ internal sealed class TaskbarAdapter : IDisposable
     private readonly TaskbarFailureBreaker _breaker = new();
     private readonly DispatcherTimer _reapplyTimer;
     private readonly DispatcherTimer _keepAliveTimer;
-    private readonly TaskbarNativeMethods.WinEventProc _winEventCallback;
-    private readonly List<nint> _winEventHooks = [];
+    private readonly Services.BackgroundWinEventPump _pump;
+    private readonly List<Services.BackgroundWinEventPump.WinEventSubscription> _winEventSubscriptions = [];
     private List<nint> _taskbars = [];
     private readonly uint _taskbarCreatedMessage;
     private HwndSource? _messageWindow;
     private DateTime _lastEventReapply;
+    private int _winEventQueued;
     private int _keepAliveTicks;
-    private bool _disposed;
+    private volatile bool _disposed;
     private readonly SemaphoreSlim _applyGate = new(1, 1);
     private CancellationTokenSource? _applyCancellation;
     private TaskbarXamlSession? _xamlSession;
     private int _requestVersion;
     private uint _explorerProcessId;
-    private int _heldAccent;
+    private volatile int _heldAccent;
     private (nint Window, uint ProcessId) _autoHideTaskbar;
     private bool _ownsAutoHide;
     private int _autoHideRecoveryAttempts;
 
-    internal TaskbarAdapter(string checkpointPath)
+    internal TaskbarAdapter(string checkpointPath, Services.BackgroundWinEventPump? pump = null)
     {
         _checkpointPath = checkpointPath;
+        _pump = pump ?? Services.BackgroundWinEventPump.Shared;
         _taskbarCreatedMessage = TaskbarNativeMethods.RegisterWindowMessageW("TaskbarCreated");
         _reapplyTimer = new DispatcherTimer(DispatcherPriority.Background) { Interval = ReapplyDelay };
         _reapplyTimer.Tick += (_, _) =>
@@ -70,7 +72,6 @@ internal sealed class TaskbarAdapter : IDisposable
         };
         _keepAliveTimer = new DispatcherTimer(DispatcherPriority.Background) { Interval = KeepAliveInterval };
         _keepAliveTimer.Tick += (_, _) => Guard(KeepAlive);
-        _winEventCallback = OnWinEvent;
     }
 
     /// <summary>The mode currently held on the taskbar.</summary>
@@ -221,11 +222,12 @@ internal sealed class TaskbarAdapter : IDisposable
             case TaskbarMode.Transparent when TaskbarCompatibility.UsesWin32Taskbar(Environment.OSVersion.Version.Build):
                 // Windows 10: the taskbar is a Win32 window, so transparency is a window
                 // accent held and restored the same way as blur. It needs no system setting.
-                ApplyAccent(
+                await ApplyAccentAsync(
                     TaskbarMode.Transparent,
                     TaskbarNativeMethods.AccentEnableTransparentGradient,
                     turnOnSystemTransparency: false,
-                    notice: string.Empty);
+                    notice: string.Empty,
+                    cancellationToken);
                 break;
             case TaskbarMode.Transparent:
                 _xamlSession = new TaskbarXamlSession(Path.GetDirectoryName(_checkpointPath)!);
@@ -237,13 +239,15 @@ internal sealed class TaskbarAdapter : IDisposable
                     XamlSessionName = _xamlSession.MappingName,
                     OriginalSystemTransparency = originalTransparency
                 });
-                if (originalTransparency == false && !TryWriteSystemTransparency(true))
+                if (originalTransparency == false && !await Task.Run(() => TryWriteSystemTransparency(true)))
                 {
                     await RestoreActiveAsync();
                     SetStatus(TaskbarMode.SystemDefault, "未能开启 Windows 透明效果，保持系统默认");
                     return;
                 }
-                await _xamlSession.StartAsync(FindTaskbars().Count, cancellationToken);
+                cancellationToken.ThrowIfCancellationRequested();
+                var taskbarCount = await Task.Run(() => FindTaskbars().Count, cancellationToken);
+                await _xamlSession.StartAsync(taskbarCount, cancellationToken);
                 cancellationToken.ThrowIfCancellationRequested();
                 EnsureMessageWindow();
                 TaskbarNativeMethods.GetWindowThreadProcessId(
@@ -252,14 +256,15 @@ internal sealed class TaskbarAdapter : IDisposable
                 SetStatus(mode, string.Empty);
                 break;
             case TaskbarMode.Blur:
-                ApplyAccent(
+                await ApplyAccentAsync(
                     TaskbarMode.Blur,
                     TaskbarNativeMethods.AccentEnableBlurBehind,
                     turnOnSystemTransparency: true,
-                    notice: compatibility.SubstituteMode is null ? string.Empty : compatibility.Reason);
+                    notice: compatibility.SubstituteMode is null ? string.Empty : compatibility.Reason,
+                    cancellationToken);
                 break;
             case TaskbarMode.SmartHide:
-                ApplyAutoHide();
+                await ApplyAutoHideAsync(cancellationToken);
                 break;
             default:
                 SetStatus(TaskbarMode.SystemDefault, string.Empty);
@@ -294,7 +299,12 @@ internal sealed class TaskbarAdapter : IDisposable
     // Holds a window accent on the native taskbars: blur on either Windows, and on
     // Windows 10 also transparency. The checkpoint's TransparencyApplied restores both,
     // because a restore always sets the accent back to disabled.
-    private void ApplyAccent(TaskbarMode mode, int accent, bool turnOnSystemTransparency, string notice)
+    private async Task ApplyAccentAsync(
+        TaskbarMode mode,
+        int accent,
+        bool turnOnSystemTransparency,
+        string notice,
+        CancellationToken cancellationToken)
     {
         var originalTransparency = turnOnSystemTransparency && !IsSystemTransparencyEnabled() ? (bool?)false : null;
         WriteCheckpoint(new TaskbarCheckpoint
@@ -302,13 +312,20 @@ internal sealed class TaskbarAdapter : IDisposable
             TransparencyApplied = true,
             OriginalSystemTransparency = originalTransparency
         });
-        if (originalTransparency == false && !TryWriteSystemTransparency(true))
+        if (originalTransparency == false && !await Task.Run(() => TryWriteSystemTransparency(true)))
         {
             TryDelete(_checkpointPath);
             SetStatus(TaskbarMode.SystemDefault, "未能开启 Windows 透明效果，保持系统默认");
             return;
         }
-        _taskbars = FindTaskbars();
+        cancellationToken.ThrowIfCancellationRequested();
+        var taskbars = await Task.Run(FindTaskbars, cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (_disposed)
+        {
+            return;
+        }
+        _taskbars = taskbars;
         if (TrySetAccent(_taskbars, accent, out var error))
         {
             _heldAccent = accent;
@@ -323,7 +340,9 @@ internal sealed class TaskbarAdapter : IDisposable
         {
             // Put back the transparency effect this call switched on before the record goes.
             if (originalTransparency == false && IsSystemTransparencyEnabled())
-                TryWriteSystemTransparency(false);
+            {
+                await Task.Run(() => TryWriteSystemTransparency(false));
+            }
             TryDelete(_checkpointPath);
             SetStatus(TaskbarMode.SystemDefault, $"无法设置任务栏外观：{error}");
             return;
@@ -331,9 +350,9 @@ internal sealed class TaskbarAdapter : IDisposable
         SetStatus(TaskbarMode.SystemDefault, $"无法设置任务栏外观，也未能完全恢复：{error}。下次启动时会再次恢复");
     }
 
-    private void ApplyAutoHide()
+    private async Task ApplyAutoHideAsync(CancellationToken cancellationToken)
     {
-        if (GetAutoHide())
+        if (await Task.Run(GetAutoHide, cancellationToken))
         {
             // Already hidden by the user; nothing of ours to restore later.
             _autoHideTaskbar = ReadTaskbarIdentity();
@@ -342,9 +361,14 @@ internal sealed class TaskbarAdapter : IDisposable
             return;
         }
 
+        cancellationToken.ThrowIfCancellationRequested();
         WriteCheckpoint(new TaskbarCheckpoint { AutoHideApplied = true, OriginalAutoHide = false });
-        if (SetAutoHide(true))
+        if (await Task.Run(() => SetAutoHide(true)))
         {
+            if (_disposed)
+            {
+                return;
+            }
             _autoHideTaskbar = ReadTaskbarIdentity();
             _ownsAutoHide = true;
             EnsureMessageWindow();
@@ -409,7 +433,7 @@ internal sealed class TaskbarAdapter : IDisposable
     // and on a slow keep-alive tick.
     private void StartKeepingTransparent()
     {
-        if (_winEventHooks.Count == 0)
+        if (_winEventSubscriptions.Count == 0)
         {
             Hook(TaskbarNativeMethods.EventSystemForeground, TaskbarNativeMethods.EventSystemForeground);
             Hook(TaskbarNativeMethods.EventObjectShow, TaskbarNativeMethods.EventObjectHide);
@@ -426,51 +450,77 @@ internal sealed class TaskbarAdapter : IDisposable
         _autoHideRecoveryAttempts = 0;
         _reapplyTimer.Stop();
         _keepAliveTimer.Stop();
-        foreach (var hook in _winEventHooks)
+        foreach (var subscription in _winEventSubscriptions)
         {
-            TaskbarNativeMethods.UnhookWinEvent(hook);
+            subscription.Dispose();
         }
-        _winEventHooks.Clear();
+        _winEventSubscriptions.Clear();
     }
 
     private void Hook(uint eventMin, uint eventMax)
     {
-        var hook = TaskbarNativeMethods.SetWinEventHook(
+        var subscription = _pump.Subscribe(
             eventMin,
             eventMax,
-            0,
-            _winEventCallback,
-            0,
-            0,
-            TaskbarNativeMethods.WineventOutOfContext | TaskbarNativeMethods.WineventSkipOwnProcess);
-        if (hook != 0)
+            static message => ShouldForwardWinEvent(message),
+            OnBackgroundWinEvent);
+        if (subscription.IsActive)
         {
-            _winEventHooks.Add(hook);
+            _winEventSubscriptions.Add(subscription);
+        }
+        else
+        {
+            subscription.Dispose();
         }
     }
 
-    private void OnWinEvent(
-        nint hook,
-        uint eventType,
-        nint window,
-        int objectId,
-        int childId,
-        uint eventThread,
-        uint eventTime)
+    internal static bool ShouldForwardWinEvent(in Services.WinEventMessage message)
     {
+        if (message.EventType == TaskbarNativeMethods.EventSystemForeground)
+        {
+            return message.ChildId == 0 && message.ObjectId == TaskbarNativeMethods.ObjidWindow;
+        }
+        return Services.BackgroundWinEventPump.IsTopLevelWindowEvent(message);
+    }
+
+    private void OnBackgroundWinEvent(Services.WinEventMessage message)
+    {
+        if (_disposed || !HoldsAccent)
+        {
+            return;
+        }
         Services.UiDiagnostics.Hit(Services.UiActivity.TaskbarEvent);
-        if (objectId != TaskbarNativeMethods.ObjidWindow || !HoldsAccent)
+        if (Interlocked.CompareExchange(ref _winEventQueued, 1, 0) != 0)
+        {
+            return;
+        }
+        var dispatcher = _reapplyTimer.Dispatcher;
+        if (dispatcher.HasShutdownStarted)
+        {
+            Interlocked.Exchange(ref _winEventQueued, 0);
+            return;
+        }
+        dispatcher.BeginInvoke(DispatcherPriority.Background, HandleCoalescedWinEvent);
+    }
+
+    private void HandleCoalescedWinEvent()
+    {
+        Interlocked.Exchange(ref _winEventQueued, 0);
+        if (_disposed || !HoldsAccent)
         {
             return;
         }
 
-        // Once now (at most every 150 ms while events stream in) and once after
-        // Explorer has finished its own transition.
+        // Fast-path only touches cached taskbar handles; full FindTaskbars() recovery
+        // runs on the debounced timer tick rather than synchronously on event bursts.
         var now = DateTime.UtcNow;
-        if (now - _lastEventReapply >= MinimumEventReapplyInterval)
+        if (_taskbars.Count > 0 && now - _lastEventReapply >= MinimumEventReapplyInterval)
         {
             _lastEventReapply = now;
-            Guard(Reapply);
+            if (TrySetAccent(_taskbars, _heldAccent, out _))
+            {
+                _breaker.RecordSuccess();
+            }
         }
         _reapplyTimer.Stop();
         _reapplyTimer.Start();
@@ -491,7 +541,7 @@ internal sealed class TaskbarAdapter : IDisposable
                 // Only the effect this app switched on goes back; the other tool keeps the taskbar.
                 var recorded = File.Exists(_checkpointPath) ? ReadCheckpoint(_checkpointPath) : null;
                 if (recorded?.OriginalSystemTransparency == false && IsSystemTransparencyEnabled())
-                    TryWriteSystemTransparency(false);
+                    _ = Task.Run(() => TryWriteSystemTransparency(false));
                 TryDelete(_checkpointPath);
             }
             SetStatus(TaskbarMode.SystemDefault, $"{customizer} 正在调整任务栏，冰蓝桌面已停止调整");

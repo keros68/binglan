@@ -17,15 +17,15 @@ namespace BingLan.App.Dock;
 internal sealed class MaximizeStateWatcher : IDisposable
 {
     private readonly Dispatcher _dispatcher;
-    private readonly DockNativeMethods.WinEventProc _callback;
-    private readonly List<nint> _hooks = [];
-    private bool _disposed;
-    private bool _notifyQueued;
+    private readonly BackgroundWinEventPump _pump;
+    private BackgroundWinEventPump.WinEventSubscription? _subscription;
+    private int _disposed;
+    private int _notifyQueued;
 
-    internal MaximizeStateWatcher(Dispatcher dispatcher)
+    internal MaximizeStateWatcher(Dispatcher dispatcher, BackgroundWinEventPump? pump = null)
     {
         _dispatcher = dispatcher;
-        _callback = OnWinEvent;
+        _pump = pump ?? BackgroundWinEventPump.Shared;
     }
 
     /// <summary>Raised on the dispatcher thread whenever a top-level window changes state.</summary>
@@ -33,42 +33,44 @@ internal sealed class MaximizeStateWatcher : IDisposable
 
     internal void Start()
     {
-        Hook(DockNativeMethods.EventObjectStateChange, DockNativeMethods.EventObjectStateChange);
+        if (Volatile.Read(ref _disposed) != 0 || _subscription is not null)
+        {
+            return;
+        }
+        var subscription = _pump.Subscribe(
+            DockNativeMethods.EventObjectStateChange,
+            DockNativeMethods.EventObjectStateChange,
+            static message => BackgroundWinEventPump.IsTopLevelWindowEvent(message),
+            message => OnWinEvent(
+                0,
+                message.EventType,
+                message.Window,
+                message.ObjectId,
+                message.ChildId,
+                message.EventThread,
+                message.EventTime));
+        if (subscription.IsActive)
+        {
+            _subscription = subscription;
+        }
+        else
+        {
+            subscription.Dispose();
+        }
     }
 
     public void Dispose()
     {
-        if (_disposed)
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
         {
             return;
         }
 
-        _disposed = true;
-        foreach (var hook in _hooks)
-        {
-            DockNativeMethods.UnhookWinEvent(hook);
-        }
-        _hooks.Clear();
+        _subscription?.Dispose();
+        _subscription = null;
     }
 
-    private void Hook(uint eventMin, uint eventMax)
-    {
-        var hook = DockNativeMethods.SetWinEventHook(
-            eventMin,
-            eventMax,
-            0,
-            _callback,
-            0,
-            0,
-            DockNativeMethods.WineventOutOfContext | DockNativeMethods.WineventSkipOwnProcess);
-        if (hook != 0)
-        {
-            _hooks.Add(hook);
-        }
-    }
-
-    // Out-of-context: the callback arrives on this thread's message loop, which the
-    // WPF dispatcher already pumps.
+    // Receives pre-filtered top-level events from BackgroundWinEventPump (and direct test calls).
     internal void OnWinEvent(
         nint hook,
         uint eventType,
@@ -79,23 +81,23 @@ internal sealed class MaximizeStateWatcher : IDisposable
         uint eventTime)
     {
         UiDiagnostics.Hit(UiActivity.StateEvent);
-        if (_disposed
+        if (Volatile.Read(ref _disposed) != 0
+            || _dispatcher.HasShutdownStarted
             || window == 0
             || objectId != DockNativeMethods.ObjidWindow
             || childId != 0
             || NativeMethods.IsChildWindow(window)
-            || _notifyQueued)
+            || Interlocked.CompareExchange(ref _notifyQueued, 1, 0) != 0)
         {
             return;
         }
 
         // Some apps raise state changes in bursts; the receiver reads the current
         // state anyway, so one queued notice covers every event before it runs.
-        _notifyQueued = true;
         _dispatcher.BeginInvoke(DispatcherPriority.Normal, () =>
         {
-            _notifyQueued = false;
-            if (!_disposed)
+            Interlocked.Exchange(ref _notifyQueued, 0);
+            if (Volatile.Read(ref _disposed) == 0)
             {
                 TopLevelStateChanged?.Invoke();
             }

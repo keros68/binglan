@@ -847,6 +847,8 @@ public sealed partial class WidgetCoordinator : IDisposable
         SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
         WindowScreenRecovery.LayoutChanged -= OnDisplayLayoutChanged;
         AccessibilityThemeManager.HighContrastChanged -= OnHighContrastChanged;
+        _saveTimer.Stop();
+        _peek.Dispose();
         _fullScreenWatcher.Dispose();
         _desktopSurfaceWatcher.Dispose();
         StopDesktopDoubleClickWatcher();
@@ -857,6 +859,7 @@ public sealed partial class WidgetCoordinator : IDisposable
         _cornerReveal.Dispose();
         _taskbar.Dispose();
         _cleanDesktop.Dispose();
+        _updater.Dispose();
         _topBar.Dispose();
         _trayOverflow?.Dispose();
         _performanceSampler.Dispose();
@@ -1304,6 +1307,77 @@ public sealed partial class WidgetCoordinator : IDisposable
             }
             SanitizePlacement(placement);
             AddFileBox(placement);
+        };
+        overlay.PhysicalBoxSelected += physical =>
+        {
+            var monitors = MonitorCatalog.GetAll();
+            var centerX = (physical.Left + physical.Right) / 2;
+            var centerY = (physical.Top + physical.Bottom) / 2;
+            var monitor = monitors.FirstOrDefault(screen =>
+                    centerX >= screen.Bounds.Left && centerX < screen.Bounds.Right
+                    && centerY >= screen.Bounds.Top && centerY < screen.Bounds.Bottom)
+                ?? monitors.FirstOrDefault(screen => screen.IsPrimary)
+                ?? monitors.FirstOrDefault();
+            var scale = monitor is { Dpi: > 0 } ? monitor.Dpi / 96d : 1d;
+            var minWidthPx = (int)Math.Ceiling(226d * scale);
+            var minHeightPx = (int)Math.Ceiling(166d * scale);
+            var leftPx = physical.Left;
+            var topPx = physical.Top;
+            var widthPx = Math.Max(physical.Width, minWidthPx);
+            var heightPx = Math.Max(physical.Height, minHeightPx);
+            if (WidgetWindowBase.GridSnapEnabled)
+            {
+                var cellPx = DesktopStyleRules.GridCellDip * scale;
+                if (cellPx > 0d)
+                {
+                    var originX = monitor is not null && monitor.WorkingArea.HasArea ? monitor.WorkingArea.Left : 0;
+                    var originY = monitor is not null && monitor.WorkingArea.HasArea ? monitor.WorkingArea.Top : 0;
+                    leftPx = originX + (int)Math.Round(Math.Round((leftPx - originX) / cellPx) * cellPx);
+                    topPx = originY + (int)Math.Round(Math.Round((topPx - originY) / cellPx) * cellPx);
+                }
+            }
+            if (monitor is not null && monitor.WorkingArea.HasArea)
+            {
+                var work = monitor.WorkingArea;
+                widthPx = Math.Min(widthPx, Math.Max(minWidthPx, work.Width));
+                heightPx = Math.Min(heightPx, Math.Max(minHeightPx, work.Height));
+                leftPx = Math.Clamp(leftPx, work.Left, Math.Max(work.Left, work.Right - widthPx));
+                topPx = Math.Clamp(topPx, work.Top, Math.Max(work.Top, work.Bottom - heightPx));
+            }
+            var targetPx = new PixelRect(leftPx, topPx, leftPx + widthPx, topPx + heightPx);
+            var placement = new WindowPlacement
+            {
+                Left = leftPx / scale,
+                Top = topPx / scale,
+                Width = Math.Max(widthPx / scale, 226d),
+                Height = Math.Max(heightPx / scale, 166d)
+            };
+            SanitizePlacement(placement, monitors);
+            AddFileBox(placement);
+            if (_state.FileBoxes.LastOrDefault() is { } createdState
+                && _windows.OfType<FileBoxWindow>().LastOrDefault(w => w.State.Id == createdState.Id) is { } createdWindow
+                && createdWindow.WindowHandle is var handle && handle != 0)
+            {
+                for (var attempt = 0; attempt < 2; attempt++)
+                {
+                    if (DockNativeMethods.GetWindowRect(handle, out var current)
+                        && new PixelRect(current.Left, current.Top, current.Right, current.Bottom) == targetPx)
+                    {
+                        break;
+                    }
+                    NativeMethods.SetWindowPos(
+                        handle,
+                        0,
+                        targetPx.Left,
+                        targetPx.Top,
+                        targetPx.Width,
+                        targetPx.Height,
+                        NativeMethods.SwpNoZOrder | NativeMethods.SwpNoActivate);
+                }
+                WindowScreenRecovery.RememberLayout(createdWindow, createdState.Placement, targetPx);
+                createdWindow.CaptureState();
+                ScheduleSave();
+            }
         };
         overlay.Show();
     }
@@ -3277,17 +3351,66 @@ public sealed partial class WidgetCoordinator : IDisposable
 
     // A rough bound over all monitors; Start then moves any card that lands between or off
     // monitors onto the nearest work area.
-    private static void SanitizePlacement(WindowPlacement placement)
+    private static void SanitizePlacement(WindowPlacement placement) =>
+        SanitizePlacement(placement, MonitorCatalog.GetAll());
+
+    internal static void SanitizePlacement(
+        WindowPlacement placement,
+        IReadOnlyList<MonitorSnapshot> monitors)
     {
-        var area = new Rect(
-            SystemParameters.VirtualScreenLeft,
-            SystemParameters.VirtualScreenTop,
-            SystemParameters.VirtualScreenWidth,
-            SystemParameters.VirtualScreenHeight);
-        placement.Width = Math.Clamp(placement.Width, 226, Math.Max(226, area.Width));
-        placement.Height = Math.Clamp(placement.Height, 72, Math.Max(72, area.Height));
-        placement.Left = Math.Clamp(placement.Left, area.Left - placement.Width + 80, area.Right - 80);
-        placement.Top = Math.Clamp(placement.Top, area.Top, area.Bottom - 60);
+        if (monitors.Count == 0)
+        {
+            var area = new Rect(
+                SystemParameters.VirtualScreenLeft,
+                SystemParameters.VirtualScreenTop,
+                SystemParameters.VirtualScreenWidth,
+                SystemParameters.VirtualScreenHeight);
+            if (!double.IsFinite(placement.Width)) placement.Width = 320d;
+            if (!double.IsFinite(placement.Height)) placement.Height = 240d;
+            if (!double.IsFinite(placement.Left)) placement.Left = area.Left;
+            if (!double.IsFinite(placement.Top)) placement.Top = area.Top;
+            placement.Width = Math.Clamp(placement.Width, 226, Math.Max(226, area.Width));
+            placement.Height = Math.Clamp(placement.Height, 72, Math.Max(72, area.Height));
+            placement.Left = Math.Clamp(placement.Left, area.Left - placement.Width + 80, area.Right - 80);
+            placement.Top = Math.Clamp(placement.Top, area.Top, area.Bottom - 60);
+            return;
+        }
+
+        var primary = monitors.FirstOrDefault(monitor => monitor.IsPrimary) ?? monitors[0];
+        var primaryScale = primary.Dpi > 0 ? primary.Dpi / 96d : 1d;
+        var minLeft = double.PositiveInfinity;
+        var minTop = double.PositiveInfinity;
+        var maxRight = double.NegativeInfinity;
+        var maxBottom = double.NegativeInfinity;
+        var maxMonitorWidth = 226d;
+        var maxMonitorHeight = 72d;
+
+        foreach (var monitor in monitors)
+        {
+            var scale = monitor.Dpi > 0 ? monitor.Dpi / 96d : primaryScale;
+            var work = monitor.WorkingArea.HasArea ? monitor.WorkingArea : monitor.Bounds;
+            var bounds = monitor.Bounds.HasArea ? monitor.Bounds : work;
+            // Encompass both the monitor's own DPI coordinate space and the primary-DPI
+            // projection so mixed-DPI secondary monitors and negative offsets stay uncropped.
+            minLeft = Math.Min(minLeft, Math.Min(bounds.Left / scale, bounds.Left / primaryScale));
+            minTop = Math.Min(minTop, Math.Min(bounds.Top / scale, bounds.Top / primaryScale));
+            maxRight = Math.Max(maxRight, Math.Max(bounds.Right / scale, bounds.Right / primaryScale));
+            maxBottom = Math.Max(maxBottom, Math.Max(bounds.Bottom / scale, bounds.Bottom / primaryScale));
+            maxMonitorWidth = Math.Max(maxMonitorWidth, work.Width / scale);
+            maxMonitorHeight = Math.Max(maxMonitorHeight, work.Height / scale);
+        }
+
+        if (!double.IsFinite(placement.Width)) placement.Width = 320d;
+        if (!double.IsFinite(placement.Height)) placement.Height = 240d;
+        if (!double.IsFinite(placement.Left)) placement.Left = primary.WorkingArea.Left / primaryScale;
+        if (!double.IsFinite(placement.Top)) placement.Top = primary.WorkingArea.Top / primaryScale;
+
+        var totalWidth = Math.Max(maxMonitorWidth, maxRight - minLeft);
+        var totalHeight = Math.Max(maxMonitorHeight, maxBottom - minTop);
+        placement.Width = Math.Clamp(placement.Width, 226d, Math.Max(226d, totalWidth));
+        placement.Height = Math.Clamp(placement.Height, 72d, Math.Max(72d, totalHeight));
+        placement.Left = Math.Clamp(placement.Left, minLeft - placement.Width + 80d, maxRight - 80d);
+        placement.Top = Math.Clamp(placement.Top, minTop, maxBottom - 60d);
     }
 
     /// <summary>
@@ -3455,12 +3578,14 @@ public sealed partial class WidgetCoordinator : IDisposable
 
         public void OpenTaskManagerPerformance()
         {
+            int? launchedPid = null;
             try
             {
-                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("taskmgr.exe")
+                using var started = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("taskmgr.exe")
                 {
                     UseShellExecute = true
                 });
+                launchedPid = started?.Id;
             }
             catch (Exception exception) when (exception is System.ComponentModel.Win32Exception
                 or InvalidOperationException)
@@ -3477,16 +3602,8 @@ public sealed partial class WidgetCoordinator : IDisposable
                     await Task.Delay(300);
                     try
                     {
-                        var manager = System.Windows.Automation.AutomationElement.RootElement.FindFirst(
-                            System.Windows.Automation.TreeScope.Children,
-                            new System.Windows.Automation.PropertyCondition(
-                                System.Windows.Automation.AutomationElement.NameProperty,
-                                "任务管理器"));
-                        var page = manager?.FindFirst(
-                            System.Windows.Automation.TreeScope.Descendants,
-                            new System.Windows.Automation.PropertyCondition(
-                                System.Windows.Automation.AutomationElement.NameProperty,
-                                "性能"));
+                        var manager = FindTaskManagerWindow(launchedPid);
+                        var page = FindTaskManagerPerformanceTab(manager);
                         if (page is null)
                         {
                             continue;
@@ -3509,12 +3626,78 @@ public sealed partial class WidgetCoordinator : IDisposable
                     }
                     catch (Exception exception)
                         when (exception is System.Windows.Automation.ElementNotAvailableException
-                            or System.Windows.Automation.ElementNotEnabledException)
+                            or System.Windows.Automation.ElementNotEnabledException
+                            or InvalidOperationException
+                            or System.Runtime.InteropServices.COMException)
                     {
-                        // Window rebuilt mid-read; try again on the next attempt.
+                        // Window rebuilt mid-read or elevated UIA denied; try again quietly.
                     }
                 }
             });
+        }
+
+        private static System.Windows.Automation.AutomationElement? FindTaskManagerWindow(int? launchedPid)
+        {
+            var root = System.Windows.Automation.AutomationElement.RootElement;
+            if (launchedPid is { } pid)
+            {
+                var byPid = root.FindFirst(
+                    System.Windows.Automation.TreeScope.Children,
+                    new System.Windows.Automation.PropertyCondition(
+                        System.Windows.Automation.AutomationElement.ProcessIdProperty,
+                        pid));
+                if (byPid is not null)
+                {
+                    return byPid;
+                }
+            }
+            var byClass = root.FindFirst(
+                System.Windows.Automation.TreeScope.Children,
+                new System.Windows.Automation.PropertyCondition(
+                    System.Windows.Automation.AutomationElement.ClassNameProperty,
+                    "TaskManagerWindow"));
+            if (byClass is not null)
+            {
+                return byClass;
+            }
+            return root.FindFirst(
+                System.Windows.Automation.TreeScope.Children,
+                new System.Windows.Automation.OrCondition(
+                    new System.Windows.Automation.PropertyCondition(
+                        System.Windows.Automation.AutomationElement.NameProperty,
+                        "任务管理器"),
+                    new System.Windows.Automation.PropertyCondition(
+                        System.Windows.Automation.AutomationElement.NameProperty,
+                        "Task Manager")));
+        }
+
+        private static System.Windows.Automation.AutomationElement? FindTaskManagerPerformanceTab(
+            System.Windows.Automation.AutomationElement? manager)
+        {
+            if (manager is null)
+            {
+                return null;
+            }
+            // Prefer locale-neutral AutomationIds on Windows 11 Task Manager, falling back to
+            // localized labels when older builds expose only the visible name.
+            return manager.FindFirst(
+                System.Windows.Automation.TreeScope.Descendants,
+                new System.Windows.Automation.OrCondition(
+                    new System.Windows.Automation.PropertyCondition(
+                        System.Windows.Automation.AutomationElement.AutomationIdProperty,
+                        "Performance"),
+                    new System.Windows.Automation.PropertyCondition(
+                        System.Windows.Automation.AutomationElement.AutomationIdProperty,
+                        "PerformancePage"),
+                    new System.Windows.Automation.PropertyCondition(
+                        System.Windows.Automation.AutomationElement.AutomationIdProperty,
+                        "NavigationViewItem_Performance"),
+                    new System.Windows.Automation.PropertyCondition(
+                        System.Windows.Automation.AutomationElement.NameProperty,
+                        "性能"),
+                    new System.Windows.Automation.PropertyCondition(
+                        System.Windows.Automation.AutomationElement.NameProperty,
+                        "Performance")));
         }
 
         public void OpenComponentSettings(DesktopComponentKind kind) => owner.OpenSettings(kind);

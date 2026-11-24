@@ -19,9 +19,11 @@ public partial class InformationWidgetWindow : WidgetWindowBase
     private readonly WeatherService _weather;
     private readonly bool _usesLegacyAppearance;
     private readonly DesktopComponentKind? _componentKind;
+    private readonly bool _subscribesSampler;
     private DesktopExperienceState _experience;
     private readonly DispatcherTimer _ambientTimer;
     private DateTimeOffset? _lastWeatherSuccess;
+    private long _lastClockMinuteKey = long.MinValue;
     private bool _weatherInFlight;
     private bool _systemEventsHooked;
 
@@ -37,6 +39,7 @@ public partial class InformationWidgetWindow : WidgetWindowBase
         _weather = weather;
         _usesLegacyAppearance = experience is null;
         _componentKind = componentKind;
+        _subscribesSampler = componentKind is null or DesktopComponentKind.Performance;
         _experience = experience ?? CreateExperienceFromLegacyAppearance(state);
         InitializeComponent();
         DataContext = state;
@@ -45,12 +48,18 @@ public partial class InformationWidgetWindow : WidgetWindowBase
         WidgetCornerRadius = state.CornerRadius;
         ApplyDesktopExperience(_experience);
 
-        _sampler.Sampled += OnSampled;
+        if (_subscribesSampler)
+        {
+            _sampler.Sampled += OnSampled;
+        }
         _ambientTimer = new DispatcherTimer(DispatcherPriority.Background, Dispatcher);
         _ambientTimer.Tick += OnAmbientTick;
         Closed += (_, _) =>
         {
-            _sampler.Sampled -= OnSampled;
+            if (_subscribesSampler)
+            {
+                _sampler.Sampled -= OnSampled;
+            }
             _ambientTimer.Stop();
             if (_systemEventsHooked)
             {
@@ -60,7 +69,7 @@ public partial class InformationWidgetWindow : WidgetWindowBase
             }
         };
 
-        UpdateClock();
+        UpdateClock(force: true);
         UpdatePerformance(new PerformanceSnapshot(0d, 0d, 0d, 0d, DateTimeOffset.Now));
         var cachedWeather = State.HasWeatherLocation
             ? _weather.GetLastSnapshot(
@@ -93,7 +102,8 @@ public partial class InformationWidgetWindow : WidgetWindowBase
                 SystemEvents.TimeChanged += OnSystemTimeChanged;
                 SystemEvents.PowerModeChanged += OnPowerModeChanged;
             }
-            if (_componentKind is null or DesktopComponentKind.Weather && !_sampler.IsRunning)
+            if (_componentKind == DesktopComponentKind.Weather
+                || (_componentKind is null && !_sampler.IsRunning))
             {
                 MaybeRefreshWeather(false);
             }
@@ -620,17 +630,17 @@ public partial class InformationWidgetWindow : WidgetWindowBase
             {
                 return;
             }
-            // A single-component card only refreshes what it shows: changing collapsed
-            // text still re-renders the whole cached card in software every second.
-            if (_componentKind is null or DesktopComponentKind.TimeDate or DesktopComponentKind.Greeting)
+            // A single-component card only refreshes what it shows; isolated TimeDate/Greeting/Weather
+            // cards do not subscribe to 1 Hz sampling and refresh on minute-aligned ticks instead.
+            if (_componentKind is null)
             {
-                UpdateClock();
+                UpdateClock(force: false);
             }
             if (_componentKind is null or DesktopComponentKind.Performance)
             {
                 UpdatePerformance(snapshot);
             }
-            if (_componentKind is null or DesktopComponentKind.Weather)
+            if (_componentKind is null)
             {
                 MaybeRefreshWeather(false);
             }
@@ -643,16 +653,15 @@ public partial class InformationWidgetWindow : WidgetWindowBase
         {
             return;
         }
-        if (!_sampler.IsRunning)
+        if (_componentKind is DesktopComponentKind.TimeDate or DesktopComponentKind.Greeting
+            || (_componentKind is null && !_sampler.IsRunning))
         {
-            if (_componentKind is null or DesktopComponentKind.TimeDate or DesktopComponentKind.Greeting)
-            {
-                UpdateClock();
-            }
-            if (_componentKind is null or DesktopComponentKind.Weather)
-            {
-                MaybeRefreshWeather(false);
-            }
+            UpdateClock(force: false);
+        }
+        if (_componentKind == DesktopComponentKind.Weather
+            || (_componentKind is null && !_sampler.IsRunning))
+        {
+            MaybeRefreshWeather(false);
         }
         ArmAmbientTimer();
     }
@@ -704,9 +713,15 @@ public partial class InformationWidgetWindow : WidgetWindowBase
         });
     }
 
-    private void UpdateClock()
+    private void UpdateClock(bool force = true)
     {
         var now = DateTime.Now;
+        var minuteKey = now.Ticks / TimeSpan.TicksPerMinute;
+        if (!force && minuteKey == _lastClockMinuteKey)
+        {
+            return;
+        }
+        _lastClockMinuteKey = minuteKey;
         var showTimeDate = (_experience?.GetComponent(DesktopComponentKind.TimeDate).IsVisible ?? true)
             && (_componentKind is null or DesktopComponentKind.TimeDate);
         var parts = ClockLayoutRules.FormatClockParts(

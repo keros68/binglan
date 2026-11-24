@@ -20,28 +20,33 @@ internal sealed class DesktopSurfaceWatcher : IDisposable
     private const int ObjidWindow = 0;
 
     private readonly Func<IReadOnlyList<nint>> _cardHandles;
-    private readonly NativeMethods.WinEventProc _hookCallback;
-    private readonly List<nint> _hooks = [];
+    private readonly Dispatcher _dispatcher;
+    private readonly BackgroundWinEventPump _pump;
+    private readonly List<BackgroundWinEventPump.WinEventSubscription> _subscriptions = [];
     private readonly DispatcherTimer _fastTimer;
     private readonly DispatcherTimer _evaluateTimer;
     private readonly DispatcherTimer _trailingTimer;
-    private nint _shellShowHook;
+    private BackgroundWinEventPump.WinEventSubscription? _shellShowHook;
+    private BackgroundWinEventPump.WinEventSubscription? _raisedGlobalShowHook;
     private uint _shellProcessId;
     private long _lastEvaluateTick;
     private long _burstStartedTick;
     private nint _restoringWindow;
     private long _restoreDeadline;
+    private int _reorderQueued;
     private bool _started;
     private bool _trailingForExit;
     private int _trailingPassesRemaining;
     private bool _disposed;
 
-    internal DesktopSurfaceWatcher(Func<IReadOnlyList<nint>> cardHandles)
+    internal DesktopSurfaceWatcher(
+        Func<IReadOnlyList<nint>> cardHandles,
+        BackgroundWinEventPump? pump = null)
     {
         _cardHandles = cardHandles;
-        // Keep the delegate alive for as long as the hook exists.
-        _hookCallback = OnWinEvent;
+        _pump = pump ?? BackgroundWinEventPump.Shared;
         var dispatcher = Dispatcher.CurrentDispatcher;
+        _dispatcher = dispatcher;
         _fastTimer = new DispatcherTimer(
             FastCoalesceDelay,
             DispatcherPriority.Render,
@@ -72,6 +77,10 @@ internal sealed class DesktopSurfaceWatcher : IDisposable
 
     internal bool IsTopmostLayerRequired { get; private set; }
 
+    internal bool HasGlobalShowHook => _raisedGlobalShowHook is { IsActive: true };
+
+    internal uint ShellHookProcessId => Volatile.Read(ref _shellProcessId);
+
     internal void Start()
     {
         if (_started || _disposed)
@@ -79,11 +88,22 @@ internal sealed class DesktopSurfaceWatcher : IDisposable
             return;
         }
         _started = true;
-        Hook(DockNativeMethods.EventSystemForeground, DockNativeMethods.EventSystemForeground);
-        Hook(DockNativeMethods.EventSystemMinimizeStart, DockNativeMethods.EventSystemMinimizeEnd);
-        Hook(DockNativeMethods.EventSystemDesktopSwitch, DockNativeMethods.EventSystemDesktopSwitch);
-        Hook(DockNativeMethods.EventObjectShow, DockNativeMethods.EventObjectShow);
-        Hook(DockNativeMethods.EventObjectCloaked, DockNativeMethods.EventObjectUncloaked);
+        Hook(
+            DockNativeMethods.EventSystemForeground,
+            DockNativeMethods.EventSystemForeground,
+            static e => e.ChildId == 0 && e.ObjectId == ObjidWindow);
+        Hook(
+            DockNativeMethods.EventSystemMinimizeStart,
+            DockNativeMethods.EventSystemMinimizeEnd,
+            static e => e.ChildId == 0 && e.ObjectId == ObjidWindow);
+        Hook(
+            DockNativeMethods.EventSystemDesktopSwitch,
+            DockNativeMethods.EventSystemDesktopSwitch,
+            static e => e.ChildId == 0);
+        Hook(
+            DockNativeMethods.EventObjectCloaked,
+            DockNativeMethods.EventObjectUncloaked,
+            static e => BackgroundWinEventPump.IsTopLevelWindowEvent(e));
         _ = FindDesktopSurfaceWindow(out var shellProcess);
         RefreshShellShowHook(shellProcess);
         ScheduleCheck();
@@ -142,16 +162,15 @@ internal sealed class DesktopSurfaceWatcher : IDisposable
         _fastTimer.Stop();
         _evaluateTimer.Stop();
         _trailingTimer.Stop();
-        if (_shellShowHook != 0)
+        _raisedGlobalShowHook?.Dispose();
+        _raisedGlobalShowHook = null;
+        _shellShowHook?.Dispose();
+        _shellShowHook = null;
+        foreach (var subscription in _subscriptions)
         {
-            NativeMethods.UnhookWinEvent(_shellShowHook);
-            _shellShowHook = 0;
+            subscription.Dispose();
         }
-        foreach (var hook in _hooks)
-        {
-            NativeMethods.UnhookWinEvent(hook);
-        }
-        _hooks.Clear();
+        _subscriptions.Clear();
     }
 
     /// <summary>
@@ -252,23 +271,110 @@ internal sealed class DesktopSurfaceWatcher : IDisposable
             rect.Bottom - rect.Top);
     }
 
-    private void Hook(uint eventMin, uint eventMax)
+    private void Hook(uint eventMin, uint eventMax, Func<WinEventMessage, bool> filter)
     {
-        var hook = NativeMethods.SetWinEventHook(
+        var subscription = _pump.Subscribe(
             eventMin,
             eventMax,
-            nint.Zero,
-            _hookCallback,
-            0,
-            0,
-            DockNativeMethods.WineventOutOfContext | DockNativeMethods.WineventSkipOwnProcess);
-        if (hook != 0)
+            filter,
+            ForwardBackgroundEvent);
+        if (subscription.IsActive)
         {
-            _hooks.Add(hook);
+            _subscriptions.Add(subscription);
+        }
+        else
+        {
+            subscription.Dispose();
         }
     }
 
-    private void RefreshShellShowHook(uint shellProcessId)
+    internal static bool ShouldForwardShellObjectEvent(in WinEventMessage message)
+    {
+        if (message.ChildId != 0)
+        {
+            return false;
+        }
+        if (message.EventType == DockNativeMethods.EventObjectReorder)
+        {
+            return message.Window == 0 || message.Window == DockNativeMethods.GetDesktopWindow();
+        }
+        return BackgroundWinEventPump.IsTopLevelWindowEvent(message);
+    }
+
+    internal static bool ShouldForwardGlobalShowEvent(in WinEventMessage message, uint shellProcessId)
+    {
+        if (message.EventType != DockNativeMethods.EventObjectShow
+            || !BackgroundWinEventPump.IsTopLevelWindowEvent(message))
+        {
+            return false;
+        }
+
+        NativeMethods.GetWindowThreadProcessId(message.Window, out var processId);
+        if (shellProcessId != 0 && processId == shellProcessId)
+        {
+            // Explorer show events already arrive via the process-scoped shell hook.
+            return false;
+        }
+
+        var exStyle = NativeMethods.GetExStyleOf(message.Window);
+        var isAppWindow = (exStyle & NativeMethods.WsExAppWindow) != 0;
+        var isNoActivate = (exStyle & NativeMethods.WsExNoActivate) != 0;
+        var isClickThrough = (exStyle & NativeMethods.WsExLayered) != 0
+            && (exStyle & NativeMethods.WsExTransparent) != 0;
+        return DesktopSurfaceRules.ShouldEvaluateWindowShowWhileRaised(
+            isAppWindow,
+            isNoActivate,
+            isClickThrough);
+    }
+
+    private void ForwardBackgroundEvent(WinEventMessage message)
+    {
+        if (_disposed || _dispatcher.HasShutdownStarted)
+        {
+            return;
+        }
+
+        if (message.EventType == DockNativeMethods.EventObjectReorder)
+        {
+            if (Interlocked.CompareExchange(ref _reorderQueued, 1, 0) != 0)
+            {
+                return;
+            }
+            _dispatcher.BeginInvoke(DispatcherPriority.Input, () =>
+            {
+                Interlocked.Exchange(ref _reorderQueued, 0);
+                if (!_disposed)
+                {
+                    OnWinEvent(
+                        0,
+                        message.EventType,
+                        message.Window,
+                        message.ObjectId,
+                        message.ChildId,
+                        message.EventThread,
+                        message.EventTime);
+                }
+            });
+            return;
+        }
+
+        _dispatcher.BeginInvoke(DispatcherPriority.Input, () =>
+        {
+            if (!_disposed)
+            {
+                OnWinEvent(
+                    0,
+                    message.EventType,
+                    message.Window,
+                    message.ObjectId,
+                    message.ChildId,
+                    message.EventThread,
+                    message.EventTime);
+            }
+        });
+    }
+
+    internal void RefreshShellShowHook(uint shellProcessId)
     {
         if (!_started || _disposed)
         {
@@ -276,34 +382,84 @@ internal sealed class DesktopSurfaceWatcher : IDisposable
         }
         if (shellProcessId == 0)
         {
-            if (_shellShowHook != 0)
-            {
-                NativeMethods.UnhookWinEvent(_shellShowHook);
-                _shellShowHook = 0;
-            }
-            _shellProcessId = 0;
+            _shellShowHook?.Dispose();
+            _shellShowHook = null;
+            Volatile.Write(ref _shellProcessId, 0);
             return;
         }
-        if (shellProcessId == _shellProcessId && _shellShowHook != 0)
+        if (shellProcessId == Volatile.Read(ref _shellProcessId) && _shellShowHook is { IsActive: true })
         {
             return;
         }
-        if (_shellShowHook != 0)
-        {
-            NativeMethods.UnhookWinEvent(_shellShowHook);
-            _shellShowHook = 0;
-        }
-        _shellProcessId = shellProcessId;
-        // EventObjectShow (0x8002) is already hooked globally; start at EventObjectHide
-        // (0x8003) here so Explorer's show events are not delivered twice.
-        _shellShowHook = NativeMethods.SetWinEventHook(
-            DockNativeMethods.EventObjectHide,
+        _shellShowHook?.Dispose();
+        _shellShowHook = null;
+        Volatile.Write(ref _shellProcessId, shellProcessId);
+        // Scope EVENT_OBJECT_SHOW..EVENT_OBJECT_REORDER strictly to Explorer in normal mode
+        // so high-frequency non-Explorer UIA show bursts (e.g. Task Manager) never reach us.
+        var subscription = _pump.Subscribe(
+            DockNativeMethods.EventObjectShow,
             DockNativeMethods.EventObjectReorder,
-            nint.Zero,
-            _hookCallback,
-            shellProcessId,
-            0,
-            DockNativeMethods.WineventOutOfContext);
+            static message => ShouldForwardShellObjectEvent(message),
+            ForwardBackgroundEvent,
+            processId: shellProcessId,
+            flags: DockNativeMethods.WineventOutOfContext);
+        if (subscription.IsActive)
+        {
+            _shellShowHook = subscription;
+        }
+        else
+        {
+            subscription.Dispose();
+        }
+    }
+
+    private void SyncRaisedGlobalShowHook(bool desktopShown)
+    {
+        if (!_started || _disposed || !desktopShown)
+        {
+            _raisedGlobalShowHook?.Dispose();
+            _raisedGlobalShowHook = null;
+            return;
+        }
+
+        if (_raisedGlobalShowHook is { IsActive: true })
+        {
+            return;
+        }
+
+        // Only listen for non-Explorer top-level window shows while cards are raised over
+        // "show desktop", pre-filtered on the background WinEvent pump thread.
+        var subscription = _pump.Subscribe(
+            DockNativeMethods.EventObjectShow,
+            DockNativeMethods.EventObjectShow,
+            message => ShouldForwardGlobalShowEvent(message, Volatile.Read(ref _shellProcessId)),
+            ForwardBackgroundEvent);
+        if (subscription.IsActive)
+        {
+            _raisedGlobalShowHook = subscription;
+        }
+        else
+        {
+            subscription.Dispose();
+        }
+    }
+
+    private void TryRebindShellProcess()
+    {
+        var shellWindow = NativeMethods.FindWindowW("Progman", null);
+        if (shellWindow == 0)
+        {
+            shellWindow = DockNativeMethods.GetShellWindow();
+        }
+        if (shellWindow == 0)
+        {
+            return;
+        }
+        NativeMethods.GetWindowThreadProcessId(shellWindow, out var shellProcess);
+        if (shellProcess != 0 && shellProcess != Volatile.Read(ref _shellProcessId))
+        {
+            RefreshShellShowHook(shellProcess);
+        }
     }
 
     private void EvaluateImmediate(bool force = false)
@@ -469,6 +625,7 @@ internal sealed class DesktopSurfaceWatcher : IDisposable
         }
         if (eventType == DockNativeMethods.EventSystemForeground && window != 0)
         {
+            TryRebindShellProcess();
             if (IsDesktopShown)
             {
                 EvaluateAndFollowUpWhileRaised(force: true);
@@ -656,6 +813,7 @@ internal sealed class DesktopSurfaceWatcher : IDisposable
             anySurfaceCovered || IsTopmostLayerRequired != topmostLayerRequired);
         IsDesktopShown = shown;
         IsTopmostLayerRequired = topmostLayerRequired;
+        SyncRaisedGlobalShowHook(shown);
         if (action != DesktopSurfaceAction.None)
         {
             Changed?.Invoke();

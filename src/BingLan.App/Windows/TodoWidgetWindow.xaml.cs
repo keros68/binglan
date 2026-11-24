@@ -1030,14 +1030,23 @@ public partial class TodoWidgetWindow : WidgetWindowBase
     }
 
     private (double Left, double Top)? _weeklyAppliedPosition;
+    private (int Left, int Top)? _preWeeklyAnchorPx;
+    private (int Left, int Top)? _weeklyAppliedPositionPx;
 
     protected override void OnDragEnded()
     {
-        if (_weeklyAppliedPosition is { } applied
-            && (Math.Abs(Left - applied.Left) > 0.5d || Math.Abs(Top - applied.Top) > 0.5d))
+        var movedInPixels = _weeklyAppliedPositionPx is { } appliedPx
+            && WindowHandle is var handle && handle != 0
+            && BingLan.App.Interop.DockNativeMethods.GetWindowRect(handle, out var currentPx)
+            && (Math.Abs(currentPx.Left - appliedPx.Left) > 1 || Math.Abs(currentPx.Top - appliedPx.Top) > 1);
+        var movedInDip = _weeklyAppliedPosition is { } applied
+            && (Math.Abs(Left - applied.Left) > 0.5d || Math.Abs(Top - applied.Top) > 0.5d);
+        if (movedInPixels || movedInDip)
         {
             _preWeeklyAnchor = null;
             _weeklyAppliedPosition = null;
+            _preWeeklyAnchorPx = null;
+            _weeklyAppliedPositionPx = null;
         }
         base.OnDragEnded();
     }
@@ -1050,6 +1059,10 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         var currentHeight = ActualHeight > 0 ? ActualHeight : Height;
         var currentRect = new CardRect(Left, Top, currentWidth, currentHeight);
         var wasWeekly = State.WeeklyView;
+        var handle = WindowHandle;
+        BingLan.App.Interop.DockNativeMethods.NativeRect currentNative = default;
+        var hasNativeRect = handle != 0
+            && BingLan.App.Interop.DockNativeMethods.GetWindowRect(handle, out currentNative);
 
         // 列表和周历各记一份尺寸：周历会把卡片撑大，切回列表时回到列表离开时的大小
         // （从没记过就用新卡片的默认大小），再切到周历时回到周历上次的大小。
@@ -1061,6 +1074,7 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         {
             (State.ListWidth, State.ListHeight) = (currentWidth, currentHeight);
             _preWeeklyAnchor = (Left, Top);
+            _preWeeklyAnchorPx = hasNativeRect ? (currentNative.Left, currentNative.Top) : null;
         }
         State.WeeklyView = !wasWeekly;
         var defaults = new WindowPlacement();
@@ -1069,61 +1083,135 @@ public partial class TodoWidgetWindow : WidgetWindowBase
                Math.Max(State.WeeklyHeight > 0 ? State.WeeklyHeight : currentHeight, WeeklyMinimumHeight))
             : State.ListWidth > 0 ? (State.ListWidth, State.ListHeight) : (defaults.Width, defaults.Height);
         var savedAnchor = wasWeekly ? _preWeeklyAnchor : null;
+        var savedAnchorPx = wasWeekly ? _preWeeklyAnchorPx : null;
         if (wasWeekly)
         {
             _preWeeklyAnchor = null;
             _weeklyAppliedPosition = null;
+            _preWeeklyAnchorPx = null;
+            _weeklyAppliedPositionPx = null;
         }
         if (width > 0 && height > 0)
         {
-            var (nextLeft, nextTop) = TodoViewPlacementRules.ComputeToggledPosition(
-                currentRect,
-                width,
-                height,
-                CurrentWorkAreaDip(),
-                savedAnchor);
             MinWidth = State.WeeklyView ? WeeklyMinimumWidth : ListMinimumWidth;
             MinHeight = State.WeeklyView ? WeeklyMinimumHeight : ListMinimumHeight;
-            Left = nextLeft;
-            Top = nextTop;
-            Width = width;
-            Height = height;
-            if (State.WeeklyView)
+            if (hasNativeRect && TryResolveTargetMonitor(currentNative) is { } monitor)
             {
-                _weeklyAppliedPosition = (Left, Top);
+                var scale = monitor.Dpi > 0
+                    ? monitor.Dpi / 96d
+                    : Math.Max(1d, System.Windows.Media.VisualTreeHelper.GetDpi(this).DpiScaleX);
+                var targetPx = ComputeToggledMonitorPixelBounds(
+                    new BingLan.Core.Dock.PixelRect(currentNative.Left, currentNative.Top, currentNative.Right, currentNative.Bottom),
+                    width,
+                    height,
+                    monitor.WorkingArea,
+                    scale,
+                    savedAnchorPx);
+                ApplyPhysicalBoundsTwoPass(handle, targetPx);
+                if (State.WeeklyView)
+                {
+                    _weeklyAppliedPosition = (Left, Top);
+                    _weeklyAppliedPositionPx = BingLan.App.Interop.DockNativeMethods.GetWindowRect(handle, out var appliedNative)
+                        ? (appliedNative.Left, appliedNative.Top)
+                        : (targetPx.Left, targetPx.Top);
+                }
+            }
+            else
+            {
+                var (nextLeft, nextTop) = TodoViewPlacementRules.ComputeToggledPosition(
+                    currentRect,
+                    width,
+                    height,
+                    CurrentWorkAreaDip(),
+                    savedAnchor);
+                Left = nextLeft;
+                Top = nextTop;
+                Width = width;
+                Height = height;
+                if (State.WeeklyView)
+                {
+                    _weeklyAppliedPosition = (Left, Top);
+                }
             }
         }
         ApplyViewMode();
         NotifyStateChanged();
     }
 
+    internal static BingLan.Core.Dock.PixelRect ComputeToggledMonitorPixelBounds(
+        BingLan.Core.Dock.PixelRect currentPx,
+        double targetWidthDip,
+        double targetHeightDip,
+        BingLan.Core.Dock.PixelRect workAreaPx,
+        double scale,
+        (int Left, int Top)? savedAnchorPx)
+    {
+        var effectiveScale = scale > 0d ? scale : 1d;
+        var localCurrent = new CardRect(
+            (currentPx.Left - workAreaPx.Left) / effectiveScale,
+            (currentPx.Top - workAreaPx.Top) / effectiveScale,
+            currentPx.Width / effectiveScale,
+            currentPx.Height / effectiveScale);
+        var localWorkArea = new CardRect(
+            0d,
+            0d,
+            workAreaPx.Width / effectiveScale,
+            workAreaPx.Height / effectiveScale);
+        (double Left, double Top)? localAnchor = savedAnchorPx is { } anchor
+            ? ((anchor.Left - workAreaPx.Left) / effectiveScale, (anchor.Top - workAreaPx.Top) / effectiveScale)
+            : null;
+        var (nextLocalLeft, nextLocalTop) = TodoViewPlacementRules.ComputeToggledPosition(
+            localCurrent,
+            targetWidthDip,
+            targetHeightDip,
+            localWorkArea,
+            localAnchor);
+        var leftPx = workAreaPx.Left + (int)Math.Round(nextLocalLeft * effectiveScale);
+        var topPx = workAreaPx.Top + (int)Math.Round(nextLocalTop * effectiveScale);
+        var widthPx = Math.Max(1, (int)Math.Round(targetWidthDip * effectiveScale));
+        var heightPx = Math.Max(1, (int)Math.Round(targetHeightDip * effectiveScale));
+        return new BingLan.Core.Dock.PixelRect(leftPx, topPx, leftPx + widthPx, topPx + heightPx);
+    }
+
+    private static BingLan.App.Dock.MonitorSnapshot? TryResolveTargetMonitor(
+        BingLan.App.Interop.DockNativeMethods.NativeRect native)
+    {
+        var monitors = BingLan.App.Dock.MonitorCatalog.GetAll();
+        if (monitors.Count == 0)
+        {
+            return null;
+        }
+        var centerX = (native.Left + native.Right) / 2;
+        var centerY = (native.Top + native.Bottom) / 2;
+        return monitors.FirstOrDefault(candidate =>
+                centerX >= candidate.Bounds.Left && centerX < candidate.Bounds.Right
+                && centerY >= candidate.Bounds.Top && centerY < candidate.Bounds.Bottom)
+            ?? monitors.FirstOrDefault(candidate => candidate.IsPrimary)
+            ?? monitors[0];
+    }
+
+    private static void ApplyPhysicalBoundsTwoPass(nint handle, BingLan.Core.Dock.PixelRect target)
+    {
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            if (BingLan.App.Interop.DockNativeMethods.GetWindowRect(handle, out var native)
+                && new BingLan.Core.Dock.PixelRect(native.Left, native.Top, native.Right, native.Bottom) == target)
+            {
+                break;
+            }
+            BingLan.App.Interop.NativeMethods.SetWindowPos(
+                handle,
+                0,
+                target.Left,
+                target.Top,
+                target.Width,
+                target.Height,
+                BingLan.App.Interop.NativeMethods.SwpNoZOrder | BingLan.App.Interop.NativeMethods.SwpNoActivate);
+        }
+    }
+
     private CardRect CurrentWorkAreaDip()
     {
-        var handle = WindowHandle;
-        if (handle != 0 && BingLan.App.Interop.DockNativeMethods.GetWindowRect(handle, out var native))
-        {
-            var monitors = BingLan.App.Dock.MonitorCatalog.GetAll();
-            if (monitors.Count > 0)
-            {
-                var centerX = (native.Left + native.Right) / 2;
-                var centerY = (native.Top + native.Bottom) / 2;
-                var monitor = monitors.FirstOrDefault(candidate =>
-                        centerX >= candidate.Bounds.Left && centerX < candidate.Bounds.Right
-                        && centerY >= candidate.Bounds.Top && centerY < candidate.Bounds.Bottom)
-                    ?? monitors.FirstOrDefault(candidate => candidate.IsPrimary)
-                    ?? monitors[0];
-                var dpi = System.Windows.Media.VisualTreeHelper.GetDpi(this);
-                var scaleX = dpi.DpiScaleX > 0 ? dpi.DpiScaleX : monitor.Dpi / 96d;
-                var scaleY = dpi.DpiScaleY > 0 ? dpi.DpiScaleY : monitor.Dpi / 96d;
-                var work = monitor.WorkingArea;
-                return new CardRect(
-                    work.Left / scaleX,
-                    work.Top / scaleY,
-                    work.Width / scaleX,
-                    work.Height / scaleY);
-            }
-        }
-
         var fallback = SystemParameters.WorkArea;
         return new CardRect(fallback.Left, fallback.Top, fallback.Width, fallback.Height);
     }

@@ -2085,14 +2085,30 @@ public sealed partial class TopBarWindow : Window
         openTimer.Tick += (_, _) =>
         {
             openTimer.Stop();
+            if (_closing || !host.IsLoaded || !IsVisible)
+            {
+                toolTip.IsOpen = false;
+                return;
+            }
             ApplyToolTipStyle(toolTip);
             toolTip.PlacementTarget = host;
             toolTip.Placement = PlacementMode.Bottom;
             toolTip.VerticalOffset = 4;
             toolTip.IsOpen = true;
         };
-        host.MouseEnter += (_, _) => openTimer.Start();
+        host.MouseEnter += (_, _) =>
+        {
+            if (!_closing && host.IsLoaded && IsVisible)
+            {
+                openTimer.Start();
+            }
+        };
         host.MouseLeave += (_, _) =>
+        {
+            openTimer.Stop();
+            toolTip.IsOpen = false;
+        };
+        host.Unloaded += (_, _) =>
         {
             openTimer.Stop();
             toolTip.IsOpen = false;

@@ -18,6 +18,18 @@ namespace
     constexpr GUID TapClass = { 0x561329cb, 0x595c, 0x4cd3, { 0xa8, 0x4f, 0x22, 0xa7, 0xe2, 0x91, 0x44, 0x81 } };
     constexpr LONG Protocol = 0x424c0001;
     constexpr ULONGLONG LeaseMilliseconds = 5000;
+    constexpr ULONGLONG RestoreWaitTimeoutMilliseconds = 3000;
+    constexpr ULONGLONG PostUnadviseWaitTimeoutMilliseconds = 500;
+
+    ULONGLONG UnbiasedNowMilliseconds() noexcept
+    {
+        ULONGLONG unbiasedTime = 0;
+        if (QueryUnbiasedInterruptTime(&unbiasedTime))
+        {
+            return unbiasedTime / 10000ULL;
+        }
+        return GetTickCount64();
+    }
 
     // Fixed ABI shared with TaskbarXamlSession. No paths or executable commands cross it.
     struct alignas(8) State
@@ -49,8 +61,10 @@ namespace
         {
             if (!state || !owner || WaitForSingleObject(owner, 0) != WAIT_TIMEOUT) return false;
             const auto beat = static_cast<ULONGLONG>(InterlockedCompareExchange64(&state->heartbeat, 0, 0));
+            const auto now = UnbiasedNowMilliseconds();
+            const auto delta = now >= beat ? now - beat : beat - now;
             return InterlockedCompareExchange(&state->requested, 0, 0) == 1
-                && GetTickCount64() - beat < LeaseMilliseconds;
+                && delta < LeaseMilliseconds;
         }
 
         void Fail(HRESULT result) noexcept
@@ -198,6 +212,14 @@ namespace
                     auto tap = *holder;
                     bool advised = false;
                     const auto apartment = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+                    const auto waitForTargets = [&](ULONGLONG timeoutMs) noexcept {
+                        const auto start = UnbiasedNowMilliseconds();
+                        while (InterlockedCompareExchange(&tap->session->state->activeTargets, 0, 0) > 0
+                            && UnbiasedNowMilliseconds() - start < timeoutMs)
+                        {
+                            Sleep(100);
+                        }
+                    };
                     try
                     {
                         check_hresult(apartment);
@@ -205,8 +227,9 @@ namespace
                         advised = true;
                         while (tap->session->IsRequested()) Sleep(250);
                         // Each XAML thread restores its own objects; never access them from
-                        // this worker. A blocked Explorer UI keeps recovery unconfirmed.
-                        while (InterlockedCompareExchange(&tap->session->state->activeTargets, 0, 0) > 0) Sleep(100);
+                        // this worker. Bound the wait so a destroyed monitor island cannot
+                        // leave this Explorer worker spinning forever before Unadvise.
+                        waitForTargets(RestoreWaitTimeoutMilliseconds);
                     }
                     catch (...) { tap->session->Fail(to_hresult()); }
                     if (advised)
@@ -214,7 +237,7 @@ namespace
                         const auto hr = tap->tree->UnadviseVisualTreeChange(tap.as<IVisualTreeServiceCallback2>().get());
                         if (FAILED(hr)) tap->session->Fail(hr);
                     }
-                    while (InterlockedCompareExchange(&tap->session->state->activeTargets, 0, 0) > 0) Sleep(100);
+                    waitForTargets(PostUnadviseWaitTimeoutMilliseconds);
                     InterlockedCompareExchange(&tap->session->state->stopped, 1, 0);
                     {
                         std::scoped_lock siteLock(tap->siteMutex);

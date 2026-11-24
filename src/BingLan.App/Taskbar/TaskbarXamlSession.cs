@@ -36,16 +36,25 @@ internal sealed class TaskbarXamlSession : IDisposable
         _view = _mapping.CreateViewAccessor(0, 32);
         _view.Write(0, Protocol);
         _view.Write(4, Environment.ProcessId);
-        _view.Write(HeartbeatOffset, Environment.TickCount64);
+        _view.Write(HeartbeatOffset, ReadUnbiasedNowMilliseconds());
         _view.Write(RequestedOffset, 1);
         _heartbeat = new System.Threading.Timer(_ =>
         {
             lock (_sync)
             {
-                if (!_disposed && !_stopping) _view.Write(HeartbeatOffset, Environment.TickCount64);
+                if (!_disposed && !_stopping) _view.Write(HeartbeatOffset, ReadUnbiasedNowMilliseconds());
             }
         }, null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
     }
+
+    internal static long ReadUnbiasedNowMilliseconds() =>
+        QueryUnbiasedInterruptTime(out var unbiasedTime)
+            ? (long)(unbiasedTime / 10_000UL)
+            : Environment.TickCount64;
+
+    [DllImport("kernel32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool QueryUnbiasedInterruptTime(out ulong unbiasedTime);
 
     internal string MappingName { get; }
 

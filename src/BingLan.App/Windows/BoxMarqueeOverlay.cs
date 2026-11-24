@@ -1,8 +1,12 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Shapes;
+using BingLan.App.Dock;
+using BingLan.App.Interop;
+using BingLan.Core.Dock;
 using Point = System.Windows.Point;
 using Rectangle = System.Windows.Shapes.Rectangle;
 using Color = System.Windows.Media.Color;
@@ -16,8 +20,9 @@ namespace BingLan.App.Windows;
 /// Transient mask over the whole virtual screen, opened from the tray to create a file
 /// box by dragging a rectangle ("框选新建分组盒"). The user explicitly starts the mode,
 /// so a short-lived topmost window is acceptable; completing the drag, Esc, right-click
-/// or losing focus closes it again. Mouse handlers only forward into the seam methods
-/// the tests drive, so a selection can be simulated without real input.
+/// or losing focus closes it again. Mouse handlers record physical cursor coordinates via
+/// <c>GetCursorPos</c> so mixed-DPI and negative-offset secondary monitors place the new
+/// box accurately, while the DIP seam methods remain intact for synthetic test input.
 /// </summary>
 internal sealed class BoxMarqueeOverlay : Window
 {
@@ -27,6 +32,8 @@ internal sealed class BoxMarqueeOverlay : Window
     private readonly Rectangle _marquee = CreateMarquee();
     private Point? _startPoint;
     private Point _lastPoint;
+    private (int X, int Y)? _physicalStart;
+    private (int X, int Y) _physicalLast;
     // Close() must not re-enter itself: closing deactivates the window, which would
     // otherwise call Cancel → Close again while the window is still closing.
     private bool _closeRequested;
@@ -53,13 +60,33 @@ internal sealed class BoxMarqueeOverlay : Window
         root.Children.Add(CreateHint());
         Content = root;
 
+        SourceInitialized += (_, _) => PositionAcrossPhysicalVirtualScreen();
         MouseLeftButtonDown += (_, e) =>
         {
             CaptureMouse();
+            if (DockNativeMethods.GetCursorPos(out var cursor))
+            {
+                _physicalStart = (cursor.X, cursor.Y);
+                _physicalLast = (cursor.X, cursor.Y);
+            }
             BeginMarquee(e.GetPosition(this));
         };
-        MouseMove += (_, e) => UpdateMarquee(e.GetPosition(this));
-        MouseLeftButtonUp += (_, _) => CompleteMarquee();
+        MouseMove += (_, e) =>
+        {
+            if (_physicalStart is not null && DockNativeMethods.GetCursorPos(out var cursor))
+            {
+                _physicalLast = (cursor.X, cursor.Y);
+            }
+            UpdateMarquee(e.GetPosition(this));
+        };
+        MouseLeftButtonUp += (_, _) =>
+        {
+            if (_physicalStart is not null && DockNativeMethods.GetCursorPos(out var cursor))
+            {
+                _physicalLast = (cursor.X, cursor.Y);
+            }
+            CompleteMarquee();
+        };
         MouseRightButtonUp += (_, _) => Cancel();
         PreviewKeyDown += (_, e) =>
         {
@@ -74,17 +101,74 @@ internal sealed class BoxMarqueeOverlay : Window
         // Capture stolen mid-drag (another window popping up) also ends the mode.
         LostMouseCapture += (_, _) =>
         {
-            if (_startPoint is not null)
+            if (_startPoint is not null || _physicalStart is not null)
             {
                 Cancel();
             }
         };
     }
 
-    /// <summary>Raised with the selected rectangle in screen DIPs after the mask closed.</summary>
+    /// <summary>Raised with the selected rectangle in screen DIPs when driven via synthetic DIP seams.</summary>
     internal event Action<Rect>? BoxSelected;
 
-    // The three seam methods below are pure state transitions of the marquee rectangle.
+    /// <summary>Raised with the exact physical screen pixel rectangle for real pointer drags across mixed DPIs.</summary>
+    internal event Action<PixelRect>? PhysicalBoxSelected;
+
+    internal static PixelRect? ComputePhysicalUnion(IReadOnlyList<MonitorSnapshot> monitors)
+    {
+        if (monitors.Count == 0)
+        {
+            return null;
+        }
+        var left = monitors.Min(m => m.Bounds.Left);
+        var top = monitors.Min(m => m.Bounds.Top);
+        var right = monitors.Max(m => m.Bounds.Right);
+        var bottom = monitors.Max(m => m.Bounds.Bottom);
+        return right > left && bottom > top ? new PixelRect(left, top, right, bottom) : null;
+    }
+
+    private void PositionAcrossPhysicalVirtualScreen()
+    {
+        var handle = new WindowInteropHelper(this).Handle;
+        if (handle == 0 || ComputePhysicalUnion(MonitorCatalog.GetAll()) is not { } union)
+        {
+            return;
+        }
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            if (DockNativeMethods.GetWindowRect(handle, out var native)
+                && new PixelRect(native.Left, native.Top, native.Right, native.Bottom) == union)
+            {
+                break;
+            }
+            NativeMethods.SetWindowPos(
+                handle,
+                DockNativeMethods.HwndTopmost,
+                union.Left,
+                union.Top,
+                union.Width,
+                union.Height,
+                NativeMethods.SwpNoActivate);
+        }
+    }
+
+    // The seam methods below are pure state transitions of the marquee rectangle.
+
+    internal void BeginPhysicalMarquee(int x, int y)
+    {
+        _physicalStart = (x, y);
+        _physicalLast = (x, y);
+        _startPoint = new Point(0d, 0d);
+        _lastPoint = new Point(0d, 0d);
+    }
+
+    internal void UpdatePhysicalMarquee(int x, int y)
+    {
+        if (_physicalStart is not null)
+        {
+            _physicalLast = (x, y);
+        }
+    }
 
     internal void BeginMarquee(Point point)
     {
@@ -108,6 +192,36 @@ internal sealed class BoxMarqueeOverlay : Window
 
     internal void CompleteMarquee()
     {
+        if (_physicalStart is { } physStart)
+        {
+            var physEnd = _physicalLast;
+            _physicalStart = null;
+            _startPoint = null;
+            var physical = new PixelRect(
+                Math.Min(physStart.X, physEnd.X),
+                Math.Min(physStart.Y, physEnd.Y),
+                Math.Max(physStart.X, physEnd.X),
+                Math.Max(physStart.Y, physEnd.Y));
+            var centerX = (physical.Left + physical.Right) / 2;
+            var centerY = (physical.Top + physical.Bottom) / 2;
+            var monitors = MonitorCatalog.GetAll();
+            var target = monitors.FirstOrDefault(m =>
+                    centerX >= m.Bounds.Left && centerX < m.Bounds.Right
+                    && centerY >= m.Bounds.Top && centerY < m.Bounds.Bottom)
+                ?? monitors.FirstOrDefault(m => m.IsPrimary)
+                ?? monitors.FirstOrDefault();
+            var scale = target is { Dpi: > 0 } ? target.Dpi / 96d : 1d;
+            var minDragPx = MinDragDip * scale;
+            if (physical.Width < minDragPx || physical.Height < minDragPx)
+            {
+                Cancel();
+                return;
+            }
+            CloseOnce();
+            PhysicalBoxSelected?.Invoke(physical);
+            return;
+        }
+
         if (_startPoint is not { } start)
         {
             Cancel();
@@ -129,6 +243,7 @@ internal sealed class BoxMarqueeOverlay : Window
     internal void Cancel()
     {
         _startPoint = null;
+        _physicalStart = null;
         CloseOnce();
     }
 

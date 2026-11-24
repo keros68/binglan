@@ -20,6 +20,26 @@ public sealed class UiStallDetector(long thresholdMilliseconds)
 
     public void Sent(long now) => _pendingSince ??= now;
 
+    public void Reset()
+    {
+        _pendingSince = null;
+        _stalled = false;
+    }
+
+    /// <summary>
+    /// Resets any pending probe when the watchdog's own loop experienced a large jump
+    /// (such as OS sleep/hibernate or Modern Standby) so wake-up is never logged as a UI stall.
+    /// </summary>
+    public bool HandleClockJump(long previousTick, long now, long maxExpectedGapMilliseconds)
+    {
+        if (now < previousTick || now - previousTick > maxExpectedGapMilliseconds)
+        {
+            Reset();
+            return true;
+        }
+        return false;
+    }
+
     public UiStallChange? Answered(long now)
     {
         if (_pendingSince is not { } since)

@@ -240,6 +240,7 @@ internal static class Program
         Run("Shell 隐藏或最小化组件后自动恢复显示", TestShellHideAndMinimizeRecovery, failures);
         Run("显示桌面时组件提升到任务栏下方、恢复后回落", TestDesktopSurfaceRaiseAndLower, failures);
         Run("显示桌面判定每次事件突发只执行一次，不遗留计时器", TestDesktopSurfaceWatcherChecksOncePerBurst, failures);
+        Run("PR-2 回归：后台 WinEvent 泵、总览卡回收、坏目录容错与混合 DPI 坐标", () => BugFixRegressionTests.Run(ShowAndPump, Pump, PumpUntil), failures);
         Run("组件恢复默认位置", TestResetComponentPlacement, failures);
         Run("被占用屏幕边缘推开的卡片不改写保存位置，边缘空出后回到原位", TestReservedEdgeDisplacementReturns, failures);
         Run("清爽桌面开关", TestCleanDesktopToggle, failures);
