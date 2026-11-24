@@ -102,6 +102,7 @@ public sealed partial class TopBarWindow : Window
 {
     private static readonly TimeSpan SmartHideCheckInterval = TimeSpan.FromMilliseconds(150);
     private static readonly TimeSpan FullScreenCheckInterval = TimeSpan.FromMilliseconds(500);
+    private static readonly TimeSpan BackdropSampleInterval = TimeSpan.FromMilliseconds(1500);
     private const int SystemInfoTickDivisor = 5;
     private const double CapsuleWidth = 176d;
     private double _capsuleCompactWidth = CapsuleWidth;
@@ -134,6 +135,15 @@ public sealed partial class TopBarWindow : Window
     private readonly DispatcherTimer _foregroundTimer;
     private readonly DispatcherTimer _ambientTimer;
     private readonly DispatcherTimer _minuteTimer;
+    private readonly DispatcherTimer _backdropTimer;
+    private int _backdropSampleInFlight;
+    private ColorContrastRules.SrgbColor? _sampledBackdrop;
+    private bool? _lastAdaptiveDarkInk;
+    private TopBarAdaptivePalette _palette = BarAdaptiveInkRules.ResolveTopBarPalette(
+        DesktopStyleRules.TopBar(new DesktopStyleState(), new TopBarState()),
+        hasDarkAcrylicScrim: true,
+        sampledBackdrop: null,
+        previousUseDarkInk: null);
     private readonly Dictionary<TopBarModuleKind, FrameworkElement> _modules = [];
     private TopBarAppBarController? _appBar;
     private PerformanceSnapshot? _lastSnapshot;
@@ -219,6 +229,14 @@ public sealed partial class TopBarWindow : Window
             Dispatcher);
         _minuteTimer = new DispatcherTimer(DispatcherPriority.Background, Dispatcher);
         _minuteTimer.Tick += (_, _) => OnMinuteTick();
+        _backdropTimer = new DispatcherTimer(
+            BackdropSampleInterval,
+            DispatcherPriority.Background,
+            (_, _) => ScheduleBackdropSample(),
+            Dispatcher);
+        _backdropTimer.Stop();
+        IsVisibleChanged += (_, _) => UpdateBackdropSampling(immediate: IsVisible);
+        AccessibilityThemeManager.HighContrastChanged += OnHighContrastChanged;
         _nudgeRecheckTimer = new DispatcherTimer(DispatcherPriority.Background, Dispatcher)
         {
             Interval = TimeSpan.FromMilliseconds(120)
@@ -312,6 +330,7 @@ public sealed partial class TopBarWindow : Window
         SyncSearchHotkey();
         RenderModules();
         RefreshSystemFacts();
+        UpdateBackdropSampling(immediate: true);
     }
 
     private MonitorSnapshot? ResolveMonitor()
@@ -567,7 +586,9 @@ public sealed partial class TopBarWindow : Window
         _foregroundTimer.Stop();
         _ambientTimer.Stop();
         _minuteTimer.Stop();
+        _backdropTimer.Stop();
         _nudgeRecheckTimer.Stop();
+        AccessibilityThemeManager.HighContrastChanged -= OnHighContrastChanged;
         _sampler.Sampled -= OnSampled;
         System.Net.NetworkInformation.NetworkChange.NetworkAddressChanged -= OnNetworkAddressChanged;
         SystemEvents.TimeChanged -= OnSystemTimeChanged;
@@ -983,14 +1004,18 @@ public sealed partial class TopBarWindow : Window
         panel.Children.Add(button);
     }
 
-    /// <summary>The bar's value text: white over the dark scrim, no drop shadow — a WPF
-    /// Effect would switch the text to software rendering and lose ClearType.</summary>
-    private static TextBlock CreateValueText() => new()
+    /// <summary>The bar's value text, bound to the adaptive ink brush so contrast flips
+    /// automatically over light surfaces or bright wallpapers without losing ClearType.</summary>
+    private static TextBlock CreateValueText()
     {
-        Foreground = Brushes.White,
-        TextTrimming = TextTrimming.CharacterEllipsis,
-        VerticalAlignment = VerticalAlignment.Center
-    };
+        var text = new TextBlock
+        {
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        text.SetResourceReference(TextBlock.ForegroundProperty, "TopBarInkBrush");
+        return text;
+    }
 
     /// <summary>Measures one line of text in the bar's own typeface, in DIU.</summary>
     private double MeasureTextWidth(string value)
@@ -1007,26 +1032,26 @@ public sealed partial class TopBarWindow : Window
     }
 
     /// <summary>A status glyph from Windows' icon font followed by the value text.</summary>
-    private static StackPanel CreateIconContent(string glyph, TextBlock value) => new()
+    private static StackPanel CreateIconContent(string glyph, TextBlock value)
     {
-        Orientation = System.Windows.Controls.Orientation.Horizontal,
-        VerticalAlignment = VerticalAlignment.Center,
-        Children =
+        var icon = new TextBlock
         {
-            new TextBlock
-            {
-                FontFamily = StatusIconFont,
-                FontSize = 14,
-                Text = glyph,
-                Tag = IconTag,
-                Foreground = Brushes.White,
-                Opacity = 0.92,
-                VerticalAlignment = VerticalAlignment.Center,
-                Margin = new Thickness(0, 0, 6, 1)
-            },
-            value
-        }
-    };
+            FontFamily = StatusIconFont,
+            FontSize = 14,
+            Text = glyph,
+            Tag = IconTag,
+            Opacity = 0.92,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 6, 1)
+        };
+        icon.SetResourceReference(TextBlock.ForegroundProperty, "TopBarInkBrush");
+        return new StackPanel
+        {
+            Orientation = System.Windows.Controls.Orientation.Horizontal,
+            VerticalAlignment = VerticalAlignment.Center,
+            Children = { icon, value }
+        };
+    }
 
     /// <summary>
     /// The input method module is a display-only element wearing the taskbar indicator's
@@ -1047,26 +1072,23 @@ public sealed partial class TopBarWindow : Window
         block.Content = null;
         var nameText = new TextBlock
         {
-            Foreground = Brushes.White,
             TextTrimming = TextTrimming.CharacterEllipsis,
             MaxWidth = 120,
             Margin = new Thickness(4, 0, 6, 0),
             VerticalAlignment = VerticalAlignment.Center
         };
+        nameText.SetResourceReference(TextBlock.ForegroundProperty, "TopBarInkBrush");
+        var badgeBorder = new Border
+        {
+            CornerRadius = new CornerRadius(5),
+            Padding = new Thickness(6, 1, 6, 1),
+            Child = badgeText
+        };
+        badgeBorder.SetResourceReference(Border.BackgroundProperty, "TopBarBadgeBackgroundBrush");
         block.Content = new StackPanel
         {
             Orientation = System.Windows.Controls.Orientation.Horizontal,
-            Children =
-            {
-                new Border
-                {
-                    CornerRadius = new CornerRadius(5),
-                    Background = FrozenBrush("#33FFFFFF"),
-                    Padding = new Thickness(6, 1, 6, 1),
-                    Child = badgeText
-                },
-                nameText
-            }
+            Children = { badgeBorder, nameText }
         };
         _inputMethodBadgeText = badgeText;
         _inputMethodNameText = nameText;
@@ -1219,15 +1241,15 @@ public sealed partial class TopBarWindow : Window
         _inputMethodTargetForeground = DockNativeMethods.GetForegroundWindow();
 
         var highContrast = AccessibilityThemeManager.IsHighContrastEnabled || SystemParameters.HighContrast;
-        var glass = DesktopStyleRules.TopBar(_style, _state);
+        var flyoutPalette = _palette.Flyout;
         var card = new Border
         {
-            Background = highContrast ? SystemColors.WindowBrush : FrozenBrush(glass.Surface),
-            BorderBrush = highContrast ? SystemColors.WindowTextBrush : FrozenBrush(glass.Border),
+            Background = highContrast ? SystemColors.WindowBrush : FrozenBrush(flyoutPalette.Background),
+            BorderBrush = highContrast ? SystemColors.WindowTextBrush : FrozenBrush(flyoutPalette.Border),
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(10),
             Padding = new Thickness(10, 10, 10, 10),
-            Child = BuildInputMethodCard(highContrast)
+            Child = BuildInputMethodCard(highContrast, flyoutPalette)
         };
         var onRight = ReferenceEquals(button.Parent, RightModules);
         var hostPanel = button.Parent as Panel ?? RightModules;
@@ -1261,10 +1283,10 @@ public sealed partial class TopBarWindow : Window
         TopBarNativeMethods.ConsumeMouseButtonDown(TopBarNativeMethods.EscapeKey);
     }
 
-    private FrameworkElement BuildInputMethodCard(bool highContrast)
+    private FrameworkElement BuildInputMethodCard(bool highContrast, TopBarFlyoutPalette flyoutPalette)
     {
-        var inkBrush = highContrast ? SystemColors.WindowTextBrush : Brushes.White;
-        var mutedOpacity = highContrast ? 1.0 : 0.65;
+        var inkBrush = highContrast ? SystemColors.WindowTextBrush : FrozenBrush(flyoutPalette.Foreground);
+        var mutedOpacity = highContrast ? 1.0 : 0.68;
         var panel = new StackPanel { MinWidth = 228, MaxWidth = 280 };
 
         var header = new DockPanel { Margin = new Thickness(6, 0, 6, 8) };
@@ -1304,7 +1326,7 @@ public sealed partial class TopBarWindow : Window
         {
             foreach (var option in options)
             {
-                panel.Children.Add(CreateInputMethodRow(option, highContrast, inkBrush));
+                panel.Children.Add(CreateInputMethodRow(option, highContrast, inkBrush, flyoutPalette));
             }
         }
 
@@ -1312,12 +1334,13 @@ public sealed partial class TopBarWindow : Window
         {
             Height = 1,
             Margin = new Thickness(4, 6, 4, 6),
-            Background = highContrast ? SystemColors.WindowTextBrush : FrozenBrush("#26FFFFFF")
+            Background = highContrast ? SystemColors.WindowTextBrush : FrozenBrush(flyoutPalette.Divider)
         });
 
         var settingsButton = CreateInputMethodActionButton(
             highContrast,
             isActive: false,
+            flyoutPalette,
             content: new TextBlock
             {
                 Text = "键盘与语言设置…",
@@ -1336,7 +1359,11 @@ public sealed partial class TopBarWindow : Window
         return panel;
     }
 
-    private Button CreateInputMethodRow(TopBarInputMethodOption option, bool highContrast, Brush inkBrush)
+    private Button CreateInputMethodRow(
+        TopBarInputMethodOption option,
+        bool highContrast,
+        Brush inkBrush,
+        TopBarFlyoutPalette flyoutPalette)
     {
         var rowInk = highContrast && option.IsActive ? SystemColors.HighlightTextBrush : inkBrush;
         var grid = new Grid();
@@ -1349,14 +1376,14 @@ public sealed partial class TopBarWindow : Window
             CornerRadius = new CornerRadius(5),
             Background = highContrast
                 ? SystemColors.ControlBrush
-                : FrozenBrush(option.IsActive ? "#4AFFFFFF" : "#26FFFFFF"),
+                : FrozenBrush(option.IsActive ? flyoutPalette.ActiveBadgeBackground : flyoutPalette.BadgeBackground),
             Padding = new Thickness(4, 1, 4, 1),
             HorizontalAlignment = HorizontalAlignment.Left,
             VerticalAlignment = VerticalAlignment.Center,
             Child = new TextBlock
             {
                 Text = option.LanguageTag,
-                Foreground = highContrast ? SystemColors.ControlTextBrush : Brushes.White,
+                Foreground = highContrast ? SystemColors.ControlTextBrush : inkBrush,
                 FontSize = 11,
                 FontWeight = FontWeights.SemiBold
             }
@@ -1394,6 +1421,7 @@ public sealed partial class TopBarWindow : Window
         var button = CreateInputMethodActionButton(
             highContrast,
             option.IsActive,
+            flyoutPalette,
             grid,
             automationName: option.DisplayName);
         button.Click += (_, _) => SelectInputMethod(option);
@@ -1403,13 +1431,14 @@ public sealed partial class TopBarWindow : Window
     private static Button CreateInputMethodActionButton(
         bool highContrast,
         bool isActive,
+        TopBarFlyoutPalette flyoutPalette,
         object content,
         string automationName)
     {
         var normalBg = isActive
-            ? (highContrast ? SystemColors.HighlightBrush : FrozenBrush("#30FFFFFF"))
+            ? (highContrast ? SystemColors.HighlightBrush : FrozenBrush(flyoutPalette.ActiveRowBackground))
             : Brushes.Transparent;
-        var hoverBg = highContrast ? SystemColors.HighlightBrush : FrozenBrush("#24FFFFFF");
+        var hoverBg = highContrast ? SystemColors.HighlightBrush : FrozenBrush(flyoutPalette.HoverRowBackground);
 
         var shellFactory = new FrameworkElementFactory(typeof(Border));
         shellFactory.Name = "Shell";
@@ -1484,16 +1513,23 @@ public sealed partial class TopBarWindow : Window
 
     private ToolTip CreateGlassToolTip()
     {
-        var glass = DesktopStyleRules.TopBar(_style, _state);
-        return new ToolTip
+        var toolTip = new ToolTip
         {
-            Background = FrozenBrush(glass.Surface),
-            Foreground = Brushes.White,
-            BorderBrush = FrozenBrush(glass.Border),
             BorderThickness = new Thickness(1),
             Padding = new Thickness(10, 8, 10, 9),
             StaysOpen = true
         };
+        ApplyToolTipStyle(toolTip);
+        return toolTip;
+    }
+
+    private void ApplyToolTipStyle(ToolTip toolTip)
+    {
+        var highContrast = AccessibilityThemeManager.IsHighContrastEnabled || SystemParameters.HighContrast;
+        var flyout = _palette.Flyout;
+        toolTip.Background = highContrast ? SystemColors.WindowBrush : FrozenBrush(flyout.Background);
+        toolTip.Foreground = highContrast ? SystemColors.WindowTextBrush : FrozenBrush(flyout.Foreground);
+        toolTip.BorderBrush = highContrast ? SystemColors.WindowTextBrush : FrozenBrush(flyout.Border);
     }
 
     private TextBlock? ModuleText(TopBarModuleKind kind) =>
@@ -1588,11 +1624,12 @@ public sealed partial class TopBarWindow : Window
         CloseInputMethodFlyout();
 
         _clockMonth = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
-        var glass = DesktopStyleRules.TopBar(_style, _state);
+        var highContrast = AccessibilityThemeManager.IsHighContrastEnabled || SystemParameters.HighContrast;
+        var flyoutPalette = _palette.Flyout;
         var card = new Border
         {
-            Background = FrozenBrush(glass.Surface),
-            BorderBrush = FrozenBrush(glass.Border),
+            Background = highContrast ? SystemColors.WindowBrush : FrozenBrush(flyoutPalette.Background),
+            BorderBrush = highContrast ? SystemColors.WindowTextBrush : FrozenBrush(flyoutPalette.Border),
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(10),
             Padding = new Thickness(16, 12, 16, 14),
@@ -1632,12 +1669,14 @@ public sealed partial class TopBarWindow : Window
 
     private FrameworkElement BuildClockCard()
     {
+        var highContrast = AccessibilityThemeManager.IsHighContrastEnabled || SystemParameters.HighContrast;
+        var inkBrush = highContrast ? SystemColors.WindowTextBrush : FrozenBrush(_palette.Flyout.Foreground);
         var panel = new StackPanel { Width = 268 };
         var now = DateTime.Now;
         panel.Children.Add(new TextBlock
         {
             Text = now.ToString(_environment.Use24HourClock ? "HH:mm" : "hh:mm tt"),
-            Foreground = Brushes.White,
+            Foreground = inkBrush,
             FontSize = 30
         });
         var lunarToday = LunarDayText.FullDate(now);
@@ -1649,16 +1688,16 @@ public sealed partial class TopBarWindow : Window
         panel.Children.Add(new TextBlock
         {
             Text = dateLine,
-            Foreground = Brushes.White,
+            Foreground = inkBrush,
             Opacity = 0.82,
             FontSize = 12,
             Margin = new Thickness(0, 2, 0, 10)
         });
-        panel.Children.Add(BuildMonthView());
+        panel.Children.Add(BuildMonthView(inkBrush));
         return panel;
     }
 
-    private FrameworkElement BuildMonthView()
+    private FrameworkElement BuildMonthView(Brush inkBrush)
     {
         var panel = new StackPanel();
 
@@ -1666,13 +1705,13 @@ public sealed partial class TopBarWindow : Window
         var title = new TextBlock
         {
             Text = MonthTitle(_clockMonth),
-            Foreground = Brushes.White,
+            Foreground = inkBrush,
             FontSize = 13,
             HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center
         };
-        var previous = CreateMonthNavButton("‹", "上一月", -1);
-        var next = CreateMonthNavButton("›", "下一月", 1);
+        var previous = CreateMonthNavButton("‹", "上一月", -1, inkBrush);
+        var next = CreateMonthNavButton("›", "下一月", 1, inkBrush);
         var header = new DockPanel { Margin = new Thickness(0, 0, 0, 6) };
         DockPanel.SetDock(previous, System.Windows.Controls.Dock.Left);
         DockPanel.SetDock(next, System.Windows.Controls.Dock.Right);
@@ -1699,8 +1738,8 @@ public sealed partial class TopBarWindow : Window
             var headerCell = new TextBlock
             {
                 Text = weekdayNames[column],
-                Foreground = Brushes.White,
-                Opacity = 0.6,
+                Foreground = inkBrush,
+                Opacity = 0.65,
                 HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
                 VerticalAlignment = VerticalAlignment.Center
             };
@@ -1718,6 +1757,7 @@ public sealed partial class TopBarWindow : Window
             var column = index % 7;
             var date = new DateTime(_clockMonth.Year, _clockMonth.Month, day);
             var isToday = date == DateTime.Today;
+            var cellInk = isToday ? Brushes.White : inkBrush;
             var lunar = LunarDayText.For(date);
             var dayContent = new StackPanel
             {
@@ -1727,7 +1767,7 @@ public sealed partial class TopBarWindow : Window
             dayContent.Children.Add(new TextBlock
             {
                 Text = day.ToString(),
-                Foreground = Brushes.White,
+                Foreground = cellInk,
                 Opacity = isToday ? 1.0 : 0.9,
                 FontSize = 12.5,
                 FontWeight = isToday ? FontWeights.SemiBold : FontWeights.Normal,
@@ -1738,8 +1778,8 @@ public sealed partial class TopBarWindow : Window
                 dayContent.Children.Add(new TextBlock
                 {
                     Text = lunar,
-                    Foreground = Brushes.White,
-                    Opacity = isToday ? 0.92 : (lunar.EndsWith('月') ? 0.78 : 0.58),
+                    Foreground = cellInk,
+                    Opacity = isToday ? 0.92 : (lunar.EndsWith('月') ? 0.8 : 0.62),
                     FontSize = 9.5,
                     Margin = new Thickness(0, -1, 0, 0),
                     HorizontalAlignment = System.Windows.HorizontalAlignment.Center
@@ -1766,19 +1806,19 @@ public sealed partial class TopBarWindow : Window
 
     private static SolidColorBrush CreateTodayBrush()
     {
-        var brush = new SolidColorBrush(Color.FromArgb(140, 122, 180, 237));
+        var brush = new SolidColorBrush(Color.FromArgb(216, 37, 116, 200));
         brush.Freeze();
         return brush;
     }
 
-    private Button CreateMonthNavButton(string glyph, string automationName, int months)
+    private Button CreateMonthNavButton(string glyph, string automationName, int months, Brush inkBrush)
     {
         var button = new Button
         {
             Content = new TextBlock
             {
                 Text = glyph,
-                Foreground = Brushes.White,
+                Foreground = inkBrush,
                 FontSize = 16
             },
             Style = (Style)Resources["ModuleButton"],
@@ -1835,7 +1875,9 @@ public sealed partial class TopBarWindow : Window
         CloseClockFlyout();
         CloseInputMethodFlyout();
 
-        var glass = DesktopStyleRules.TopBar(_style, _state);
+        var highContrast = AccessibilityThemeManager.IsHighContrastEnabled || SystemParameters.HighContrast;
+        var flyoutPalette = _palette.Flyout;
+        var inkBrush = highContrast ? SystemColors.WindowTextBrush : FrozenBrush(flyoutPalette.Foreground);
         var list = _environment.ReadTodoList();
         var items = list?.Items ?? [];
         var panel = new StackPanel { MaxWidth = 300 };
@@ -1843,7 +1885,7 @@ public sealed partial class TopBarWindow : Window
         panel.Children.Add(new TextBlock
         {
             Text = string.IsNullOrWhiteSpace(list?.Title) ? "待办" : list!.Title,
-            Foreground = Brushes.White,
+            Foreground = inkBrush,
             FontSize = 13,
             Margin = new Thickness(0, 0, 0, 6)
         });
@@ -1852,7 +1894,7 @@ public sealed partial class TopBarWindow : Window
             panel.Children.Add(new TextBlock
             {
                 Text = "暂无待办",
-                Foreground = Brushes.White,
+                Foreground = inkBrush,
                 Opacity = 0.7
             });
         }
@@ -1860,14 +1902,14 @@ public sealed partial class TopBarWindow : Window
         {
             foreach (var item in items)
             {
-                panel.Children.Add(CreateTodoRow(item));
+                panel.Children.Add(CreateTodoRow(item, inkBrush));
             }
         }
 
         var card = new Border
         {
-            Background = FrozenBrush(glass.Surface),
-            BorderBrush = FrozenBrush(glass.Border),
+            Background = highContrast ? SystemColors.WindowBrush : FrozenBrush(flyoutPalette.Background),
+            BorderBrush = highContrast ? SystemColors.WindowTextBrush : FrozenBrush(flyoutPalette.Border),
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(10),
             Padding = new Thickness(14, 10, 14, 12),
@@ -1910,12 +1952,13 @@ public sealed partial class TopBarWindow : Window
         TopBarNativeMethods.ConsumeMouseButtonDown(TopBarNativeMethods.EscapeKey);
     }
 
-    private FrameworkElement CreateTodoRow(TodoItemState item)
+    private FrameworkElement CreateTodoRow(TodoItemState item, Brush? inkBrush = null)
     {
+        var foreground = inkBrush ?? FrozenBrush(_palette.Flyout.Foreground);
         var glyph = new TextBlock
         {
             Width = 18,
-            Foreground = Brushes.White,
+            Foreground = foreground,
             Opacity = 0.7
         };
         if (IsCapsule) glyph.SetResourceReference(TextBlock.ForegroundProperty, "FloatingGlassMutedBrush");
@@ -1940,7 +1983,7 @@ public sealed partial class TopBarWindow : Window
                 Text = item.Text,
                 TextWrapping = TextWrapping.Wrap,
                 MaxWidth = 270,
-                Foreground = Brushes.White
+                Foreground = foreground
             };
             if (IsCapsule) eventText.SetResourceReference(TextBlock.ForegroundProperty, "FloatingGlassInkBrush");
             eventRow.Children.Add(eventText);
@@ -1958,7 +2001,7 @@ public sealed partial class TopBarWindow : Window
         {
             TextWrapping = TextWrapping.Wrap,
             MaxWidth = 270,
-            Foreground = Brushes.White
+            Foreground = foreground
         };
         if (IsCapsule) text.SetResourceReference(TextBlock.ForegroundProperty, "FloatingGlassInkBrush");
         text.SetBinding(TextBlock.TextProperty, new System.Windows.Data.Binding(nameof(TodoItemState.Text)));
@@ -1972,7 +2015,7 @@ public sealed partial class TopBarWindow : Window
         content.Children.Add(text);
         var deadline = new TextBlock
         {
-            TextWrapping = TextWrapping.Wrap, Foreground = Brushes.White, Opacity = 0.7, FontSize = 11,
+            TextWrapping = TextWrapping.Wrap, Foreground = foreground, Opacity = 0.7, FontSize = 11,
             Margin = new Thickness(0, 2, 0, 0)
         };
         if (IsCapsule) deadline.SetResourceReference(TextBlock.ForegroundProperty, "FloatingGlassMutedBrush");
@@ -2038,6 +2081,7 @@ public sealed partial class TopBarWindow : Window
         openTimer.Tick += (_, _) =>
         {
             openTimer.Stop();
+            ApplyToolTipStyle(toolTip);
             toolTip.PlacementTarget = host;
             toolTip.Placement = PlacementMode.Bottom;
             toolTip.VerticalOffset = 4;
@@ -2280,32 +2324,28 @@ public sealed partial class TopBarWindow : Window
             return;
         }
 
+        var searchIcon = new TextBlock
+        {
+            Text = GlyphSearch,
+            FontFamily = StatusIconFont,
+            FontSize = 12,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 8, 1)
+        };
+        searchIcon.SetResourceReference(TextBlock.ForegroundProperty, "TopBarMutedInkBrush");
+        var searchPlaceholder = new TextBlock
+        {
+            Text = "搜索应用、文件…",
+            FontSize = 12,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        searchPlaceholder.SetResourceReference(TextBlock.ForegroundProperty, "TopBarMutedInkBrush");
         var content = new StackPanel
         {
             Orientation = System.Windows.Controls.Orientation.Horizontal,
             VerticalAlignment = VerticalAlignment.Center,
-            Children =
-            {
-                new TextBlock
-                {
-                    Text = GlyphSearch,
-                    FontFamily = StatusIconFont,
-                    FontSize = 12,
-                    Foreground = Brushes.White,
-                    Opacity = 0.72,
-                    VerticalAlignment = VerticalAlignment.Center,
-                    Margin = new Thickness(0, 0, 8, 1)
-                },
-                new TextBlock
-                {
-                    Text = "搜索应用、文件…",
-                    FontSize = 12,
-                    Foreground = Brushes.White,
-                    Opacity = 0.72,
-                    TextTrimming = TextTrimming.CharacterEllipsis,
-                    VerticalAlignment = VerticalAlignment.Center
-                }
-            }
+            Children = { searchIcon, searchPlaceholder }
         };
 
         var button = new Button
@@ -2688,16 +2728,17 @@ public sealed partial class TopBarWindow : Window
                     }
                 }
 
+                var attentionText = new TextBlock
+                {
+                    Text = name,
+                    TextTrimming = TextTrimming.CharacterEllipsis,
+                    MaxWidth = 120
+                };
+                attentionText.SetResourceReference(TextBlock.ForegroundProperty, "TopBarAttentionBrush");
                 var button = new Button
                 {
                     Style = (Style)Resources["ModuleButton"],
-                    Content = new TextBlock
-                    {
-                        Text = name,
-                        Foreground = Brushes.Orange,
-                        TextTrimming = TextTrimming.CharacterEllipsis,
-                        MaxWidth = 120
-                    },
+                    Content = attentionText,
                     Focusable = true,
                     Tag = window
                 };
@@ -2716,13 +2757,14 @@ public sealed partial class TopBarWindow : Window
             }
             if (overflow > 0)
             {
-                _attentionPanel.Children.Add(new TextBlock
+                var overflowText = new TextBlock
                 {
                     Text = $"+{overflow}",
-                    Foreground = Brushes.Orange,
                     VerticalAlignment = VerticalAlignment.Center,
                     Margin = new Thickness(4, 0, 8, 0)
-                });
+                };
+                overflowText.SetResourceReference(TextBlock.ForegroundProperty, "TopBarAttentionBrush");
+                _attentionPanel.Children.Add(overflowText);
             }
         }
     }
@@ -2792,10 +2834,27 @@ public sealed partial class TopBarWindow : Window
         ApplySurface();
     }
 
+    internal void RefreshAppearance()
+    {
+        if (_closing)
+        {
+            return;
+        }
+
+        ApplySurface();
+        UpdateBackdropSampling(immediate: true);
+    }
+
+    internal bool UsesDarkInk => _palette.UseDarkInk;
+
+    private void OnHighContrastChanged(object? sender, EventArgs e) =>
+        Dispatcher.BeginInvoke(RefreshAppearance);
+
     private void ApplySurface()
     {
+        var highContrast = AccessibilityThemeManager.IsHighContrastEnabled || SystemParameters.HighContrast;
         var glass = DesktopStyleRules.TopBar(_style, _state);
-        var acrylic = !IsCapsule && _acrylicAvailable
+        var acrylic = !IsCapsule && !highContrast && _acrylicAvailable
             && DesktopStyleRules.TopBarFrostedScrim(_state, glass.Surface);
         _acrylicBackdrop = acrylic;
         // The first call must also clear the startup probe on a light surface.
@@ -2814,6 +2873,7 @@ public sealed partial class TopBarWindow : Window
         Surface.Height = IsCapsule ? (_capsuleExpanded ? _capsuleExpandedHeight : CapsuleHeight) : double.NaN;
         if (IsCapsule)
         {
+            _backdropTimer.Stop();
             if (!_state.FrostedGlass)
             {
                 _capsuleGlass?.Dispose();
@@ -2831,8 +2891,137 @@ public sealed partial class TopBarWindow : Window
         }
         _capsuleGlass?.Dispose();
         _capsuleGlass = null;
-        Surface.Background = FrozenBrush(acrylic ? AcrylicSurfaceTint : glass.Surface);
-        Surface.BorderBrush = FrozenBrush(glass.Border);
+        if (highContrast || !BarAdaptiveInkRules.NeedsBackdropSampling(glass.Surface, acrylic))
+        {
+            _sampledBackdrop = null;
+            _lastAdaptiveDarkInk = null;
+            _backdropTimer.Stop();
+        }
+        ApplyAdaptivePalette(glass, acrylic, highContrast);
+        Surface.Background = highContrast
+            ? SystemColors.WindowBrush
+            : FrozenBrush(acrylic ? AcrylicSurfaceTint : glass.Surface);
+        Surface.BorderBrush = highContrast
+            ? SystemColors.WindowTextBrush
+            : FrozenBrush(_palette.BarBorderColor);
+    }
+
+    private void ApplyAdaptivePalette(DockGlass glass, bool acrylic, bool highContrast)
+    {
+        var palette = BarAdaptiveInkRules.ResolveTopBarPalette(
+            glass,
+            acrylic,
+            _sampledBackdrop,
+            _lastAdaptiveDarkInk);
+        _palette = palette;
+        _lastAdaptiveDarkInk = BarAdaptiveInkRules.NeedsBackdropSampling(glass.Surface, acrylic)
+            ? palette.UseDarkInk
+            : null;
+
+        if (highContrast)
+        {
+            Resources["TopBarInkBrush"] = SystemColors.WindowTextBrush;
+            Resources["TopBarMutedInkBrush"] = SystemColors.WindowTextBrush;
+            Resources["TopBarHoverBrush"] = SystemColors.HighlightBrush;
+            Resources["TopBarPressedBrush"] = SystemColors.HighlightBrush;
+            Resources["TopBarSearchBackgroundBrush"] = SystemColors.ControlBrush;
+            Resources["TopBarSearchHoverBrush"] = SystemColors.HighlightBrush;
+            Resources["TopBarSearchBorderBrush"] = SystemColors.WindowTextBrush;
+            Resources["TopBarBadgeBackgroundBrush"] = SystemColors.ControlBrush;
+            Resources["TopBarAttentionBrush"] = SystemColors.HighlightBrush;
+            return;
+        }
+
+        Resources["TopBarInkBrush"] = FrozenBrush(palette.Foreground);
+        Resources["TopBarMutedInkBrush"] = FrozenBrush(palette.MutedForeground);
+        Resources["TopBarHoverBrush"] = FrozenBrush(palette.HoverBackground);
+        Resources["TopBarPressedBrush"] = FrozenBrush(palette.PressedBackground);
+        Resources["TopBarSearchBackgroundBrush"] = FrozenBrush(palette.SearchBackground);
+        Resources["TopBarSearchHoverBrush"] = FrozenBrush(palette.SearchHoverBackground);
+        Resources["TopBarSearchBorderBrush"] = FrozenBrush(palette.SearchBorder);
+        Resources["TopBarBadgeBackgroundBrush"] = FrozenBrush(palette.BadgeBackground);
+        Resources["TopBarAttentionBrush"] = FrozenBrush(palette.AttentionForeground);
+    }
+
+    private void UpdateBackdropSampling(bool immediate)
+    {
+        if (_closing || IsCapsule || !IsVisible || _trueFullScreenForeground
+            || AccessibilityThemeManager.IsHighContrastEnabled || SystemParameters.HighContrast)
+        {
+            _backdropTimer.Stop();
+            return;
+        }
+
+        var glass = DesktopStyleRules.TopBar(_style, _state);
+        if (!BarAdaptiveInkRules.NeedsBackdropSampling(glass.Surface, _acrylicBackdrop))
+        {
+            _backdropTimer.Stop();
+            return;
+        }
+
+        if (!_backdropTimer.IsEnabled)
+        {
+            _backdropTimer.Start();
+        }
+        if (immediate)
+        {
+            ScheduleBackdropSample();
+        }
+    }
+
+    private void ScheduleBackdropSample()
+    {
+        if (_closing || IsCapsule || !IsVisible || _trueFullScreenForeground
+            || AccessibilityThemeManager.IsHighContrastEnabled || SystemParameters.HighContrast)
+        {
+            return;
+        }
+
+        var bounds = _appBar?.Bounds;
+        if (bounds is not { HasArea: true } barBounds)
+        {
+            return;
+        }
+
+        var glass = DesktopStyleRules.TopBar(_style, _state);
+        if (!BarAdaptiveInkRules.NeedsBackdropSampling(glass.Surface, _acrylicBackdrop))
+        {
+            _backdropTimer.Stop();
+            return;
+        }
+
+        if (Interlocked.CompareExchange(ref _backdropSampleInFlight, 1, 0) != 0)
+        {
+            return;
+        }
+
+        var surface = glass.Surface;
+        Task.Run(() =>
+        {
+            try
+            {
+                if (_closing) return;
+                var sampled = ScreenBackdropSampler.SampleTopBarBackdrop(barBounds, surface);
+                if (_closing || sampled is null) return;
+                Dispatcher.BeginInvoke(() =>
+                {
+                    if (_closing || IsCapsule || !IsVisible) return;
+                    _sampledBackdrop = sampled;
+                    var currentGlass = DesktopStyleRules.TopBar(_style, _state);
+                    var highContrast = AccessibilityThemeManager.IsHighContrastEnabled || SystemParameters.HighContrast;
+                    var previousDark = _palette.UseDarkInk;
+                    ApplyAdaptivePalette(currentGlass, _acrylicBackdrop, highContrast);
+                    if (!highContrast && previousDark != _palette.UseDarkInk)
+                    {
+                        Surface.BorderBrush = FrozenBrush(_palette.BarBorderColor);
+                    }
+                });
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _backdropSampleInFlight, 0);
+            }
+        });
     }
 
     /// <summary>Whether the current surface decided to sit on the acrylic scrim.</summary>

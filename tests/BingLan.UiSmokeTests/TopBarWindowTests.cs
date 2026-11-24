@@ -244,6 +244,7 @@ internal static class TopBarWindowTests
             Assert(color.A > 200 && color.R == 0xD8 && color.G == 0xCF && color.B == 0xF0,
                 $"玻璃底画刷应为淡紫 84%，实际 A={color.A} #{color.R:X2}{color.G:X2}{color.B:X2}");
             Assert(!bar.IsAcrylicSurface, "浅色自定义材质不应启用亚克力薄纱（否则 0% 不透明度下发灰）");
+            Assert(bar.UsesDarkInk, "浅色不透明自定义顶栏应自动切换为深色文字与图标");
 
             // What actually reaches the screen: render the surface and sample the middle.
             var render = new System.Windows.Media.Imaging.RenderTargetBitmap(
@@ -407,7 +408,7 @@ internal static class TopBarWindowTests
                 throw new InvalidOperationException("输入法模块应以圆角徽标显示任务栏式中/英文状态");
             }
             var imeName = imePanel.Children.OfType<TextBlock>().FirstOrDefault();
-            if (imeName is null || imeName.Foreground != Brushes.White)
+            if (imeName is null || imeName.Foreground is not SolidColorBrush imeInk || imeInk.Color != Colors.White)
             {
                 throw new InvalidOperationException("输入法模块应在徽标旁以白字显示当前输入法名");
             }

@@ -32,6 +32,7 @@ public static class TopBarTests
         TestRevealZoneAndTopEdge();
         TestThemeTopBarFields();
         TestModuleOrderAndMigration();
+        TestAdaptiveInkAndBackdropRules();
     }
 
     private static void TestDefaultsAndNormalize()
@@ -794,6 +795,126 @@ public static class TopBarTests
                 Directory.Delete(folder, recursive: true);
             }
         }
+    }
+
+    private static void TestAdaptiveInkAndBackdropRules()
+    {
+        var white = new ColorContrastRules.SrgbColor(1d, 1d, 1d, 1d);
+        var black = new ColorContrastRules.SrgbColor(0d, 0d, 0d, 1d);
+
+        // 1. Default dark acrylic top bar needs no sampling and stays light-ink.
+        var defaultBar = DesktopStyleRules.TopBar(new DesktopStyleState(), new TopBarState());
+        Assert(!BarAdaptiveInkRules.NeedsBackdropSampling(defaultBar.Surface, hasDarkAcrylicScrim: true),
+            "默认深色磨砂顶栏不应采样壁纸");
+        var defaultPalette = BarAdaptiveInkRules.ResolveTopBarPalette(defaultBar, hasDarkAcrylicScrim: true, white, null);
+        Assert(!defaultPalette.UseDarkInk && defaultPalette.Foreground == BarAdaptiveInkRules.LightInkColor,
+            "深色磨砂顶栏应保持白字");
+
+        // 2. Opaque light top bar (e.g. following light ice-blue glass) flips to dark ink without sampling.
+        var lightBar = DesktopStyleRules.TopBar(new DesktopStyleState(), new TopBarState { FollowCardLook = true });
+        Assert(!BarAdaptiveInkRules.NeedsBackdropSampling(lightBar.Surface, hasDarkAcrylicScrim: false),
+            "不透明浅色顶栏不需要采样壁纸");
+        var lightPalette = BarAdaptiveInkRules.ResolveTopBarPalette(lightBar, hasDarkAcrylicScrim: false, black, null);
+        Assert(lightPalette.UseDarkInk && lightPalette.Foreground == BarAdaptiveInkRules.DarkInkColor,
+            "不透明浅色顶栏应使用深色文字与图标");
+        Assert(ColorContrastRules.ParseHex(lightPalette.Flyout.Background).A >= BarAdaptiveInkRules.MinimumLightFlyoutOpacity - 0.01d,
+            "浅色顶栏浮层应保持高不透明度");
+
+        // 3. Repro case: 0% transparent cyan top bar over pure white vs dark wallpaper.
+        var clearCyanBar = DesktopStyleRules.TopBar(new DesktopStyleState(), new TopBarState
+        {
+            FollowCardLook = false,
+            SurfaceColor = "#00FFFF",
+            SurfaceOpacity = 0d
+        });
+        Assert(BarAdaptiveInkRules.NeedsBackdropSampling(clearCyanBar.Surface, hasDarkAcrylicScrim: false),
+            "0% 透明顶栏需要采样底层壁纸亮度");
+        var overWhiteBar = BarAdaptiveInkRules.ResolveTopBarPalette(clearCyanBar, hasDarkAcrylicScrim: false, white, null);
+        Assert(overWhiteBar.UseDarkInk && overWhiteBar.Foreground == BarAdaptiveInkRules.DarkInkColor,
+            "纯白壁纸上的全透明顶栏应切深色字");
+        Assert(overWhiteBar.BarBorderColor != "#00FFFFFF",
+            "纯白壁纸上的全透明顶栏应补细暗色底边线");
+        Assert(overWhiteBar.Flyout.UseDarkInk && overWhiteBar.Flyout.Background == BarAdaptiveInkRules.ClearLightFlyoutBackground,
+            "纯白壁纸上全透明顶栏的弹出浮层应使用不透明浅色底板配深色文字");
+
+        var overBlackBar = BarAdaptiveInkRules.ResolveTopBarPalette(clearCyanBar, hasDarkAcrylicScrim: false, black, overWhiteBar.UseDarkInk);
+        Assert(!overBlackBar.UseDarkInk && overBlackBar.Foreground == BarAdaptiveInkRules.LightInkColor,
+            "切回暗色壁纸后全透明顶栏应切回白字");
+        Assert(!overBlackBar.Flyout.UseDarkInk && overBlackBar.Flyout.Background == BarAdaptiveInkRules.ClearDarkFlyoutBackground,
+            "暗色壁纸上全透明顶栏的弹出浮层应使用深色底板配白字");
+
+        // 4. Hysteresis prevents flapping around mid-grey dynamic wallpapers.
+        var midGrey = new ColorContrastRules.SrgbColor(0.72d, 0.72d, 0.72d, 1d); // luminance ~0.48
+        Assert(BarAdaptiveInkRules.ResolveUseDarkInk(clearCyanBar.Surface, false, midGrey, previousUseDarkInk: true),
+            "临界灰下原深色字应保持深色防闪烁");
+        Assert(!BarAdaptiveInkRules.ResolveUseDarkInk(clearCyanBar.Surface, false, midGrey, previousUseDarkInk: false),
+            "临界灰下原白色字应保持白色防闪烁");
+
+        // 5. Uncompositing removes translucent bar tint accurately.
+        var tint = ColorContrastRules.ParseHex("#4000FFFF"); // ~25% cyan over black -> observed ~25% cyan
+        var observed = ColorContrastRules.CompositeOver(tint, black);
+        var recovered = BarAdaptiveInkRules.UncompositeOverSurface(observed, "#4000FFFF");
+        Assert(recovered.R < 0.02d && recovered.G < 0.02d && recovered.B < 0.02d,
+            "反混色应从半透明顶栏观测色中还原真实暗壁纸");
+
+        // 6. Median luminance ignores outlier sample points (such as mouse cursor).
+        var samples = new[] { white, white, white, black, white };
+        var rep = BarAdaptiveInkRules.PickRepresentativeBackdropColor(samples);
+        Assert(rep is { R: > 0.99d, G: > 0.99d, B: > 0.99d }, "中位数采样应忽略单个离群暗点");
+
+        // 7. Repro case: 5% white custom Dock over pure white vs dark wallpaper.
+        var lowWhiteDock = DesktopStyleRules.Dock(new DesktopStyleState(), new DockState
+        {
+            FollowCardLook = false,
+            SurfaceColor = "#FFFFFF",
+            SurfaceOpacity = 0.05d
+        });
+        Assert(BarAdaptiveInkRules.NeedsBackdropSampling(lowWhiteDock.Surface, hasDarkAcrylicScrim: false),
+            "5% 不透明度 Dock 需要采样底层壁纸");
+        var dockOverWhite = BarAdaptiveInkRules.ResolveDockAdaptiveColors(lowWhiteDock, white, null);
+        Assert(dockOverWhite.UseDarkInk
+            && dockOverWhite.RunningDot == BarAdaptiveInkRules.DarkRunningDotColor
+            && dockOverWhite.Border == BarAdaptiveInkRules.LightSurfaceDarkBorderColor
+            && dockOverWhite.Divider == BarAdaptiveInkRules.LightSurfaceDarkDividerColor,
+            "纯白壁纸上的 5% 白色 Dock 应切深色功能图标、运行点、分割线与细轮廓边框");
+
+        var dockOverBlack = BarAdaptiveInkRules.ResolveDockAdaptiveColors(lowWhiteDock, black, dockOverWhite.UseDarkInk);
+        Assert(!dockOverBlack.UseDarkInk
+            && dockOverBlack.RunningDot == BarAdaptiveInkRules.LightRunningDotColor
+            && dockOverBlack.Border == "#BFFFFFFF",
+            "暗色壁纸上的 5% 白色 Dock 应恢复白色图标、运行点与边框");
+
+        // 8. Default opaque light ice-blue Dock keeps its signature white glass border highlight.
+        var defaultDock = DesktopStyleRules.Dock(new DesktopStyleState());
+        Assert(!BarAdaptiveInkRules.NeedsBackdropSampling(defaultDock.Surface, hasDarkAcrylicScrim: false),
+            "默认 82% 浅色冰蓝 Dock 不需要采样壁纸");
+        var defaultDockAdaptive = BarAdaptiveInkRules.ResolveDockAdaptiveColors(defaultDock, black, null);
+        Assert(defaultDockAdaptive.UseDarkInk
+            && defaultDockAdaptive.RunningDot == BarAdaptiveInkRules.DarkRunningDotColor
+            && defaultDockAdaptive.Border == "#BFFFFFFF",
+            "默认不透明冰蓝 Dock 应保留白色玻璃高光描边并使用深色图标与分割线");
+
+        // 9. Clear (no-backing) Dock keeps transparent outer border while still flipping icons/divider on white wallpaper.
+        var clearStyle = new DesktopStyleState { Glass = GlassMode.Clear };
+        var clearDock = DesktopStyleRules.Dock(clearStyle);
+        var clearDockOverWhite = BarAdaptiveInkRules.ResolveDockAdaptiveColors(clearDock, white, null);
+        Assert(clearDockOverWhite.UseDarkInk
+            && clearDockOverWhite.Border == "#00FFFFFF"
+            && clearDockOverWhite.RunningDot == BarAdaptiveInkRules.DarkRunningDotColor
+            && clearDockOverWhite.Divider == BarAdaptiveInkRules.LightSurfaceDarkDividerColor,
+            "无底板 Dock 在纯白壁纸上不强加外框，同时切深色功能按钮、运行点与分割线");
+
+        // 10. Dock external sample strip geometry stays strictly outside the dock bounds.
+        var monitor = new PixelRect(0, 0, 2560, 1600);
+        var bottomDock = new PixelRect(700, 1480, 1860, 1558);
+        var bottomStrip = BarAdaptiveInkRules.ComputeDockSampleStrip(bottomDock, monitor, DockEdge.Bottom);
+        Assert(bottomStrip is { Top: > 1558, Height: 1, Width: > 100 }, "底部留白 Dock 应在胶囊下方外侧采样");
+        var flushBottomDock = new PixelRect(700, 1522, 1860, 1600);
+        var flushStrip = BarAdaptiveInkRules.ComputeDockSampleStrip(flushBottomDock, monitor, DockEdge.Bottom);
+        Assert(flushStrip is { Width: 1, Left: < 700 }, "贴底边 Dock 应在胶囊侧方外侧采样");
+        var leftDock = new PixelRect(20, 400, 96, 1200);
+        var leftStrip = BarAdaptiveInkRules.ComputeDockSampleStrip(leftDock, monitor, DockEdge.Left);
+        Assert(leftStrip is { Width: 1, Left: < 20 }, "左侧 Dock 应在胶囊外侧采样");
     }
 
     [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]

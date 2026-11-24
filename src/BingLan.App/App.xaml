@@ -126,6 +126,7 @@
              of its own (the ice-blue accent lightened) so it reads on any background. -->
         <SolidColorBrush x:Key="DockHandleBrush" Color="#F2AACEF8"/>
         <SolidColorBrush x:Key="DockSurfaceBorderBrush" Color="#BFFFFFFF"/>
+        <SolidColorBrush x:Key="DockDividerBrush" Color="#38122C44"/>
         <SolidColorBrush x:Key="DockActiveDotBrush" Color="#E0559EF3"/>
         <!-- The lively blue of the performance bars and download rate. -->
         <SolidColorBrush x:Key="PerformanceAccentBrush" Color="#F51EA9FF"/>

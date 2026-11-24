@@ -12,6 +12,7 @@ namespace BingLan.App.Dock;
 internal sealed class DockHost : IDisposable
 {
     private readonly DockState _state;
+    private readonly DesktopStyleState _style;
     private readonly Action _stateChanged;
     private readonly Action _openSettings;
     private readonly Action<string> _notify;
@@ -19,11 +20,13 @@ internal sealed class DockHost : IDisposable
 
     internal DockHost(
         DockState state,
+        DesktopStyleState style,
         Action stateChanged,
         Action openSettings,
         Action<string> notify)
     {
         _state = state;
+        _style = style;
         _stateChanged = stateChanged;
         _openSettings = openSettings;
         _notify = notify;
@@ -50,6 +53,9 @@ internal sealed class DockHost : IDisposable
 
     internal void EnsureAboveDesktop() =>
         _window?.EnsureAboveDesktop();
+
+    internal void RefreshAdaptiveAppearance() =>
+        _window?.RefreshAdaptiveAppearance();
 
     internal void Apply()
     {
@@ -103,7 +109,7 @@ internal sealed class DockHost : IDisposable
 
     private void Open()
     {
-        var window = new IceBlueDockWindow(_state)
+        var window = new IceBlueDockWindow(_state, _style)
         {
             ReadFileBoxes = ReadFileBoxes,
             SendToFileBox = SendToFileBox,

@@ -123,6 +123,7 @@ public sealed partial class WidgetCoordinator : IDisposable
         ApplyStyleSettings();
         _dock = new DockHost(
             _state.Dock,
+            _state.Style,
             () =>
             {
                 ScheduleSave();
@@ -2340,10 +2341,14 @@ public sealed partial class WidgetCoordinator : IDisposable
         resources["WidgetSubtleControlBrush"] = Brush(rendered.SubtleControlColor);
         resources["WidgetControlBrush"] = Brush(rendered.ControlColor);
         var dock = DesktopStyleRules.Dock(_state.Style, _state.Dock);
+        var dockAdaptive = BarAdaptiveInkRules.ResolveDockAdaptiveColors(dock, sampledBackdrop: null, previousUseDarkInk: null);
         resources["DockSurfaceBrush"] = Brush(dock.Surface);
         resources["DockSurfaceBorderBrush"] = Brush(dock.Border);
+        resources["DockDividerBrush"] = Brush(dockAdaptive.Divider);
         resources["DockRunningDotBrush"] = Brush(dock.RunningDot);
         FloatingGlassPalette.Apply(resources, dock);
+        _dock?.RefreshAdaptiveAppearance();
+        _topBar?.RefreshAppearance();
         _launcherPanel?.ApplyAppearance();
         resources["PerformanceAccentBrush"] = Brush("#F5" + _state.Style.AccentColor.TrimStart('#'));
         // A whisper of the accent colour behind an entry whose deadline is due soon.

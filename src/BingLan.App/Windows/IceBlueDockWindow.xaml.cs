@@ -177,9 +177,17 @@ public partial class IceBlueDockWindow : Window
     private PixelRect? _appliedHitRegion;
     private int _magReturnGeneration;
 
-    internal IceBlueDockWindow(DockState state)
+    private static readonly TimeSpan BackdropSampleInterval = TimeSpan.FromMilliseconds(1500);
+    private readonly DesktopStyleState _style;
+    private readonly DispatcherTimer _backdropTimer;
+    private int _backdropSampleInFlight;
+    private ColorContrastRules.SrgbColor? _sampledBackdrop;
+    private bool? _lastAdaptiveDarkInk;
+
+    internal IceBlueDockWindow(DockState state, DesktopStyleState? style = null)
     {
         _state = state;
+        _style = style ?? new DesktopStyleState();
         InitializeComponent();
         _morph = new DockMorphAnimator(DockSurface);
         _glass = new DockGlassSurface(
@@ -238,7 +246,16 @@ public partial class IceBlueDockWindow : Window
             (_, _) => OnDragHoverTick(),
             Dispatcher);
         _dragHoverTimer.Stop();
+        _backdropTimer = new DispatcherTimer(
+            BackdropSampleInterval,
+            DispatcherPriority.Background,
+            (_, _) => ScheduleBackdropSample(),
+            Dispatcher);
+        _backdropTimer.Stop();
+        IsVisibleChanged += (_, _) => UpdateBackdropSampling(immediate: IsVisible);
+        AccessibilityThemeManager.HighContrastChanged += OnHighContrastChanged;
         _magTimer = new RenderFrameTicker(StepMagnification);
+        SystemParameters.StaticPropertyChanged += OnSystemParametersChanged;
         SourceInitialized += OnSourceInitialized;
         SizeChanged += (_, _) => SyncMagnificationHitRegion();
         Closing += OnClosing;
@@ -433,6 +450,7 @@ public partial class IceBlueDockWindow : Window
             edge,
             topBarBottomPx);
         SyncMagnificationHitRegion();
+        RefreshAdaptiveAppearance();
         if (!reserveWorkArea || _appBar.IsReserved)
         {
             _reservationFailureReported = false;
@@ -696,8 +714,11 @@ public partial class IceBlueDockWindow : Window
         _foregroundTimer.Stop();
         _yieldReleaseTimer.Stop();
         _yieldHideTimer.Stop();
+        _backdropTimer.Stop();
+        AccessibilityThemeManager.HighContrastChanged -= OnHighContrastChanged;
         _magTimer.Stop();
         _magClock.Stop();
+        SystemParameters.StaticPropertyChanged -= OnSystemParametersChanged;
         _watcher.Dispose();
         _maximizeWatcher.Dispose();
         _appBar?.Dispose();
@@ -858,10 +879,10 @@ public partial class IceBlueDockWindow : Window
             Text = "\uE712",
             FontFamily = new System.Windows.Media.FontFamily("Segoe Fluent Icons"),
             FontSize = Math.Max(10, _effectiveIconSize * 0.5),
-            Foreground = System.Windows.Media.Brushes.White,
             HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center
         };
+        glyph.SetResourceReference(TextBlock.ForegroundProperty, "DockRunningDotBrush");
         var button = new Button
         {
             Content = glyph,
@@ -1066,7 +1087,7 @@ public partial class IceBlueDockWindow : Window
                 Margin = new Thickness(0, 6, 0, 6),
                 HorizontalAlignment = System.Windows.HorizontalAlignment.Center
             };
-            horizontalDivider.SetResourceReference(Border.BackgroundProperty, "DockSurfaceBorderBrush");
+            horizontalDivider.SetResourceReference(Border.BackgroundProperty, "DockDividerBrush");
             return horizontalDivider;
         }
 
@@ -1077,7 +1098,7 @@ public partial class IceBlueDockWindow : Window
             Margin = new Thickness(6, 0, 6, 0),
             VerticalAlignment = System.Windows.VerticalAlignment.Center
         };
-        divider.SetResourceReference(Border.BackgroundProperty, "DockSurfaceBorderBrush");
+        divider.SetResourceReference(Border.BackgroundProperty, "DockDividerBrush");
         return divider;
     }
 
@@ -1400,6 +1421,160 @@ public partial class IceBlueDockWindow : Window
         });
     }
 
+    internal void RefreshAdaptiveAppearance()
+    {
+        if (_closing)
+        {
+            return;
+        }
+
+        var highContrast = AccessibilityThemeManager.IsHighContrastEnabled || SystemParameters.HighContrast;
+        if (highContrast)
+        {
+            _sampledBackdrop = null;
+            _lastAdaptiveDarkInk = null;
+            _backdropTimer.Stop();
+            Resources.Remove("DockRunningDotBrush");
+            Resources.Remove("DockSurfaceBorderBrush");
+            Resources.Remove("DockDividerBrush");
+            return;
+        }
+
+        var baseGlass = DesktopStyleRules.Dock(_style, _state);
+        var needsSampling = BarAdaptiveInkRules.NeedsBackdropSampling(baseGlass.Surface, hasDarkAcrylicScrim: false);
+        if (!needsSampling)
+        {
+            _sampledBackdrop = null;
+            _lastAdaptiveDarkInk = null;
+            _backdropTimer.Stop();
+        }
+
+        ApplyDockAdaptiveResources(baseGlass, needsSampling);
+        UpdateBackdropSampling(immediate: needsSampling);
+    }
+
+    private void OnHighContrastChanged(object? sender, EventArgs e) =>
+        Dispatcher.BeginInvoke(RefreshAdaptiveAppearance);
+
+    private void ApplyDockAdaptiveResources(DockGlass baseGlass, bool needsSampling)
+    {
+        var adaptive = BarAdaptiveInkRules.ResolveDockAdaptiveColors(
+            baseGlass,
+            needsSampling ? _sampledBackdrop : null,
+            needsSampling ? _lastAdaptiveDarkInk : null);
+        _lastAdaptiveDarkInk = needsSampling ? adaptive.UseDarkInk : null;
+
+        Resources["DockRunningDotBrush"] = CreateFrozenBrush(adaptive.RunningDot);
+        Resources["DockSurfaceBorderBrush"] = CreateFrozenBrush(adaptive.Border);
+        Resources["DockDividerBrush"] = CreateFrozenBrush(adaptive.Divider);
+    }
+
+    private void UpdateBackdropSampling(bool immediate)
+    {
+        if (_closing || !IsVisible || _hiddenBySmartHide || _trueFullScreenForeground
+            || AccessibilityThemeManager.IsHighContrastEnabled || SystemParameters.HighContrast)
+        {
+            _backdropTimer.Stop();
+            return;
+        }
+
+        var baseGlass = DesktopStyleRules.Dock(_style, _state);
+        if (!BarAdaptiveInkRules.NeedsBackdropSampling(baseGlass.Surface, hasDarkAcrylicScrim: false))
+        {
+            _backdropTimer.Stop();
+            return;
+        }
+
+        if (!_backdropTimer.IsEnabled)
+        {
+            _backdropTimer.Start();
+        }
+        if (immediate)
+        {
+            ScheduleBackdropSample();
+        }
+    }
+
+    private void ScheduleBackdropSample()
+    {
+        if (_closing || !IsVisible || _hiddenBySmartHide || _trueFullScreenForeground
+            || AccessibilityThemeManager.IsHighContrastEnabled || SystemParameters.HighContrast)
+        {
+            return;
+        }
+
+        if (_appBar?.Monitor is not { } monitor)
+        {
+            return;
+        }
+
+        var baseGlass = DesktopStyleRules.Dock(_style, _state);
+        if (!BarAdaptiveInkRules.NeedsBackdropSampling(baseGlass.Surface, hasDarkAcrylicScrim: false))
+        {
+            _backdropTimer.Stop();
+            return;
+        }
+
+        var dockBounds = GetDockSurfacePixelRect();
+        if (!dockBounds.HasArea)
+        {
+            return;
+        }
+
+        if (Interlocked.CompareExchange(ref _backdropSampleInFlight, 1, 0) != 0)
+        {
+            return;
+        }
+
+        var monitorBounds = monitor.Bounds;
+        var edge = CurrentEdge;
+        Task.Run(() =>
+        {
+            try
+            {
+                if (_closing) return;
+                var sampled = ScreenBackdropSampler.SampleDockBackdrop(dockBounds, monitorBounds, edge);
+                if (_closing || sampled is null) return;
+                Dispatcher.BeginInvoke(() =>
+                {
+                    if (_closing || !IsVisible || _hiddenBySmartHide) return;
+                    if (AccessibilityThemeManager.IsHighContrastEnabled || SystemParameters.HighContrast) return;
+                    _sampledBackdrop = sampled;
+                    var currentGlass = DesktopStyleRules.Dock(_style, _state);
+                    var stillNeedsSampling = BarAdaptiveInkRules.NeedsBackdropSampling(
+                        currentGlass.Surface,
+                        hasDarkAcrylicScrim: false);
+                    ApplyDockAdaptiveResources(currentGlass, stillNeedsSampling);
+                });
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _backdropSampleInFlight, 0);
+            }
+        });
+    }
+
+    private PixelRect GetDockSurfacePixelRect()
+    {
+        if (_glass.BackgroundBounds is { HasArea: true } backdropBounds)
+        {
+            return backdropBounds;
+        }
+        if (_handle != 0 && DockNativeMethods.GetWindowRect(_handle, out var native))
+        {
+            return new PixelRect(native.Left, native.Top, native.Right, native.Bottom);
+        }
+        return _appBar?.Bounds ?? default;
+    }
+
+    private static SolidColorBrush CreateFrozenBrush(string hex)
+    {
+        var brush = new SolidColorBrush(
+            (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(hex)!);
+        brush.Freeze();
+        return brush;
+    }
+
     private static readonly SolidColorBrush UnreadPillBrush = CreateUnreadPillBrush();
 
     private static SolidColorBrush CreateUnreadPillBrush()
@@ -1623,6 +1798,40 @@ public partial class IceBlueDockWindow : Window
         {
             StopMagnification(animateReturn: true);
         }
+    }
+
+    private void OnSystemParametersChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (_closing || !_state.HoverMagnification)
+        {
+            return;
+        }
+
+        if (e.PropertyName is not (nameof(SystemParameters.ClientAreaAnimation) or null or ""))
+        {
+            return;
+        }
+
+        Dispatcher.BeginInvoke(
+            DispatcherPriority.Background,
+            () =>
+            {
+                if (_closing || !_state.HoverMagnification)
+                {
+                    return;
+                }
+
+                var desiredOverflow = DockMagnificationRules.RequiredTopOverflowDip(
+                    _state.HoverMagnification,
+                    _state.HoverMagnificationScale,
+                    _effectiveIconSize,
+                    Motion,
+                    SystemParameters.ClientAreaAnimation);
+                if (Math.Abs(desiredOverflow - _topOverflowDip) > 0.01d)
+                {
+                    ApplyState();
+                }
+            });
     }
 
     private void StepMagnification()
@@ -2095,8 +2304,10 @@ public partial class IceBlueDockWindow : Window
         {
             existing.IsOpen = false;
         }
-        var darkSurface = TryFindResource("DockSurfaceBrush") is SolidColorBrush brush
-            && (0.2126d * brush.Color.R + 0.7152d * brush.Color.G + 0.0722d * brush.Color.B) / 255d <= 0.6d;
+        var darkSurface = _lastAdaptiveDarkInk is { } adaptiveDarkInk
+            ? !adaptiveDarkInk
+            : TryFindResource("DockSurfaceBrush") is SolidColorBrush brush
+                && (0.2126d * brush.Color.R + 0.7152d * brush.Color.G + 0.0722d * brush.Color.B) / 255d <= 0.6d;
         var menu = new NonActivatingPopupMenu(placementTarget ?? DockSurface, placement, darkSurface);
         menu.Opened += (_, _) =>
         {

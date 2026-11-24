@@ -207,6 +207,7 @@ internal static class AccessibilityThemeManager
         Set(resources, "DockSurfaceBrush", SystemColors.WindowBrush);
         Set(resources, "DockHandleBrush", SystemColors.WindowBrush);
         Set(resources, "DockSurfaceBorderBrush", SystemColors.WindowTextBrush);
+        Set(resources, "DockDividerBrush", SystemColors.WindowTextBrush);
         Set(resources, "DockActiveDotBrush", SystemColors.HighlightBrush);
         Set(resources, "PerformanceAccentBrush", SystemColors.HighlightBrush);
         Set(resources, "TodoDueSoonBrush", SystemColors.HighlightBrush);
@@ -318,6 +319,7 @@ internal static class AccessibilityThemeManager
         Set(resources, "DockSurfaceBrush", Brush("#D6EAF5FC"));
         Set(resources, "DockHandleBrush", Brush("#F2AACEF8"));
         Set(resources, "DockSurfaceBorderBrush", Brush("#BFFFFFFF"));
+        Set(resources, "DockDividerBrush", Brush("#38122C44"));
         Set(resources, "DockActiveDotBrush", Brush("#E0559EF3"));
         Set(resources, "PerformanceAccentBrush", Brush("#F51EA9FF"));
         Set(resources, "TodoDueSoonBrush", Brush("#261EA9FF"));
