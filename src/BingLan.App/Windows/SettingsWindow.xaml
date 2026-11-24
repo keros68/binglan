@@ -2460,6 +2460,16 @@
                                             </StackPanel>
                                         </Border>
                                     </local:SettingsRow>
+                                    <local:SettingsRow x:Name="DockMaximizeReleaseRow"
+                                                       Header="最大化窗口时临时隐藏并释放底部空间"
+                                                       Description="开启后，最大化窗口时 Dock 会临时隐藏并释放底部空间，鼠标移到屏幕底边或把手可临时唤出；希望最大化时也始终显示 Dock 请关闭此项"
+                                                       local:SettingsSearch.Keywords="让出底部空间 释放底部空间 临时隐藏">
+                                        <CheckBox x:Name="DockMaximizeReleaseCheckBox"
+                                                  AutomationProperties.Name="最大化窗口时临时隐藏并释放底部空间"
+                                                  Style="{StaticResource ToggleSwitchStyle}"
+                                                  Checked="DockSetting_Changed"
+                                                  Unchecked="DockSetting_Changed"/>
+                                    </local:SettingsRow>
                                     <local:SettingsRow x:Name="DockRevealModeRow"
                                                        Header="唤出方式"
                                                        Description="仅控制冰蓝 Dock 隐藏后如何重新显示（控制 Windows 原生任务栏请到「Windows 任务栏 → 鼠标触边唤出」）。不想右下角出现小把手时，选“只用屏幕底边（不显示把手）”"
@@ -2486,7 +2496,8 @@
                                             <TextBlock x:Name="DockIconSizeText" Style="{StaticResource ValueTextStyle}"/>
                                         </StackPanel>
                                     </local:SettingsRow>
-                                    <local:SettingsRow Header="悬停放大图标"
+                                    <local:SettingsRow x:Name="DockHoverMagnificationRow"
+                                                       Header="悬停放大图标"
                                                        Description="鼠标靠近 Dock 图标时按距离平滑放大（macOS 风格），遵守动效与系统动画设置"
                                                        local:SettingsSearch.Keywords="Dock 放大 悬停放大 波浪 macOS">
                                         <CheckBox x:Name="DockHoverMagnificationCheckBox"
@@ -2643,16 +2654,6 @@
                                                 <ComboBoxItem Content="减弱" Tag="Reduced"/>
                                                 <ComboBoxItem Content="关闭" Tag="Off"/>
                                             </ComboBox>
-                                        </local:SettingsRow>
-                                        <local:SettingsRow x:Name="DockMaximizeReleaseRow"
-                                                           Header="最大化窗口时临时隐藏并释放底部空间"
-                                                           Description="开启后，最大化窗口时 Dock 会临时隐藏并释放底部空间，鼠标移到屏幕底边或把手可临时唤出；希望最大化时也始终显示 Dock 请关闭此项"
-                                                           local:SettingsSearch.Keywords="让出底部空间 释放底部空间 临时隐藏">
-                                            <CheckBox x:Name="DockMaximizeReleaseCheckBox"
-                                                      AutomationProperties.Name="最大化窗口时临时隐藏并释放底部空间"
-                                                      Style="{StaticResource ToggleSwitchStyle}"
-                                                      Checked="DockSetting_Changed"
-                                                      Unchecked="DockSetting_Changed"/>
                                         </local:SettingsRow>
                                         <local:SettingsRow x:Name="DockAutoHideAlwaysRow"
                                                            Header="始终自动隐藏"

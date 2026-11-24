@@ -23,6 +23,76 @@ public static class DockMagnificationRules
             ? Math.Clamp(scale, DockState.MinimumHoverMagnificationScale, DockState.MaximumHoverMagnificationScale)
             : DockState.DefaultHoverMagnificationScale;
 
+    /// <summary>Default description shown for the Dock hover magnification toggle.</summary>
+    public const string DefaultSettingDescription =
+        "鼠标靠近 Dock 图标时按距离平滑放大（macOS 风格），遵守动效与系统动画设置";
+
+    /// <summary>
+    /// Explains why an enabled hover magnification toggle currently has no effect, or returns
+    /// <c>null</c> when magnification is disabled or ready to run.
+    /// </summary>
+    public static string? InactiveReason(
+        bool enabled,
+        MotionLevel motion,
+        bool systemAnimationsEnabled)
+    {
+        if (!enabled)
+        {
+            return null;
+        }
+
+        if (!systemAnimationsEnabled && motion == MotionLevel.Off)
+        {
+            return "当前 Windows 已关闭动画效果，且下方「尺寸与高级 → 动效」设为关闭，悬停放大暂不生效（请开启 Windows「设置 → 辅助功能 → 视觉效果 → 动画效果」并将动效改为标准或减弱）";
+        }
+
+        if (!systemAnimationsEnabled)
+        {
+            return "当前 Windows 已关闭动画效果，悬停放大暂不生效（可在 Windows「设置 → 辅助功能 → 视觉效果 → 动画效果」中开启）";
+        }
+
+        if (motion == MotionLevel.Off)
+        {
+            return "当前「动效」已关闭，悬停放大暂不生效（可在下方「尺寸与高级 → 动效」中改为标准或减弱）";
+        }
+
+        return null;
+    }
+
+    public static string SettingDescription(
+        bool enabled,
+        MotionLevel motion,
+        bool systemAnimationsEnabled) =>
+        InactiveReason(enabled, motion, systemAnimationsEnabled) ?? DefaultSettingDescription;
+
+    public static string ToggleStatusMessage(
+        bool enabled,
+        MotionLevel motion,
+        bool systemAnimationsEnabled)
+    {
+        if (!enabled)
+        {
+            return "已关闭 Dock 悬停放大";
+        }
+
+        if (!systemAnimationsEnabled && motion == MotionLevel.Off)
+        {
+            return "已开启悬停放大，但 Windows 动画与 Dock 动效均已关闭，暂不生效";
+        }
+
+        if (!systemAnimationsEnabled)
+        {
+            return "已开启悬停放大，但 Windows 已关闭动画效果，暂不生效";
+        }
+
+        if (motion == MotionLevel.Off)
+        {
+            return "已开启悬停放大，但 Dock「动效」已关闭，暂不生效";
+        }
+
+        return "已开启 Dock 悬停放大";
+    }
+
     /// <summary>
     /// Effective peak scale after honouring the feature toggle, Dock motion level, and the
     /// OS "show animations" preference. Returns 1 when magnification must stay off.

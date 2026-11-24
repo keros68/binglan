@@ -142,8 +142,6 @@ public static class SettingsFoldRules
         ["DockHoverMagnificationScaleSlider"] = DockAdvancedFold,
         ["DockBottomGapSlider"] = DockAdvancedFold,
         ["MotionSelector"] = DockAdvancedFold,
-        ["DockMaximizeReleaseRow"] = DockAdvancedFold,
-        ["DockMaximizeReleaseCheckBox"] = DockAdvancedFold,
         ["DockHiddenList"] = DockAdvancedFold,
 
         // TopBarPage -> TopBarOrderFold / TopBarAdvancedFold

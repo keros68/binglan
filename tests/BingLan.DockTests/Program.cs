@@ -2626,6 +2626,32 @@ static void TestDockHoverMagnification()
         "保持关闭时允许重置槽位");
     Assert(!DockMagnificationRules.ShouldResetSlotsOnOverflowChange(44d, 52d),
         "保持开启仅改变放大倍率或尺寸时不应中断当前悬停放大");
+
+    // 悬停放大受系统动画或动效档位限制时的设置页原因提示。
+    Assert(DockMagnificationRules.InactiveReason(false, MotionLevel.Off, false) is null,
+        "开关关闭时不应显示暂不生效提示");
+    Assert(DockMagnificationRules.InactiveReason(true, MotionLevel.Standard, true) is null
+            && DockMagnificationRules.InactiveReason(true, MotionLevel.Reduced, true) is null,
+        "系统动画开启且动效非关闭时不应显示暂不生效提示");
+    Assert(DockMagnificationRules.SettingDescription(true, MotionLevel.Standard, true)
+            == DockMagnificationRules.DefaultSettingDescription,
+        "正常生效时应保留默认说明文案");
+    var osOffReason = DockMagnificationRules.InactiveReason(true, MotionLevel.Standard, false);
+    Assert(osOffReason is not null && osOffReason.Contains("动画效果", StringComparison.Ordinal),
+        "系统关闭动画时应明确提示开启 Windows 动画效果");
+    var motionOffReason = DockMagnificationRules.InactiveReason(true, MotionLevel.Off, true);
+    Assert(motionOffReason is not null && motionOffReason.Contains("动效", StringComparison.Ordinal),
+        "Dock 动效设为关闭时应明确提示修改动效档位");
+    var bothOffReason = DockMagnificationRules.InactiveReason(true, MotionLevel.Off, false);
+    Assert(bothOffReason is not null
+            && bothOffReason.Contains("动画效果", StringComparison.Ordinal)
+            && bothOffReason.Contains("动效", StringComparison.Ordinal),
+        "系统动画与 Dock 动效同时关闭时应同时提示两项原因");
+    Assert(DockMagnificationRules.ToggleStatusMessage(true, MotionLevel.Standard, false).Contains("暂不生效", StringComparison.Ordinal)
+            && DockMagnificationRules.ToggleStatusMessage(true, MotionLevel.Off, true).Contains("暂不生效", StringComparison.Ordinal)
+            && DockMagnificationRules.ToggleStatusMessage(true, MotionLevel.Standard, true) == "已开启 Dock 悬停放大"
+            && DockMagnificationRules.ToggleStatusMessage(false, MotionLevel.Off, false) == "已关闭 Dock 悬停放大",
+        "切换悬停放大后的状态反馈应如实反映是否受动画设置限制");
 }
 
 static void TestDockEdgeWording()

@@ -239,8 +239,12 @@ public partial class SettingsWindow : Window
         // The index reads the finished pages once, after the window has shown.
         Loaded += (_, _) => Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, () => _ = SearchIndex);
         Deactivated += (_, _) => SettingsSearchPopup.IsOpen = false;
-        // Back from Windows' own taskbar settings: show what is there now.
-        Activated += (_, _) => LoadTaskbarSettings();
+        // Back from Windows' own taskbar or visual-effects settings: show what is there now.
+        Activated += (_, _) =>
+        {
+            LoadTaskbarSettings();
+            RefreshDockHoverMagnificationHint();
+        };
         LocationChanged += (_, _) => SettingsSearchPopup.IsOpen = false;
         SystemParameters.StaticPropertyChanged += SystemParameters_Changed;
         DpiChanged += SettingsWindow_DpiChanged;
@@ -309,6 +313,16 @@ public partial class SettingsWindow : Window
                     ApplyHostWorkAreaConstraint(recenter: false);
                 }
                 UpdatePresetPreview(GetSelectedPreset());
+            });
+        }
+        else if (e.PropertyName is nameof(SystemParameters.ClientAreaAnimation) or null or "")
+        {
+            Dispatcher.InvokeAsync(() =>
+            {
+                if (!_isClosed)
+                {
+                    RefreshDockHoverMagnificationHint();
+                }
             });
         }
     }
@@ -2404,6 +2418,7 @@ public partial class SettingsWindow : Window
         _maintenance.Style.CardSpacing = double.Parse(spacingTag, System.Globalization.CultureInfo.InvariantCulture);
         _maintenance.Style.Motion = Enum.Parse<MotionLevel>(motionTag);
         _maintenance.ApplyStyle();
+        RefreshDockHoverMagnificationHint();
     }
 
     private void GridSnapCheckBox_Changed(object sender, RoutedEventArgs e)
@@ -3018,6 +3033,7 @@ public partial class SettingsWindow : Window
             DockHoverMagnificationScaleSlider.Value = magScale;
             DockHoverMagnificationScaleText.Text = $"{magScale:0.00}×";
             DockHoverMagnificationScaleRow.IsEnabled = _dockState.HoverMagnification;
+            RefreshDockHoverMagnificationHint();
             QuietTaskbarFlashCheckBox.IsChecked = !BingLan.App.Services.TaskbarFlashingSetting.IsEnabled();
             LoadDockLook();
             DockIconSizeText.Text = $"{_dockState.IconSize:0}";
@@ -3917,7 +3933,24 @@ public partial class SettingsWindow : Window
 
         _dockState.HoverMagnification = DockHoverMagnificationCheckBox.IsChecked == true;
         DockHoverMagnificationScaleRow.IsEnabled = _dockState.HoverMagnification;
-        ApplyDockChange(_dockState.HoverMagnification ? "已开启 Dock 悬停放大" : "已关闭 Dock 悬停放大");
+        RefreshDockHoverMagnificationHint();
+        ApplyDockChange(DockMagnificationRules.ToggleStatusMessage(
+            _dockState.HoverMagnification,
+            _maintenance.Style.Motion,
+            SystemParameters.ClientAreaAnimation));
+    }
+
+    private void RefreshDockHoverMagnificationHint()
+    {
+        if (DockHoverMagnificationRow is null)
+        {
+            return;
+        }
+
+        DockHoverMagnificationRow.Description = DockMagnificationRules.SettingDescription(
+            _dockState.HoverMagnification,
+            _maintenance.Style.Motion,
+            SystemParameters.ClientAreaAnimation);
     }
 
     private void DockHoverMagnificationScale_Changed(object sender, RoutedPropertyChangedEventArgs<double> e)
