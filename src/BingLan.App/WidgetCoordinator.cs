@@ -3414,13 +3414,19 @@ public sealed partial class WidgetCoordinator : IDisposable
             }
         }
 
-        public async void OpenInputMethod()
+        public void OpenInputMethod()
         {
-            if (!await ShellSurfaceService.OpenInputMethodAsync())
+            if (!ShellSurfaceService.OpenInputMethodSettings())
             {
                 ReportShellFailure();
             }
         }
+
+        public IReadOnlyList<TopBarInputMethodOption> ReadInputMethodOptions() =>
+            TopBarSystemInfo.ReadInputMethodOptions();
+
+        public bool ActivateInputMethod(TopBarInputMethodOption option, nint foregroundWindow) =>
+            TopBarSystemInfo.ActivateInputMethod(option, foregroundWindow);
 
         private void ReportShellFailure() => owner._trayIcon.ShowBalloonTip(
             4000, "系统入口暂不可用", "可将鼠标移到屏幕底边或角落唤出 Windows 任务栏。", TrayTipKind.Info);

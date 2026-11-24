@@ -401,6 +401,45 @@ public static class TopBarTests
         Assert(TopBarModuleRules.DescribeInputMethod((nint)0xE0010411, 0x0001) == "JA", "非中文 IME 显示语言码");
         Assert(TopBarModuleRules.DescribeInputMethod(0, null) == "键盘", "无布局回退占位文案");
 
+        // 64 位进程下符号扩展的 IMM32 HKL（如 0xFFFFFFFFE0200804）应只取低 32 位查注册表。
+        var signExtendedIme = unchecked((nint)0xFFFFFFFFE0200804L);
+        Assert(TopBarModuleRules.FormatLayoutRegistryCandidates(signExtendedIme).SequenceEqual(["E0200804", "0000E020", "00000804"]),
+            "符号扩展的 IMM32 HKL 应规范化为 8 位注册表键名");
+        Assert(TopBarModuleRules.FormatLayoutRegistryCandidates(0).Count == 0, "空 HKL 不生成注册表候选");
+        Assert(TopBarModuleRules.IsLegacyImeLayout(signExtendedIme), "0xE0xx 高字应识别为传统 IMM32 输入法");
+        Assert(!TopBarModuleRules.IsLegacyImeLayout(0x08040804), "0x08040804 不是传统 IMM32 输入法");
+        Assert(!TopBarModuleRules.IsLegacyImeLayout(0x04090409), "英语键盘不是传统 IMM32 输入法");
+        Assert(!TopBarModuleRules.IsLegacyImeLayout(unchecked((nint)0xFFFFFFFFF0010409L)), "0xF0xx 替代键盘布局不是传统 IMM32 输入法");
+        Assert(TopBarModuleRules.ResolveInputMethodDisplayName("微信输入法", 0x08040804, "中文(简体) - 美式键盘") == "微信输入法",
+            "TSF 输入法优先展示处理器名称");
+        Assert(TopBarModuleRules.ResolveInputMethodDisplayName(null, signExtendedIme, "搜狗拼音输入法") == "搜狗拼音输入法",
+            "无 TSF 名称时传统 IMM32 输入法回退注册表布局名");
+        Assert(TopBarModuleRules.ResolveInputMethodDisplayName(null, 0x04090409, "美式键盘") is null,
+            "普通键盘布局折叠名称仅留徽标与悬停提示");
+        Assert(TopBarModuleRules.FormatInputMethodLanguageTag(0x0804) == "中"
+            && TopBarModuleRules.FormatInputMethodLanguageTag(0x0404) == "繁"
+            && TopBarModuleRules.FormatInputMethodLanguageTag(0x0409) == "EN",
+            "输入法列表短标应区分简繁与外语");
+        var msPinyin = new TopBarInputMethodOption(
+            TopBarModuleRules.BuildInputMethodKey(true, 0x0804, Guid.Parse("81D4E9C9-1D3B-41BC-9E6C-4B40BF79E35E"), Guid.Parse("FA550B04-5AD7-411F-A5AC-CA038EC515D7"), 0x08040804),
+            "微软拼音", "中", 0x0804, true, false, 0x08040804,
+            Guid.Parse("81D4E9C9-1D3B-41BC-9E6C-4B40BF79E35E"), Guid.Parse("FA550B04-5AD7-411F-A5AC-CA038EC515D7"));
+        var wechatIme = new TopBarInputMethodOption(
+            TopBarModuleRules.BuildInputMethodKey(true, 0x0804, Guid.Parse("11111111-1111-1111-1111-111111111111"), Guid.Parse("22222222-2222-2222-2222-222222222222"), 0x08040804),
+            " 微信输入法 ", "中", 0x0804, true, true, 0x08040804,
+            Guid.Parse("11111111-1111-1111-1111-111111111111"), Guid.Parse("22222222-2222-2222-2222-222222222222"));
+        var normalizedOptions = TopBarModuleRules.NormalizeInputMethodOptions([
+            msPinyin,
+            msPinyin with { IsActive = true },
+            wechatIme,
+            new TopBarInputMethodOption("bad", "   ", "EN", 0x0409, false, false, 0x04090409, Guid.Empty, Guid.Empty)
+        ]);
+        Assert(normalizedOptions.Count == 2
+            && normalizedOptions[0].IsActive
+            && normalizedOptions[1].DisplayName == "微信输入法"
+            && msPinyin.Key != wechatIme.Key,
+            "同 HKL 的不同中文 TSF 输入法应拥有独立标识、去重保留激活态并剔除空白项");
+
         Assert(TopBarModuleRules.VolumePercentFromScalar(0.42f) == 42, "音量换算百分比");
         Assert(TopBarModuleRules.VolumePercentFromScalar(1.3f) == 100, "音量钳制上限");
         Assert(TopBarModuleRules.VolumePercentFromScalar(-0.5f) == 0, "音量钳制下限");

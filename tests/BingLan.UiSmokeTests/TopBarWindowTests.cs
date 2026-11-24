@@ -501,8 +501,28 @@ internal static class TopBarWindowTests
             Assert(environment.QuickSettingsKinds.SequenceEqual(new[]
                 { TopBarModuleKind.Volume, TopBarModuleKind.Battery, TopBarModuleKind.Network }),
                 "系统状态点击应保留对应模块，以便回退到各自设置页");
-            Invoke(ButtonByName(bar, "输入法模块"));
-            Assert(environment.InputMethodRequested == 1, "点击输入法应打开系统选择器");
+            var imeButton = ButtonByName(bar, "输入法模块");
+            Invoke(imeButton);
+            pump();
+            var imeFlyout = bar.InputMethodFlyout;
+            Assert(imeFlyout?.IsOpen == true, "点击输入法模块应弹出输入法切换浮层");
+            var wechatButton = AllButtons(imeFlyout!.Child)
+                .Single(candidate => AutomationProperties.GetName(candidate) == "微信输入法");
+            Invoke(wechatButton);
+            pump();
+            Assert(environment.ActivatedInputMethods.Count == 1
+                && environment.ActivatedInputMethods[0].DisplayName == "微信输入法",
+                "点击浮层中的输入法条目应触发切换");
+            Assert(bar.InputMethodFlyout is null, "切换输入法后浮层应收起");
+
+            Invoke(imeButton);
+            pump();
+            var imeSettingsButton = AllButtons(bar.InputMethodFlyout!.Child)
+                .Single(candidate => AutomationProperties.GetName(candidate) == "打开 Windows 键盘与语言设置");
+            Invoke(imeSettingsButton);
+            pump();
+            Assert(environment.InputMethodRequested == 1, "点击浮层底部设置项应打开系统键盘与语言设置");
+            Assert(bar.InputMethodFlyout is null, "打开系统键盘设置后浮层应收起");
             if (OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000))
             {
                 var tray = ButtonByName(bar, "托盘模块");
@@ -975,6 +995,30 @@ internal static class TopBarWindowTests
         internal List<TopBarModuleKind> QuickSettingsKinds { get; } = [];
 
         internal int InputMethodRequested { get; private set; }
+        internal List<TopBarInputMethodOption> ActivatedInputMethods { get; } = [];
+        internal IReadOnlyList<TopBarInputMethodOption> InputMethodOptions { get; set; } =
+        [
+            new(
+                "tip:0804:ms:pinyin",
+                "微软拼音",
+                "中",
+                0x0804,
+                IsInputProcessor: true,
+                IsActive: true,
+                KeyboardLayout: 0x08040804,
+                Clsid: Guid.Parse("81D4E9C9-1D3B-41BC-9E6C-4B40BF79E35E"),
+                ProfileGuid: Guid.Parse("FA550B04-5AD7-411F-A5AC-CA038EC515D7")),
+            new(
+                "tip:0804:wx:ime",
+                "微信输入法",
+                "中",
+                0x0804,
+                IsInputProcessor: true,
+                IsActive: false,
+                KeyboardLayout: 0x08040804,
+                Clsid: Guid.Parse("11111111-1111-1111-1111-111111111111"),
+                ProfileGuid: Guid.Parse("22222222-2222-2222-2222-222222222222"))
+        ];
 
         public void OpenQuickSettings(TopBarModuleKind kind)
         {
@@ -983,6 +1027,14 @@ internal static class TopBarWindowTests
         }
 
         public void OpenInputMethod() => InputMethodRequested++;
+
+        public IReadOnlyList<TopBarInputMethodOption> ReadInputMethodOptions() => InputMethodOptions;
+
+        public bool ActivateInputMethod(TopBarInputMethodOption option, nint foregroundWindow)
+        {
+            ActivatedInputMethods.Add(option);
+            return true;
+        }
 
         internal int TrayOverflowRequested { get; private set; }
         internal int TrayOverflowClosed { get; private set; }

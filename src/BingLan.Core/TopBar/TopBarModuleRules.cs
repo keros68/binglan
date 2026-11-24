@@ -21,6 +21,17 @@ public sealed record TopBarNetworkStatus(
     int? SignalQuality,
     string Tooltip);
 
+public sealed record TopBarInputMethodOption(
+    string Key,
+    string DisplayName,
+    string LanguageTag,
+    ushort LanguageId,
+    bool IsInputProcessor,
+    bool IsActive,
+    nint KeyboardLayout,
+    Guid Clsid,
+    Guid ProfileGuid);
+
 /// <summary>Read-only value rules for the top bar's system status modules.</summary>
 public static class TopBarModuleRules
 {
@@ -203,6 +214,123 @@ public static class TopBarModuleRules
     /// <summary>A keyboard layout handle carries the language id in its low word.</summary>
     public static ushort ExtractLanguageId(nint keyboardLayout) =>
         (ushort)(keyboardLayout & 0xFFFF);
+
+    /// <summary>
+    /// Returns the registry subkey names under Keyboard Layouts for an HKL, masking to 32 bits
+    /// first so sign-extended 64-bit handles (e.g. legacy IMM32 0xFFFFFFFFE0200804) still hit
+    /// their 8-character E0200804 subkey.
+    /// </summary>
+    public static IReadOnlyList<string> FormatLayoutRegistryCandidates(nint keyboardLayout)
+    {
+        if (keyboardLayout == 0)
+        {
+            return [];
+        }
+
+        var raw = unchecked((uint)keyboardLayout);
+        var full = raw.ToString("X8");
+        var high = ((raw >> 16) & 0xFFFF).ToString("X8");
+        var low = (raw & 0xFFFF).ToString("X8");
+        var result = new List<string>(3) { full };
+        if (high != full)
+        {
+            result.Add(high);
+        }
+        if (low != full && low != high)
+        {
+            result.Add(low);
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Legacy IMM32 IMEs (0xE000..0xEFFF in the high word) carry their own layout name in the
+    /// registry rather than a TSF text input processor profile. Substitute layouts (0xF000+) and
+    /// standard layouts (e.g. 0x04090409) are plain keyboards.
+    /// </summary>
+    public static bool IsLegacyImeLayout(nint keyboardLayout)
+    {
+        var high = (unchecked((uint)keyboardLayout) >> 16) & 0xFFFF;
+        return high is >= 0xE000 and < 0xF000;
+    }
+
+    /// <summary>
+    /// Chooses the input-method name shown next to the badge: the active TSF processor name when
+    /// available, falling back to the registry layout text for legacy IMM32 IMEs, and collapsing
+    /// for plain keyboard layouts.
+    /// </summary>
+    public static string? ResolveInputMethodDisplayName(
+        string? inputProcessorName,
+        nint keyboardLayout,
+        string? layoutText)
+    {
+        if (!string.IsNullOrWhiteSpace(inputProcessorName))
+        {
+            return inputProcessorName.Trim();
+        }
+        if (IsLegacyImeLayout(keyboardLayout)
+            && !string.IsNullOrWhiteSpace(layoutText)
+            && !string.Equals(layoutText.Trim(), "键盘", StringComparison.Ordinal))
+        {
+            return layoutText.Trim();
+        }
+        return null;
+    }
+
+    /// <summary>Short language badge for an input method picker row.</summary>
+    public static string FormatInputMethodLanguageTag(ushort languageId) => languageId switch
+    {
+        0x0804 or 0x1004 => "中",
+        0x0404 or 0x0C04 or 0x1404 => "繁",
+        _ => LanguageCode(languageId)
+    };
+
+    /// <summary>Stable key for identifying and deduplicating TSF profiles and keyboard layouts.</summary>
+    public static string BuildInputMethodKey(
+        bool isInputProcessor,
+        ushort languageId,
+        Guid clsid,
+        Guid profileGuid,
+        nint keyboardLayout) =>
+        isInputProcessor
+            ? $"tip:{languageId:X4}:{clsid:N}:{profileGuid:N}"
+            : $"hkl:{languageId:X4}:{unchecked((uint)keyboardLayout):X8}";
+
+    /// <summary>
+    /// Drops blank entries and deduplicates by stable key while keeping original order and
+    /// preserving any active flag across duplicates.
+    /// </summary>
+    public static IReadOnlyList<TopBarInputMethodOption> NormalizeInputMethodOptions(
+        IEnumerable<TopBarInputMethodOption> options)
+    {
+        var list = new List<TopBarInputMethodOption>();
+        var indexByKey = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (var option in options)
+        {
+            if (string.IsNullOrWhiteSpace(option.Key) || string.IsNullOrWhiteSpace(option.DisplayName))
+            {
+                continue;
+            }
+            var trimmed = option with
+            {
+                DisplayName = option.DisplayName.Trim(),
+                LanguageTag = string.IsNullOrWhiteSpace(option.LanguageTag)
+                    ? FormatInputMethodLanguageTag(option.LanguageId)
+                    : option.LanguageTag.Trim()
+            };
+            if (indexByKey.TryGetValue(trimmed.Key, out var existingIndex))
+            {
+                if (trimmed.IsActive && !list[existingIndex].IsActive)
+                {
+                    list[existingIndex] = trimmed;
+                }
+                continue;
+            }
+            indexByKey[trimmed.Key] = list.Count;
+            list.Add(trimmed);
+        }
+        return list;
+    }
 
     /// <summary>The IME conversion-mode bit that marks native (Chinese) composition.</summary>
     public const int ConversionModeNative = 0x0001;

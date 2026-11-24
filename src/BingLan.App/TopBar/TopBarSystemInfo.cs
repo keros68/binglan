@@ -176,23 +176,49 @@ internal static class TopBarSystemInfo
     /// </summary>
     internal static (nint Layout, string Label, string FullName, bool ModeKnown) ReadInputMethod()
     {
+        // Prefer the actual focused child window from GetGUIThreadInfo so UWP /
+        // ApplicationFrameHost containers report the hosted input thread rather than the frame.
+        var foreground = DockNativeMethods.GetForegroundWindow();
+        var targetWindow = ResolveFocusedInputWindow(foreground);
+        var threadId = targetWindow == 0
+            ? 0u
+            : DockNativeMethods.GetWindowThreadProcessId(targetWindow, out _);
+        if (threadId == 0 && foreground != 0)
+        {
+            threadId = DockNativeMethods.GetWindowThreadProcessId(foreground, out _);
+        }
+
         // No classic foreground window (a console host, for example) falls back to this
         // thread's own layout, which is the same list Windows would show.
-        var foreground = DockNativeMethods.GetForegroundWindow();
-        var threadId = foreground == 0
-            ? 0u
-            : DockNativeMethods.GetWindowThreadProcessId(foreground, out _);
         var layout = TopBarNativeMethods.GetKeyboardLayout(threadId);
         if (layout == 0)
         {
             layout = TopBarNativeMethods.GetKeyboardLayout(0);
         }
 
-        var conversionMode = ReadConversionMode(foreground);
+        var conversionMode = ReadConversionMode(targetWindow != 0 ? targetWindow : foreground);
         return (layout,
             TopBarModuleRules.DescribeInputMethod(layout, conversionMode),
             LayoutName(layout),
             conversionMode is not null);
+    }
+
+    private static nint ResolveFocusedInputWindow(nint foreground)
+    {
+        if (foreground == 0)
+        {
+            return 0;
+        }
+
+        var gui = new TopBarNativeMethods.GuiThreadInfo
+        {
+            Size = Marshal.SizeOf<TopBarNativeMethods.GuiThreadInfo>()
+        };
+        if (TopBarNativeMethods.GetGUIThreadInfo(0, ref gui) && gui.HwndFocus != 0)
+        {
+            return gui.HwndFocus;
+        }
+        return foreground;
     }
 
     /// <summary>
@@ -202,6 +228,18 @@ internal static class TopBarSystemInfo
     /// </summary>
     internal static string? ReadInputMethodName() =>
         TsfInputProcessorInterop.ReadActiveInputProcessorName();
+
+    internal static TsfInputProcessorInterop.ActiveProfileSnapshot ReadActiveInputMethod() =>
+        TsfInputProcessorInterop.ReadActiveInputProcessor();
+
+    internal static IReadOnlyList<TopBarInputMethodOption> ReadInputMethodOptions() =>
+        TsfInputProcessorInterop.EnumerateEnabledProfiles(LayoutName);
+
+    internal static bool ActivateInputMethod(TopBarInputMethodOption option, nint foregroundWindow) =>
+        TsfInputProcessorInterop.ActivateInputMethod(option, foregroundWindow);
+
+    internal static IDisposable? SubscribeInputMethodChanges(Action onChanged) =>
+        TsfInputProcessorInterop.SubscribeProfileActivation(onChanged);
 
     private static int? ReadConversionMode(nint foreground)
     {
@@ -246,15 +284,7 @@ internal static class TopBarSystemInfo
 
         return LayoutNames.GetOrAdd(layout, static handle =>
         {
-            // The layout's registry subkey: an IME names it with the whole HKL (E0200804),
-            // a standard layout with its high word (00000409). Try both spellings.
-            var candidates = new[]
-            {
-                handle.ToString("X8"),
-                ((handle >> 16) & 0xFFFF).ToString("X8"),
-                (handle & 0xFFFF).ToString("X8")
-            };
-            foreach (var id in candidates.Distinct())
+            foreach (var id in TopBarModuleRules.FormatLayoutRegistryCandidates(handle))
             {
                 var text = Registry.GetValue(
                     $"HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Keyboard Layouts\\{id}",

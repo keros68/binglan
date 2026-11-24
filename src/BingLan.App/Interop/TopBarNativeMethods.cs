@@ -28,6 +28,32 @@ internal static class TopBarNativeMethods
     [DllImport("user32.dll", SetLastError = true)]
     internal static extern nint GetKeyboardLayout(uint idThread);
 
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct NativeRect
+    {
+        internal int Left, Top, Right, Bottom;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct GuiThreadInfo
+    {
+        internal int Size;
+        internal uint Flags;
+        internal nint HwndActive;
+        internal nint HwndFocus;
+        internal nint HwndCapture;
+        internal nint HwndMenuOwner;
+        internal nint HwndMoveSize;
+        internal nint HwndCaret;
+        internal NativeRect CaretRect;
+    }
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool GetGUIThreadInfo(uint idThread, ref GuiThreadInfo info);
+
+    internal const uint WmInputLangChangeRequest = 0x0050;
+
     // The IME's Chinese/English toggle rides the imm32 bridge the taskbar indicator
     // uses: ask the foreground thread's default IME window for its conversion mode.
     [DllImport("imm32.dll")]

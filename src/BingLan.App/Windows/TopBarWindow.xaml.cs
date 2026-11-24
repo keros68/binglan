@@ -63,6 +63,10 @@ internal interface ITopBarEnvironment
 
     void OpenInputMethod();
 
+    IReadOnlyList<TopBarInputMethodOption> ReadInputMethodOptions();
+
+    bool ActivateInputMethod(TopBarInputMethodOption option, nint foregroundWindow);
+
     void OpenTrayOverflow();
 
     void CloseTrayOverflow();
@@ -136,6 +140,7 @@ public sealed partial class TopBarWindow : Window
     private TopBarSystemFacts? _facts;
     private Popup? _todoFlyout;
     private Popup? _clockFlyout;
+    private Popup? _inputMethodFlyout;
     private DateTime _clockMonth;
     private MonitorSnapshot? _monitor;
     private TaskbarEdgeGuard.NativeTaskbarLayout? _nativeTaskbar;
@@ -154,10 +159,15 @@ public sealed partial class TopBarWindow : Window
     private TextBlock? _inputMethodBadgeText;
     private TextBlock? _inputMethodNameText;
     private nint _lastInputLayout;
+    private nint _lastInputForeground;
+    private long _lastInputProfileCheckAt;
     private string? _inputMethodName;
+    private string _inputMethodFullName = string.Empty;
     private string _inputMethodToolTip = string.Empty;
     private string _inputMethodLabel = string.Empty;
     private int _imeReadInFlight;
+    private IDisposable? _inputMethodSubscription;
+    private nint _inputMethodTargetForeground;
 
     // ---------------------------------------------------------------- 搜索
 
@@ -293,7 +303,7 @@ public sealed partial class TopBarWindow : Window
             IsCapsule ? (_capsuleExpanded ? CapsuleExpandedWidth : _capsuleCompactWidth) : null);
         // While a flyout is open the fast interval keeps its outside-click watch
         // prompt even in reserve mode.
-        _foregroundTimer.Interval = reserve && _todoFlyout is null && _clockFlyout is null
+        _foregroundTimer.Interval = reserve && _todoFlyout is null && _clockFlyout is null && _inputMethodFlyout is null
             ? FullScreenCheckInterval
             : SmartHideCheckInterval;
         _foregroundTimer.Start();
@@ -346,6 +356,14 @@ public sealed partial class TopBarWindow : Window
         _appBar.ExplorerNotified += () => ExplorerNotified?.Invoke();
         _appBar.ExplorerRestarted += RenderModules;
         _appBar.ReservationFallbackTriggered += UpdateForForeground;
+        _inputMethodSubscription?.Dispose();
+        _inputMethodSubscription = TopBarSystemInfo.SubscribeInputMethodChanges(() =>
+            Dispatcher.BeginInvoke(() =>
+            {
+                if (_closing || !_modules.ContainsKey(TopBarModuleKind.InputMethod)) return;
+                RefreshActiveInputMethodName();
+                PollInputMethod(forceProfileRefresh: true);
+            }));
         ApplyAcrylicBackdrop();
         ApplyState();
     }
@@ -543,6 +561,9 @@ public sealed partial class TopBarWindow : Window
         UnregisterSearchHotkey();
         CloseTodoFlyout(animate: false);
         CloseClockFlyout();
+        CloseInputMethodFlyout();
+        _inputMethodSubscription?.Dispose();
+        _inputMethodSubscription = null;
         _foregroundTimer.Stop();
         _ambientTimer.Stop();
         _minuteTimer.Stop();
@@ -736,6 +757,7 @@ public sealed partial class TopBarWindow : Window
         _searchButton = null;
         CloseTodoFlyout(animate: false);
         CloseClockFlyout();
+        CloseInputMethodFlyout();
         CapsuleHeader.Children.Clear();
         CapsuleHeader.Visibility = IsCapsule ? Visibility.Visible : Visibility.Collapsed;
         ModuleHeader.Visibility = IsCapsule ? Visibility.Collapsed : Visibility.Visible;
@@ -875,7 +897,14 @@ public sealed partial class TopBarWindow : Window
                 }
                 break;
             case TopBarModuleKind.InputMethod:
-                AddModule(TopBarModuleKind.InputMethod, panel, "输入法", _environment.OpenInputMethod);
+                AddModule(TopBarModuleKind.InputMethod, panel, "输入法", () =>
+                {
+                    if (_modules.TryGetValue(TopBarModuleKind.InputMethod, out var element)
+                        && element is Button button)
+                    {
+                        ToggleInputMethodFlyout(button);
+                    }
+                });
                 StyleInputMethodModule();
                 break;
             case TopBarModuleKind.Attention:
@@ -1047,12 +1076,15 @@ public sealed partial class TopBarWindow : Window
         ApplyInputMethodSnapshot(TopBarSystemInfo.ReadInputMethod());
     }
 
+    private const long InputProfileRefreshIntervalMs = 1000;
+
     /// <summary>
     /// Re-reads the input method on the fast focus tick off the UI thread so a busy or
-    /// hung foreground IME window cannot stall the bar; the TSF name is queried on the
-    /// UI thread only when the keyboard layout handle actually changes.
+    /// hung foreground IME window cannot stall the bar; the TSF name also refreshes on TSF
+    /// activation notifications, foreground switches and a 1 s cadence so same-HKL switches
+    /// between Chinese IMEs (e.g. Microsoft Pinyin ↔ WeChat/Sogou IME) never get stuck.
     /// </summary>
-    private void PollInputMethod()
+    private void PollInputMethod(bool forceProfileRefresh = false)
     {
         if (Interlocked.CompareExchange(ref _imeReadInFlight, 1, 0) != 0)
         {
@@ -1066,14 +1098,20 @@ public sealed partial class TopBarWindow : Window
                 if (_closing) return;
                 var snapshot = TopBarSystemInfo.ReadInputMethod();
                 if (_closing) return;
-                if (snapshot.Layout == _lastInputLayout
+                var foreground = DockNativeMethods.GetForegroundWindow();
+                var now = Environment.TickCount64;
+                var shouldRefreshProfile = forceProfileRefresh
+                    || snapshot.Layout != _lastInputLayout
+                    || foreground != _lastInputForeground
+                    || now - Interlocked.Read(ref _lastInputProfileCheckAt) >= InputProfileRefreshIntervalMs;
+                if (!shouldRefreshProfile
                     && (!snapshot.ModeKnown || snapshot.Label == _inputMethodLabel))
                 {
                     return;
                 }
                 Dispatcher.BeginInvoke(() =>
                 {
-                    if (!_closing) ApplyInputMethodSnapshot(snapshot);
+                    if (!_closing) ApplyInputMethodSnapshot(snapshot, refreshProfile: shouldRefreshProfile, foreground);
                 });
             }
             finally
@@ -1083,14 +1121,39 @@ public sealed partial class TopBarWindow : Window
         });
     }
 
-    private void ApplyInputMethodSnapshot((nint Layout, string Label, string FullName, bool ModeKnown) snapshot)
+    private void RefreshActiveInputMethodName()
+    {
+        Interlocked.Exchange(ref _lastInputProfileCheckAt, Environment.TickCount64);
+        var active = TopBarSystemInfo.ReadActiveInputMethod();
+        var displayName = TopBarModuleRules.ResolveInputMethodDisplayName(
+            active.Name,
+            _lastInputLayout != 0 ? _lastInputLayout : active.Layout,
+            _inputMethodFullName);
+        var tooltip = displayName ?? (_inputMethodFullName.Length > 0 ? _inputMethodFullName : _inputMethodToolTip);
+        if (displayName == _inputMethodName && tooltip == _inputMethodToolTip)
+        {
+            return;
+        }
+        _inputMethodName = displayName;
+        _inputMethodToolTip = tooltip;
+        UpdateInputMethodVisuals();
+    }
+
+    private void ApplyInputMethodSnapshot(
+        (nint Layout, string Label, string FullName, bool ModeKnown) snapshot,
+        bool refreshProfile = false,
+        nint foreground = 0)
     {
         var (layout, label, fullName, modeKnown) = snapshot;
-        if (layout != _lastInputLayout)
+        var layoutChanged = layout != _lastInputLayout;
+        if (foreground != 0)
+        {
+            _lastInputForeground = foreground;
+        }
+        _inputMethodFullName = fullName;
+        if (layoutChanged)
         {
             _lastInputLayout = layout;
-            _inputMethodName = TopBarSystemInfo.ReadInputMethodName();
-            _inputMethodToolTip = _inputMethodName ?? fullName;
             _inputMethodLabel = label;
         }
         else if (modeKnown)
@@ -1100,6 +1163,20 @@ public sealed partial class TopBarWindow : Window
             // instead of flashing the language-code fallback.
             _inputMethodLabel = label;
         }
+
+        if (layoutChanged || refreshProfile)
+        {
+            Interlocked.Exchange(ref _lastInputProfileCheckAt, Environment.TickCount64);
+            var active = TopBarSystemInfo.ReadActiveInputMethod();
+            _inputMethodName = TopBarModuleRules.ResolveInputMethodDisplayName(active.Name, layout, fullName);
+            _inputMethodToolTip = _inputMethodName ?? fullName;
+        }
+
+        UpdateInputMethodVisuals();
+    }
+
+    private void UpdateInputMethodVisuals()
+    {
         if (_inputMethodBadgeText is { } badge)
         {
             badge.Text = _inputMethodLabel;
@@ -1121,6 +1198,284 @@ public sealed partial class TopBarWindow : Window
             };
         }
     }
+
+    // ---------------------------------------------------------------- 输入法切换浮层
+
+    private void ToggleInputMethodFlyout(Button button)
+    {
+        if (_inputMethodFlyout?.IsOpen == true)
+        {
+            CloseInputMethodFlyout();
+            return;
+        }
+
+        CloseTodoFlyout(animate: false);
+        CloseClockFlyout();
+        _inputMethodTargetForeground = DockNativeMethods.GetForegroundWindow();
+
+        var highContrast = AccessibilityThemeManager.IsHighContrastEnabled || SystemParameters.HighContrast;
+        var glass = DesktopStyleRules.TopBar(_style, _state);
+        var card = new Border
+        {
+            Background = highContrast ? SystemColors.WindowBrush : FrozenBrush(glass.Surface),
+            BorderBrush = highContrast ? SystemColors.WindowTextBrush : FrozenBrush(glass.Border),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(10),
+            Padding = new Thickness(10, 10, 10, 10),
+            Child = BuildInputMethodCard(highContrast)
+        };
+        var onRight = ReferenceEquals(button.Parent, RightModules);
+        var hostPanel = button.Parent as Panel ?? RightModules;
+        var flyout = new Popup
+        {
+            PlacementTarget = button,
+            Placement = PlacementMode.Bottom,
+            HorizontalOffset = onRight ? -110 : -6,
+            VerticalOffset = 2,
+            StaysOpen = true,
+            AllowsTransparency = true,
+            Child = card
+        };
+        flyout.Closed += (_, _) =>
+        {
+            if (ReferenceEquals(_inputMethodFlyout, flyout))
+            {
+                _inputMethodFlyout = null;
+            }
+            if (flyout.Parent is Panel parent)
+            {
+                parent.Children.Remove(flyout);
+            }
+            UpdateForegroundTimerInterval();
+        };
+        hostPanel.Children.Add(flyout);
+        _inputMethodFlyout = flyout;
+        flyout.IsOpen = true;
+        UpdateForegroundTimerInterval();
+        TopBarNativeMethods.ConsumeMouseButtonDown(TopBarNativeMethods.LeftMouseButton);
+        TopBarNativeMethods.ConsumeMouseButtonDown(TopBarNativeMethods.EscapeKey);
+    }
+
+    private FrameworkElement BuildInputMethodCard(bool highContrast)
+    {
+        var inkBrush = highContrast ? SystemColors.WindowTextBrush : Brushes.White;
+        var mutedOpacity = highContrast ? 1.0 : 0.65;
+        var panel = new StackPanel { MinWidth = 228, MaxWidth = 280 };
+
+        var header = new DockPanel { Margin = new Thickness(6, 0, 6, 8) };
+        var title = new TextBlock
+        {
+            Text = "切换输入法",
+            Foreground = inkBrush,
+            FontWeight = FontWeights.SemiBold,
+            FontSize = 13,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        var hint = new TextBlock
+        {
+            Text = "Win+Space",
+            Foreground = inkBrush,
+            Opacity = mutedOpacity,
+            FontSize = 11,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        DockPanel.SetDock(hint, System.Windows.Controls.Dock.Right);
+        header.Children.Add(hint);
+        header.Children.Add(title);
+        panel.Children.Add(header);
+
+        var options = _environment.ReadInputMethodOptions();
+        if (options.Count == 0)
+        {
+            panel.Children.Add(new TextBlock
+            {
+                Text = "未检测到可切换的输入法",
+                Foreground = inkBrush,
+                Opacity = mutedOpacity,
+                Margin = new Thickness(6, 4, 6, 8)
+            });
+        }
+        else
+        {
+            foreach (var option in options)
+            {
+                panel.Children.Add(CreateInputMethodRow(option, highContrast, inkBrush));
+            }
+        }
+
+        panel.Children.Add(new Border
+        {
+            Height = 1,
+            Margin = new Thickness(4, 6, 4, 6),
+            Background = highContrast ? SystemColors.WindowTextBrush : FrozenBrush("#26FFFFFF")
+        });
+
+        var settingsButton = CreateInputMethodActionButton(
+            highContrast,
+            isActive: false,
+            content: new TextBlock
+            {
+                Text = "键盘与语言设置…",
+                Foreground = inkBrush,
+                Opacity = highContrast ? 1.0 : 0.85,
+                FontSize = 12,
+                VerticalAlignment = VerticalAlignment.Center
+            },
+            automationName: "打开 Windows 键盘与语言设置");
+        settingsButton.Click += (_, _) =>
+        {
+            CloseInputMethodFlyout();
+            _environment.OpenInputMethod();
+        };
+        panel.Children.Add(settingsButton);
+        return panel;
+    }
+
+    private Button CreateInputMethodRow(TopBarInputMethodOption option, bool highContrast, Brush inkBrush)
+    {
+        var rowInk = highContrast && option.IsActive ? SystemColors.HighlightTextBrush : inkBrush;
+        var grid = new Grid();
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(30) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(20) });
+
+        var tagBorder = new Border
+        {
+            CornerRadius = new CornerRadius(5),
+            Background = highContrast
+                ? SystemColors.ControlBrush
+                : FrozenBrush(option.IsActive ? "#4AFFFFFF" : "#26FFFFFF"),
+            Padding = new Thickness(4, 1, 4, 1),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Center,
+            Child = new TextBlock
+            {
+                Text = option.LanguageTag,
+                Foreground = highContrast ? SystemColors.ControlTextBrush : Brushes.White,
+                FontSize = 11,
+                FontWeight = FontWeights.SemiBold
+            }
+        };
+        Grid.SetColumn(tagBorder, 0);
+        grid.Children.Add(tagBorder);
+
+        var nameText = new TextBlock
+        {
+            Text = option.DisplayName,
+            Foreground = rowInk,
+            FontSize = 13,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(6, 0, 6, 0)
+        };
+        Grid.SetColumn(nameText, 1);
+        grid.Children.Add(nameText);
+
+        if (option.IsActive)
+        {
+            var check = new TextBlock
+            {
+                Text = "\uE73E",
+                FontFamily = StatusIconFont,
+                FontSize = 12,
+                Foreground = rowInk,
+                HorizontalAlignment = HorizontalAlignment.Right,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            Grid.SetColumn(check, 2);
+            grid.Children.Add(check);
+        }
+
+        var button = CreateInputMethodActionButton(
+            highContrast,
+            option.IsActive,
+            grid,
+            automationName: option.DisplayName);
+        button.Click += (_, _) => SelectInputMethod(option);
+        return button;
+    }
+
+    private static Button CreateInputMethodActionButton(
+        bool highContrast,
+        bool isActive,
+        object content,
+        string automationName)
+    {
+        var normalBg = isActive
+            ? (highContrast ? SystemColors.HighlightBrush : FrozenBrush("#30FFFFFF"))
+            : Brushes.Transparent;
+        var hoverBg = highContrast ? SystemColors.HighlightBrush : FrozenBrush("#24FFFFFF");
+
+        var shellFactory = new FrameworkElementFactory(typeof(Border));
+        shellFactory.Name = "Shell";
+        shellFactory.SetValue(Border.CornerRadiusProperty, new CornerRadius(6));
+        shellFactory.SetValue(Border.PaddingProperty, new Thickness(8, 6, 8, 6));
+        shellFactory.SetValue(Border.BackgroundProperty, normalBg);
+        shellFactory.SetValue(Border.SnapsToDevicePixelsProperty, true);
+
+        var presenter = new FrameworkElementFactory(typeof(ContentPresenter));
+        presenter.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center);
+        presenter.SetValue(FrameworkElement.HorizontalAlignmentProperty, HorizontalAlignment.Stretch);
+        shellFactory.AppendChild(presenter);
+
+        var template = new ControlTemplate(typeof(Button)) { VisualTree = shellFactory };
+        var hoverTrigger = new Trigger { Property = UIElement.IsMouseOverProperty, Value = true };
+        hoverTrigger.Setters.Add(new Setter(Border.BackgroundProperty, hoverBg, "Shell"));
+        template.Triggers.Add(hoverTrigger);
+
+        var button = new Button
+        {
+            Template = template,
+            MinHeight = 32,
+            Margin = new Thickness(0, 1, 0, 1),
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            HorizontalContentAlignment = HorizontalAlignment.Stretch,
+            Cursor = Cursors.Hand,
+            Content = content
+        };
+        AutomationProperties.SetName(button, automationName);
+        return button;
+    }
+
+    private void SelectInputMethod(TopBarInputMethodOption option)
+    {
+        var targetForeground = _inputMethodTargetForeground;
+        CloseInputMethodFlyout();
+        if (_environment.ActivateInputMethod(option, targetForeground))
+        {
+            _inputMethodName = option.IsInputProcessor || TopBarModuleRules.IsLegacyImeLayout(option.KeyboardLayout)
+                ? option.DisplayName
+                : null;
+            _inputMethodToolTip = option.DisplayName;
+            _inputMethodLabel = option.LanguageTag;
+            UpdateInputMethodVisuals();
+            PollInputMethod(forceProfileRefresh: true);
+        }
+    }
+
+    private void CloseInputMethodFlyout()
+    {
+        _inputMethodFlyout?.SetCurrentValue(Popup.IsOpenProperty, false);
+        _inputMethodFlyout = null;
+        UpdateForegroundTimerInterval();
+    }
+
+    private void UpdateForegroundTimerInterval()
+    {
+        if (_appBar is null || _closing)
+        {
+            return;
+        }
+        _foregroundTimer.Interval = _appBar.IsReserved
+            && _todoFlyout is null
+            && _clockFlyout is null
+            && _inputMethodFlyout is null
+            ? FullScreenCheckInterval
+            : SmartHideCheckInterval;
+    }
+
+    /// <summary>The open input-method picker flyout, for tests; popups sit outside the visual tree.</summary>
+    internal Popup? InputMethodFlyout => _inputMethodFlyout;
 
     private ToolTip CreateGlassToolTip()
     {
@@ -1801,9 +2156,10 @@ public sealed partial class TopBarWindow : Window
     /// </summary>
     private void CloseFlyoutOnOutsideClick()
     {
-        if (_capsuleExpanded && TopBarNativeMethods.IsMouseButtonDown(TopBarNativeMethods.EscapeKey))
+        if (TopBarNativeMethods.IsMouseButtonDown(TopBarNativeMethods.EscapeKey))
         {
-            CloseTodoFlyout();
+            if (_capsuleExpanded) CloseTodoFlyout();
+            if (_inputMethodFlyout?.IsOpen == true) CloseInputMethodFlyout();
         }
         if (!TopBarNativeMethods.IsMouseButtonDown(TopBarNativeMethods.LeftMouseButton))
         {
@@ -1819,6 +2175,7 @@ public sealed partial class TopBarWindow : Window
         }
         TryCloseOnOutsideClick(_todoFlyout, cursor);
         TryCloseOnOutsideClick(_clockFlyout, cursor);
+        TryCloseOnOutsideClick(_inputMethodFlyout, cursor);
     }
 
     private void TryCloseOnOutsideClick(Popup? flyout, DockNativeMethods.NativePoint cursor)
@@ -1842,7 +2199,8 @@ public sealed partial class TopBarWindow : Window
         // close it here would only make the same click re-open it.
         TopBarModuleKind? owner = flyout == _todoFlyout
             ? TopBarModuleKind.TodoSummary
-            : flyout == _clockFlyout ? TopBarModuleKind.Clock : null;
+            : flyout == _clockFlyout ? TopBarModuleKind.Clock
+            : flyout == _inputMethodFlyout ? TopBarModuleKind.InputMethod : null;
         if (owner is { } kind
             && _modules.TryGetValue(kind, out var element)
             && element is Button button)
@@ -1962,6 +2320,7 @@ public sealed partial class TopBarWindow : Window
         }
         CloseTodoFlyout(animate: false);
         CloseClockFlyout();
+        CloseInputMethodFlyout();
         _environment.ToggleLauncherPanel();
     }
 
@@ -2544,7 +2903,8 @@ public sealed partial class TopBarWindow : Window
                 excludedCaptionSpan),
             PointerOverDock: pointerOverBar,
             InteractionActive: _menuOpen || _capsuleExpanded
-                || _todoFlyout?.IsOpen == true || _clockFlyout?.IsOpen == true,
+                || _todoFlyout?.IsOpen == true || _clockFlyout?.IsOpen == true
+                || _inputMethodFlyout?.IsOpen == true,
             OverlapIsMaximizedWindow: zoomed);
         _autoHide.Update(input, DateTimeOffset.UtcNow);
         if (_autoHide.IsShown != IsVisible)
@@ -2563,6 +2923,7 @@ public sealed partial class TopBarWindow : Window
                 }
                 CloseTodoFlyout();
                 CloseClockFlyout();
+                CloseInputMethodFlyout();
                 HideFromApp();
             }
         }
