@@ -106,9 +106,15 @@ public static class TopBarReserveRules
         && liveWorkArea.Top >= reservedStrip.Bottom;
 
     /// <summary>
-    /// Whether an active foreground window intrudes deep into a reserved top bar (e.g. a
-    /// borderless window or an already-maximized window that ignored the work-area change),
-    /// ignoring the intentional 1-pixel tuck at the bar's bottom seam.
+    /// Bottom-edge tolerance in physical pixels so the intentional 1-pixel tuck at the bar's
+    /// bottom seam (plus minor DWM frame rounding) does not count as intruding into the bar.
+    /// </summary>
+    public const int SeamTolerancePixels = 4;
+
+    /// <summary>
+    /// Whether an active foreground window intrudes into a reserved top bar beyond the
+    /// bottom-seam tolerance (e.g. a borderless window, a restored window opening at Y=0,
+    /// or a maximized window that ignored the work-area change).
     /// </summary>
     public static bool IsWindowCoveringReservedBar(PixelRect foregroundBounds, PixelRect barBounds)
     {
@@ -122,7 +128,66 @@ public static class TopBarReserveRules
             return false;
         }
 
-        var midpointY = barBounds.Top + Math.Max(1, barBounds.Height / 2);
-        return foregroundBounds.Top < midpointY && foregroundBounds.Bottom > midpointY;
+        var intrusionBottom = Math.Max(barBounds.Top + 1, barBounds.Bottom - SeamTolerancePixels);
+        return foregroundBounds.Top < intrusionBottom && foregroundBounds.Bottom > barBounds.Top;
+    }
+
+    /// <summary>
+    /// Computes a one-time top-edge nudge for a newly opened, ordinary, non-maximized external
+    /// window whose visible top intrudes into a reserved top bar (such as Chromium/Electron
+    /// apps restoring a saved Y=0 coordinate that ignores <c>SPI_GETWORKAREA</c>). Returns null
+    /// when the window is ineligible or already sits below the reserved strip.
+    /// </summary>
+    public static PixelRect? ComputeNudgedWindowRect(
+        PixelRect visibleBounds,
+        PixelRect windowRect,
+        PixelRect barBounds,
+        PixelRect workArea,
+        bool isMaximized,
+        bool isFullScreen,
+        bool isTopmost,
+        bool isToolOrPopup,
+        bool hasOwner,
+        bool hasCaption)
+    {
+        if (isMaximized || isFullScreen || isTopmost || isToolOrPopup || hasOwner || !hasCaption)
+        {
+            return null;
+        }
+
+        if (!visibleBounds.HasArea || !windowRect.HasArea || !barBounds.HasArea || !workArea.HasArea)
+        {
+            return null;
+        }
+
+        if (visibleBounds.Right <= barBounds.Left || visibleBounds.Left >= barBounds.Right)
+        {
+            return null;
+        }
+
+        var targetVisibleTop = Math.Max(barBounds.Bottom, workArea.Top);
+        if (visibleBounds.Top >= targetVisibleTop - SeamTolerancePixels || visibleBounds.Bottom <= barBounds.Top)
+        {
+            return null;
+        }
+
+        var deltaY = targetVisibleTop - visibleBounds.Top;
+        if (deltaY <= 0)
+        {
+            return null;
+        }
+
+        var nextTop = windowRect.Top + deltaY;
+        var nextBottom = windowRect.Bottom + deltaY;
+        var bottomFrameInset = Math.Max(0, windowRect.Bottom - visibleBounds.Bottom);
+        var maxWindowBottom = workArea.Bottom + bottomFrameInset;
+        if (nextBottom > maxWindowBottom)
+        {
+            var minHeight = Math.Min(windowRect.Height, 120);
+            nextBottom = Math.Max(nextTop + minHeight, maxWindowBottom);
+        }
+
+        var nudged = new PixelRect(windowRect.Left, nextTop, windowRect.Right, nextBottom);
+        return nudged.HasArea && nudged != windowRect ? nudged : null;
     }
 }

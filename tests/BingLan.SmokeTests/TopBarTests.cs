@@ -515,6 +515,8 @@ public static class TopBarTests
             "正常位于预留条下方的最大化窗口不算侵入顶栏");
         Assert(!TopBarReserveRules.IsWindowCoveringReservedBar(new PixelRect(0, 30, 1920, 1040), reservedStrip),
             "底部 1 像素无缝贴合不应误判为侵入顶栏");
+        Assert(TopBarReserveRules.IsWindowCoveringReservedBar(new PixelRect(120, 20, 1400, 900), reservedStrip),
+            "顶边侵入预留顶栏下半段超过衔接缝容差的窗口应判侵入，避免顶栏压住标签栏");
         Assert(TopBarReserveRules.IsWindowCoveringReservedBar(new PixelRect(0, 0, 1920, 1040), reservedStrip),
             "顶边仍贴在 y=0 的最大化浏览器应判侵入预留顶栏");
         Assert(!TopBarReserveRules.IsWindowCoveringReservedBar(new PixelRect(1920, 0, 3840, 1040), reservedStrip),
@@ -523,6 +525,61 @@ public static class TopBarTests
             "负坐标副屏上顶边侵入的窗口应判侵入");
         Assert(!TopBarReserveRules.IsWindowCoveringReservedBar(new PixelRect(-1920, -1049, 0, -40), negStrip),
             "负坐标副屏上位于预留条下方的窗口不判侵入");
+
+        // 新开普通非最大化窗口若顶边钻进预留顶栏，应一次性下移到工作区顶边，且不影响全屏/最大化/弹窗/另一屏。
+        var workArea = new PixelRect(0, 32, 1920, 1000);
+        var nudged = TopBarReserveRules.ComputeNudgedWindowRect(
+            visibleBounds: new PixelRect(100, 0, 1300, 800),
+            windowRect: new PixelRect(93, 0, 1307, 807),
+            barBounds: fullBar,
+            workArea: workArea,
+            isMaximized: false,
+            isFullScreen: false,
+            isTopmost: false,
+            isToolOrPopup: false,
+            hasOwner: false,
+            hasCaption: true);
+        Assert(nudged == new PixelRect(93, 32, 1307, 839),
+            "新开普通窗口在 y=0 时应保持尺寸下移到工作区顶边，并保留 DWM 阴影边偏移");
+
+        var tallNudged = TopBarReserveRules.ComputeNudgedWindowRect(
+            visibleBounds: new PixelRect(100, 0, 1300, 995),
+            windowRect: new PixelRect(93, 0, 1307, 1002),
+            barBounds: fullBar,
+            workArea: workArea,
+            isMaximized: false,
+            isFullScreen: false,
+            isTopmost: false,
+            isToolOrPopup: false,
+            hasOwner: false,
+            hasCaption: true);
+        Assert(tallNudged == new PixelRect(93, 32, 1307, 1007),
+            "下移后底边超出工作区时应按工作区底边收紧高度");
+
+        Assert(TopBarReserveRules.ComputeNudgedWindowRect(
+                new PixelRect(100, 32, 1300, 800), new PixelRect(93, 32, 1307, 807),
+                fullBar, workArea, false, false, false, false, false, true) is null,
+            "已在顶栏下方的新窗口无需移动");
+        Assert(TopBarReserveRules.ComputeNudgedWindowRect(
+                new PixelRect(0, 0, 1920, 1080), new PixelRect(0, 0, 1920, 1080),
+                fullBar, workArea, false, true, false, false, false, true) is null,
+            "全屏窗口不得移动");
+        Assert(TopBarReserveRules.ComputeNudgedWindowRect(
+                new PixelRect(0, 0, 1920, 1000), new PixelRect(0, 0, 1920, 1000),
+                fullBar, workArea, true, false, false, false, false, true) is null,
+            "最大化窗口不得移动");
+        Assert(TopBarReserveRules.ComputeNudgedWindowRect(
+                new PixelRect(100, 0, 600, 400), new PixelRect(100, 0, 600, 400),
+                fullBar, workArea, false, false, true, false, false, true) is null,
+            "置顶窗口不得移动");
+        Assert(TopBarReserveRules.ComputeNudgedWindowRect(
+                new PixelRect(100, 0, 600, 400), new PixelRect(100, 0, 600, 400),
+                fullBar, workArea, false, false, false, true, false, false) is null,
+            "无标题栏弹窗或工具窗口不得移动");
+        Assert(TopBarReserveRules.ComputeNudgedWindowRect(
+                new PixelRect(100, 0, 600, 400), new PixelRect(100, 0, 600, 400),
+                fullBar, workArea, false, false, false, false, true, true) is null,
+            "带宿主窗口的子对话框不得移动");
     }
 
     private static void TestThemeTopBarFields()

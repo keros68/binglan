@@ -49,6 +49,7 @@ internal static class NativeMethods
     internal const int GwlExStyle = -20;
 
     internal const long WsCaption = 0x00C00000L;
+    internal const long WsPopup = 0x80000000L;
     internal const long WsThickFrame = 0x00040000L;
     internal const long WsMaximizeBox = 0x00010000L;
     internal const long WsExAcceptFiles = 0x00000010L;

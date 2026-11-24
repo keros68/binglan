@@ -142,6 +142,9 @@ public sealed partial class TopBarWindow : Window
     private nint _handle;
     private uint _shellHookMessage;
     private bool _shellHookActive;
+    private readonly HashSet<nint> _observedTopWindows = [];
+    private readonly DispatcherTimer _nudgeRecheckTimer;
+    private bool _observedWindowsSeeded;
     private bool _closing;
     private bool _isChangingVisibilityByApp;
     private bool _trueFullScreenForeground;
@@ -206,6 +209,18 @@ public sealed partial class TopBarWindow : Window
             Dispatcher);
         _minuteTimer = new DispatcherTimer(DispatcherPriority.Background, Dispatcher);
         _minuteTimer.Tick += (_, _) => OnMinuteTick();
+        _nudgeRecheckTimer = new DispatcherTimer(
+            TimeSpan.FromMilliseconds(120),
+            DispatcherPriority.Background,
+            (_, _) =>
+            {
+                _nudgeRecheckTimer.Stop();
+                if (!_closing)
+                {
+                    UpdateForForeground();
+                }
+            },
+            Dispatcher);
         _sampler.Sampled += OnSampled;
         // A network address change is the one system fact with an event source; the
         // others ride the sampling or ambient tick.
@@ -439,13 +454,24 @@ public sealed partial class TopBarWindow : Window
             return 0;
         }
 
-        var changed = (int)wParam switch
+        var shellEvent = (int)wParam;
+        var changed = shellEvent switch
         {
             HshellFlash => MarkFlashed(lParam),
             HshellWindowActivated or HshellRudeAppActivated => ClearActivatedAttention(lParam),
             HshellWindowDestroyed => _attention.Closed(lParam),
             _ => false
         };
+        if (shellEvent == HshellWindowDestroyed && lParam != 0)
+        {
+            _observedTopWindows.Remove(lParam);
+        }
+        else if (shellEvent is HshellWindowActivated or HshellRudeAppActivated)
+        {
+            // React immediately when a new or overlapping window activates instead of waiting
+            // for the 500 ms foreground poll.
+            Dispatcher.BeginInvoke(UpdateForForeground, DispatcherPriority.Input);
+        }
         if (changed)
         {
             RefreshAttention();
@@ -520,6 +546,7 @@ public sealed partial class TopBarWindow : Window
         _foregroundTimer.Stop();
         _ambientTimer.Stop();
         _minuteTimer.Stop();
+        _nudgeRecheckTimer.Stop();
         _sampler.Sampled -= OnSampled;
         System.Net.NetworkInformation.NetworkChange.NetworkAddressChanged -= OnNetworkAddressChanged;
         SystemEvents.TimeChanged -= OnSystemTimeChanged;
@@ -2454,11 +2481,30 @@ public sealed partial class TopBarWindow : Window
 
         if (_appBar.IsReserved)
         {
+            if (!_observedWindowsSeeded)
+            {
+                SeedObservedTopWindows();
+            }
+
+            var nudgedAsynchronously = false;
+            if (foreground && foregroundWindow != 0)
+            {
+                nudgedAsynchronously = TryNudgeNewlyOpenedWindow(
+                    foregroundWindow,
+                    foregroundBounds,
+                    bounds,
+                    monitor,
+                    zoomed,
+                    fullScreen);
+            }
+
             // A reserved bar rides above normal windows and yields beneath a full-screen
-            // app or any foreground window that still intrudes deep into the top strip
-            // (such as a custom borderless or un-repositioned maximized window).
+            // app or any foreground window that still intrudes into the top strip
+            // (such as a borderless, elevated, or user-dragged window).
             var coveredByForeground = fullScreen
-                || (foreground && TopBarReserveRules.IsWindowCoveringReservedBar(foregroundBounds, bounds));
+                || (!nudgedAsynchronously
+                    && foreground
+                    && TopBarReserveRules.IsWindowCoveringReservedBar(foregroundBounds, bounds));
             _appBar.SetFullScreenDetected(coveredByForeground);
             if (!IsVisible && !coveredByForeground)
             {
@@ -2549,6 +2595,93 @@ public sealed partial class TopBarWindow : Window
         }
 
         bounds = new PixelRect(rectangle.Left, rectangle.Top, rectangle.Right, rectangle.Bottom);
+        return true;
+    }
+
+    private void SeedObservedTopWindows()
+    {
+        _observedWindowsSeeded = true;
+        NativeMethods.EnumWindows((hwnd, _) =>
+        {
+            if (hwnd != 0 && NativeMethods.IsWindowVisible(hwnd))
+            {
+                _observedTopWindows.Add(hwnd);
+            }
+            return true;
+        }, 0);
+    }
+
+    private bool TryNudgeNewlyOpenedWindow(
+        nint window,
+        PixelRect visibleBounds,
+        PixelRect barBounds,
+        MonitorSnapshot monitor,
+        bool isMaximized,
+        bool isFullScreen)
+    {
+        if (!_observedTopWindows.Add(window))
+        {
+            return false;
+        }
+
+        if (_observedTopWindows.Count > 512)
+        {
+            _observedTopWindows.RemoveWhere(candidate => !DockNativeMethods.IsWindow(candidate));
+        }
+
+        DockNativeMethods.GetWindowThreadProcessId(window, out var processId);
+        if (processId == 0 || processId == (uint)Environment.ProcessId)
+        {
+            return false;
+        }
+
+        if (!DockNativeMethods.GetWindowRect(window, out var nativeRect))
+        {
+            return false;
+        }
+
+        var style = (long)NativeMethods.GetWindowLongPtr(window, NativeMethods.GwlStyle);
+        var exStyle = (long)NativeMethods.GetWindowLongPtr(window, NativeMethods.GwlExStyle);
+        var hasCaption = (style & NativeMethods.WsCaption) == NativeMethods.WsCaption;
+        var isToolOrPopup = (exStyle & NativeMethods.WsExToolWindow) != 0
+            || ((style & NativeMethods.WsPopup) != 0 && !hasCaption);
+        var isTopmost = (exStyle & NativeMethods.WsExTopmost) != 0;
+        var hasOwner = NativeMethods.GetWindow(window, NativeMethods.GwOwner) != 0;
+        var windowRect = new PixelRect(nativeRect.Left, nativeRect.Top, nativeRect.Right, nativeRect.Bottom);
+        var workArea = BingLan.App.Dock.DockAppBarController.GetLiveWorkingArea(monitor);
+        var nudged = TopBarReserveRules.ComputeNudgedWindowRect(
+            visibleBounds,
+            windowRect,
+            barBounds,
+            workArea,
+            isMaximized,
+            isFullScreen,
+            isTopmost,
+            isToolOrPopup,
+            hasOwner,
+            hasCaption);
+        if (nudged is not { } target)
+        {
+            return false;
+        }
+
+        var flags = NativeMethods.SwpNoZOrder
+            | NativeMethods.SwpNoActivate
+            | DockNativeMethods.SwpAsyncWindowPos;
+        if (target.Width == windowRect.Width && target.Height == windowRect.Height)
+        {
+            flags |= NativeMethods.SwpNoSize;
+        }
+
+        if (!NativeMethods.SetWindowPos(window, 0, target.Left, target.Top, target.Width, target.Height, flags))
+        {
+            return false;
+        }
+
+        // Re-verify once after the target thread applies the async move; if it ignored or
+        // clamped the move back into the bar, Layer 2 yields the bar beneath it.
+        _nudgeRecheckTimer.Stop();
+        _nudgeRecheckTimer.Start();
         return true;
     }
 
