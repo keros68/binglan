@@ -2441,7 +2441,7 @@
                                     </local:SettingsRow>
                                     <local:SettingsRow x:Name="DockRevealModeRow"
                                                        Header="唤出方式"
-                                                       Description="Dock 隐藏后如何重新显示。不想右下角出现小把手时，选“只用屏幕底边（不显示把手）”；原生任务栏一直显示时，推到屏幕最底边即可唤出"
+                                                       Description="仅控制冰蓝 Dock 隐藏后如何重新显示（控制 Windows 原生任务栏请到「Windows 任务栏 → 鼠标触边唤出」）。不想右下角出现小把手时，选“只用屏幕底边（不显示把手）”"
                                                        local:SettingsSearch.Keywords="唤出方式 把手 角落把手 右下角 隐藏把手 屏幕底边">
                                         <ComboBox x:Name="DockRevealModeComboBox"
                                                   Width="220"
@@ -2988,8 +2988,8 @@
                                         </ComboBox>
                                     </local:SettingsRow>
                                     <local:SettingsRow Header="有新消息时不弹出任务栏"
-                                                       Description="关闭 Windows 的任务栏应用闪烁，新消息只在 Dock 图标上显示橙色标记"
-                                                       local:SettingsSearch.Keywords="弹出方式 闪烁">
+                                                       Description="仅关闭 Windows 的任务栏应用闪烁，不影响系统右下角消息通知弹窗；新消息仍会在 Dock 图标提醒（可开启弹跳）和顶部信息条「消息提示」中显示"
+                                                       local:SettingsSearch.Keywords="弹出方式 闪烁 通知 消息提醒">
                                         <CheckBox x:Name="QuietTaskbarFlashCheckBox"
                                                   AutomationProperties.Name="有新消息时不弹出 Windows 任务栏"
                                                   Style="{StaticResource ToggleSwitchStyle}"

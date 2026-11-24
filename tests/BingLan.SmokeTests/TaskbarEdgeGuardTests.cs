@@ -12,6 +12,7 @@ internal static class TaskbarEdgeGuardTests
         TestMiddleStripAcrossDpis();
         TestGameLikeFullScreenSuspensionRules();
         TestNeedsModeReapply();
+        TestExpandedTaskbarDetection();
     }
 
     private static void TestStripGeometryPerMode()
@@ -119,6 +120,19 @@ internal static class TaskbarEdgeGuardTests
             "模式变化时必须重新应用任务栏模式");
         Assert(TaskbarCornerRules.NeedsModeReapply(TaskbarMode.SmartHide, TaskbarMode.SmartHide, "Windows 没有接受"),
             "当前模式带有异常提示时应允许重新应用");
+    }
+
+    private static void TestExpandedTaskbarDetection()
+    {
+        var strip = new PixelRect(0, 2158, 3840, 2160);
+        Assert(!TaskbarCornerRules.IsBottomTaskbarExpanded(new PixelRect(0, 2158, 3840, 2242), strip),
+            "收起态仅露出 2 像素的任务栏不应判为展开");
+        Assert(TaskbarCornerRules.IsBottomTaskbarExpanded(new PixelRect(0, 2076, 3840, 2160), strip),
+            "完整展开的底部任务栏应判为展开，挡板不得抢占其 Z 序");
+        Assert(TaskbarCornerRules.IsBottomTaskbarExpanded(new PixelRect(0, 2120, 3840, 2204), strip),
+            "正在滑出/收回中途的任务栏应判为展开，等彻底收起后再复位挡板");
+        Assert(!TaskbarCornerRules.IsBottomTaskbarExpanded(new PixelRect(0, 2076, 3840, 2160), new PixelRect(3840, 1078, 5760, 1080)),
+            "其他显示器上展开的任务栏不应影响当前显示器的挡板");
     }
 
     private static void Assert(bool condition, string message)

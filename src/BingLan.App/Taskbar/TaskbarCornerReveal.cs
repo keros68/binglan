@@ -135,21 +135,27 @@ internal sealed class TaskbarCornerReveal : IDisposable
             _strips[stale].Close();
             _strips.Remove(stale);
         }
+        var raisedAny = false;
         foreach (var (device, bounds) in wanted)
         {
-            if (!_strips.TryGetValue(device, out var strip))
+            var isNew = !_strips.TryGetValue(device, out var strip);
+            if (isNew)
             {
                 strip = new EdgeStrip();
                 _strips[device] = strip;
                 strip.Show();
             }
-            strip.Place(bounds);
+            if (isNew || strip!.Bounds != bounds || !IsTaskbarExpandedOver(bounds))
+            {
+                strip!.Place(bounds);
+                raisedAny = true;
+            }
         }
         if (_strips.Count > 0)
         {
             WatchTaskbar();
             if (!_zOrderTimer.IsEnabled) _zOrderTimer.Start();
-            NotifyRaised();
+            if (raisedAny) NotifyRaised();
         }
         else
         {
@@ -219,6 +225,11 @@ internal sealed class TaskbarCornerReveal : IDisposable
         _classNameBuffer.Clear();
         DockNativeMethods.GetClassNameW(hwnd, _classNameBuffer, _classNameBuffer.Capacity);
         if (!IsTaskbarClass(_classNameBuffer.ToString())) return;
+        // Do not fight the taskbar's Z-order while it is open/expanded; wait until it collapses.
+        if (IsTaskbarWindowExpanded(hwnd))
+        {
+            return;
+        }
         if (Environment.TickCount64 - _lastRaise >= RaiseThrottleMs) Raise();
         _settleForceRaise = true;
         _settle.Stop();
@@ -236,58 +247,116 @@ internal sealed class TaskbarCornerReveal : IDisposable
         _settle.Start();
     }
 
-    /// <summary>Raises strips only if a taskbar window sits above any strip or a strip was hidden.</summary>
+    /// <summary>Raises strips only if a collapsed taskbar window sits above any strip or a strip was hidden.</summary>
     internal void RaiseIfBehindTaskbar()
     {
-        if (_strips.Count == 0 || _raising || !IsAnyTaskbarAboveStrips())
+        if (_strips.Count == 0 || _raising)
         {
             return;
         }
-        Raise();
-    }
-
-    private bool IsAnyTaskbarAboveStrips()
-    {
+        var raisedAny = false;
         foreach (var strip in _strips.Values)
         {
-            var handle = new WindowInteropHelper(strip).Handle;
-            if (handle == 0)
+            if (NeedsRaiseForStrip(strip))
             {
-                continue;
+                strip.Raise();
+                raisedAny = true;
             }
-            if (!NativeMethods.IsWindowVisible(handle) || !NativeMethods.IsTopmostWindow(handle))
+        }
+        if (raisedAny)
+        {
+            _lastRaise = Environment.TickCount64;
+            NotifyRaised();
+        }
+    }
+
+    private bool NeedsRaiseForStrip(EdgeStrip strip)
+    {
+        var handle = new WindowInteropHelper(strip).Handle;
+        if (handle == 0)
+        {
+            return false;
+        }
+        if (!NativeMethods.IsWindowVisible(handle) || !NativeMethods.IsTopmostWindow(handle))
+        {
+            return !IsTaskbarExpandedOver(strip.Bounds);
+        }
+        var cursor = NativeMethods.GetWindow(handle, NativeMethods.GwHwndPrev);
+        var steps = 0;
+        while (cursor != 0 && steps++ < 64)
+        {
+            _classNameBuffer.Clear();
+            if (DockNativeMethods.GetClassNameW(cursor, _classNameBuffer, _classNameBuffer.Capacity) > 0
+                && IsTaskbarClass(_classNameBuffer.ToString()))
             {
+                if (DockNativeMethods.GetWindowRect(cursor, out var rect)
+                    && TaskbarCornerRules.IsBottomTaskbarExpanded(
+                        new PixelRect(rect.Left, rect.Top, rect.Right, rect.Bottom),
+                        strip.Bounds))
+                {
+                    return false;
+                }
                 return true;
             }
-            var cursor = NativeMethods.GetWindow(handle, NativeMethods.GwHwndPrev);
-            var steps = 0;
-            while (cursor != 0 && steps++ < 64)
+            cursor = NativeMethods.GetWindow(cursor, NativeMethods.GwHwndPrev);
+        }
+        return false;
+    }
+
+    private bool IsTaskbarWindowExpanded(nint hwnd)
+    {
+        if (!DockNativeMethods.GetWindowRect(hwnd, out var rect))
+        {
+            return false;
+        }
+        var taskbarRect = new PixelRect(rect.Left, rect.Top, rect.Right, rect.Bottom);
+        foreach (var strip in _strips.Values)
+        {
+            if (TaskbarCornerRules.IsBottomTaskbarExpanded(taskbarRect, strip.Bounds))
             {
-                _classNameBuffer.Clear();
-                if (DockNativeMethods.GetClassNameW(cursor, _classNameBuffer, _classNameBuffer.Capacity) > 0
-                    && IsTaskbarClass(_classNameBuffer.ToString()))
-                {
-                    return true;
-                }
-                cursor = NativeMethods.GetWindow(cursor, NativeMethods.GwHwndPrev);
+                return true;
             }
         }
         return false;
     }
 
-    /// <summary>Puts the existing strips back above the taskbar without re-reading monitors.</summary>
+    private static bool IsTaskbarExpandedOver(PixelRect stripBounds)
+    {
+        foreach (var taskbar in TaskbarAdapter.FindTaskbars())
+        {
+            if (DockNativeMethods.IsWindowVisible(taskbar)
+                && DockNativeMethods.GetWindowRect(taskbar, out var rect)
+                && TaskbarCornerRules.IsBottomTaskbarExpanded(
+                    new PixelRect(rect.Left, rect.Top, rect.Right, rect.Bottom),
+                    stripBounds))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /// <summary>Puts the existing strips back above collapsed taskbars without re-reading monitors.</summary>
     internal void Raise()
     {
         if (_strips.Count == 0 || _raising)
         {
             return;
         }
-        _lastRaise = Environment.TickCount64;
+        var raisedAny = false;
         foreach (var strip in _strips.Values)
         {
-            strip.Raise();
+            if (!IsTaskbarExpandedOver(strip.Bounds))
+            {
+                strip.Raise();
+                raisedAny = true;
+            }
         }
-        NotifyRaised();
+        if (raisedAny)
+        {
+            _lastRaise = Environment.TickCount64;
+            NotifyRaised();
+        }
     }
 
     private void NotifyRaised()
@@ -353,8 +422,11 @@ internal sealed class TaskbarCornerReveal : IDisposable
             };
         }
 
+        internal PixelRect Bounds { get; private set; }
+
         internal void Place(PixelRect bounds)
         {
+            Bounds = bounds;
             var handle = new WindowInteropHelper(this).Handle;
             var flags = NativeMethods.SwpNoActivate;
             if (!NativeMethods.IsWindowVisible(handle))

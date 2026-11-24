@@ -155,6 +155,7 @@ public static class TaskbarCornerRules
     public const double CornerFraction = 0.15d;
     public const double MinimumCornerDip = 160d;
     public const int StripPixels = 2;
+    public const int ExpandedTaskbarThresholdPixels = 8;
 
     public static PixelRect MiddleStrip(PixelRect monitor, uint dpi)
     {
@@ -215,6 +216,18 @@ public static class TaskbarCornerRules
         TaskbarMode requestedMode,
         string? activeProblem) =>
         activeMode != requestedMode || !string.IsNullOrEmpty(activeProblem);
+
+    /// <summary>
+    /// Whether an auto-hidden bottom taskbar overlapping <paramref name="stripBounds"/> is
+    /// currently expanded/open rather than collapsed to its thin edge strip. While the taskbar
+    /// is intentionally open (Start menu, Win key, tray), edge strips must not fight its Z-order
+    /// or raise the Dock over it, which can interfere with auto-hide retraction.
+    /// </summary>
+    public static bool IsBottomTaskbarExpanded(PixelRect taskbarRect, PixelRect stripBounds) =>
+        taskbarRect.Right > stripBounds.Left
+        && taskbarRect.Left < stripBounds.Right
+        && taskbarRect.Bottom >= stripBounds.Bottom
+        && stripBounds.Bottom - taskbarRect.Top > ExpandedTaskbarThresholdPixels;
 }
 
 /// <summary>

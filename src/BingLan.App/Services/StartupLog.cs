@@ -19,6 +19,12 @@ internal static class StartupLog
     private static string? _path;
     private static string? _crashPath;
 
+    internal static string DataDirectory =>
+        Path.GetDirectoryName(_path)
+        ?? Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "BingLanWidgets");
+
     internal static void Open(string dataDirectory)
     {
         _path = Path.Combine(dataDirectory, "startup.log");

@@ -168,7 +168,12 @@ public sealed class AppUpdater : IDisposable
 
         try
         {
-            Process.Start(new ProcessStartInfo(path, "/SILENT /SUPPRESSMSGBOXES /NORESTART /NOCLOSEAPPLICATIONS /UPDATE=1")
+            var logDirectory = StartupLog.DataDirectory;
+            Directory.CreateDirectory(logDirectory);
+            var logPath = Path.Combine(logDirectory, "update-install.log");
+            Process.Start(new ProcessStartInfo(
+                path,
+                $"/SILENT /SUPPRESSMSGBOXES /NORESTART /NOCLOSEAPPLICATIONS /UPDATE=1 /LOG=\"{logPath}\"")
             {
                 UseShellExecute = true
             });
