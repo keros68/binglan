@@ -4117,9 +4117,21 @@ public partial class SettingsWindow : Window
 
     private async void CheckUpdates_Click(object sender, RoutedEventArgs e)
     {
-        if (_maintenance.Updater is { } updater)
+        if (_maintenance.Updater is not { } updater)
+        {
+            return;
+        }
+        try
         {
             await updater.CheckNowAsync();
+        }
+        catch (Exception)
+        {
+            if (!_isClosed)
+            {
+                UpdateStatusText.Text = "检查更新失败：发生意外错误，请稍后重试";
+                CheckUpdatesButton.IsEnabled = !updater.IsBusy;
+            }
         }
     }
 

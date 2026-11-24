@@ -80,6 +80,10 @@ Run("更新发布信息解析与安全过滤", UpdateServiceTests.TestReleasePar
 Run("检查更新结果与请求内容（离线桩）", UpdateServiceTests.TestCheck);
 Run("更新安装包大小与 SHA-256 校验", UpdateServiceTests.TestVerifiedDownload);
 Run("更新设置 v20 迁移与保存", UpdateServiceTests.TestStateMigration);
+Run("更新检查 302 发现零 API 调用与 HEAD 回退", UpdateServiceTests.TestRedirectDiscoverySkipsApiWhenUpToDate);
+Run("更新检查 API 403 限流走 SHA256SUMS 降级与安全校验", UpdateServiceTests.TestRateLimitedApiFallsBackToChecksumsAndReleasePage);
+Run("更新检查限流提示与冷却窗口规则", UpdateServiceTests.TestRateLimitMessageAndCooldown);
+Run("更新检查 407/代理/DNS/TLS/5xx/HttpIOException 精准分类", UpdateServiceTests.TestErrorClassificationForProxyTlsDnsAndHttpIOException);
 Run("清爽桌面识别用户接管", CleanDesktopTests.TestTakeoverDetection);
 Run("清爽桌面无记录时关闭仍恢复显示", CleanDesktopTests.TestTurnOffWithoutRecordPlan);
 Run("清爽桌面接手无记录的隐藏图标", CleanDesktopTests.TestAdoptionOfOrphanedHiddenIcons);

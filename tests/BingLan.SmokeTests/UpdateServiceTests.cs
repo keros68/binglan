@@ -46,6 +46,8 @@ internal static class UpdateServiceTests
             "非安装包附件被忽略");
         Check(UpdateService.ParseRelease(ReleaseJson("v0.3.0", downloadUrl: "http://example.com/BingLan-Setup-0.3.0.exe")) is { Installer: null },
             "非 HTTPS 下载地址被拒绝");
+        Check(UpdateService.ParseRelease(ReleaseJson("v0.3.0", downloadUrl: "https://evil.example.com/BingLan-Setup-0.3.0.exe")) is { Installer: null },
+            "非可信域名下载地址被拒绝");
     }
 
     internal static void TestCheck()
@@ -57,7 +59,8 @@ internal static class UpdateServiceTests
         var failing = new UpdateService(new Version(0, 2, 2),
             new StubHandler(_ => new HttpResponseMessage(HttpStatusCode.InternalServerError)));
         var failed = failing.CheckAsync().GetAwaiter().GetResult();
-        Check(failed is { Status: UpdateCheckStatus.Failed, ErrorMessage: "网络请求失败" }, "服务器错误安静失败");
+        Check(failed is { Status: UpdateCheckStatus.Failed, ErrorMessage: "GitHub 服务暂时不可用（HTTP 500），请稍后重试" },
+            "服务器 500 返回明确状态提示");
 
         string? userAgent = null;
         var probe = new UpdateService(new Version(0, 2, 2), new StubHandler(request =>
@@ -67,6 +70,328 @@ internal static class UpdateServiceTests
         }));
         probe.CheckAsync().GetAwaiter().GetResult();
         Check(userAgent == "BingLan/0.2.2", "请求只带程序名和版本号");
+    }
+
+    internal static void TestRedirectDiscoverySkipsApiWhenUpToDate()
+    {
+        var apiCalls = 0;
+        var headCalls = 0;
+        var redirectOnlyHandler = new StubHandler(request =>
+        {
+            if (request.RequestUri!.Host == "api.github.com")
+            {
+                apiCalls++;
+                return new HttpResponseMessage(HttpStatusCode.Forbidden);
+            }
+            if (request.Method == HttpMethod.Head && request.RequestUri.AbsoluteUri == UpdateService.LatestReleasePageEndpoint)
+            {
+                headCalls++;
+                var redirect = new HttpResponseMessage(HttpStatusCode.Found);
+                redirect.Headers.Location = new Uri("https://github.com/keros68/binglan/releases/tag/v0.4.8");
+                return redirect;
+            }
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        });
+
+        var upToDate = new UpdateService(new Version(0, 4, 8), redirectOnlyHandler)
+            .CheckAsync().GetAwaiter().GetResult();
+        Check(upToDate.Status == UpdateCheckStatus.UpToDate, "302 发现版本不高于当前版本时判定最新");
+        Check(headCalls == 1 && apiCalls == 0, "已是最新时通过 302 零次调用 api.github.com");
+
+        // HEAD 返回 405 时回退 GET 仅读响应头
+        var fallbackHeadCalls = 0;
+        var fallbackGetCalls = 0;
+        var fallbackApiCalls = 0;
+        var headUnsupported = new StubHandler(request =>
+        {
+            if (request.RequestUri!.Host == "api.github.com")
+            {
+                fallbackApiCalls++;
+                return new HttpResponseMessage(HttpStatusCode.Forbidden);
+            }
+            if (request.Method == HttpMethod.Head)
+            {
+                fallbackHeadCalls++;
+                return new HttpResponseMessage(HttpStatusCode.MethodNotAllowed);
+            }
+            if (request.Method == HttpMethod.Get && request.RequestUri.AbsoluteUri == UpdateService.LatestReleasePageEndpoint)
+            {
+                fallbackGetCalls++;
+                var redirect = new HttpResponseMessage(HttpStatusCode.MovedPermanently);
+                redirect.Headers.Location = new Uri("/keros68/binglan/releases/tag/v0.4.8", UriKind.Relative);
+                return redirect;
+            }
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        });
+
+        var fallbackResult = new UpdateService(new Version(0, 4, 8), headUnsupported)
+            .CheckAsync().GetAwaiter().GetResult();
+        Check(fallbackResult.Status == UpdateCheckStatus.UpToDate, "HEAD 不支持时回退 GET 301 仍可判定最新");
+        Check(fallbackHeadCalls == 1 && fallbackGetCalls == 1 && fallbackApiCalls == 0,
+            "HEAD 回退 GET 同样零次调用 api.github.com");
+
+        var baseUri = new Uri(UpdateService.LatestReleasePageEndpoint);
+        Check(!UpdateService.TryParseLatestRedirectLocation(
+                new Uri("https://evil.example.com/keros68/binglan/releases/tag/v9.9.9"), baseUri, out _, out _, out _),
+            "拒绝非 github.com 的重定向目标");
+        Check(!UpdateService.TryParseLatestRedirectLocation(
+                new Uri("http://github.com/keros68/binglan/releases/tag/v9.9.9"), baseUri, out _, out _, out _),
+            "拒绝 HTTP 降级重定向目标");
+    }
+
+    internal static void TestRateLimitedApiFallsBackToChecksumsAndReleasePage()
+    {
+        var expectedSha = Sha256Hex(InstallerBytes);
+        var checksumsBody = $"\uFEFF{expectedSha}  BingLan-Setup-0.4.8.exe\n" +
+                            "0D5DC0353FCA7B857D57EB8F8CD9E702B6FDACE7039589BB5F351D72C694699A  BingLan-0.4.8-portable.zip\n";
+
+        var degradedHandler = new StubHandler(request =>
+        {
+            var uri = request.RequestUri!.AbsoluteUri;
+            if (request.Method == HttpMethod.Head && uri == UpdateService.LatestReleasePageEndpoint)
+            {
+                var redirect = new HttpResponseMessage(HttpStatusCode.Found);
+                redirect.Headers.Location = new Uri("https://github.com/keros68/binglan/releases/tag/v0.4.8");
+                return redirect;
+            }
+            if (uri == "https://api.github.com/repos/keros68/binglan/releases/tags/v0.4.8")
+            {
+                var limited = new HttpResponseMessage(HttpStatusCode.Forbidden)
+                {
+                    ReasonPhrase = "rate limit exceeded",
+                    Content = new StringContent("""{"message":"API rate limit exceeded for 38.175.104.157."}""")
+                };
+                limited.Headers.Add("X-RateLimit-Remaining", "0");
+                return limited;
+            }
+            if (request.Method == HttpMethod.Get
+                && uri == "https://github.com/keros68/binglan/releases/download/v0.4.8/SHA256SUMS.txt")
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    RequestMessage = new HttpRequestMessage(HttpMethod.Get,
+                        "https://release-assets.githubusercontent.com/assets/SHA256SUMS.txt"),
+                    Content = new StringContent(checksumsBody, Encoding.UTF8, "text/plain")
+                };
+            }
+            if (request.Method == HttpMethod.Head
+                && uri == "https://github.com/keros68/binglan/releases/download/v0.4.8/BingLan-Setup-0.4.8.exe")
+            {
+                var head = new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    RequestMessage = new HttpRequestMessage(HttpMethod.Head,
+                        "https://release-assets.githubusercontent.com/assets/BingLan-Setup-0.4.8.exe"),
+                    Content = new ByteArrayContent([])
+                };
+                head.Content.Headers.ContentLength = 47_321_600;
+                return head;
+            }
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        });
+
+        var result = new UpdateService(new Version(0, 4, 6), degradedHandler)
+            .CheckAsync().GetAwaiter().GetResult();
+        Check(result.Status == UpdateCheckStatus.Available && result.Release is not null,
+            "API 403 限流时走 SHA256SUMS.txt + HEAD 降级仍发现新版本");
+        Check(result.Release!.Version == new Version(0, 4, 8), "降级解析版本号为 0.4.8");
+        Check(result.Release.PageUrl == new Uri("https://github.com/keros68/binglan/releases/tag/v0.4.8"),
+            "降级保留官方发布页链接");
+        Check(result.Release.Installer is { } asset
+            && asset.Name == "BingLan-Setup-0.4.8.exe"
+            && asset.Size == 47_321_600
+            && string.Equals(asset.Sha256, expectedSha, StringComparison.OrdinalIgnoreCase),
+            "降级解析 SHA256SUMS.txt 与 HEAD 安装包大小");
+
+        // 资产不可得、重定向到不可信域名或超限时，降级为仅发布页可用（Installer == null）
+        var untrustedRedirectHandler = new StubHandler(request =>
+        {
+            var uri = request.RequestUri!.AbsoluteUri;
+            if (request.Method == HttpMethod.Head && uri == UpdateService.LatestReleasePageEndpoint)
+            {
+                var redirect = new HttpResponseMessage(HttpStatusCode.Found);
+                redirect.Headers.Location = new Uri("https://github.com/keros68/binglan/releases/tag/v0.4.8");
+                return redirect;
+            }
+            if (uri.StartsWith(UpdateService.ReleaseByTagEndpointPrefix, StringComparison.Ordinal))
+            {
+                return new HttpResponseMessage(HttpStatusCode.Forbidden);
+            }
+            if (uri.EndsWith("SHA256SUMS.txt", StringComparison.Ordinal))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(checksumsBody, Encoding.UTF8, "text/plain")
+                };
+            }
+            if (request.Method == HttpMethod.Head && uri.EndsWith("BingLan-Setup-0.4.8.exe", StringComparison.Ordinal))
+            {
+                var evil = new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    RequestMessage = new HttpRequestMessage(HttpMethod.Head, "https://evil.example.com/BingLan-Setup-0.4.8.exe"),
+                    Content = new ByteArrayContent([])
+                };
+                evil.Content.Headers.ContentLength = 47_321_600;
+                return evil;
+            }
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        });
+
+        var pageOnly = new UpdateService(new Version(0, 4, 6), untrustedRedirectHandler)
+            .CheckAsync().GetAwaiter().GetResult();
+        Check(pageOnly is { Status: UpdateCheckStatus.Available, Release: { Installer: null } },
+            "安装包最终重定向域名不可信时拒绝直接安装但仍返回发布页");
+
+        var missingChecksumsHandler = new StubHandler(request =>
+        {
+            var uri = request.RequestUri!.AbsoluteUri;
+            if (request.Method == HttpMethod.Head && uri == UpdateService.LatestReleasePageEndpoint)
+            {
+                var redirect = new HttpResponseMessage(HttpStatusCode.Found);
+                redirect.Headers.Location = new Uri("https://github.com/keros68/binglan/releases/tag/v0.4.8");
+                return redirect;
+            }
+            return new HttpResponseMessage(HttpStatusCode.Forbidden);
+        });
+
+        var noAsset = new UpdateService(new Version(0, 4, 6), missingChecksumsHandler)
+            .CheckAsync().GetAwaiter().GetResult();
+        Check(noAsset is { Status: UpdateCheckStatus.Available, Release: { Installer: null } }
+            && noAsset.Release!.Version == new Version(0, 4, 8),
+            "SHA256SUMS 不可得时仍降级返回 Available + PageUrl");
+    }
+
+    internal static void TestRateLimitMessageAndCooldown()
+    {
+        var fixedNowUtc = new DateTimeOffset(2026, 11, 24, 14, 0, 0, TimeSpan.Zero);
+        var chinaZone = TimeZoneInfo.CreateCustomTimeZone("TestUTC+8", TimeSpan.FromHours(8), "UTC+8", "UTC+8");
+        var clock = new FixedTimeProvider(fixedNowUtc, chinaZone);
+        var resetUtc = new DateTimeOffset(2026, 11, 24, 14, 24, 0, TimeSpan.Zero);
+
+        var rateLimited = UpdateService.Create(
+            new Version(0, 4, 6),
+            handler: new StubHandler(_ =>
+            {
+                var response = new HttpResponseMessage(HttpStatusCode.Forbidden)
+                {
+                    ReasonPhrase = "rate limit exceeded"
+                };
+                response.Headers.Add("X-RateLimit-Remaining", "0");
+                response.Headers.Add("X-RateLimit-Reset", resetUtc.ToUnixTimeSeconds().ToString());
+                return response;
+            }),
+            noRedirectHandler: new StubHandler(_ =>
+            {
+                var response = new HttpResponseMessage(HttpStatusCode.Forbidden)
+                {
+                    ReasonPhrase = "rate limit exceeded"
+                };
+                response.Headers.Add("X-RateLimit-Remaining", "0");
+                response.Headers.Add("X-RateLimit-Reset", resetUtc.ToUnixTimeSeconds().ToString());
+                return response;
+            }),
+            timeProvider: clock);
+
+        var limitedResult = rateLimited.CheckAsync().GetAwaiter().GetResult();
+        Check(limitedResult.Status == UpdateCheckStatus.Failed, "403 限流返回失败状态");
+        Check(limitedResult.ErrorMessage == "GitHub 访问受限（当前出口 IP 请求过多），请于 22:24 后重试或前往发布页查看",
+            $"403 限流提示应包含本地重置时间 22:24，实际：{limitedResult.ErrorMessage}");
+        Check(limitedResult.RetryAfterUtc == resetUtc, "403 限流应带出 RetryAfterUtc");
+
+        Check(!UpdateService.IsAutoCheckDue(null, fixedNowUtc, limitedResult.RetryAfterUtc), "冷却期内阻止自动重试");
+        Check(!UpdateService.IsAutoCheckDue(null, resetUtc.AddSeconds(-1), limitedResult.RetryAfterUtc), "冷却期结束前 1 秒仍阻止");
+        Check(UpdateService.IsAutoCheckDue(null, resetUtc, limitedResult.RetryAfterUtc), "到达 RetryAfterUtc 后恢复自动检查");
+        Check(UpdateService.IsRetryAllowed(limitedResult.RetryAfterUtc, fixedNowUtc.AddHours(-5)),
+            "时钟大幅回调超过最大冷却上限时不永久锁死");
+
+        var retryAfterHandler = new StubHandler(_ =>
+        {
+            var response = new HttpResponseMessage(HttpStatusCode.TooManyRequests);
+            response.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(TimeSpan.FromMinutes(10));
+            return response;
+        });
+        var retryAfterResult = UpdateService.Create(
+            new Version(0, 4, 6),
+            handler: retryAfterHandler,
+            noRedirectHandler: retryAfterHandler,
+            timeProvider: clock).CheckAsync().GetAwaiter().GetResult();
+        Check(retryAfterResult.Status == UpdateCheckStatus.Failed
+            && retryAfterResult.RetryAfterUtc == fixedNowUtc.AddMinutes(10)
+            && retryAfterResult.ErrorMessage == "GitHub 访问受限（当前出口 IP 请求过多），请于 22:10 后重试或前往发布页查看",
+            "429 Retry-After 解析冷却时间与本地提示");
+
+        var bodyOnly403Handler = new StubHandler(_ => new HttpResponseMessage(HttpStatusCode.Forbidden)
+        {
+            Content = new StringContent("""{"message":"API rate limit exceeded for 38.175.104.157."}""")
+        });
+        var bodyOnlyResult = UpdateService.Create(
+            new Version(0, 4, 6),
+            handler: bodyOnly403Handler,
+            noRedirectHandler: bodyOnly403Handler,
+            timeProvider: clock).CheckAsync().GetAwaiter().GetResult();
+        Check(bodyOnlyResult is { Status: UpdateCheckStatus.Failed, ErrorMessage: "GitHub 访问受限（当前出口 IP 请求过多），请稍后重试或前往发布页查看" },
+            "无重置头但响应体含 rate limit 的 403 也能精准识别");
+    }
+
+    internal static void TestErrorClassificationForProxyTlsDnsAndHttpIOException()
+    {
+        var proxy407 = new UpdateService(new Version(0, 4, 6),
+            new StubHandler(_ => new HttpResponseMessage(HttpStatusCode.ProxyAuthenticationRequired)))
+            .CheckAsync().GetAwaiter().GetResult();
+        Check(proxy407 is { Status: UpdateCheckStatus.Failed, ErrorMessage: "代理连接失败，请检查系统代理设置" },
+            "407 映射为代理连接失败");
+
+        var proxyTunnel = new UpdateService(new Version(0, 4, 6),
+            new StubHandler(_ => throw new HttpRequestException(HttpRequestError.ProxyTunnelError)))
+            .CheckAsync().GetAwaiter().GetResult();
+        Check(proxyTunnel is { Status: UpdateCheckStatus.Failed, ErrorMessage: "代理连接失败，请检查系统代理设置" },
+            "ProxyTunnelError 映射为代理连接失败");
+
+        var dnsError = new UpdateService(new Version(0, 4, 6),
+            new StubHandler(_ => throw new HttpRequestException(HttpRequestError.NameResolutionError)))
+            .CheckAsync().GetAwaiter().GetResult();
+        Check(dnsError is { Status: UpdateCheckStatus.Failed, ErrorMessage: "无法解析 GitHub 域名，请检查网络或 DNS 设置" },
+            "NameResolutionError 映射为 DNS 失败");
+
+        var tlsError = new UpdateService(new Version(0, 4, 6),
+            new StubHandler(_ => throw new HttpRequestException(HttpRequestError.SecureConnectionError)))
+            .CheckAsync().GetAwaiter().GetResult();
+        Check(tlsError is { Status: UpdateCheckStatus.Failed, ErrorMessage: "安全连接（TLS）失败，请检查系统时间或代理证书" },
+            "SecureConnectionError 映射为 TLS 失败");
+
+        var ioError = new UpdateService(new Version(0, 4, 6),
+            new StubHandler(_ => throw new HttpIOException(HttpRequestError.ResponseEnded, "premature EOF")))
+            .CheckAsync().GetAwaiter().GetResult();
+        Check(ioError is { Status: UpdateCheckStatus.Failed, ErrorMessage: "网络连接中断，请稍后重试" },
+            "HttpIOException 被安全捕获并映射为网络连接中断");
+
+        var serviceUnavailable = new UpdateService(new Version(0, 4, 6),
+            new StubHandler(_ => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)))
+            .CheckAsync().GetAwaiter().GetResult();
+        Check(serviceUnavailable is { Status: UpdateCheckStatus.Failed, ErrorMessage: "GitHub 服务暂时不可用（HTTP 503），请稍后重试" },
+            "503 映射为服务暂时不可用");
+
+        var genericConnection = new UpdateService(new Version(0, 4, 6),
+            new StubHandler(_ => throw new HttpRequestException(HttpRequestError.ConnectionError)))
+            .CheckAsync().GetAwaiter().GetResult();
+        Check(genericConnection is { Status: UpdateCheckStatus.Failed, ErrorMessage: "网络请求失败" },
+            "常规连接异常保留网络请求失败提示");
+
+        var downloadDir = Path.Combine(Path.GetTempPath(), $"BingLan-update-io-{Guid.NewGuid():N}");
+        try
+        {
+            var asset = new UpdateAsset("BingLan-Setup-0.4.8.exe", new Uri("https://example.com/setup.exe"),
+                InstallerBytes.Length, Sha256Hex(InstallerBytes));
+            var downloadService = new UpdateService(new Version(0, 4, 6),
+                new StubHandler(_ => throw new HttpIOException(HttpRequestError.ResponseEnded, "stream cut")));
+            ExpectFailure(() => downloadService.DownloadAsync(asset, downloadDir), "网络连接中断，请稍后重试");
+        }
+        finally
+        {
+            if (Directory.Exists(downloadDir))
+            {
+                Directory.Delete(downloadDir, true);
+            }
+        }
     }
 
     internal static void TestVerifiedDownload()
@@ -185,6 +510,12 @@ internal static class UpdateServiceTests
         {
             throw new InvalidOperationException(message);
         }
+    }
+
+    private sealed class FixedTimeProvider(DateTimeOffset utcNow, TimeZoneInfo localTimeZone) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => utcNow;
+        public override TimeZoneInfo LocalTimeZone => localTimeZone;
     }
 
     private sealed class StubHandler(Func<HttpRequestMessage, HttpResponseMessage> respond) : HttpMessageHandler

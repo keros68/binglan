@@ -23,8 +23,10 @@ public sealed class AppUpdater : IDisposable
     private readonly Action _saveState;
     private readonly Action _exitApp;
     private readonly bool _canAutoCheck;
+    private readonly TimeProvider _time;
     private readonly DispatcherTimer _timer = new() { Interval = TickInterval };
     private Version? _notifiedVersion;
+    private DateTimeOffset? _retryAfterUtc;
 
     public AppUpdater(
         UpdateState state,
@@ -32,10 +34,17 @@ public sealed class AppUpdater : IDisposable
         Action saveState,
         Action exitApp,
         bool canAutoCheck,
-        System.Net.Http.HttpMessageHandler? handler = null)
+        System.Net.Http.HttpMessageHandler? handler = null,
+        TimeProvider? timeProvider = null)
     {
         _state = state;
-        _service = new UpdateService(currentVersion, handler);
+        _time = timeProvider ?? TimeProvider.System;
+        _service = UpdateService.Create(
+            currentVersion,
+            handler: handler,
+            noRedirectHandler: handler,
+            timeout: null,
+            timeProvider: _time);
         _saveState = saveState;
         _exitApp = exitApp;
         _canAutoCheck = canAutoCheck;
@@ -52,6 +61,7 @@ public sealed class AppUpdater : IDisposable
     public UpdateRelease? Available { get; private set; }
     public bool IsBusy { get; private set; }
     public string Status { get; private set; } = string.Empty;
+    public DateTimeOffset? RetryAfterUtc => _retryAfterUtc;
 
     public bool AutoCheck
     {
@@ -84,13 +94,21 @@ public sealed class AppUpdater : IDisposable
     public Task CheckNowAsync() => CheckAsync(manual: true);
 
     private Task CheckIfDueAsync() =>
-        _canAutoCheck && _state.AutoCheck && UpdateService.IsAutoCheckDue(_state.LastCheckedAt, DateTimeOffset.Now)
+        _canAutoCheck
+        && _state.AutoCheck
+        && UpdateService.IsAutoCheckDue(_state.LastCheckedAt, _time.GetLocalNow(), _retryAfterUtc)
             ? CheckAsync(manual: false)
             : Task.CompletedTask;
 
     private async Task CheckAsync(bool manual)
     {
         if (IsBusy)
+        {
+            return;
+        }
+        // Automatic checks wait until the RetryAfterUtc cooldown expires; explicit manual
+        // checks remain allowed so the user can retry immediately after switching proxy/network.
+        if (!manual && !UpdateService.IsRetryAllowed(_retryAfterUtc, _time.GetUtcNow()))
         {
             return;
         }
@@ -101,11 +119,26 @@ public sealed class AppUpdater : IDisposable
         }
         OnChanged();
 
-        var result = await _service.CheckAsync();
-        IsBusy = false;
+        UpdateCheckResult result;
+        try
+        {
+            result = await _service.CheckAsync();
+        }
+        finally
+        {
+            IsBusy = false;
+        }
         if (result.Status == UpdateCheckStatus.Failed)
         {
-            // An automatic check fails quietly and is tried again later.
+            if (result.RetryAfterUtc is { } retryAfter)
+            {
+                _retryAfterUtc = retryAfter;
+            }
+            else if (UpdateService.IsRetryAllowed(_retryAfterUtc, _time.GetUtcNow()))
+            {
+                _retryAfterUtc = null;
+            }
+            // An automatic check fails quietly and is tried again later (after any rate-limit cooldown).
             if (manual)
             {
                 Status = $"检查更新失败：{result.ErrorMessage}";
@@ -114,7 +147,8 @@ public sealed class AppUpdater : IDisposable
             return;
         }
 
-        _state.LastCheckedAt = DateTimeOffset.Now;
+        _retryAfterUtc = null;
+        _state.LastCheckedAt = _time.GetLocalNow();
         _saveState();
         Available = result.Release;
         var checkedAt = _state.LastCheckedAt.Value.LocalDateTime.ToString("M月d日 HH:mm", CultureInfo.InvariantCulture);
