@@ -30,6 +30,7 @@ internal sealed class BoxMarqueeOverlay : Window
     private const double MinDragDip = 40d;
 
     private readonly Rectangle _marquee = CreateMarquee();
+    private readonly Grid _hintHost = CreateHintHost();
     private Point? _startPoint;
     private Point _lastPoint;
     private (int X, int Y)? _physicalStart;
@@ -57,7 +58,7 @@ internal sealed class BoxMarqueeOverlay : Window
 
         var root = new Grid();
         root.Children.Add(_marquee);
-        root.Children.Add(CreateHint());
+        root.Children.Add(_hintHost);
         Content = root;
 
         SourceInitialized += (_, _) => PositionAcrossPhysicalVirtualScreen();
@@ -127,10 +128,28 @@ internal sealed class BoxMarqueeOverlay : Window
         return right > left && bottom > top ? new PixelRect(left, top, right, bottom) : null;
     }
 
+    internal static Rect? ComputeHintHostRect(
+        PixelRect union,
+        MonitorSnapshot targetMonitor,
+        double overlayScale)
+    {
+        var work = targetMonitor.WorkingArea.HasArea ? targetMonitor.WorkingArea : targetMonitor.Bounds;
+        if (!work.HasArea || overlayScale <= 0d)
+        {
+            return null;
+        }
+        return new Rect(
+            (work.Left - union.Left) / overlayScale,
+            (work.Top - union.Top) / overlayScale,
+            work.Width / overlayScale,
+            work.Height / overlayScale);
+    }
+
     private void PositionAcrossPhysicalVirtualScreen()
     {
         var handle = new WindowInteropHelper(this).Handle;
-        if (handle == 0 || ComputePhysicalUnion(MonitorCatalog.GetAll()) is not { } union)
+        var monitors = MonitorCatalog.GetAll();
+        if (handle == 0 || ComputePhysicalUnion(monitors) is not { } union)
         {
             return;
         }
@@ -150,6 +169,36 @@ internal sealed class BoxMarqueeOverlay : Window
                 union.Height,
                 NativeMethods.SwpNoActivate);
         }
+        PositionHintWithinVisibleMonitor(union, monitors);
+    }
+
+    private void PositionHintWithinVisibleMonitor(PixelRect union, IReadOnlyList<MonitorSnapshot> monitors)
+    {
+        MonitorSnapshot? target = null;
+        if (DockNativeMethods.GetCursorPos(out var cursor))
+        {
+            target = monitors.FirstOrDefault(m =>
+                cursor.X >= m.Bounds.Left && cursor.X < m.Bounds.Right
+                && cursor.Y >= m.Bounds.Top && cursor.Y < m.Bounds.Bottom);
+        }
+        target ??= monitors.FirstOrDefault(m => m.IsPrimary) ?? monitors.FirstOrDefault();
+        if (target is null)
+        {
+            return;
+        }
+        var scale = VisualTreeHelper.GetDpi(this).DpiScaleX;
+        if (scale <= 0d)
+        {
+            scale = target.Dpi > 0 ? target.Dpi / 96d : 1d;
+        }
+        if (ComputeHintHostRect(union, target, scale) is not { } slot)
+        {
+            return;
+        }
+        _hintHost.HorizontalAlignment = System.Windows.HorizontalAlignment.Left;
+        _hintHost.VerticalAlignment = System.Windows.VerticalAlignment.Top;
+        _hintHost.Width = slot.Width;
+        _hintHost.Margin = new Thickness(slot.Left, slot.Top, 0d, 0d);
     }
 
     // The seam methods below are pure state transitions of the marquee rectangle.
@@ -268,6 +317,13 @@ internal sealed class BoxMarqueeOverlay : Window
             Visibility = Visibility.Collapsed,
             IsHitTestVisible = false
         };
+    }
+
+    private static Grid CreateHintHost()
+    {
+        var host = new Grid { IsHitTestVisible = false };
+        host.Children.Add(CreateHint());
+        return host;
     }
 
     private static FrameworkElement CreateHint()

@@ -83,6 +83,7 @@ public partial class LauncherPanelWindow : Window
     private nint _handle;
     private int _searchVersion;
     private int _renderedSearchVersion = -1;
+    private DispatcherOperation? _deactivateOperation;
     private bool _closed;
     private bool _dismissing;
     private bool _composing;
@@ -176,8 +177,20 @@ public partial class LauncherPanelWindow : Window
         {
             AccessibilityThemeManager.HighContrastChanged -= OnHighContrastChanged;
             _closed = true;
+            _deactivateOperation?.Abort();
+            _deactivateOperation = null;
             _debounce.Stop();
             _statusFade?.Stop();
+            PanelContentGrid.BeginAnimation(OpacityProperty, null);
+            if (PanelContentGrid.RenderTransform is TranslateTransform rise)
+            {
+                rise.BeginAnimation(TranslateTransform.YProperty, null);
+            }
+            PanelContentGrid.RenderTransform = Transform.Identity;
+            if (IsKeyboardFocusWithin)
+            {
+                Keyboard.ClearFocus();
+            }
             _lifetime.Cancel();
             _searchCancellation?.Cancel();
             _searchCancellation?.Dispose();
@@ -186,6 +199,7 @@ public partial class LauncherPanelWindow : Window
             _menu?.SetCurrentValue(ContextMenu.IsOpenProperty, false);
             _menu = null;
             _everything?.Dispose();
+            _everything = null;
             _glass.Dispose();
             _lifetime.Dispose();
             WallpaperBackdropImage.Source = null;
@@ -1662,7 +1676,9 @@ public partial class LauncherPanelWindow : Window
 
     private void OnPanelDeactivated(object? sender, EventArgs args)
     {
-        Dispatcher.BeginInvoke(CloseOnDeactivation, DispatcherPriority.ContextIdle);
+        if (_closed || _dismissing) return;
+        _deactivateOperation?.Abort();
+        _deactivateOperation = Dispatcher.BeginInvoke(CloseOnDeactivation, DispatcherPriority.ContextIdle);
     }
 
     private void CloseOnDeactivation()

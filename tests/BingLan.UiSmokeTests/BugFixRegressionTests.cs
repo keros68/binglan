@@ -30,6 +30,7 @@ internal static class BugFixRegressionTests
         TestLauncherPanelWindowCollectsAfterClose(show, pump);
         TestFileMappingWatchServiceSkipsBadDirectoryAndWatchesValidOnes(pump, pumpUntil);
         TestMixedDpiAndNegativeOffsetPlacementRules();
+        TestBoxMarqueePhysicalPlacement(pump, pumpUntil);
         TestWidgetCoordinatorDisposeStopsTimerAndDisposesServices(pump, pumpUntil);
         TestUiDiagnosticsUntrackedDescription();
     }
@@ -178,18 +179,40 @@ internal static class BugFixRegressionTests
     {
         var weakRef = CreateOpenAndCloseLauncherPanel(show, pump);
 
-        // Give WPF dispatcher and GC multiple full passes to collect the closed window.
-        for (var pass = 0; pass < 6 && weakRef.TryGetTarget(out _); pass++)
+        // Give WPF dispatcher (including SystemIdle cleanup) and GC multiple full passes
+        // to collect the closed window. Never call weakRef.TryGetTarget(out _) in the same
+        // frame as GC.Collect: its address-exposed discard slot stays rooted by RyuJIT for
+        // the whole method lifetime.
+        for (var pass = 0; pass < 6 && IsWeakTargetAlive(weakRef); pass++)
         {
             pump();
+            DrainIdle();
             GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced, blocking: true, compacting: true);
             GC.WaitForPendingFinalizers();
             GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced, blocking: true, compacting: true);
-            pump();
+            DrainIdle();
         }
 
-        Check(!weakRef.TryGetTarget(out _),
+        Check(!IsWeakTargetAlive(weakRef),
             "LauncherPanelWindow 关闭后必须可被 GC 回收（不得因 DependencyPropertyDescriptor.AddValueChanged 或未停定时器永久泄漏）");
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static bool IsWeakTargetAlive<T>(WeakReference<T> weakRef) where T : class =>
+        weakRef.TryGetTarget(out _);
+
+    private static void DrainIdle()
+    {
+        var frame = new System.Windows.Threading.DispatcherFrame();
+        System.Windows.Threading.Dispatcher.CurrentDispatcher.BeginInvoke(
+            System.Windows.Threading.DispatcherPriority.SystemIdle,
+            new System.Windows.Threading.DispatcherOperationCallback(state =>
+            {
+                ((System.Windows.Threading.DispatcherFrame)state).Continue = false;
+                return null;
+            }),
+            frame);
+        System.Windows.Threading.Dispatcher.PushFrame(frame);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -276,10 +299,14 @@ internal static class BugFixRegressionTests
         Check(double.IsFinite(wildlyOffscreen.Width) && wildlyOffscreen.Left < 4480 && wildlyOffscreen.Top >= -50,
             "极端越界或 NaN 位置仍应被安全钳制到多屏包围盒内");
 
-        // BoxMarqueeOverlay union covers full physical area including negative Y.
+        // BoxMarqueeOverlay union covers full physical area including negative Y, and hint
+        // host maps inside the target monitor's visible work area (never clipped above Y=0).
         var union = BoxMarqueeOverlay.ComputePhysicalUnion(monitors);
         Check(union == new PixelRect(0, -50, 4480, 1440),
             $"物理虚拟屏并集应包含副屏负 Y 与完整右边界，实际 {union}");
+        var primaryHintSlot = BoxMarqueeOverlay.ComputeHintHostRect(union!.Value, monitors[0], overlayScale: 1.5d);
+        Check(primaryHintSlot is { } slot && Math.Abs(slot.Top - (50d / 1.5d)) < 0.01 && Math.Abs(slot.Left) < 0.01,
+            $"负 Y 错位双屏下主屏提示条应下移至主屏可见工作区内，实际 {primaryHintSlot}");
 
         // TodoWidgetWindow toggle on secondary monitor with negative Y and 150% DPI.
         var secondaryWork = new PixelRect(2560, -75, 5120, 1465);
@@ -294,6 +321,80 @@ internal static class BugFixRegressionTests
             weeklyPx, targetWidthDip: 286, targetHeightDip: 336, secondaryWork, scale: 1.5d, savedAnchorPx: (4700, -60));
         Check(restoredListPx.Top == -60 && restoredListPx.Left >= secondaryWork.Left,
             $"副屏负 Y 锚点切回列表时应精确恢复原物理位置，实际 {restoredListPx}");
+    }
+
+    private static void TestBoxMarqueePhysicalPlacement(
+        Action pump,
+        Action<Func<bool>, string> pumpUntil)
+    {
+        var monitors = MonitorCatalog.GetAll();
+        var target = monitors.FirstOrDefault(m => !m.IsPrimary && m.WorkingArea.HasArea)
+            ?? monitors.FirstOrDefault(m => m.WorkingArea.HasArea);
+        if (target is null)
+        {
+            return;
+        }
+
+        var temp = Path.Combine(Path.GetTempPath(), $"BingLan-marquee-phys-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(temp);
+        var coordinator = new WidgetCoordinator(interactiveQa: true, dataDirectory: temp);
+        const BindingFlags Private = BindingFlags.Instance | BindingFlags.NonPublic;
+        var previousGridSnap = WidgetWindowBase.GridSnapEnabled;
+        WidgetWindowBase.GridSnapEnabled = false;
+        try
+        {
+            coordinator.Start();
+            pumpUntil(
+                () => Application.Current.Windows.OfType<WidgetWindowBase>().Any(w => w.IsLoaded),
+                "物理框选回归测试启动后应至少打开一张卡片");
+            var appState = (AppState)typeof(WidgetCoordinator).GetField("_state", Private)!.GetValue(coordinator)!;
+            var boxesBefore = appState.FileBoxes.Count;
+
+            typeof(WidgetCoordinator).GetMethod("StartMarqueeFileBox", Private)!.Invoke(coordinator, []);
+            BoxMarqueeOverlay? overlay = null;
+            pumpUntil(
+                () => (overlay = Application.Current.Windows.OfType<BoxMarqueeOverlay>().SingleOrDefault()) != null,
+                "物理框选回归测试遮罩应打开");
+
+            var work = target.WorkingArea;
+            var scale = target.Dpi > 0 ? target.Dpi / 96d : 1d;
+            var startX = work.Left + Math.Min(60, Math.Max(10, work.Width / 8));
+            var startY = work.Top + Math.Min(16, Math.Max(4, work.Height / 16));
+            var widthPx = Math.Min((int)Math.Round(360d * scale), Math.Max((int)Math.Ceiling(226d * scale), work.Width - 80));
+            var heightPx = Math.Min((int)Math.Round(280d * scale), Math.Max((int)Math.Ceiling(166d * scale), work.Height - 80));
+
+            overlay!.BeginPhysicalMarquee(startX, startY);
+            overlay.UpdatePhysicalMarquee(startX + widthPx, startY + heightPx);
+            overlay.CompleteMarquee();
+            pump();
+
+            Check(appState.FileBoxes.Count == boxesBefore + 1, "物理坐标框选完成后应新建一个分组盒");
+            var createdState = appState.FileBoxes[^1];
+            var createdWindow = Application.Current.Windows.OfType<FileBoxWindow>()
+                .LastOrDefault(w => w.State.Id == createdState.Id);
+            Check(createdWindow is not null, "物理坐标框选后应打开对应分组盒窗口");
+            var handle = new WindowInteropHelper(createdWindow!).Handle;
+            Check(handle != 0, "新建分组盒应已创建窗口句柄");
+            Check(DockNativeMethods.GetWindowRect(handle, out var actual),
+                "新建分组盒应能读取真实物理矩形");
+            Check(Math.Abs(actual.Left - startX) <= 2 && Math.Abs(actual.Top - startY) <= 2,
+                $"物理框选新建分组盒应精确落在目标屏（含负坐标）物理起点 ({startX}, {startY})，实际 ({actual.Left}, {actual.Top})");
+            Check(Math.Abs((actual.Right - actual.Left) - widthPx) <= 2
+                && Math.Abs((actual.Bottom - actual.Top) - heightPx) <= 2,
+                $"物理框选新建分组盒尺寸应匹配 ({widthPx}x{heightPx})，实际 ({actual.Right - actual.Left}x{actual.Bottom - actual.Top})");
+        }
+        finally
+        {
+            WidgetWindowBase.GridSnapEnabled = previousGridSnap;
+            coordinator.Dispose();
+            foreach (var window in Application.Current.Windows.OfType<WidgetWindowBase>().ToList())
+            {
+                window.CanClose = true;
+                window.Close();
+            }
+            pump();
+            try { Directory.Delete(temp, true); } catch (IOException) { }
+        }
     }
 
     private static void TestWidgetCoordinatorDisposeStopsTimerAndDisposesServices(
