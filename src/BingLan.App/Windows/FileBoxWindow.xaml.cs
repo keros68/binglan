@@ -1550,14 +1550,12 @@ public partial class FileBoxWindow : WidgetWindowBase
         {
             return;
         }
-        if (tiles.Count == 1)
-        {
-            TransferMapping(tiles[0], target);
-            target.StatusText.Text = $"已从“{State.Title}”转入 1 项";
-            return;
-        }
-        BatchTransferMappings(target, tiles);
-        target.StatusText.Text = $"已从“{State.Title}”转入映射";
+        var (moved, skipped) = BatchTransferMappings(target, tiles);
+        target.StatusText.Text = moved > 0
+            ? (skipped > 0
+                ? $"已从“{State.Title}”转入 {moved} 项（跳过 {skipped} 项重复）"
+                : $"已从“{State.Title}”转入 {moved} 项")
+            : "所选项目已在此收纳盒中";
     }
 
     internal void CopyMappingsFrom(FileBoxWindow sourceBox, IReadOnlyList<Guid> mappingIds)
@@ -1600,7 +1598,7 @@ public partial class FileBoxWindow : WidgetWindowBase
             : "所选项目已在此收纳盒中";
     }
 
-    private void BatchTransferMappings(FileBoxWindow target, IReadOnlyList<FileTile> selected)
+    private (int Moved, int Skipped) BatchTransferMappings(FileBoxWindow target, IReadOnlyList<FileTile> selected)
     {
         CaptureState();
         target.CaptureState();
@@ -1630,6 +1628,7 @@ public partial class FileBoxWindow : WidgetWindowBase
         StatusText.Text = skipped > 0
             ? $"已转移 {moved} 项；{skipped} 项已存在于“{target.State.Title}”"
             : $"已转移 {moved} 项到“{target.State.Title}”";
+        return (moved, skipped);
     }
 
     private async void BatchDeleteOriginals_Click(object sender, RoutedEventArgs e)

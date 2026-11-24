@@ -1828,6 +1828,14 @@ public sealed partial class WidgetCoordinator : IDisposable
         {
             return;
         }
+
+        // Both panels can change foreground focus across monitors, including when closing each other.
+        if ((kind is GlobalHotkeyKind.Launcher or GlobalHotkeyKind.LauncherFiles or GlobalHotkeyKind.PeekFileBoxes)
+            && FullScreenWatcher.IsFullScreen(DockNativeMethods.GetForegroundWindow(), excludeMaximized: true))
+        {
+            return;
+        }
+
         switch (kind)
         {
             case GlobalHotkeyKind.Launcher:

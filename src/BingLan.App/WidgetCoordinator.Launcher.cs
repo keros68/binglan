@@ -32,6 +32,11 @@ public sealed partial class WidgetCoordinator
         {
             return;
         }
+        var foreground = DockNativeMethods.GetForegroundWindow();
+        if (FullScreenWatcher.IsFullScreen(foreground, excludeMaximized: true))
+        {
+            return;
+        }
         if (_launcherPanel is { } open)
         {
             if (targetTab == LauncherMainTab.Files && !open.IsAtFilesCommonPlaces)
@@ -55,8 +60,7 @@ public sealed partial class WidgetCoordinator
                 && cursor.Y >= screen.Bounds.Top && cursor.Y < screen.Bounds.Bottom)
             : null;
         monitor ??= monitors.FirstOrDefault();
-        var foreground = DockNativeMethods.GetForegroundWindow();
-        if (monitor is null || FullScreenWatcher.IsFullScreen(foreground, monitor.MonitorHandle, excludeMaximized: true))
+        if (monitor is null)
         {
             return;
         }

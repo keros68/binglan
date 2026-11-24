@@ -4,7 +4,6 @@ using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Threading;
-using BingLan.App.Dock;
 using BingLan.App.Interop;
 using BingLan.App.Windows;
 using Color = System.Windows.Media.Color;
@@ -81,6 +80,11 @@ internal sealed class DesktopPeekController : IDisposable
         {
             return false;
         }
+        var foreground = DockNativeMethods.GetForegroundWindow();
+        if (FullScreenWatcher.IsFullScreen(foreground, excludeMaximized: true))
+        {
+            return false;
+        }
         if (IsActive)
         {
             End(restoreForeground: true);
@@ -89,18 +93,6 @@ internal sealed class DesktopPeekController : IDisposable
 
         var visibleBoxes = candidates.Where(box => box.IsVisible).ToList();
         if (visibleBoxes.Count == 0)
-        {
-            return false;
-        }
-
-        var foreground = DockNativeMethods.GetForegroundWindow();
-        var monitors = MonitorCatalog.GetAll();
-        var monitor = DockNativeMethods.GetCursorPos(out var cursor)
-            ? monitors.FirstOrDefault(screen => cursor.X >= screen.Bounds.Left && cursor.X < screen.Bounds.Right
-                && cursor.Y >= screen.Bounds.Top && cursor.Y < screen.Bounds.Bottom)
-            : null;
-        monitor ??= monitors.FirstOrDefault();
-        if (monitor is not null && FullScreenWatcher.IsFullScreen(foreground, monitor.MonitorHandle, excludeMaximized: true))
         {
             return false;
         }

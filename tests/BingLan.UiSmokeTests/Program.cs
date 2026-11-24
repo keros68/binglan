@@ -106,6 +106,17 @@ internal static class Program
         var app = new BingLan.App.App();
         app.InitializeComponent();
         BingLan.App.App.UseSoftwareRendering();
+        if (Environment.GetCommandLineArgs().Contains("--fullscreen-hotkey-probe"))
+        {
+            return FullScreenHotkeyTests.RunProbe(app);
+        }
+        if (Environment.GetCommandLineArgs().Contains("--fullscreen-hotkey-tests"))
+        {
+            Run("全屏窗口保持前台：总览卡与收纳盒快捷键",
+                () => FullScreenHotkeyTests.Run(Pump, PumpUntil), failures);
+            failures.ForEach(Console.Error.WriteLine);
+            return failures.Count == 0 ? 0 : 1;
+        }
         if (Environment.GetCommandLineArgs().Contains("--shell-surfaces-preview"))
         {
             ShellSurfacePreview.Run(app);
@@ -159,6 +170,7 @@ internal static class Program
         Run("逐像素透明 HWND 与单一可调圆角", TestUnifiedCornerAndSettings, failures);
         Run("卡片自己跟随指针拖动，锁定后不动，边缘不缩放", TestNativeHitTesting, failures);
         Run("分组盒图标按宽度均分成整列", TestFileBoxTilesFillRow, failures);
+        Run("分组盒盒间转移与 Ctrl 复制映射", () => FileBoxTransferTests.Run(ShowAndPump, Pump), failures);
         Run("快捷入口显示系统位置图标", TestQuickPlaces, failures);
         Run("新建卡片不会重置 Dock 与卡片颜色", TestNewCardKeepsAppBrushes, failures);
         Run("卡片显示后与切换窗口后位于普通窗口下方", TestCardsStayBehindWindows, failures);

@@ -2,7 +2,7 @@
 ; installer\obj\publish and passes the version with /DAppVersion=x.y.z.
 
 #ifndef AppVersion
-  #define AppVersion "0.4.7"
+  #define AppVersion "0.4.8"
 #endif
 
 [Setup]
@@ -169,22 +169,21 @@ begin
   Result := RunPowerShell(
     '$src = ' + PowerShellLiteral(AppDir) + '; ' +
     '$dst = ' + PowerShellLiteral(BackupDir) + '; ' +
-    'if (Test-Path -LiteralPath $dst) { Remove-Item -LiteralPath $dst -Recurse -Force -ErrorAction SilentlyContinue } ' +
     'Copy-Item -LiteralPath $src -Destination $dst -Recurse -Force -ErrorAction Stop; ' +
     'if (-not (Test-Path -LiteralPath (Join-Path $dst ''BingLan.exe''))) { exit 1 }');
 end;
 
-procedure RestoreBackupApp(const BackupDir, AppDir: String);
+function RestoreBackupApp(const BackupDir, AppDir: String): Boolean;
 begin
-  RunPowerShell(
+  Result := RunPowerShell(
+    '$ErrorActionPreference = ''Stop''; ' +
     '$src = ' + PowerShellLiteral(BackupDir) + '; ' +
     '$dst = ' + PowerShellLiteral(AppDir) + '; ' +
     'if (-not (Test-Path -LiteralPath (Join-Path $src ''BingLan.exe''))) { exit 1 } ' +
     'New-Item -ItemType Directory -Path $dst -Force | Out-Null; ' +
     'Get-ChildItem -LiteralPath $src -Force | ForEach-Object { ' +
-    '  Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $dst $_.Name) -Recurse -Force -ErrorAction SilentlyContinue ' +
-    '}; ' +
-    'Remove-Item -LiteralPath $src -Recurse -Force -ErrorAction SilentlyContinue');
+    '  Copy-Item -LiteralPath $_.FullName -Destination $dst -Recurse -Force ' +
+    '}');
 end;
 
 procedure RemoveBackupDir(const BackupDir: String);
@@ -193,8 +192,7 @@ begin
     RunPowerShell('Remove-Item -LiteralPath ' + PowerShellLiteral(BackupDir) + ' -Recurse -Force -ErrorAction SilentlyContinue');
 end;
 
-// Before installing or updating, stops the installed copy (if any) and any other production copy,
-// backs up the previous binaries for rollback, and undoes taskbar/desktop icon changes on update.
+// Preserve the existing installation before stopping it or overwriting any files.
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
   AppDir: String;
@@ -210,17 +208,26 @@ begin
   IsUpdate := FileExists(ExePath);
   if IsUpdate then
   begin
+    // Setup cleans {tmp} on exit, so a backup needed after a failed restore lives outside it.
+    BackupDir := ExpandConstant('{localappdata}\BingLan-Rollback-') + ExtractFileName(ExpandConstant('{tmp}'));
+    if DirExists(BackupDir) or FileExists(BackupDir) then
+    begin
+      Result := '旧版本备份位置已被占用，安装已停止。';
+      exit;
+    end;
+    if not BackupInstalledApp(AppDir, BackupDir) then
+    begin
+      RemoveBackupDir(BackupDir);
+      Result := '无法备份旧版本，安装已停止。';
+      exit;
+    end;
+    UpdateBackupDir := BackupDir;
     StopInstalledApp(ExePath, ExpandConstant('{param:UPDATE|0}') = '1');
   end;
   StopOtherCopies(ExePath);
   if IsUpdate then
   begin
     Exec(ExePath, '--restore-taskbar', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-    BackupDir := ExpandConstant('{tmp}\BingLan-Rollback-Backup');
-    if BackupInstalledApp(AppDir, BackupDir) then
-    begin
-      UpdateBackupDir := BackupDir;
-    end;
   end;
 end;
 
@@ -241,10 +248,18 @@ procedure DeinitializeSetup();
 var
   ExePath: String;
   ResultCode: Integer;
+  RestoreError: String;
 begin
   if IsUpdate and (not InstallSucceeded) and (UpdateBackupDir <> '') and DirExists(UpdateBackupDir) then
   begin
-    RestoreBackupApp(UpdateBackupDir, ExpandConstant('{app}'));
+    if not RestoreBackupApp(UpdateBackupDir, ExpandConstant('{app}')) then
+    begin
+      RestoreError := '无法完整恢复旧版本。旧版本备份位置' + #13#10 + UpdateBackupDir;
+      Log(RestoreError);
+      SuppressibleMsgBox(RestoreError, mbError, MB_OK, IDOK);
+      exit;
+    end;
+    RemoveBackupDir(UpdateBackupDir);
     UpdateBackupDir := '';
     ExePath := ExpandConstant('{app}\BingLan.exe');
     if (ExpandConstant('{param:UPDATE|0}') = '1') and FileExists(ExePath) then
