@@ -639,9 +639,8 @@ internal sealed class DockAppBarController : IDisposable
         {
             return false;
         }
-        var flags = Marshal.PtrToStructure<NativeMethods.WindowPos>(lParam).Flags;
-        const uint noMoveOrSize = NativeMethods.SwpNoMove | NativeMethods.SwpNoSize;
-        return (flags & noMoveOrSize) == noMoveOrSize;
+        return AppBarPositionGuard.IsZOrderOnlyWindowPosFlags(
+            Marshal.PtrToStructure<NativeMethods.WindowPos>(lParam).Flags);
     }
 
     internal void EnsureLayer() => UpdateWindowLayer();

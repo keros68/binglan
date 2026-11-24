@@ -339,6 +339,11 @@ public partial class IceBlueDockWindow : Window
         {
             return;
         }
+        if (_appBar?.Monitor is { } monitor
+            && (Taskbar.TaskbarCornerReveal.IsTaskbarExpandedOnMonitor(monitor.Bounds) || TaskbarCoversDock()))
+        {
+            return;
+        }
         if (IsVisible && !_hiddenBySmartHide && _handle != 0)
         {
             if (NativeMethods.IsIconic(_handle) || !NativeMethods.IsWindowVisible(_handle))
@@ -1913,7 +1918,7 @@ public partial class IceBlueDockWindow : Window
 
     private async Task QuitItemFromMenuAsync(DockItem item, string name)
     {
-        var result = await WindowCommandService.QuitAsync(item, name);
+        var result = await WindowCommandService.QuitAsync(item, name, _items);
         Report(result);
         if (!_closing && result.Succeeded)
         {
@@ -1956,12 +1961,12 @@ public partial class IceBlueDockWindow : Window
             menu.AddItem(
                 item.HasMultipleWindows ? $"关闭全部 {item.WindowCount} 个窗口" : "关闭窗口",
                 () => Report(WindowCommandService.Close(group.Windows)));
-            if (DockQuitRules.CanOfferQuit(item))
+            if (DockQuitRules.CanOfferQuit(item, _items))
             {
                 menu.AddItem("结束应用", () => _ = QuitItemFromMenuAsync(item, name));
             }
         }
-        else if (DockQuitRules.CanOfferQuit(item))
+        else if (DockQuitRules.CanOfferQuit(item, _items))
         {
             menu.AddItem("结束后台应用", () => _ = QuitItemFromMenuAsync(item, name));
         }

@@ -345,9 +345,12 @@ internal static class WindowCommandService
         return new WindowCommandResult(count > 0, $"已请求关闭 {count} 个窗口");
     }
 
-    internal static Task<WindowCommandResult> QuitAsync(DockItem item, string displayName)
+    internal static Task<WindowCommandResult> QuitAsync(
+        DockItem item,
+        string displayName,
+        IReadOnlyList<DockItem>? allItems = null)
     {
-        if (!DockQuitRules.CanOfferQuit(item))
+        if (!DockQuitRules.CanOfferQuit(item, allItems))
         {
             return Task.FromResult(new WindowCommandResult(false, $"不能从 Dock 结束 {displayName}"));
         }
@@ -358,7 +361,6 @@ internal static class WindowCommandService
     private static WindowCommandResult QuitCore(DockItem item, string displayName)
     {
         var selfPid = Environment.ProcessId;
-        var groupPids = new HashSet<int>();
         var groupExecutablePaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var groupAumids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -370,10 +372,6 @@ internal static class WindowCommandService
                     && !DockQuitRules.IsProtectedExecutable(window.ExecutablePath))
                 {
                     groupExecutablePaths.Add(WindowGrouping.NormalizeExecutablePath(window.ExecutablePath));
-                    if (window.ProcessId > 4 && window.ProcessId != selfPid)
-                    {
-                        groupPids.Add((int)window.ProcessId);
-                    }
                 }
                 if (!string.IsNullOrWhiteSpace(window.AppUserModelId)
                     && !DockQuitRules.IsProtectedAumid(window.AppUserModelId))
@@ -384,7 +382,9 @@ internal static class WindowCommandService
         }
 
         var checkAumid = !string.IsNullOrWhiteSpace(item.Pinned?.AppUserModelId) || groupAumids.Count > 0;
-        var targetPids = new HashSet<int>(groupPids);
+        var matchedAny = false;
+        var terminated = 0;
+        var accessDenied = false;
         foreach (var process in Process.GetProcesses())
         {
             using (process)
@@ -395,62 +395,49 @@ internal static class WindowCommandService
                     continue;
                 }
 
-                var exe = WindowCatalog.ExecutablePathOf((uint)pid);
-                if (DockQuitRules.IsProtectedExecutable(exe))
+                // Read executable path with limited-query first to skip unrelated processes cheaply.
+                var previewExe = WindowCatalog.ExecutablePathOf((uint)pid);
+                if (DockQuitRules.IsProtectedExecutable(previewExe))
                 {
-                    targetPids.Remove(pid);
                     continue;
                 }
-
-                var aumid = checkAumid ? WindowCatalog.AppUserModelIdOf((uint)pid) : null;
-                if (DockQuitRules.MatchesProcess(item.Pinned, groupExecutablePaths, groupAumids, exe, aumid))
-                {
-                    targetPids.Add(pid);
-                }
-            }
-        }
-
-        if (targetPids.Count == 0)
-        {
-            return new WindowCommandResult(false, $"{displayName} 当前未在运行");
-        }
-
-        var terminated = 0;
-        var accessDenied = false;
-        foreach (var pid in targetPids)
-        {
-            if (pid <= 4 || pid == selfPid)
-            {
-                continue;
-            }
-
-            try
-            {
-                using var process = Process.GetProcessById(pid);
-                // Re-check right before termination to guard against PID reuse.
-                if (DockQuitRules.IsProtectedExecutable(WindowCatalog.ExecutablePathOf((uint)pid)))
+                var previewAumid = checkAumid ? WindowCatalog.AppUserModelIdOf((uint)pid) : null;
+                if (!DockQuitRules.MatchesProcess(item.Pinned, groupExecutablePaths, groupAumids, previewExe, previewAumid))
                 {
                     continue;
                 }
 
+                matchedAny = true;
                 try
                 {
-                    process.Kill(entireProcessTree: true);
-                }
-                catch (Exception exception) when (exception is NotSupportedException or Win32Exception)
-                {
+                    // Hold one Process handle across final identity verification and termination so
+                    // PID reuse cannot target an unrelated process, and terminate only verified
+                    // processes (never Kill(entireProcessTree: true), which could kill unrelated children).
+                    var handle = process.Handle;
+                    var verifiedExe = WindowCatalog.TryGetExecutablePath(handle);
+                    var verifiedAumid = checkAumid ? WindowCatalog.TryGetAppUserModelId(handle) : null;
+                    if (!DockQuitRules.MatchesProcess(item.Pinned, groupExecutablePaths, groupAumids, verifiedExe, verifiedAumid))
+                    {
+                        continue;
+                    }
+
                     process.Kill();
+                    terminated++;
                 }
-                terminated++;
+                catch (Exception exception) when (exception is ArgumentException or InvalidOperationException)
+                {
+                    terminated++;
+                }
+                catch (Exception exception) when (exception is Win32Exception or UnauthorizedAccessException)
+                {
+                    accessDenied = true;
+                }
             }
-            catch (Exception exception) when (exception is ArgumentException or InvalidOperationException)
-            {
-                terminated++;
-            }
-            catch (Exception exception) when (exception is Win32Exception or UnauthorizedAccessException)
-            {
-                accessDenied = true;
-            }
+        }
+
+        if (!matchedAny)
+        {
+            return new WindowCommandResult(false, $"{displayName} 当前未在运行");
         }
 
         if (terminated == 0 && accessDenied)

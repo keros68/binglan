@@ -46,6 +46,19 @@ public sealed class AppBarPositionGuard
     /// <summary>Forget the held strip after the AppBar is registered again or released.</summary>
     public void Reset() => _submitted = null;
 
+    private const uint SwpNoSize = 0x0001;
+    private const uint SwpNoMove = 0x0002;
+    private const uint SwpShowWindow = 0x0040;
+    private const uint SwpHideWindow = 0x0080;
+
+    /// <summary>
+    /// Whether <c>WINDOWPOS.flags</c> represents a pure Z-order change (neither position, size,
+    /// nor show/hide visibility changed).
+    /// </summary>
+    public static bool IsZOrderOnlyWindowPosFlags(uint flags) =>
+        (flags & (SwpNoMove | SwpNoSize)) == (SwpNoMove | SwpNoSize)
+        && (flags & (SwpShowWindow | SwpHideWindow)) == 0;
+
     /// <summary>
     /// Whether <c>WM_WINDOWPOSCHANGED</c> should notify Explorer via <c>ABM_WINDOWPOSCHANGED</c>.
     /// Self-initiated positioning or Z-order-only layer reassertions (for example keeping the Dock

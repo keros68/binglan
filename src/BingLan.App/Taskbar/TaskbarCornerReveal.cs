@@ -169,6 +169,40 @@ internal sealed class TaskbarCornerReveal : IDisposable
     internal static bool IsTaskbarClass(string className) =>
         className is "Shell_TrayWnd" or "Shell_SecondaryTrayWnd";
 
+    private static bool IsTaskbarClass(System.Text.StringBuilder buffer) =>
+        EqualsLiteral(buffer, "Shell_TrayWnd") || EqualsLiteral(buffer, "Shell_SecondaryTrayWnd");
+
+    private static bool EqualsLiteral(System.Text.StringBuilder buffer, string literal)
+    {
+        if (buffer.Length != literal.Length)
+        {
+            return false;
+        }
+        for (var i = 0; i < literal.Length; i++)
+        {
+            if (buffer[i] != literal[i])
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /// <summary>Whether an auto-hidden bottom taskbar is currently expanded on <paramref name="monitorBounds"/>.</summary>
+    internal static bool IsTaskbarExpandedOnMonitor(PixelRect monitorBounds)
+    {
+        if (!TaskbarEdgeGuard.HasBottomAutoHideBar(monitorBounds))
+        {
+            return false;
+        }
+        var edgeBand = new PixelRect(
+            monitorBounds.Left,
+            monitorBounds.Bottom - TaskbarCornerRules.StripPixels,
+            monitorBounds.Right,
+            monitorBounds.Bottom);
+        return IsTaskbarExpandedOver(edgeBand);
+    }
+
     private void WatchTaskbar()
     {
         var tray = TaskbarNativeMethods.FindWindowW("Shell_TrayWnd", null);
@@ -224,7 +258,7 @@ internal sealed class TaskbarCornerReveal : IDisposable
         }
         _classNameBuffer.Clear();
         DockNativeMethods.GetClassNameW(hwnd, _classNameBuffer, _classNameBuffer.Capacity);
-        if (!IsTaskbarClass(_classNameBuffer.ToString())) return;
+        if (!IsTaskbarClass(_classNameBuffer)) return;
         // Do not fight the taskbar's Z-order while it is open/expanded; wait until it collapses.
         if (IsTaskbarWindowExpanded(hwnd))
         {
@@ -273,13 +307,13 @@ internal sealed class TaskbarCornerReveal : IDisposable
     private bool NeedsRaiseForStrip(EdgeStrip strip)
     {
         var handle = new WindowInteropHelper(strip).Handle;
-        if (handle == 0)
+        if (handle == 0 || IsTaskbarExpandedOver(strip.Bounds))
         {
             return false;
         }
         if (!NativeMethods.IsWindowVisible(handle) || !NativeMethods.IsTopmostWindow(handle))
         {
-            return !IsTaskbarExpandedOver(strip.Bounds);
+            return true;
         }
         var cursor = NativeMethods.GetWindow(handle, NativeMethods.GwHwndPrev);
         var steps = 0;
@@ -287,16 +321,14 @@ internal sealed class TaskbarCornerReveal : IDisposable
         {
             _classNameBuffer.Clear();
             if (DockNativeMethods.GetClassNameW(cursor, _classNameBuffer, _classNameBuffer.Capacity) > 0
-                && IsTaskbarClass(_classNameBuffer.ToString()))
+                && IsTaskbarClass(_classNameBuffer)
+                && DockNativeMethods.GetWindowRect(cursor, out var rect))
             {
-                if (DockNativeMethods.GetWindowRect(cursor, out var rect)
-                    && TaskbarCornerRules.IsBottomTaskbarExpanded(
-                        new PixelRect(rect.Left, rect.Top, rect.Right, rect.Bottom),
-                        strip.Bounds))
+                var taskbarRect = new PixelRect(rect.Left, rect.Top, rect.Right, rect.Bottom);
+                if (TaskbarCornerRules.IsSameMonitorBottomTaskbar(taskbarRect, strip.Bounds))
                 {
-                    return false;
+                    return !TaskbarCornerRules.IsBottomTaskbarExpanded(taskbarRect, strip.Bounds);
                 }
-                return true;
             }
             cursor = NativeMethods.GetWindow(cursor, NativeMethods.GwHwndPrev);
         }

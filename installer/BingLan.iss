@@ -67,6 +67,8 @@ const
 var
   RestoreFailed: Boolean;
   IsUpdate: Boolean;
+  UpdateBackupDir: String;
+  InstallSucceeded: Boolean;
 
 // Text as a single-quoted PowerShell string.
 function PowerShellLiteral(const Value: String): String;
@@ -90,24 +92,35 @@ end;
 // is opened again once the files are in place.
 function RelaunchAfterUpdate(): Boolean;
 begin
-  Result := ExpandConstant('{param:UPDATE|0}') = '1';
+  Result := (ExpandConstant('{param:UPDATE|0}') = '1') and FileExists(ExpandConstant('{app}\BingLan.exe'));
+end;
+
+// Signals any running production BingLan instance via its documented exit event so it
+// saves state, restores taskbar/desktop icons, and releases the single-instance mutex cleanly.
+procedure SignalProductionExit();
+begin
+  RunPowerShell(
+    '$ev = $null; ' +
+    'if ([System.Threading.EventWaitHandle]::TryOpenExisting(''Local\BingLan.Desktop.Production.Exit'', [ref]$ev)) { ' +
+    '  try { $null = $ev.Set() } finally { $ev.Dispose() } ' +
+    '}');
 end;
 
 // Stops only the copy of the app installed here, not other programs with the same name.
-// During /UPDATE=1, waits briefly for graceful exit first, then forces and waits out WER.
+// Signals graceful exit first, waits briefly, then forces and waits out WER on this exact path.
 procedure StopInstalledApp(const ExePath: String; WaitGraceful: Boolean);
 var
-  GraceFlag: String;
+  GraceLoops: Integer;
 begin
-  if WaitGraceful then GraceFlag := '1' else GraceFlag := '0';
+  if WaitGraceful then GraceLoops := 24 else GraceLoops := 16;
+  SignalProductionExit();
   RunPowerShell(
     '$p = ' + PowerShellLiteral(ExePath) + '; ' +
-    'if (''' + GraceFlag + ''' -eq ''1'') { ' +
-    '  for ($i = 0; $i -lt 20; $i++) { ' +
-    '    $r = @(Get-Process -Name BingLan -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $p }); ' +
-    '    if ($r.Count -eq 0) { exit 0 } ' +
-    '    Start-Sleep -Milliseconds 250 ' +
-    '  } ' +
+    '$graceLoops = ' + IntToStr(GraceLoops) + '; ' +
+    'for ($i = 0; $i -lt $graceLoops; $i++) { ' +
+    '  $r = @(Get-Process -Name BingLan -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $p }); ' +
+    '  if ($r.Count -eq 0) { exit 0 } ' +
+    '  Start-Sleep -Milliseconds 250 ' +
     '} ' +
     'for ($i = 0; $i -lt 48; $i++) { ' +
     '  $r = @(Get-Process -Name BingLan -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $p }); ' +
@@ -117,13 +130,21 @@ begin
     '}');
 end;
 
-// Stops any other BingLan copy running under the current user from a different path
-// (such as a portable or preview build). The app uses a named single-instance mutex,
-// so a copy running elsewhere would prevent the newly installed version from starting.
+// Stops another production BingLan copy running under the current user from a different path
+// only if it still holds the production single-instance mutex after the graceful exit signal.
+// Interactive QA / test copies use a separate mutex and are never terminated.
 procedure StopOtherCopies(const ExePath: String);
 begin
+  SignalProductionExit();
   RunPowerShell(
     '$p = ' + PowerShellLiteral(ExePath) + '; ' +
+    '$held = $false; ' +
+    'for ($i = 0; $i -lt 20; $i++) { ' +
+    '  $m = $null; ' +
+    '  if (-not [System.Threading.Mutex]::TryOpenExisting(''Local\BingLan.Desktop.Production'', [ref]$m)) { exit 0 } ' +
+    '  $m.Dispose(); $held = $true; Start-Sleep -Milliseconds 250 ' +
+    '} ' +
+    'if (-not $held) { exit 0 } ' +
     '$sid = [System.Diagnostics.Process]::GetCurrentProcess().SessionId; ' +
     '$me = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value; ' +
     '$others = @(Get-Process -Name BingLan -ErrorAction SilentlyContinue | ' +
@@ -131,32 +152,105 @@ begin
     'foreach ($proc in $others) { ' +
     '  $w = Get-CimInstance Win32_Process -Filter (''ProcessId = '' + $proc.Id) -ErrorAction SilentlyContinue; ' +
     '  if (-not $w) { continue } ' +
+    '  $cmd = [string]$w.CommandLine; ' +
+    '  if ($cmd -match ''--interactive-qa'' -or ([string]$proc.Path) -match ''\\tests\\'') { continue } ' +
     '  $o = Invoke-CimMethod -InputObject $w -MethodName GetOwnerSid -ErrorAction SilentlyContinue; ' +
     '  if (-not $o -or $o.Sid -ne $me) { continue } ' +
+    '  try { $null = $proc.CloseMainWindow(); if ($proc.WaitForExit(3000)) { continue } } catch {} ' +
     '  Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue; ' +
     '  try { $null = $proc.WaitForExit(12000) } catch {} ' +
     '}');
 end;
 
-// Before installing or updating, stops the installed copy (if any) and any other copy
-// running from a different path, then undoes taskbar and desktop icon changes on update
-// so nothing stays changed if the new copy never starts.
+// Keeps a full rollback snapshot of the existing installation before overwrite so an aborted
+// or partially failed update never leaves the user with a missing BingLan.exe.
+function BackupInstalledApp(const AppDir, BackupDir: String): Boolean;
+begin
+  Result := RunPowerShell(
+    '$src = ' + PowerShellLiteral(AppDir) + '; ' +
+    '$dst = ' + PowerShellLiteral(BackupDir) + '; ' +
+    'if (Test-Path -LiteralPath $dst) { Remove-Item -LiteralPath $dst -Recurse -Force -ErrorAction SilentlyContinue } ' +
+    'Copy-Item -LiteralPath $src -Destination $dst -Recurse -Force -ErrorAction Stop; ' +
+    'if (-not (Test-Path -LiteralPath (Join-Path $dst ''BingLan.exe''))) { exit 1 }');
+end;
+
+procedure RestoreBackupApp(const BackupDir, AppDir: String);
+begin
+  RunPowerShell(
+    '$src = ' + PowerShellLiteral(BackupDir) + '; ' +
+    '$dst = ' + PowerShellLiteral(AppDir) + '; ' +
+    'if (-not (Test-Path -LiteralPath (Join-Path $src ''BingLan.exe''))) { exit 1 } ' +
+    'New-Item -ItemType Directory -Path $dst -Force | Out-Null; ' +
+    'Get-ChildItem -LiteralPath $src -Force | ForEach-Object { ' +
+    '  Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $dst $_.Name) -Recurse -Force -ErrorAction SilentlyContinue ' +
+    '}; ' +
+    'Remove-Item -LiteralPath $src -Recurse -Force -ErrorAction SilentlyContinue');
+end;
+
+procedure RemoveBackupDir(const BackupDir: String);
+begin
+  if (BackupDir <> '') and DirExists(BackupDir) then
+    RunPowerShell('Remove-Item -LiteralPath ' + PowerShellLiteral(BackupDir) + ' -Recurse -Force -ErrorAction SilentlyContinue');
+end;
+
+// Before installing or updating, stops the installed copy (if any) and any other production copy,
+// backs up the previous binaries for rollback, and undoes taskbar/desktop icon changes on update.
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
+  AppDir: String;
   ExePath: String;
+  BackupDir: String;
   ResultCode: Integer;
 begin
   Result := '';
+  InstallSucceeded := False;
+  UpdateBackupDir := '';
+  AppDir := ExpandConstant('{app}');
   ExePath := ExpandConstant('{app}\BingLan.exe');
   IsUpdate := FileExists(ExePath);
   if IsUpdate then
   begin
-    StopInstalledApp(ExePath, RelaunchAfterUpdate());
+    StopInstalledApp(ExePath, ExpandConstant('{param:UPDATE|0}') = '1');
   end;
   StopOtherCopies(ExePath);
   if IsUpdate then
   begin
     Exec(ExePath, '--restore-taskbar', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    BackupDir := ExpandConstant('{tmp}\BingLan-Rollback-Backup');
+    if BackupInstalledApp(AppDir, BackupDir) then
+    begin
+      UpdateBackupDir := BackupDir;
+    end;
+  end;
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if CurStep = ssPostInstall then
+  begin
+    if FileExists(ExpandConstant('{app}\BingLan.exe')) then
+    begin
+      InstallSucceeded := True;
+      RemoveBackupDir(UpdateBackupDir);
+      UpdateBackupDir := '';
+    end;
+  end;
+end;
+
+procedure DeinitializeSetup();
+var
+  ExePath: String;
+  ResultCode: Integer;
+begin
+  if IsUpdate and (not InstallSucceeded) and (UpdateBackupDir <> '') and DirExists(UpdateBackupDir) then
+  begin
+    RestoreBackupApp(UpdateBackupDir, ExpandConstant('{app}'));
+    UpdateBackupDir := '';
+    ExePath := ExpandConstant('{app}\BingLan.exe');
+    if (ExpandConstant('{param:UPDATE|0}') = '1') and FileExists(ExePath) then
+    begin
+      Exec(ExePath, '', '', SW_SHOWNORMAL, ewNoWait, ResultCode);
+    end;
   end;
 end;
 

@@ -133,6 +133,10 @@ internal static class TaskbarEdgeGuardTests
             "正在滑出/收回中途的任务栏应判为展开，等彻底收起后再复位挡板");
         Assert(!TaskbarCornerRules.IsBottomTaskbarExpanded(new PixelRect(0, 2076, 3840, 2160), new PixelRect(3840, 1078, 5760, 1080)),
             "其他显示器上展开的任务栏不应影响当前显示器的挡板");
+        Assert(!TaskbarCornerRules.IsSameMonitorBottomTaskbar(new PixelRect(3840, 1078, 5760, 1120), strip),
+            "副屏收起的任务栏不得匹配主屏挡板，避免双屏 Z 序绕过主屏展开保护");
+        Assert(TaskbarCornerRules.IsSameMonitorBottomTaskbar(new PixelRect(0, 2158, 3840, 2242), strip),
+            "同屏底部任务栏应匹配该屏挡板");
     }
 
     private static void Assert(bool condition, string message)

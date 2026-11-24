@@ -42,14 +42,8 @@ public sealed class AppearanceSampleView : UserControl
             Parse(lightBackground ? "#E5EDF4" : "#213B58"),
             Parse(lightBackground ? "#B7D2E9" : "#092338"), 35);
         canvas.Background = background;
-        var clock = Text("09:41", naked, 54, true);
-        var date = Text("10月26日  星期一", naked, 14);
         var textShadow = style.Glass == GlassMode.Clear && style.CardShadow == CardShadow.None
             ? CardShadow.Soft : style.CardShadow;
-        clock.Effect = Shadow(textShadow);
-        date.Effect = Shadow(textShadow);
-        Add(canvas, clock, 32, 24);
-        Add(canvas, date, 36, 90);
         var weatherHeadline = new StackPanel { Orientation = Orientation.Horizontal };
         weatherHeadline.Children.Add(new Path
         {
@@ -66,9 +60,48 @@ public sealed class AppearanceSampleView : UserControl
             Margin = new Thickness(0, 0, 8, 0)
         });
         weatherHeadline.Children.Add(Text("23°  晴", look.TextColor, 27, true));
+        // Keep Weather as the first Border child so AppearancePreviewTests locates the header swatch directly.
         Add(canvas, Card("天气", look, rendered, 286, 111,
             weatherHeadline,
             Text("最高 26°  ·  最低 18°", look.TextColor, 12, opacity: 0.76)), 400, 26);
+
+        var timeLook = DesktopStyleRules.ComponentLook(DesktopComponentKind.TimeDate, style, 0.18d);
+        var timeIsClear = timeLook.BackgroundOpacity <= WidgetAppearanceRules.MinimumBackgroundOpacity + 0.005d;
+        var clockStack = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+        var clockText = Text("09:41", timeLook.TextColor, 44, true);
+        var dateText = Text("10月26日 星期一 · 农历九月十七", timeLook.TextColor, 12.5, opacity: timeIsClear ? 1d : 0.76d);
+        dateText.Margin = new Thickness(0, 2, 0, 0);
+        if (timeIsClear)
+        {
+            clockText.Effect = Shadow(textShadow);
+            dateText.Effect = Shadow(textShadow);
+        }
+        clockStack.Children.Add(clockText);
+        clockStack.Children.Add(dateText);
+        var clockDark = ColorContrastRules.RelativeLuminance(rendered.BackgroundColor) < 0.25d;
+        Brush clockBorder = timeIsClear
+            ? System.Windows.Media.Brushes.Transparent
+            : new LinearGradientBrush(
+                Parse(clockDark ? "#38FFFFFF" : "#99FFFFFF"),
+                Parse(clockDark ? "#18FFFFFF" : "#4DFFFFFF"),
+                new System.Windows.Point(0, 0),
+                new System.Windows.Point(0, 1));
+        var clockCard = new Border
+        {
+            Width = 332,
+            Height = 104,
+            Padding = new Thickness(16, 10, 16, 10),
+            CornerRadius = new CornerRadius(12),
+            Background = Brush(rendered.BackgroundColor, timeLook.BackgroundOpacity),
+            BorderBrush = clockBorder,
+            BorderThickness = new Thickness(timeIsClear ? 0 : 1),
+            Child = clockStack
+        };
+        if (!timeIsClear)
+        {
+            clockStack.Effect = Shadow(rendered.EffectiveShadow);
+        }
+        Add(canvas, clockCard, 32, 26);
 
         var performance = new StackPanel();
         performance.Children.Add(Text("CPU  24%       RAM  48%", look.TextColor, 14, true));

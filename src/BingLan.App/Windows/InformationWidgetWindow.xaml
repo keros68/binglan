@@ -42,11 +42,13 @@
                                FontWeight="Bold"
                                Effect="{StaticResource NakedTextContrastShadow}"
                                Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
-                    <StackPanel x:Name="DateMetaPanel"
-                                Grid.Row="1"
-                                Grid.Column="0"
-                                Grid.ColumnSpan="2">
+                    <DockPanel x:Name="DateMetaPanel"
+                               Grid.Row="1"
+                               Grid.Column="0"
+                               Grid.ColumnSpan="2"
+                               LastChildFill="True">
                         <TextBlock x:Name="TimePeriodText"
+                                   DockPanel.Dock="Left"
                                    Visibility="Collapsed"
                                    VerticalAlignment="Center"
                                    FontSize="{StaticResource CardFont.Body}"
@@ -58,7 +60,7 @@
                                    FontSize="{StaticResource CardFont.Body}"
                                    Effect="{StaticResource NakedTextContrastShadow}"
                                    Foreground="{Binding WidgetSecondaryTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
-                    </StackPanel>
+                    </DockPanel>
                 </Grid>
                 <!-- An optional line under the date that fades out at both ends. -->
                 <Rectangle x:Name="ClockDivider"

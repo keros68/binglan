@@ -1466,6 +1466,14 @@ internal static class ThemeStyleTests
                 && v61Migrated.InformationWidgets.Single().ShowLunarDate,
                 "v60 升级到 v61 时未自定义的时间日期应跟随全局玻璃外观并默认显示农历");
 
+            // Explicit square corner radius (0) on TimeDate must be preserved when global ink or density changes.
+            v61TimeDate.CornerRadius = 0d;
+            var changedInk = v61Migrated.Style.Clone();
+            changedInk.TextInk = TextInk.White;
+            DesktopStyleRules.ApplySharedComponentLook(v61TimeDate, v61Migrated.Style, changedInk, 0.18d);
+            Check(Math.Abs(v61TimeDate.CornerRadius) < 0.001d,
+                "用户显式设置的时间日期直角（0）在调整全局外观时不得被覆盖回 12 DIP");
+
             // 4) Simulate downgrade to 0.2.66 (SchemaVersion 45) saving state back without v47 ClockLayout/ShowDate properties.
             info.ClockLayout = ClockLayoutPreset.DatePoster;
             info.ShowDate = false;

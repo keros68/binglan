@@ -1008,6 +1008,15 @@ static void TestAppBarReservation()
     Assert(
         !AppBarPositionGuard.ShouldNotifyWindowPosChanged(isRegistered: true, isPositioning: false, isUpdatingLayer: false, isZOrderOnly: true),
         "位置与尺寸未变化（SWP_NOMOVE | SWP_NOSIZE）的纯 Z 序消息不应发送 ABM_WINDOWPOSCHANGED");
+    Assert(
+        AppBarPositionGuard.IsZOrderOnlyWindowPosFlags(0x0001 | 0x0002),
+        "仅带 SWP_NOSIZE | SWP_NOMOVE 时应判为纯 Z 序消息");
+    Assert(
+        !AppBarPositionGuard.IsZOrderOnlyWindowPosFlags(0x0001 | 0x0002 | 0x0040),
+        "同时携带 SWP_SHOWWINDOW 时属于可见性变化，不得当成纯 Z 序忽略");
+    Assert(
+        !AppBarPositionGuard.IsZOrderOnlyWindowPosFlags(0x0001 | 0x0002 | 0x0080),
+        "同时携带 SWP_HIDEWINDOW 时属于可见性变化，不得当成纯 Z 序忽略");
 }
 
 static void TestDockPinIdentityKey()
@@ -2813,6 +2822,22 @@ static void TestDockQuitRules()
         "商店应用应按 AUMID 匹配真实进程而非宿主");
     Assert(!DockQuitRules.MatchesProcess(uwpPin, emptySet, emptySet, @"C:\Windows\System32\ApplicationFrameHost.exe", "OpenAI.Codex_2p2nqsd0c76g0!App"),
         "不得匹配 ApplicationFrameHost.exe 共享宿主");
+
+    var edgePin = new DockPinnedApp { DisplayName = "Edge", ExecutablePath = @"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe" };
+    var pwaPin = new DockPinnedApp
+    {
+        DisplayName = "Notion PWA",
+        ExecutablePath = @"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+        Arguments = "--profile-directory=Default --app-id=abcdef"
+    };
+    var edgeItem = new DockItem("exe:msedge", "Edge", edgePin, null);
+    var pwaItem = new DockItem("aumid:MSEdge._crx_abcdef", "Notion PWA", pwaPin, null);
+    Assert(!DockQuitRules.CanOfferQuit(pwaItem),
+        "浏览器 PWA 共享宿主进程，不得提供进程级结束应用以免误杀浏览器");
+    Assert(!DockQuitRules.CanOfferQuit(edgeItem, [edgeItem, pwaItem]),
+        "同一可执行文件被多个 Dock 项共享时不得按进程名全杀");
+    Assert(DockQuitRules.CanOfferQuit(edgeItem, [edgeItem]),
+        "没有其他共享项时普通浏览器项仍允许结束应用");
 }
 
 static void Assert(bool condition, string message)

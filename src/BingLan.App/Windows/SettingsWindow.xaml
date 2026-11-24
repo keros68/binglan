@@ -2905,108 +2905,117 @@
                                 Click="RestoreDesktopMode_Click"/>
                     </Grid>
                     <StackPanel x:Name="TaskbarSection" Margin="0,12,0,0">
-                        <local:SettingsGroup>
-                                <Border Padding="18,14,18,12">
-                                    <StackPanel>
-                                        <TextBlock Margin="0,0,0,10" Style="{StaticResource CaptionStyle}"
-                                                   Text="只改外观和显示方式，退出冰蓝桌面时自动恢复系统默认。"/>
-                                        <UniformGrid Columns="4">
-                                            <RadioButton x:Name="TaskbarDefaultRadio"
-                                                         Margin="0,0,6,0"
-                                                         GroupName="TaskbarMode"
-                                                         Style="{StaticResource ChoiceCardStyle}"
-                                                         Tag="SystemDefault"
-                                                         AutomationProperties.Name="保持系统默认"
-                                                         Checked="TaskbarMode_Checked"
-                                                         local:SettingsSearch.Keywords="顶栏与底栏 顶栏底栏 任务栏样式 默认">
-                                                <StackPanel Margin="2,0,24,0">
-                                                    <TextBlock FontWeight="Medium" Text="系统默认"/>
-                                                    <TextBlock Margin="0,2,0,0" Style="{StaticResource CaptionStyle}" Text="不做任何调整"/>
-                                                </StackPanel>
-                                            </RadioButton>
-                                            <RadioButton x:Name="TaskbarTransparentRadio"
-                                                         Margin="3,0"
-                                                         GroupName="TaskbarMode"
-                                                         Style="{StaticResource ChoiceCardStyle}"
-                                                         Tag="Transparent"
-                                                         AutomationProperties.Name="透明"
-                                                         Checked="TaskbarMode_Checked"
-                                                         local:SettingsSearch.Keywords="任务栏样式 透明任务栏">
-                                                <StackPanel Margin="2,0,24,0">
-                                                    <TextBlock FontWeight="Medium" Text="透明"/>
-                                                    <TextBlock Margin="0,2,0,0" Style="{StaticResource CaptionStyle}" Text="露出后方背景；Windows 透明效果关闭时自动开启，退出还原"/>
-                                                </StackPanel>
-                                            </RadioButton>
-                                            <RadioButton x:Name="TaskbarBlurRadio"
-                                                         Margin="3,0"
-                                                         GroupName="TaskbarMode"
-                                                         Style="{StaticResource ChoiceCardStyle}"
-                                                         Tag="Blur"
-                                                         AutomationProperties.Name="模糊"
-                                                         Checked="TaskbarMode_Checked"
-                                                         local:SettingsSearch.Keywords="任务栏样式 毛玻璃">
-                                                <StackPanel Margin="2,0,24,0">
-                                                    <TextBlock FontWeight="Medium" Text="模糊"/>
-                                                    <TextBlock Margin="0,2,0,0" Style="{StaticResource CaptionStyle}" Text="系统模糊材质，效果随 Windows 版本变化"/>
-                                                </StackPanel>
-                                            </RadioButton>
-                                            <RadioButton x:Name="TaskbarSmartHideRadio"
-                                                         Margin="6,0,0,0"
-                                                         GroupName="TaskbarMode"
-                                                         Style="{StaticResource ChoiceCardStyle}"
-                                                         Tag="SmartHide"
-                                                         AutomationProperties.Name="自动隐藏"
-                                                         Checked="TaskbarMode_Checked"
-                                                         local:SettingsSearch.Keywords="任务栏样式 隐藏任务栏">
-                                                <StackPanel Margin="2,0,24,0">
-                                                    <TextBlock FontWeight="Medium" Text="自动隐藏"/>
-                                                    <TextBlock Margin="0,2,0,0" Style="{StaticResource CaptionStyle}" Text="由冰蓝桌面接管；切走或退出时恢复到进入前的状态"/>
-                                                </StackPanel>
-                                            </RadioButton>
-                                        </UniformGrid>
-                                        <TextBlock x:Name="TaskbarStatusText"
-                                                   Margin="2,10,0,0"
-                                                   AutomationProperties.LiveSetting="Polite"
-                                                   Style="{StaticResource CaptionStyle}"/>
-                                        <TextBlock x:Name="TaskbarPositionText" Margin="2,4,0,0"
-                                                   Visibility="Collapsed" Style="{StaticResource CaptionStyle}"/>
-                                        <!-- Windows 自动隐藏开着、而不是冰蓝桌面设置的：说明来源并给出出路。 -->
-                                        <StackPanel x:Name="WindowsAutoHidePanel" Margin="2,10,0,0" Visibility="Collapsed">
-                                            <TextBlock TextWrapping="Wrap"
-                                                       Style="{StaticResource CaptionStyle}"
-                                                       Text="Windows 当前开启了“自动隐藏任务栏”，这不是冰蓝桌面设置的，所以选“系统默认”不会改动它。"/>
-                                            <WrapPanel Margin="0,8,0,0">
-                                                <Button Content="改为始终显示" Click="ShowTaskbarAlways_Click"/>
-                                            </WrapPanel>
+                        <Border Style="{StaticResource SettingsPanelStyle}" Padding="18,14,18,14">
+                            <StackPanel>
+                                <TextBlock Margin="0,0,0,10" Style="{StaticResource CaptionStyle}"
+                                           Text="只改外观和显示方式，退出冰蓝桌面时自动恢复系统默认。"/>
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <RadioButton x:Name="TaskbarDefaultRadio"
+                                                 Grid.Column="0"
+                                                 Margin="0,0,6,0"
+                                                 GroupName="TaskbarMode"
+                                                 Style="{StaticResource ChoiceCardStyle}"
+                                                 Tag="SystemDefault"
+                                                 AutomationProperties.Name="保持系统默认"
+                                                 Checked="TaskbarMode_Checked"
+                                                 local:SettingsSearch.Keywords="顶栏与底栏 顶栏底栏 任务栏样式 默认">
+                                        <StackPanel Margin="2,0,24,0">
+                                            <TextBlock FontWeight="Medium" Text="系统默认"/>
+                                            <TextBlock Margin="0,2,0,0" Style="{StaticResource CaptionStyle}" Text="不做任何调整"/>
                                         </StackPanel>
-                                        <Button Margin="2,10,0,0" HorizontalAlignment="Left"
-                                                Content="打开 Windows 任务栏设置" Click="OpenWindowsTaskbarSettings_Click"/>
-                                    </StackPanel>
-                                </Border>
-                                <!-- 只在选“自动隐藏”时显示：两项都只影响任务栏弹出。 -->
-                                <StackPanel x:Name="TaskbarPopupPanel" Visibility="Collapsed">
-                                    <local:SettingsRow Header="鼠标触边唤出"
-                                                       Description="仅对底部自动隐藏的任务栏生效。选“禁止鼠标触边唤出”时，仍可按 Win 键或点击 Dock 开始按钮打开任务栏；全屏游戏、视频等窗口中暂停"
-                                                       local:SettingsSearch.Keywords="弹出方式 两角 禁止唤出 彻底隐藏">
-                                        <ComboBox x:Name="TaskbarEdgeRevealComboBox"
-                                                  Width="200"
-                                                  AutomationProperties.Name="任务栏鼠标触边唤出方式"
-                                                  SelectionChanged="TaskbarEdgeReveal_SelectionChanged">
-                                            <ComboBoxItem Content="底部任意位置（默认）" Tag="AnyEdge"/>
-                                            <ComboBoxItem Content="仅底部两角" Tag="CornersOnly"/>
-                                            <ComboBoxItem Content="禁止鼠标触边唤出" Tag="Disabled"/>
-                                        </ComboBox>
-                                    </local:SettingsRow>
-                                    <local:SettingsRow Header="有新消息时不弹出任务栏"
-                                                       Description="仅关闭 Windows 的任务栏应用闪烁，不影响系统右下角消息通知弹窗；新消息仍会在 Dock 图标提醒（可开启弹跳）和顶部信息条「消息提示」中显示"
-                                                       local:SettingsSearch.Keywords="弹出方式 闪烁 通知 消息提醒">
-                                        <CheckBox x:Name="QuietTaskbarFlashCheckBox"
-                                                  AutomationProperties.Name="有新消息时不弹出 Windows 任务栏"
-                                                  Style="{StaticResource ToggleSwitchStyle}"
-                                                  Click="QuietTaskbarFlash_Click"/>
-                                    </local:SettingsRow>
+                                    </RadioButton>
+                                    <RadioButton x:Name="TaskbarTransparentRadio"
+                                                 Grid.Column="1"
+                                                 Margin="3,0"
+                                                 GroupName="TaskbarMode"
+                                                 Style="{StaticResource ChoiceCardStyle}"
+                                                 Tag="Transparent"
+                                                 AutomationProperties.Name="透明"
+                                                 Checked="TaskbarMode_Checked"
+                                                 local:SettingsSearch.Keywords="任务栏样式 透明任务栏">
+                                        <StackPanel Margin="2,0,24,0">
+                                            <TextBlock FontWeight="Medium" Text="透明"/>
+                                            <TextBlock Margin="0,2,0,0" Style="{StaticResource CaptionStyle}" Text="露出后方背景；Windows 透明效果关闭时自动开启，退出还原"/>
+                                        </StackPanel>
+                                    </RadioButton>
+                                    <RadioButton x:Name="TaskbarBlurRadio"
+                                                 Grid.Column="2"
+                                                 Margin="3,0"
+                                                 GroupName="TaskbarMode"
+                                                 Style="{StaticResource ChoiceCardStyle}"
+                                                 Tag="Blur"
+                                                 AutomationProperties.Name="模糊"
+                                                 Checked="TaskbarMode_Checked"
+                                                 local:SettingsSearch.Keywords="任务栏样式 毛玻璃">
+                                        <StackPanel Margin="2,0,24,0">
+                                            <TextBlock FontWeight="Medium" Text="模糊"/>
+                                            <TextBlock Margin="0,2,0,0" Style="{StaticResource CaptionStyle}" Text="系统模糊材质，效果随 Windows 版本变化"/>
+                                        </StackPanel>
+                                    </RadioButton>
+                                    <RadioButton x:Name="TaskbarSmartHideRadio"
+                                                 Grid.Column="3"
+                                                 Margin="6,0,0,0"
+                                                 GroupName="TaskbarMode"
+                                                 Style="{StaticResource ChoiceCardStyle}"
+                                                 Tag="SmartHide"
+                                                 AutomationProperties.Name="自动隐藏"
+                                                 Checked="TaskbarMode_Checked"
+                                                 local:SettingsSearch.Keywords="任务栏样式 隐藏任务栏">
+                                        <StackPanel Margin="2,0,24,0">
+                                            <TextBlock FontWeight="Medium" Text="自动隐藏"/>
+                                            <TextBlock Margin="0,2,0,0" Style="{StaticResource CaptionStyle}" Text="由冰蓝桌面接管；切走或退出时恢复到进入前的状态"/>
+                                        </StackPanel>
+                                    </RadioButton>
+                                </Grid>
+                                <TextBlock x:Name="TaskbarStatusText"
+                                           Margin="2,10,0,0"
+                                           AutomationProperties.LiveSetting="Polite"
+                                           Style="{StaticResource CaptionStyle}"/>
+                                <TextBlock x:Name="TaskbarPositionText" Margin="2,4,0,0"
+                                           Visibility="Collapsed" Style="{StaticResource CaptionStyle}"/>
+                                <!-- Windows 自动隐藏开着、而不是冰蓝桌面设置的：说明来源并给出出路。 -->
+                                <StackPanel x:Name="WindowsAutoHidePanel" Margin="2,10,0,0" Visibility="Collapsed">
+                                    <TextBlock TextWrapping="Wrap"
+                                               Style="{StaticResource CaptionStyle}"
+                                               Text="Windows 当前开启了“自动隐藏任务栏”，这不是冰蓝桌面设置的，所以选“系统默认”不会改动它。"/>
+                                    <WrapPanel Margin="0,8,0,0">
+                                        <Button Content="改为始终显示" Click="ShowTaskbarAlways_Click"/>
+                                    </WrapPanel>
                                 </StackPanel>
-                            </local:SettingsGroup>
+                                <Button x:Name="OpenWindowsTaskbarSettingsButton"
+                                        Margin="2,10,0,0" HorizontalAlignment="Left"
+                                        Content="打开 Windows 任务栏设置" Click="OpenWindowsTaskbarSettings_Click"/>
+                            </StackPanel>
+                        </Border>
+                        <!-- 只在选“自动隐藏”时显示：两项都只影响任务栏弹出。 -->
+                        <local:SettingsGroup x:Name="TaskbarPopupPanel" Margin="0,12,0,4" Visibility="Collapsed">
+                            <local:SettingsRow Header="鼠标触边唤出"
+                                               Description="仅对底部自动隐藏的任务栏生效。选“禁止鼠标触边唤出”时，仍可按 Win 键或点击 Dock 开始按钮打开任务栏；全屏游戏、视频等窗口中暂停"
+                                               local:SettingsSearch.Keywords="弹出方式 两角 禁止唤出 彻底隐藏">
+                                <ComboBox x:Name="TaskbarEdgeRevealComboBox"
+                                          Width="200"
+                                          AutomationProperties.Name="任务栏鼠标触边唤出方式"
+                                          SelectionChanged="TaskbarEdgeReveal_SelectionChanged">
+                                    <ComboBoxItem Content="底部任意位置（默认）" Tag="AnyEdge"/>
+                                    <ComboBoxItem Content="仅底部两角" Tag="CornersOnly"/>
+                                    <ComboBoxItem Content="禁止鼠标触边唤出" Tag="Disabled"/>
+                                </ComboBox>
+                            </local:SettingsRow>
+                            <local:SettingsRow Header="有新消息时不弹出任务栏"
+                                               Description="仅关闭 Windows 的任务栏应用闪烁，不影响系统右下角消息通知弹窗；新消息仍会在 Dock 图标提醒（可开启弹跳）和顶部信息条「消息提示」中显示"
+                                               local:SettingsSearch.Keywords="弹出方式 闪烁 通知 消息提醒">
+                                <CheckBox x:Name="QuietTaskbarFlashCheckBox"
+                                          AutomationProperties.Name="有新消息时不弹出 Windows 任务栏"
+                                          Style="{StaticResource ToggleSwitchStyle}"
+                                          Click="QuietTaskbarFlash_Click"/>
+                            </local:SettingsRow>
+                        </local:SettingsGroup>
                     </StackPanel>
                 </StackPanel>
             </ScrollViewer>

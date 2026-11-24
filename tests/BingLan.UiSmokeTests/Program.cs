@@ -7194,8 +7194,16 @@ internal static class Program
             ClickButton(Require<Button>(window, "SchemeTaskbarAdjustButton"));
             Assert(Require<FrameworkElement>(window, "TaskbarPage").IsVisible && Require<FrameworkElement>(window, "TaskbarSection").IsVisible,
                 "“调整 →”应跳到独立的 Windows 任务栏页");
-            Assert(Require<FrameworkElement>(window, "TaskbarPopupPanel").IsVisible,
+            var taskbarPopup = Require<FrameworkElement>(window, "TaskbarPopupPanel");
+            Assert(taskbarPopup.IsVisible,
                 "任务栏自动隐藏时应显示两项弹出方式");
+            var openTaskbarSettingsButton = Require<Button>(window, "OpenWindowsTaskbarSettingsButton");
+            var buttonBottom = openTaskbarSettingsButton.TransformToAncestor(window)
+                .Transform(new Point(0, openTaskbarSettingsButton.ActualHeight)).Y;
+            var popupTop = taskbarPopup.TransformToAncestor(window)
+                .Transform(new Point(0, 0)).Y;
+            Assert(buttonBottom <= popupTop + 0.5d,
+                $"打开 Windows 任务栏设置按钮（底边 {buttonBottom:0.#}）不得被下方弹出方式面板（顶边 {popupTop:0.#}）遮挡或裁切");
             Require<RadioButton>(window, "TaskbarDefaultRadio").IsChecked = true;
             Pump();
             Assert(Require<FrameworkElement>(window, "TaskbarPopupPanel").Visibility == Visibility.Collapsed,

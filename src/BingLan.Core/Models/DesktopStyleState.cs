@@ -746,12 +746,6 @@ public static class DesktopStyleRules
             previousStyle,
             nextStyle,
             clearBarOpacity);
-        if (component.Kind == DesktopComponentKind.TimeDate
-            && look.BackgroundOpacity >= 0.05d
-            && component.CornerRadius <= 0.001d)
-        {
-            component.CornerRadius = WidgetAppearanceRules.DefaultCornerRadius;
-        }
         if (component.Kind == DesktopComponentKind.Todo)
         {
             var glass = Appearance(nextStyle);

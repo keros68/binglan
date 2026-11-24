@@ -168,12 +168,6 @@ public partial class SettingsWindow
             component.Appearance.BackgroundColor = look.BackgroundColor;
             component.Appearance.BackgroundOpacity = look.BackgroundOpacity;
             component.Appearance.TextColor = look.TextColor;
-            if (kind == DesktopComponentKind.TimeDate
-                && look.BackgroundOpacity >= 0.05d
-                && component.CornerRadius <= 0.001d)
-            {
-                component.CornerRadius = WidgetAppearanceRules.DefaultCornerRadius;
-            }
             if (kind == DesktopComponentKind.Todo)
             {
                 var glass = DesktopStyleRules.Appearance(_maintenance.Style);

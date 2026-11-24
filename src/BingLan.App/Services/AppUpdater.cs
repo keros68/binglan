@@ -168,18 +168,17 @@ public sealed class AppUpdater : IDisposable
 
         try
         {
-            var logDirectory = StartupLog.DataDirectory;
-            Directory.CreateDirectory(logDirectory);
-            var logPath = Path.Combine(logDirectory, "update-install.log");
-            Process.Start(new ProcessStartInfo(
-                path,
-                $"/SILENT /SUPPRESSMSGBOXES /NORESTART /NOCLOSEAPPLICATIONS /UPDATE=1 /LOG=\"{logPath}\"")
+            var logArg = TryBuildInstallLogArgument();
+            var arguments = string.IsNullOrEmpty(logArg)
+                ? "/SILENT /SUPPRESSMSGBOXES /NORESTART /NOCLOSEAPPLICATIONS /UPDATE=1"
+                : $"/SILENT /SUPPRESSMSGBOXES /NORESTART /NOCLOSEAPPLICATIONS /UPDATE=1 {logArg}";
+            Process.Start(new ProcessStartInfo(path, arguments)
             {
                 UseShellExecute = true
             });
         }
         catch (Exception exception) when (exception is System.ComponentModel.Win32Exception
-            or InvalidOperationException)
+            or InvalidOperationException or IOException or UnauthorizedAccessException)
         {
             IsBusy = false;
             Status = $"无法启动安装程序：{exception.Message}";
@@ -189,6 +188,30 @@ public sealed class AppUpdater : IDisposable
 
         StartupLog.Write($"开始安装新版本 {Available.Version.ToString(3)}");
         _exitApp();
+    }
+
+    private static string TryBuildInstallLogArgument()
+    {
+        try
+        {
+            var logDirectory = StartupLog.DataDirectory;
+            Directory.CreateDirectory(logDirectory);
+            var logPath = Path.Combine(
+                logDirectory,
+                $"update-install-{DateTime.Now:yyyyMMdd-HHmmss}-{Environment.ProcessId}.log");
+            if (Directory.Exists(logPath))
+            {
+                return string.Empty;
+            }
+            return $"/LOG=\"{logPath}\"";
+        }
+        catch (Exception exception) when (exception is IOException
+            or UnauthorizedAccessException
+            or NotSupportedException
+            or System.Security.SecurityException)
+        {
+            return string.Empty;
+        }
     }
 
     public void OpenReleasePage()

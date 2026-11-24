@@ -1029,9 +1029,16 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         NotifyStateChanged();
     }
 
+    private (double Left, double Top)? _weeklyAppliedPosition;
+
     protected override void OnDragEnded()
     {
-        _preWeeklyAnchor = null;
+        if (_weeklyAppliedPosition is { } applied
+            && (Math.Abs(Left - applied.Left) > 0.5d || Math.Abs(Top - applied.Top) > 0.5d))
+        {
+            _preWeeklyAnchor = null;
+            _weeklyAppliedPosition = null;
+        }
         base.OnDragEnded();
     }
 
@@ -1065,6 +1072,7 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         if (wasWeekly)
         {
             _preWeeklyAnchor = null;
+            _weeklyAppliedPosition = null;
         }
         if (width > 0 && height > 0)
         {
@@ -1080,6 +1088,10 @@ public partial class TodoWidgetWindow : WidgetWindowBase
             Top = nextTop;
             Width = width;
             Height = height;
+            if (State.WeeklyView)
+            {
+                _weeklyAppliedPosition = (Left, Top);
+            }
         }
         ApplyViewMode();
         NotifyStateChanged();

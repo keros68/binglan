@@ -335,7 +335,7 @@ internal sealed class WindowCatalog
         }
     }
 
-    private static string? TryGetExecutablePath(nint process)
+    internal static string? TryGetExecutablePath(nint process)
     {
         var buffer = new StringBuilder(512);
         var size = (uint)buffer.Capacity;
@@ -354,7 +354,7 @@ internal sealed class WindowCatalog
             : null;
     }
 
-    private static string? TryGetAppUserModelId(nint process)
+    internal static string? TryGetAppUserModelId(nint process)
     {
         uint length = 0;
         var result = DockNativeMethods.GetApplicationUserModelId(process, ref length, null);

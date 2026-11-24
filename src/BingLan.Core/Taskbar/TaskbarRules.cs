@@ -218,15 +218,23 @@ public static class TaskbarCornerRules
         activeMode != requestedMode || !string.IsNullOrEmpty(activeProblem);
 
     /// <summary>
+    /// Whether a taskbar window rect belongs to the same monitor bottom edge as
+    /// <paramref name="stripBounds"/> (used to prevent a collapsed secondary taskbar from
+    /// bypassing the expanded-taskbar guard on another monitor).
+    /// </summary>
+    public static bool IsSameMonitorBottomTaskbar(PixelRect taskbarRect, PixelRect stripBounds) =>
+        taskbarRect.Right > stripBounds.Left
+        && taskbarRect.Left < stripBounds.Right
+        && taskbarRect.Bottom >= stripBounds.Bottom;
+
+    /// <summary>
     /// Whether an auto-hidden bottom taskbar overlapping <paramref name="stripBounds"/> is
     /// currently expanded/open rather than collapsed to its thin edge strip. While the taskbar
     /// is intentionally open (Start menu, Win key, tray), edge strips must not fight its Z-order
     /// or raise the Dock over it, which can interfere with auto-hide retraction.
     /// </summary>
     public static bool IsBottomTaskbarExpanded(PixelRect taskbarRect, PixelRect stripBounds) =>
-        taskbarRect.Right > stripBounds.Left
-        && taskbarRect.Left < stripBounds.Right
-        && taskbarRect.Bottom >= stripBounds.Bottom
+        IsSameMonitorBottomTaskbar(taskbarRect, stripBounds)
         && stripBounds.Bottom - taskbarRect.Top > ExpandedTaskbarThresholdPixels;
 }
 

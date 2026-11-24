@@ -585,9 +585,8 @@ internal sealed class TopBarAppBarController : IDisposable
         {
             return false;
         }
-        var flags = Marshal.PtrToStructure<NativeMethods.WindowPos>(lParam).Flags;
-        const uint noMoveOrSize = NativeMethods.SwpNoMove | NativeMethods.SwpNoSize;
-        return (flags & noMoveOrSize) == noMoveOrSize;
+        return AppBarPositionGuard.IsZOrderOnlyWindowPosFlags(
+            Marshal.PtrToStructure<NativeMethods.WindowPos>(lParam).Flags);
     }
 
     // A reserved bar behaves like the taskbar: above normal windows, below a full-screen
