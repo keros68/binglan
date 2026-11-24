@@ -17,7 +17,7 @@ public partial class TodoWidgetWindow : WidgetWindowBase
     // 含本周，否则整周看不到今天。
     private int WeekWindowBackShift => WeeklyRowCount >= 2 ? 1 : 0;
 
-    private DateTime WeekWindowStart => MondayOf(DateTime.Today)
+    private DateTime WeekWindowStart => WeeklyCalendarRules.WeekStartOf(DateTime.Today, State.WeekStartsOnSunday)
         .AddDays(7 * (_weekOffset - WeekWindowBackShift));
 
     // Minimum card sizes: the weekly grid needs wider columns and taller rows than
@@ -1288,6 +1288,47 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         }
         NotifyStateChanged();
     }
+
+    /// <summary>设置窗口与周历工具栏共用：调整每周起始日（周一/周日），立即重排并通知保存。</summary>
+    public void SetWeekStartsOnSunday(bool weekStartsOnSunday)
+    {
+        if (State.WeekStartsOnSunday == weekStartsOnSunday)
+        {
+            return;
+        }
+        State.WeekStartsOnSunday = weekStartsOnSunday;
+        if (State.WeeklyView)
+        {
+            RenderWeekView();
+        }
+        NotifyStateChanged();
+    }
+
+    private void WeekCountButton_Click(object sender, RoutedEventArgs e)
+    {
+        var menu = new System.Windows.Controls.ContextMenu
+        {
+            PlacementTarget = WeekCountButton,
+            Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom
+        };
+        for (var weeks = 1; weeks <= 5; weeks++)
+        {
+            var count = weeks;
+            var item = new System.Windows.Controls.MenuItem
+            {
+                Header = $"{count} 周",
+                IsCheckable = true,
+                IsChecked = count == WeeklyRowCount
+            };
+            item.Click += (_, _) => SetWeeklyWeekCount(count);
+            menu.Items.Add(item);
+        }
+        WeekCountButton.ContextMenu = menu;
+        menu.IsOpen = true;
+    }
+
+    private void WeekStartButton_Click(object sender, RoutedEventArgs e) =>
+        SetWeekStartsOnSunday(!State.WeekStartsOnSunday);
 
     private void WeekPrev_Click(object sender, RoutedEventArgs e)
     {
@@ -2667,11 +2708,27 @@ public partial class TodoWidgetWindow : WidgetWindowBase
 
     private void RenderWeekView()
     {
-        // One row per Monday-to-Sunday week, sliding one week per page. A new month
-        // shows its month on its first day instead of breaking the row.
-        var firstMonday = WeekWindowStart;
-        var lastDay = firstMonday.AddDays(7 * WeeklyRowCount - 1);
-        WeekRange.Text = $"{firstMonday:M月d日} – {lastDay:M月d日}";
+        // One row per seven-day week (Monday- or Sunday-first), sliding one week per page.
+        // A new month shows its month on its first day instead of breaking the row.
+        var headers = WeeklyCalendarRules.WeekdayHeaders(State.WeekStartsOnSunday);
+        TextBlock[] headerControls =
+        [
+            WeekdayHeader0, WeekdayHeader1, WeekdayHeader2, WeekdayHeader3,
+            WeekdayHeader4, WeekdayHeader5, WeekdayHeader6
+        ];
+        for (var column = 0; column < headerControls.Length; column++)
+        {
+            headerControls[column].Text = headers[column];
+            headerControls[column].FontWeight = WeeklyCalendarRules.IsWeekendColumn(column, State.WeekStartsOnSunday)
+                ? FontWeights.Normal
+                : FontWeights.Bold;
+        }
+        WeekCountButton.Content = $"{WeeklyRowCount}周 ▾";
+        WeekStartButton.Content = State.WeekStartsOnSunday ? "周日始" : "周一始";
+
+        var firstDayOfWindow = WeekWindowStart;
+        var lastDay = firstDayOfWindow.AddDays(7 * WeeklyRowCount - 1);
+        WeekRange.Text = $"{firstDayOfWindow:M月d日} – {lastDay:M月d日}";
         WeekTodayButton.Visibility = _weekOffset == 0 ? Visibility.Collapsed : Visibility.Visible;
 
         var previousSelectedDate = _selectedCellView?.Date;
@@ -2683,7 +2740,7 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         var current = new List<WeekCellView>(7);
         for (var index = 0; index < 7 * WeeklyRowCount; index++)
         {
-            var date = firstMonday.AddDays(index);
+            var date = firstDayOfWindow.AddDays(index);
             var cell = new WeekCellView
             {
                 Date = date,
@@ -2979,9 +3036,6 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         var markers = new[] { (events, "行程"), (countdowns, "倒数日") };
         return string.Join("、", markers.Where(x => x.Item1 > 0).Select(x => $"{x.Item1} 项{x.Item2}"));
     }
-
-    private static DateTime MondayOf(DateTime date) =>
-        date.AddDays(-(((int)date.DayOfWeek + 6) % 7));
 
     private FrameworkElement? FindCellElement(WeekCellView cell) =>
         FindVisualDescendantWhere<System.Windows.Controls.Border>(

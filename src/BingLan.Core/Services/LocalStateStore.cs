@@ -1025,6 +1025,10 @@ public sealed class LocalStateStore
             }
             state.SchemaVersion = 61;
         }
+        if (state.SchemaVersion < 62)
+        {
+            state.SchemaVersion = 62;
+        }
         if (!Enum.IsDefined(state.Taskbar.Mode))
         {
             state.Taskbar.Mode = TaskbarMode.SystemDefault;

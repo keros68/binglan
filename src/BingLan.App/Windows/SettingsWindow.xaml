@@ -1778,6 +1778,17 @@
                                                 <ComboBoxItem Content="5 周"/>
                                             </ComboBox>
                                         </local:SettingsRow>
+                                        <local:SettingsRow Header="每周起始日"
+                                                           Description="选择周历第一列从周一开始还是周日开始，修改立即生效"
+                                                           local:SettingsSearch.Keywords="日历 周 周一 周日 星期 起始">
+                                            <ComboBox x:Name="TodoWeekStartPicker"
+                                                      Width="160"
+                                                      AutomationProperties.Name="每周起始日"
+                                                      SelectionChanged="TodoWeekStart_SelectionChanged">
+                                                <ComboBoxItem Content="周一"/>
+                                                <ComboBoxItem Content="周日"/>
+                                            </ComboBox>
+                                        </local:SettingsRow>
                                     </local:SettingsGroup>
                                 </StackPanel>
 

@@ -1128,7 +1128,8 @@ public sealed partial class TopBarWindow : Window
         var displayName = TopBarModuleRules.ResolveInputMethodDisplayName(
             active.Name,
             _lastInputLayout != 0 ? _lastInputLayout : active.Layout,
-            _inputMethodFullName);
+            _inputMethodFullName,
+            active.IsInputProcessor ? active.LanguageId : null);
         var tooltip = displayName ?? (_inputMethodFullName.Length > 0 ? _inputMethodFullName : _inputMethodToolTip);
         if (displayName == _inputMethodName && tooltip == _inputMethodToolTip)
         {
@@ -1168,7 +1169,11 @@ public sealed partial class TopBarWindow : Window
         {
             Interlocked.Exchange(ref _lastInputProfileCheckAt, Environment.TickCount64);
             var active = TopBarSystemInfo.ReadActiveInputMethod();
-            _inputMethodName = TopBarModuleRules.ResolveInputMethodDisplayName(active.Name, layout, fullName);
+            _inputMethodName = TopBarModuleRules.ResolveInputMethodDisplayName(
+                active.Name,
+                layout,
+                fullName,
+                active.IsInputProcessor ? active.LanguageId : null);
             _inputMethodToolTip = _inputMethodName ?? fullName;
         }
 
@@ -1575,9 +1580,12 @@ public sealed partial class TopBarWindow : Window
     {
         if (_clockFlyout?.IsOpen == true)
         {
-            _clockFlyout.IsOpen = false;
+            CloseClockFlyout();
             return;
         }
+
+        CloseTodoFlyout(animate: false);
+        CloseInputMethodFlyout();
 
         _clockMonth = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
         var glass = DesktopStyleRules.TopBar(_style, _state);
@@ -1595,7 +1603,7 @@ public sealed partial class TopBarWindow : Window
         {
             PlacementTarget = button,
             Placement = PlacementMode.Bottom,
-            HorizontalOffset = onRight ? -140 : -6,
+            HorizontalOffset = onRight ? -156 : -6,
             VerticalOffset = 2,
             StaysOpen = true,
             AllowsTransparency = true,
@@ -1607,17 +1615,24 @@ public sealed partial class TopBarWindow : Window
             {
                 _clockFlyout = null;
             }
+            if (flyout.Parent is Panel parent)
+            {
+                parent.Children.Remove(flyout);
+            }
+            UpdateForegroundTimerInterval();
         };
         (button.Parent as Panel ?? RightModules).Children.Add(flyout);
         _clockFlyout = flyout;
         flyout.IsOpen = true;
+        UpdateForegroundTimerInterval();
         // Like the to-do flyout: the opening click must not read as an outside click.
         TopBarNativeMethods.ConsumeMouseButtonDown(TopBarNativeMethods.LeftMouseButton);
+        TopBarNativeMethods.ConsumeMouseButtonDown(TopBarNativeMethods.EscapeKey);
     }
 
     private FrameworkElement BuildClockCard()
     {
-        var panel = new StackPanel { Width = 252 };
+        var panel = new StackPanel { Width = 268 };
         var now = DateTime.Now;
         panel.Children.Add(new TextBlock
         {
@@ -1625,11 +1640,18 @@ public sealed partial class TopBarWindow : Window
             Foreground = Brushes.White,
             FontSize = 30
         });
+        var lunarToday = LunarDayText.FullDate(now);
+        var dateLine = $"{now.Year}年{now.Month}月{now.Day}日 星期{"日一二三四五六"[(int)now.DayOfWeek]}";
+        if (!string.IsNullOrEmpty(lunarToday))
+        {
+            dateLine += $" · {lunarToday}";
+        }
         panel.Children.Add(new TextBlock
         {
-            Text = now.Year + "年" + now.Month + "月" + now.Day + "日 " + "日一二三四五六"[(int)now.DayOfWeek],
+            Text = dateLine,
             Foreground = Brushes.White,
-            Opacity = 0.8,
+            Opacity = 0.82,
+            FontSize = 12,
             Margin = new Thickness(0, 2, 0, 10)
         });
         panel.Children.Add(BuildMonthView());
@@ -1646,7 +1668,8 @@ public sealed partial class TopBarWindow : Window
             Text = MonthTitle(_clockMonth),
             Foreground = Brushes.White,
             FontSize = 13,
-            HorizontalAlignment = System.Windows.HorizontalAlignment.Center
+            HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center
         };
         var previous = CreateMonthNavButton("‹", "上一月", -1);
         var next = CreateMonthNavButton("›", "下一月", 1);
@@ -1663,13 +1686,14 @@ public sealed partial class TopBarWindow : Window
         {
             grid.ColumnDefinitions.Add(new ColumnDefinition());
         }
-        for (var row = 0; row < 7; row++)
+        grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(22) });
+        for (var row = 1; row < 7; row++)
         {
-            grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(26) });
+            grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(36) });
         }
 
         // Monday-first weeks, the calendar convention in Chinese layouts.
-        var weekdayNames = new[] { "一", "二", "三", "四", "五", "六", "日" };
+        var weekdayNames = WeeklyCalendarRules.WeekdayHeaders(weekStartsOnSunday: false, shortForm: true);
         for (var column = 0; column < 7; column++)
         {
             var headerCell = new TextBlock
@@ -1677,7 +1701,8 @@ public sealed partial class TopBarWindow : Window
                 Text = weekdayNames[column],
                 Foreground = Brushes.White,
                 Opacity = 0.6,
-                HorizontalAlignment = System.Windows.HorizontalAlignment.Center
+                HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center
             };
             Grid.SetRow(headerCell, 0);
             Grid.SetColumn(headerCell, column);
@@ -1685,41 +1710,50 @@ public sealed partial class TopBarWindow : Window
         }
 
         var daysInMonth = DateTime.DaysInMonth(_clockMonth.Year, _clockMonth.Month);
-        var leading = ((int)_clockMonth.DayOfWeek + 6) % 7; // Monday-based offset
+        var leading = WeeklyCalendarRules.LeadingDaysForMonth(_clockMonth, weekStartsOnSunday: false);
         for (var day = 1; day <= daysInMonth; day++)
         {
             var index = leading + day - 1;
             var row = index / 7 + 1;
             var column = index % 7;
             var date = new DateTime(_clockMonth.Year, _clockMonth.Month, day);
-            FrameworkElement cell;
-            if (date == DateTime.Today)
+            var isToday = date == DateTime.Today;
+            var lunar = LunarDayText.For(date);
+            var dayContent = new StackPanel
             {
-                cell = new Border
+                HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            dayContent.Children.Add(new TextBlock
+            {
+                Text = day.ToString(),
+                Foreground = Brushes.White,
+                Opacity = isToday ? 1.0 : 0.9,
+                FontSize = 12.5,
+                FontWeight = isToday ? FontWeights.SemiBold : FontWeights.Normal,
+                HorizontalAlignment = System.Windows.HorizontalAlignment.Center
+            });
+            if (!string.IsNullOrEmpty(lunar))
+            {
+                dayContent.Children.Add(new TextBlock
+                {
+                    Text = lunar,
+                    Foreground = Brushes.White,
+                    Opacity = isToday ? 0.92 : (lunar.EndsWith('月') ? 0.78 : 0.58),
+                    FontSize = 9.5,
+                    Margin = new Thickness(0, -1, 0, 0),
+                    HorizontalAlignment = System.Windows.HorizontalAlignment.Center
+                });
+            }
+            FrameworkElement cell = isToday
+                ? new Border
                 {
                     Background = TodayBrush,
                     CornerRadius = new CornerRadius(8),
                     Margin = new Thickness(1),
-                    Child = new TextBlock
-                    {
-                        Text = day.ToString(),
-                        Foreground = Brushes.White,
-                        HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
-                        VerticalAlignment = VerticalAlignment.Center
-                    }
-                };
-            }
-            else
-            {
-                cell = new TextBlock
-                {
-                    Text = day.ToString(),
-                    Foreground = Brushes.White,
-                    Opacity = 0.85,
-                    HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
-                    VerticalAlignment = VerticalAlignment.Center
-                };
-            }
+                    Child = dayContent
+                }
+                : dayContent;
             Grid.SetRow(cell, row);
             Grid.SetColumn(cell, column);
             grid.Children.Add(cell);
@@ -1772,6 +1806,7 @@ public sealed partial class TopBarWindow : Window
     {
         _clockFlyout?.SetCurrentValue(Popup.IsOpenProperty, false);
         _clockFlyout = null;
+        UpdateForegroundTimerInterval();
     }
 
     /// <summary>The open calendar flyout, for tests; popups sit outside the visual tree.</summary>
@@ -1793,9 +1828,12 @@ public sealed partial class TopBarWindow : Window
         }
         if (_todoFlyout?.IsOpen == true)
         {
-            _todoFlyout.IsOpen = false;
+            CloseTodoFlyout(animate: false);
             return;
         }
+
+        CloseClockFlyout();
+        CloseInputMethodFlyout();
 
         var glass = DesktopStyleRules.TopBar(_style, _state);
         var list = _environment.ReadTodoList();
@@ -1855,14 +1893,21 @@ public sealed partial class TopBarWindow : Window
             {
                 _todoFlyout = null;
             }
+            if (flyout.Parent is Panel parent)
+            {
+                parent.Children.Remove(flyout);
+            }
+            UpdateForegroundTimerInterval();
         };
         // A popup outside the visual tree never hears outside clicks at all, so it
         // lives in the module panel; it takes no layout space while closed.
         (button.Parent as Panel ?? LeftModules).Children.Add(flyout);
         _todoFlyout = flyout;
         flyout.IsOpen = true;
+        UpdateForegroundTimerInterval();
         // The click that opened the flyout must not read as the next outside click.
         TopBarNativeMethods.ConsumeMouseButtonDown(TopBarNativeMethods.LeftMouseButton);
+        TopBarNativeMethods.ConsumeMouseButtonDown(TopBarNativeMethods.EscapeKey);
     }
 
     private FrameworkElement CreateTodoRow(TodoItemState item)
@@ -2147,6 +2192,7 @@ public sealed partial class TopBarWindow : Window
             if (_capsuleChevron is { } chevron) chevron.Text = "\uE70D";
             MorphCapsule(expanding: false, animate);
         }
+        UpdateForegroundTimerInterval();
     }
 
     /// <summary>
@@ -2158,7 +2204,8 @@ public sealed partial class TopBarWindow : Window
     {
         if (TopBarNativeMethods.IsMouseButtonDown(TopBarNativeMethods.EscapeKey))
         {
-            if (_capsuleExpanded) CloseTodoFlyout();
+            if (_capsuleExpanded || _todoFlyout?.IsOpen == true) CloseTodoFlyout();
+            if (_clockFlyout?.IsOpen == true) CloseClockFlyout();
             if (_inputMethodFlyout?.IsOpen == true) CloseInputMethodFlyout();
         }
         if (!TopBarNativeMethods.IsMouseButtonDown(TopBarNativeMethods.LeftMouseButton))

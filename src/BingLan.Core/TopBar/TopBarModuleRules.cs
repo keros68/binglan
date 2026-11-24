@@ -262,11 +262,18 @@ public static class TopBarModuleRules
     public static string? ResolveInputMethodDisplayName(
         string? inputProcessorName,
         nint keyboardLayout,
-        string? layoutText)
+        string? layoutText,
+        ushort? inputProcessorLanguageId = null)
     {
         if (!string.IsNullOrWhiteSpace(inputProcessorName))
         {
-            return inputProcessorName.Trim();
+            var layoutLangId = keyboardLayout != 0 ? ExtractLanguageId(keyboardLayout) : (ushort)0;
+            if (layoutLangId == 0
+                || inputProcessorLanguageId is null or 0
+                || inputProcessorLanguageId.Value == layoutLangId)
+            {
+                return inputProcessorName.Trim();
+            }
         }
         if (IsLegacyImeLayout(keyboardLayout)
             && !string.IsNullOrWhiteSpace(layoutText)

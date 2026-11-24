@@ -758,6 +758,32 @@
                                 Content="←"
                                 ToolTip="上一周"
                                 Click="WeekPrev_Click"/>
+                        <Button x:Name="WeekCountButton"
+                                DockPanel.Dock="Left"
+                                AutomationProperties.Name="切换周历显示周数"
+                                Margin="4,0,0,0"
+                                Height="26"
+                                Padding="6,2"
+                                Content="4周 ▾"
+                                Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
+                                Background="{DynamicResource WidgetControlBrush}"
+                                BorderBrush="{DynamicResource WidgetControlBorderBrush}"
+                                FontSize="{StaticResource CardFont.Caption}"
+                                ToolTip="切换周历显示周数（1~5 周）"
+                                Click="WeekCountButton_Click"/>
+                        <Button x:Name="WeekStartButton"
+                                DockPanel.Dock="Left"
+                                AutomationProperties.Name="切换每周起始日"
+                                Margin="4,0,0,0"
+                                Height="26"
+                                Padding="6,2"
+                                Content="周一始"
+                                Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
+                                Background="{DynamicResource WidgetControlBrush}"
+                                BorderBrush="{DynamicResource WidgetControlBorderBrush}"
+                                FontSize="{StaticResource CardFont.Caption}"
+                                ToolTip="切换每周起始日（周一开头 / 周日开头）"
+                                Click="WeekStartButton_Click"/>
                         <Button x:Name="WeekTodayButton"
                                 DockPanel.Dock="Right"
                                 AutomationProperties.Name="回到本周"
@@ -800,19 +826,19 @@
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="*"/>
                         </Grid.ColumnDefinitions>
-                        <TextBlock Text="周一" FontSize="{DynamicResource TodoFont.Weekday}" FontWeight="Bold" TextAlignment="Left" Margin="6,0,0,0"
+                        <TextBlock x:Name="WeekdayHeader0" Text="周一" FontSize="{DynamicResource TodoFont.Weekday}" FontWeight="Bold" TextAlignment="Left" Margin="6,0,0,0"
                                    Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
-                        <TextBlock Grid.Column="1" Text="周二" FontSize="{DynamicResource TodoFont.Weekday}" FontWeight="Bold" TextAlignment="Left" Margin="6,0,0,0"
+                        <TextBlock x:Name="WeekdayHeader1" Grid.Column="1" Text="周二" FontSize="{DynamicResource TodoFont.Weekday}" FontWeight="Bold" TextAlignment="Left" Margin="6,0,0,0"
                                    Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
-                        <TextBlock Grid.Column="2" Text="周三" FontSize="{DynamicResource TodoFont.Weekday}" FontWeight="Bold" TextAlignment="Left" Margin="6,0,0,0"
+                        <TextBlock x:Name="WeekdayHeader2" Grid.Column="2" Text="周三" FontSize="{DynamicResource TodoFont.Weekday}" FontWeight="Bold" TextAlignment="Left" Margin="6,0,0,0"
                                    Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
-                        <TextBlock Grid.Column="3" Text="周四" FontSize="{DynamicResource TodoFont.Weekday}" FontWeight="Bold" TextAlignment="Left" Margin="6,0,0,0"
+                        <TextBlock x:Name="WeekdayHeader3" Grid.Column="3" Text="周四" FontSize="{DynamicResource TodoFont.Weekday}" FontWeight="Bold" TextAlignment="Left" Margin="6,0,0,0"
                                    Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
-                        <TextBlock Grid.Column="4" Text="周五" FontSize="{DynamicResource TodoFont.Weekday}" FontWeight="Bold" TextAlignment="Left" Margin="6,0,0,0"
+                        <TextBlock x:Name="WeekdayHeader4" Grid.Column="4" Text="周五" FontSize="{DynamicResource TodoFont.Weekday}" FontWeight="Bold" TextAlignment="Left" Margin="6,0,0,0"
                                    Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
-                        <TextBlock Grid.Column="5" Text="周六" FontSize="{DynamicResource TodoFont.Weekday}" TextAlignment="Left" Margin="6,0,0,0"
+                        <TextBlock x:Name="WeekdayHeader5" Grid.Column="5" Text="周六" FontSize="{DynamicResource TodoFont.Weekday}" TextAlignment="Left" Margin="6,0,0,0"
                                    Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
-                        <TextBlock Grid.Column="6" Text="周日" FontSize="{DynamicResource TodoFont.Weekday}" TextAlignment="Left" Margin="6,0,0,0"
+                        <TextBlock x:Name="WeekdayHeader6" Grid.Column="6" Text="周日" FontSize="{DynamicResource TodoFont.Weekday}" TextAlignment="Left" Margin="6,0,0,0"
                                    Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
                     </Grid>
 

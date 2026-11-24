@@ -859,14 +859,40 @@ static void TestTodoDatePersistence()
         Assert(store.Load().SchemaVersion > 33, "带日期的状态必须使用高于 v33 的版本，阻止旧版静默覆盖日期");
 
         Assert(restored.WeeklyWeekCount == 4, "周数默认值应为 4");
+        Assert(!restored.WeekStartsOnSunday, "每周起始日默认应为周一");
         widget.WeeklyWeekCount = 2;
+        widget.WeekStartsOnSunday = true;
         store.Save(state);
-        Assert(store.Load().TodoWidgets.Single().WeeklyWeekCount == 2, "周数未持久化");
+        var savedWeekly = store.Load().TodoWidgets.Single();
+        Assert(savedWeekly.WeeklyWeekCount == 2 && savedWeekly.WeekStartsOnSunday, "周数与每周起始日未持久化");
         var tampered = File.ReadAllText(store.StatePath).Replace("\"WeeklyWeekCount\": 2", "\"WeeklyWeekCount\": 99");
         File.WriteAllText(store.StatePath, tampered);
         Assert(store.Load().TodoWidgets.Single().WeeklyWeekCount == 4, "越界周数应被归一化回 4");
         widget.WeeklyWeekCount = 2;
+        widget.WeekStartsOnSunday = false;
         store.Save(state);
+
+        // 周一开头 / 周日开头纯规则验证（2026-11-24 为周二，2026-11-22 为周日，2026-11-01 为周日）。
+        var tuesday = new DateTime(2026, 11, 24);
+        Assert(WeeklyCalendarRules.WeekStartOf(tuesday, weekStartsOnSunday: false) == new DateTime(2026, 11, 23),
+            "周一开头时周二应回退到周一");
+        Assert(WeeklyCalendarRules.WeekStartOf(tuesday, weekStartsOnSunday: true) == new DateTime(2026, 11, 22),
+            "周日开头时周二应回退到周日");
+        Assert(WeeklyCalendarRules.WeekStartOf(new DateTime(2026, 11, 22), weekStartsOnSunday: false) == new DateTime(2026, 11, 16),
+            "周一开头时周日应归属前一周周一");
+        Assert(WeeklyCalendarRules.WeekStartOf(new DateTime(2026, 11, 22), weekStartsOnSunday: true) == new DateTime(2026, 11, 22),
+            "周日开头时周日即为本周起始");
+        Assert(WeeklyCalendarRules.WeekdayHeaders(false).SequenceEqual(["周一", "周二", "周三", "周四", "周五", "周六", "周日"])
+            && WeeklyCalendarRules.WeekdayHeaders(true).SequenceEqual(["周日", "周一", "周二", "周三", "周四", "周五", "周六"]),
+            "周历表头应随每周起始日切换");
+        Assert(WeeklyCalendarRules.IsWeekendColumn(5, false) && WeeklyCalendarRules.IsWeekendColumn(6, false)
+            && !WeeklyCalendarRules.IsWeekendColumn(0, false)
+            && WeeklyCalendarRules.IsWeekendColumn(0, true) && WeeklyCalendarRules.IsWeekendColumn(6, true)
+            && !WeeklyCalendarRules.IsWeekendColumn(5, true),
+            "周末列索引应随每周起始日同步移动");
+        Assert(WeeklyCalendarRules.LeadingDaysForMonth(new DateTime(2026, 11, 1), weekStartsOnSunday: false) == 6
+            && WeeklyCalendarRules.LeadingDaysForMonth(new DateTime(2026, 11, 1), weekStartsOnSunday: true) == 0,
+            "月首偏移应区分周一与周日开头");
 
         // A file written by the official build carries no date fields; loading migrates
         // it into today's calendar scope so it cannot remain permanently in future today lists.

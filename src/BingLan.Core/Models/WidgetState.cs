@@ -130,6 +130,9 @@ public sealed class TodoWidgetState
     /// renderer and the store both clamp, so hand-edited files stay sane.</summary>
     public int WeeklyWeekCount { get; set; } = 4;
 
+    /// <summary>Whether the weekly calendar starts each row on Sunday instead of Monday.</summary>
+    public bool WeekStartsOnSunday { get; set; }
+
     /// <summary>Whether the card is folded up to its title bar.</summary>
     public bool IsCollapsed { get; set; }
 

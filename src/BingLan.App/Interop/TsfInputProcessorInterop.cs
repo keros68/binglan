@@ -69,7 +69,7 @@ internal static class TsfInputProcessorInterop
     [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
     private interface ITfThreadMgr
     {
-        void Activate(out Guid clientId);
+        void Activate(out uint clientId);
         void Deactivate();
     }
 

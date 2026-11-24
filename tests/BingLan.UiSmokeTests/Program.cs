@@ -5678,6 +5678,32 @@ internal static class Program
                     Require<TextBlock>(todo, "WeekRange").Text ==
                         $"{monday:M月d日} – {sunday:M月d日}",
                     "1 周窗口应恰好覆盖本周（含今天）");
+                Assert(Equals(Require<Button>(todo, "WeekCountButton").Content, "1周 ▾")
+                    && Equals(Require<Button>(todo, "WeekStartButton").Content, "周一始")
+                    && Require<TextBlock>(todo, "WeekdayHeader0").Text == "周一",
+                    "周历工具栏应同步反映当前周数与周一开头表头");
+
+                // 切换为周日开头（卡片按钮与设置页双向一致）并恢复周一开头继续后续验证。
+                var weekStartPicker = Require<ComboBox>(window, "TodoWeekStartPicker");
+                Assert(weekStartPicker.SelectedIndex == 0, "每周起始日默认应回填为周一");
+                var weekStartBtn = Require<Button>(todo, "WeekStartButton");
+                weekStartBtn.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+                Pump();
+                var sundayStart = WeeklyCalendarRules.WeekStartOf(DateTime.Today, weekStartsOnSunday: true);
+                var saturdayEnd = sundayStart.AddDays(6);
+                Assert(todo.State.WeekStartsOnSunday
+                    && Equals(weekStartBtn.Content, "周日始")
+                    && Require<TextBlock>(todo, "WeekdayHeader0").Text == "周日"
+                    && Require<TextBlock>(todo, "WeekRange").Text == $"{sundayStart:M月d日} – {saturdayEnd:M月d日}",
+                    "点击卡片周起始日按钮应立即切换为周日开头并重排表头与日期范围");
+                weekStartPicker.SelectedIndex = 1;
+                Pump();
+                weekStartPicker.SelectedIndex = 0;
+                Pump();
+                Assert(!todo.State.WeekStartsOnSunday
+                    && Equals(weekStartBtn.Content, "周一始")
+                    && Require<TextBlock>(todo, "WeekdayHeader0").Text == "周一",
+                    "设置页切换回周一开头应立即同步待办卡片周历");
 
                 // 周历模式下点击 + 应打开今天（或当前选中格）的 DayPeek 并聚焦输入框，不产生空白孤儿项。
                 // 设置窗口与卡片同时打开，前台可能在两者间来回；卡片失活时浮层按“点别处即关闭”规则关闭。

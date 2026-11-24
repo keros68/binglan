@@ -416,6 +416,10 @@ public static class TopBarTests
             "无 TSF 名称时传统 IMM32 输入法回退注册表布局名");
         Assert(TopBarModuleRules.ResolveInputMethodDisplayName(null, 0x04090409, "美式键盘") is null,
             "普通键盘布局折叠名称仅留徽标与悬停提示");
+        Assert(TopBarModuleRules.ResolveInputMethodDisplayName("微软拼音", 0x04090409, "美式键盘", 0x0804) is null,
+            "跨语言前台窗口切到英文键盘时不应错配本线程残留的中文 TSF 输入法名");
+        Assert(TopBarModuleRules.ResolveInputMethodDisplayName("微软拼音", 0x08040804, "中文(简体) - 美式键盘", 0x0804) == "微软拼音",
+            "同语言 TSF 输入法应继续展示处理器名称");
         Assert(TopBarModuleRules.FormatInputMethodLanguageTag(0x0804) == "中"
             && TopBarModuleRules.FormatInputMethodLanguageTag(0x0404) == "繁"
             && TopBarModuleRules.FormatInputMethodLanguageTag(0x0409) == "EN",

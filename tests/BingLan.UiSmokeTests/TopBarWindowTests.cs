@@ -482,8 +482,25 @@ internal static class TopBarWindowTests
                     text.Contains(today.Year + "年") && text.Contains(today.Month + "月")
                     && text.Contains(today.Day + "日")),
                 "日历信息栏应显示今天的日期");
+            var expectedLunarToday = LunarDayText.FullDate(today);
+            Assert(!string.IsNullOrEmpty(expectedLunarToday)
+                    && calendarTexts.Any(text => text.Contains(expectedLunarToday)),
+                "日历信息栏标题应显示今日完整农历");
+            var expectedLunarCell = LunarDayText.For(today);
+            Assert(!string.IsNullOrEmpty(expectedLunarCell)
+                    && calendarTexts.Contains(expectedLunarCell),
+                "日历信息栏日期格应显示农历标注");
             Assert(calendarTexts.Contains("一") && calendarTexts.Contains("日"),
                 "日历信息栏应显示星期表头");
+            var imeModule = ButtonByName(bar, "输入法模块");
+            Invoke(imeModule);
+            pump();
+            Assert(bar.ClockFlyout is null && bar.InputMethodFlyout?.IsOpen == true,
+                "打开输入法浮层时应互斥关闭已打开的日历浮层");
+            Invoke(clock);
+            pump();
+            Assert(bar.InputMethodFlyout is null && bar.ClockFlyout?.IsOpen == true,
+                "打开日历浮层时应互斥关闭已打开的输入法浮层");
             Invoke(clock);
             pump();
             Assert(bar.ClockFlyout is null, "再次点击时钟模块应收起日历信息栏");

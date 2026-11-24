@@ -1553,6 +1553,7 @@ public partial class SettingsWindow : Window
         {
             var weeks = Math.Clamp(todo.State.WeeklyWeekCount, 1, 5);
             TodoWeekCountPicker.SelectedIndex = weeks - 1;
+            TodoWeekStartPicker.SelectedIndex = todo.State.WeekStartsOnSunday ? 1 : 0;
         }
         finally
         {
@@ -1571,6 +1572,19 @@ public partial class SettingsWindow : Window
 
         todo.SetWeeklyWeekCount(TodoWeekCountPicker.SelectedIndex + 1);
         ComponentSettingsStatusText.Text = $"已应用“{todo.State.Title}”的周历周数";
+    }
+
+    private void TodoWeekStart_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_loadingTodoWeekCount
+            || TodoWeekStartPicker.SelectedIndex < 0
+            || _selectedComponentEntry?.Window is not TodoWidgetWindow todo)
+        {
+            return;
+        }
+
+        todo.SetWeekStartsOnSunday(TodoWeekStartPicker.SelectedIndex == 1);
+        ComponentSettingsStatusText.Text = $"已应用“{todo.State.Title}”的每周起始日";
     }
 
     private void LoadFileBoxViewMode(FileBoxWindow? box)
