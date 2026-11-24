@@ -59,6 +59,7 @@ internal static class UiDiagnostics
     private static string? _path;
     private static Thread? _thread;
     private static bool _hooksAttached;
+    private static int _powerEventsAttached;
     private static int _powerResetPending;
     private static volatile bool _stopping;
 
@@ -111,6 +112,11 @@ internal static class UiDiagnostics
             return;
         }
 
+        // Subscribe to SystemEvents on the WPF UI thread BEFORE starting the MTA watchdog
+        // thread so SystemEvents never initializes its hidden broadcast window on a
+        // message-loop-less background thread.
+        AttachPowerModeEvents(dispatcher);
+
         _thread = new Thread(() => Watch(dispatcher))
         {
             IsBackground = true,
@@ -119,7 +125,48 @@ internal static class UiDiagnostics
         _thread.Start();
     }
 
-    internal static void Stop() => _stopping = true;
+    internal static void Stop()
+    {
+        _stopping = true;
+        DetachPowerModeEvents();
+    }
+
+    private static void AttachPowerModeEvents(Dispatcher dispatcher)
+    {
+        if (Interlocked.CompareExchange(ref _powerEventsAttached, 1, 0) != 0)
+        {
+            return;
+        }
+
+        void Subscribe()
+        {
+            if (Volatile.Read(ref _powerEventsAttached) == 0 || dispatcher.HasShutdownStarted)
+            {
+                return;
+            }
+            SystemEvents.PowerModeChanged += OnPowerModeChanged;
+            dispatcher.ShutdownStarted += OnDispatcherShutdownStarted;
+        }
+
+        if (dispatcher.CheckAccess())
+        {
+            Subscribe();
+        }
+        else
+        {
+            dispatcher.BeginInvoke(Subscribe);
+        }
+    }
+
+    private static void OnDispatcherShutdownStarted(object? sender, EventArgs e) => DetachPowerModeEvents();
+
+    private static void DetachPowerModeEvents()
+    {
+        if (Interlocked.Exchange(ref _powerEventsAttached, 0) != 0)
+        {
+            SystemEvents.PowerModeChanged -= OnPowerModeChanged;
+        }
+    }
 
     // Hooks run on the UI thread; nested pumps (dialogs, menus) start operations inside
     // others, so the innermost running one is published for the watchdog.
@@ -167,75 +214,67 @@ internal static class UiDiagnostics
         long lastFloodLog = -FloodLogIntervalMs;
         var cpuAt = windowBegan;
         var cpuTime = CpuTime();
-        SystemEvents.PowerModeChanged += OnPowerModeChanged;
         Write($"监测启动：冰蓝 {StartupLog.BuildVersion}，Windows {Environment.OSVersion.Version}");
 
-        try
+        while (!_stopping && !dispatcher.HasShutdownStarted)
         {
-            while (!_stopping && !dispatcher.HasShutdownStarted)
+            Thread.Sleep(ProbeIntervalMs);
+            var now = NowMilliseconds();
+            var powerReset = Interlocked.Exchange(ref _powerResetPending, 0) != 0;
+            if (powerReset || detector.HandleClockJump(lastLoopTick, now, SleepJumpThresholdMs))
             {
-                Thread.Sleep(ProbeIntervalMs);
-                var now = NowMilliseconds();
-                var powerReset = Interlocked.Exchange(ref _powerResetPending, 0) != 0;
-                if (powerReset || detector.HandleClockJump(lastLoopTick, now, SleepJumpThresholdMs))
+                detector.Reset();
+                for (var i = 0; i < Names.Length; i++)
                 {
-                    detector.Reset();
-                    for (var i = 0; i < Names.Length; i++)
-                    {
-                        WindowStart[i] = Interlocked.Read(ref Counts[i]);
-                    }
-                    windowBegan = now;
-                    cpuAt = now;
-                    cpuTime = CpuTime();
-                    lastLoopTick = now;
-                    continue;
+                    WindowStart[i] = Interlocked.Read(ref Counts[i]);
                 }
+                windowBegan = now;
+                cpuAt = now;
+                cpuTime = CpuTime();
                 lastLoopTick = now;
-
-                if (Volatile.Read(ref _answeredAt) >= sentAt && !detector.CanSend
-                    && detector.Answered(now) is { } ended)
-                {
-                    Write($"界面恢复响应，卡住约 {ended.ElapsedMilliseconds / 1000.0:0.0} 秒。{Counters(now - windowBegan)}");
-                }
-
-                if (detector.CanSend)
-                {
-                    sentAt = now;
-                    detector.Sent(now);
-                    dispatcher.BeginInvoke(
-                        DispatcherPriority.Send,
-                        () => Volatile.Write(ref _answeredAt, NowMilliseconds()));
-                }
-                else if (detector.Check(now) is { } started)
-                {
-                    var cpu = CpuTime();
-                    var cpuShare = (cpu - cpuTime).TotalMilliseconds / Math.Max(1, now - cpuAt) / Environment.ProcessorCount;
-                    Write($"界面卡住 {started.ElapsedMilliseconds / 1000.0:0.0} 秒：{Describe()}；"
-                        + $"进程 CPU {cpuShare:P0}（占全部核心）；前台 {Foreground()}；{Counters(now - windowBegan)}");
-                }
-
-                if (now - windowBegan >= WindowMs)
-                {
-                    var flood = Enumerable.Range(0, Names.Length)
-                        .Any(i => Interlocked.Read(ref Counts[i]) - WindowStart[i] >= FloodPerWindow);
-                    if (flood && now - lastFloodLog >= FloodLogIntervalMs)
-                    {
-                        lastFloodLog = now;
-                        Write($"事件密集：前台 {Foreground()}；{Counters(now - windowBegan)}");
-                    }
-                    for (var i = 0; i < Names.Length; i++)
-                    {
-                        WindowStart[i] = Interlocked.Read(ref Counts[i]);
-                    }
-                    windowBegan = now;
-                    cpuAt = now;
-                    cpuTime = CpuTime();
-                }
+                continue;
             }
-        }
-        finally
-        {
-            SystemEvents.PowerModeChanged -= OnPowerModeChanged;
+            lastLoopTick = now;
+
+            if (Volatile.Read(ref _answeredAt) >= sentAt && !detector.CanSend
+                && detector.Answered(now) is { } ended)
+            {
+                Write($"界面恢复响应，卡住约 {ended.ElapsedMilliseconds / 1000.0:0.0} 秒。{Counters(now - windowBegan)}");
+            }
+
+            if (detector.CanSend)
+            {
+                sentAt = now;
+                detector.Sent(now);
+                dispatcher.BeginInvoke(
+                    DispatcherPriority.Send,
+                    () => Volatile.Write(ref _answeredAt, NowMilliseconds()));
+            }
+            else if (detector.Check(now) is { } started)
+            {
+                var cpu = CpuTime();
+                var cpuShare = (cpu - cpuTime).TotalMilliseconds / Math.Max(1, now - cpuAt) / Environment.ProcessorCount;
+                Write($"界面卡住 {started.ElapsedMilliseconds / 1000.0:0.0} 秒：{Describe()}；"
+                    + $"进程 CPU {cpuShare:P0}（占全部核心）；前台 {Foreground()}；{Counters(now - windowBegan)}");
+            }
+
+            if (now - windowBegan >= WindowMs)
+            {
+                var flood = Enumerable.Range(0, Names.Length)
+                    .Any(i => Interlocked.Read(ref Counts[i]) - WindowStart[i] >= FloodPerWindow);
+                if (flood && now - lastFloodLog >= FloodLogIntervalMs)
+                {
+                    lastFloodLog = now;
+                    Write($"事件密集：前台 {Foreground()}；{Counters(now - windowBegan)}");
+                }
+                for (var i = 0; i < Names.Length; i++)
+                {
+                    WindowStart[i] = Interlocked.Read(ref Counts[i]);
+                }
+                windowBegan = now;
+                cpuAt = now;
+                cpuTime = CpuTime();
+            }
         }
     }
 

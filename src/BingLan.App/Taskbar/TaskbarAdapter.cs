@@ -556,9 +556,9 @@ internal sealed class TaskbarAdapter : IDisposable
                 // The user turned the transparency effects off while we held the mode.
                 // Step aside; the restore leaves the off value alone and only clears
                 // what the app itself switched on.
-                RestoreActive();
-                SetStatus(TaskbarMode.SystemDefault,
-                    "Windows 透明效果已被关闭，已恢复系统默认；重新选择“透明”会自动重新开启");
+                _ = RestoreRuntimeAsync(
+                    "Windows 透明效果已被关闭，已恢复系统默认；重新选择“透明”会自动重新开启",
+                    "Windows 透明效果已被关闭，已停止调整；下次启动时会核对恢复状态");
                 return;
             }
 
@@ -647,12 +647,9 @@ internal sealed class TaskbarAdapter : IDisposable
 
         if (_breaker.RecordFailure())
         {
-            var restored = RestoreActive();
-            SetStatus(
-                TaskbarMode.SystemDefault,
-                restored
-                    ? $"任务栏外观多次未能保持，已恢复系统默认：{error}"
-                    : $"任务栏外观多次未能保持，下次启动时恢复：{error}");
+            _ = RestoreRuntimeAsync(
+                $"任务栏外观多次未能保持，已恢复系统默认：{error}",
+                $"任务栏外观多次未能保持，下次启动时恢复：{error}");
             return;
         }
 
@@ -729,40 +726,94 @@ internal sealed class TaskbarAdapter : IDisposable
         AutoHideTakenOver?.Invoke();
     }
 
+    private bool _reconcilingAutoHide;
+
+    private async Task RestoreRuntimeAsync(string restoredMessage, string pendingMessage)
+    {
+        var version = _requestVersion;
+        var restored = false;
+        try
+        {
+            restored = await RestoreActiveAsync();
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            Debug.WriteLine($"任务栏异步恢复失败：{exception}");
+        }
+        if (_disposed || version != _requestVersion)
+        {
+            return;
+        }
+        SetStatus(TaskbarMode.SystemDefault, restored ? restoredMessage : pendingMessage);
+    }
+
     private void ReconcileAutoHide()
     {
-        var taskbar = ReadTaskbarIdentity();
-        if (_autoHideRecoveryAttempts == 0)
+        if (_disposed || _reconcilingAutoHide || ActiveMode != TaskbarMode.SmartHide)
         {
-            if (taskbar.Window != 0 && taskbar == _autoHideTaskbar)
+            return;
+        }
+        _ = ReconcileAutoHideAsync();
+    }
+
+    private async Task ReconcileAutoHideAsync()
+    {
+        _reconcilingAutoHide = true;
+        var version = _requestVersion;
+        try
+        {
+            var taskbar = ReadTaskbarIdentity();
+            if (_autoHideRecoveryAttempts == 0)
             {
+                if (taskbar.Window != 0 && taskbar == _autoHideTaskbar)
+                {
+                    CheckAutoHideTakeover();
+                    return;
+                }
+                _autoHideRecoveryAttempts = AutoHideRecoveryAttemptCount;
+            }
+            var ownsAutoHide = _ownsAutoHide;
+            var recovered = taskbar.Window != 0
+                && await Task.Run(() => GetAutoHide() || (ownsAutoHide && SetAutoHide(true)));
+            if (_disposed || version != _requestVersion || ActiveMode != TaskbarMode.SmartHide)
+            {
+                return;
+            }
+            if (recovered)
+            {
+                _autoHideTaskbar = taskbar;
+                _autoHideRecoveryAttempts = 0;
+                return;
+            }
+            if (--_autoHideRecoveryAttempts > 0)
+            {
+                _reapplyTimer.Start();
+                return;
+            }
+
+            if (!_ownsAutoHide && taskbar.Window != 0)
+            {
+                _autoHideTaskbar = taskbar;
                 CheckAutoHideTakeover();
                 return;
             }
-            _autoHideRecoveryAttempts = AutoHideRecoveryAttemptCount;
+            var restored = await RestoreActiveAsync();
+            if (_disposed || version != _requestVersion)
+            {
+                return;
+            }
+            SetStatus(TaskbarMode.SystemDefault, restored
+                ? "Explorer 重启后未能恢复任务栏自动隐藏，已恢复系统默认"
+                : "Explorer 重启后未能恢复任务栏自动隐藏，下次启动时会再次核对");
         }
-        if (taskbar.Window != 0 && (GetAutoHide() || (_ownsAutoHide && SetAutoHide(true))))
+        catch (Exception exception) when (exception is not OutOfMemoryException)
         {
-            _autoHideTaskbar = taskbar;
-            _autoHideRecoveryAttempts = 0;
-            return;
+            Debug.WriteLine($"任务栏自动隐藏恢复异常：{exception}");
         }
-        if (--_autoHideRecoveryAttempts > 0)
+        finally
         {
-            _reapplyTimer.Start();
-            return;
+            _reconcilingAutoHide = false;
         }
-
-        if (!_ownsAutoHide && taskbar.Window != 0)
-        {
-            _autoHideTaskbar = taskbar;
-            CheckAutoHideTakeover();
-            return;
-        }
-        var restored = RestoreActive();
-        SetStatus(TaskbarMode.SystemDefault, restored
-            ? "Explorer 重启后未能恢复任务栏自动隐藏，已恢复系统默认"
-            : "Explorer 重启后未能恢复任务栏自动隐藏，下次启动时会再次核对");
     }
 
     private static (nint Window, uint ProcessId) ReadTaskbarIdentity()

@@ -120,20 +120,45 @@ internal sealed class BackgroundWinEventPump : IDisposable
             else
             {
                 using var done = new ManualResetEventSlim(false);
+                // 0 = pending, 1 = installed by pump thread, 2 = timed out on caller thread.
+                var state = 0;
+                nint installedHandle = 0;
                 _commands.Enqueue(() =>
                 {
                     try
                     {
-                        hookHandle = InstallHookOnPumpThread(eventMin, eventMax, processId, flags, registration);
+                        if (Volatile.Read(ref state) != 0)
+                        {
+                            return;
+                        }
+                        var installed = InstallHookOnPumpThread(eventMin, eventMax, processId, flags, registration);
+                        Volatile.Write(ref installedHandle, installed);
+                        if (Interlocked.CompareExchange(ref state, 1, 0) != 0 && installed != 0)
+                        {
+                            // Caller timed out while SetWinEventHook ran: immediately release so
+                            // no orphaned hook or _hooks entry leaks.
+                            RemoveHookOnPumpThread(installed);
+                        }
                     }
                     finally
                     {
                         try { done.Set(); } catch (ObjectDisposedException) { }
                     }
                 });
-                if (PostThreadMessageW(Volatile.Read(ref _threadId), WmAppProcessQueue, 0, 0))
+                var posted = PostThreadMessageW(Volatile.Read(ref _threadId), WmAppProcessQueue, 0, 0);
+                if (posted && done.Wait(CommandTimeout))
                 {
-                    done.Wait(CommandTimeout);
+                    hookHandle = Volatile.Read(ref installedHandle);
+                }
+                else if (Interlocked.CompareExchange(ref state, 2, 0) == 1)
+                {
+                    // Pump thread completed right as Wait timed out; take ownership cleanly.
+                    hookHandle = Volatile.Read(ref installedHandle);
+                }
+                else
+                {
+                    // Timeout won: pump thread will skip installation or immediately unhook.
+                    hookHandle = 0;
                 }
             }
 

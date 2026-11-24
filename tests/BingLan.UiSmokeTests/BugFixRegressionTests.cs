@@ -33,6 +33,7 @@ internal static class BugFixRegressionTests
         TestBoxMarqueePhysicalPlacement(pump, pumpUntil);
         TestWidgetCoordinatorDisposeStopsTimerAndDisposesServices(pump, pumpUntil);
         TestUiDiagnosticsUntrackedDescription();
+        TestUiDiagnosticsKeepsSystemEventsHealthy(pump, pumpUntil);
     }
 
     private static void TestBackgroundWinEventPumpLifecycle()
@@ -455,6 +456,34 @@ internal static class BugFixRegressionTests
             now: 1000);
         Check(tracked.Contains("不在调度任务中", StringComparison.Ordinal),
             $"启用调度钩子且当前无活动任务时应提示「不在调度任务中」，实际：{tracked}");
+    }
+
+    private static void TestUiDiagnosticsKeepsSystemEventsHealthy(
+        Action pump,
+        Action<Func<bool>, string> pumpUntil)
+    {
+        var temp = Path.Combine(Path.GetTempPath(), $"BingLan-uidiag-sysevents-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(temp);
+        EventHandler dummyDisplayHandler = static (_, _) => { };
+        try
+        {
+            // Start diagnostics before subscribing to DisplaySettingsChanged (mirroring
+            // WidgetCoordinator's constructor order) and confirm SystemEvents' hidden
+            // broadcast window remains responsive on a live message loop.
+            UiDiagnostics.Start(Dispatcher.CurrentDispatcher, temp, trackOperations: false);
+            Microsoft.Win32.SystemEvents.DisplaySettingsChanged += dummyDisplayHandler;
+
+            var invoked = 0;
+            Microsoft.Win32.SystemEvents.InvokeOnEventsThread((Action)(() => Interlocked.Exchange(ref invoked, 1)));
+            pumpUntil(() => Volatile.Read(ref invoked) == 1,
+                "UiDiagnostics.Start 后进程级 SystemEvents 消息泵必须保持健康并能正常分发回调");
+            pump();
+        }
+        finally
+        {
+            Microsoft.Win32.SystemEvents.DisplaySettingsChanged -= dummyDisplayHandler;
+            try { Directory.Delete(temp, true); } catch (IOException) { }
+        }
     }
 
     private static void Check(bool condition, string message)
