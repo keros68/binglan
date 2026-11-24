@@ -379,11 +379,20 @@ internal static class UpdateServiceTests
         var downloadDir = Path.Combine(Path.GetTempPath(), $"BingLan-update-io-{Guid.NewGuid():N}");
         try
         {
-            var asset = new UpdateAsset("BingLan-Setup-0.4.8.exe", new Uri("https://example.com/setup.exe"),
+            var trustedUrl = new Uri("https://github.com/keros68/binglan/releases/download/v0.4.8/BingLan-Setup-0.4.8.exe");
+            var asset = new UpdateAsset("BingLan-Setup-0.4.8.exe", trustedUrl,
                 InstallerBytes.Length, Sha256Hex(InstallerBytes));
             var downloadService = new UpdateService(new Version(0, 4, 6),
                 new StubHandler(_ => throw new HttpIOException(HttpRequestError.ResponseEnded, "stream cut")));
             ExpectFailure(() => downloadService.DownloadAsync(asset, downloadDir), "网络连接中断，请稍后重试");
+
+            // 网络流读取期间抛出普通 IOException（如 SocketException）应报网络中断，而非本地写盘失败
+            var socketCutService = new UpdateService(new Version(0, 4, 6),
+                new StubHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StreamContent(new FailingReadStream())
+                }));
+            ExpectFailure(() => socketCutService.DownloadAsync(asset, downloadDir), "网络连接中断，请稍后重试");
         }
         finally
         {
@@ -394,12 +403,201 @@ internal static class UpdateServiceTests
         }
     }
 
+    internal static void TestDiscoveryFallbackAndSubTimeoutResilience()
+    {
+        // D2: github.com 遇到网络异常或非限流 403 时回退 api.github.com，保持与旧版网络兼容
+        var apiFallbackCalls = 0;
+        var blockedWebHandler = new StubHandler(request =>
+        {
+            if (request.RequestUri!.Host == "github.com")
+            {
+                throw new HttpRequestException(HttpRequestError.ConnectionError, "web blocked");
+            }
+            if (request.RequestUri.AbsoluteUri == UpdateService.LatestReleaseEndpoint)
+            {
+                apiFallbackCalls++;
+                return Json(ReleaseJson("v0.4.8", assetName: "BingLan-Setup-0.4.8.exe",
+                    downloadUrl: "https://github.com/keros68/binglan/releases/download/v0.4.8/BingLan-Setup-0.4.8.exe"));
+            }
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        });
+        var fromApi = new UpdateService(new Version(0, 4, 6), blockedWebHandler)
+            .CheckAsync().GetAwaiter().GetResult();
+        Check(fromApi is { Status: UpdateCheckStatus.Available, Release: { Version.Minor: 4, Version.Build: 8 } }
+            && apiFallbackCalls == 1,
+            "github.com 连接失败时应回退 api.github.com 并成功发现新版本");
+
+        var nonRateLimit403Handler = new StubHandler(request =>
+        {
+            if (request.RequestUri!.Host == "github.com")
+            {
+                return new HttpResponseMessage(HttpStatusCode.Forbidden)
+                {
+                    Content = new StringContent("Access denied by corporate proxy")
+                };
+            }
+            if (request.RequestUri.AbsoluteUri == UpdateService.LatestReleaseEndpoint)
+            {
+                return Json(ReleaseJson("v0.4.8", assetName: "BingLan-Setup-0.4.8.exe",
+                    downloadUrl: "https://github.com/keros68/binglan/releases/download/v0.4.8/BingLan-Setup-0.4.8.exe"));
+            }
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        });
+        var fromApiAfter403 = new UpdateService(new Version(0, 4, 6), nonRateLimit403Handler)
+            .CheckAsync().GetAwaiter().GetResult();
+        Check(fromApiAfter403.Status == UpdateCheckStatus.Available,
+            "github.com 返回非限流 403 时应回退 api.github.com");
+
+        // D7: 若外部注入了自动跟随重定向的 handler（返回 200 且最终 RequestUri 为 /releases/tag/），仍保持 0 次 API 调用
+        var autoRedirectApiCalls = 0;
+        var autoRedirectHandler = new StubHandler(request =>
+        {
+            if (request.RequestUri!.Host == "api.github.com")
+            {
+                autoRedirectApiCalls++;
+                return new HttpResponseMessage(HttpStatusCode.Forbidden);
+            }
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                RequestMessage = new HttpRequestMessage(request.Method,
+                    "https://github.com/keros68/binglan/releases/tag/v0.4.8")
+            };
+        });
+        var autoRedirectResult = new UpdateService(new Version(0, 4, 8), autoRedirectHandler)
+            .CheckAsync().GetAwaiter().GetResult();
+        Check(autoRedirectResult.Status == UpdateCheckStatus.UpToDate && autoRedirectApiCalls == 0,
+            "自动重定向 handler 返回 200 且终址为 /releases/tag/ 时仍保持零 API 调用");
+
+        // D3: API tag 查询卡死触发子超时，不耗尽总超时，后续 SHA256SUMS.txt + HEAD 降级仍成功
+        var expectedSha = Sha256Hex(InstallerBytes);
+        var checksumsCrlf = $"# BingLan release checksums\r\n" +
+                            $"{expectedSha.ToLowerInvariant()}\t*BingLan-Setup-0.4.8.exe\r\n" +
+                            $"0D5DC0353FCA7B857D57EB8F8CD9E702B6FDACE7039589BB5F351D72C694699A  BingLan-0.4.8-portable.zip\r\n";
+        var stallingApiHandler = new AsyncStubHandler(async (request, ct) =>
+        {
+            var uri = request.RequestUri!.AbsoluteUri;
+            if (request.Method == HttpMethod.Head && uri == UpdateService.LatestReleasePageEndpoint)
+            {
+                var redirect = new HttpResponseMessage(HttpStatusCode.Found);
+                redirect.Headers.Location = new Uri("https://github.com/keros68/binglan/releases/tag/v0.4.8");
+                return redirect;
+            }
+            if (uri == "https://api.github.com/repos/keros68/binglan/releases/tags/v0.4.8")
+            {
+                await Task.Delay(TimeSpan.FromSeconds(5), ct);
+                return new HttpResponseMessage(HttpStatusCode.OK);
+            }
+            if (uri == "https://github.com/keros68/binglan/releases/download/v0.4.8/SHA256SUMS.txt")
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(checksumsCrlf, Encoding.UTF8, "text/plain")
+                };
+            }
+            if (request.Method == HttpMethod.Head
+                && uri == "https://github.com/keros68/binglan/releases/download/v0.4.8/BingLan-Setup-0.4.8.exe")
+            {
+                var head = new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new ByteArrayContent([])
+                };
+                head.Content.Headers.ContentLength = 47_321_600;
+                return head;
+            }
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        });
+        var subTimeoutResult = new UpdateService(new Version(0, 4, 6), stallingApiHandler, TimeSpan.FromMilliseconds(900))
+            .CheckAsync().GetAwaiter().GetResult();
+        Check(subTimeoutResult is { Status: UpdateCheckStatus.Available, Release: { Installer: not null } }
+            && string.Equals(subTimeoutResult.Release!.Installer!.Sha256, expectedSha, StringComparison.OrdinalIgnoreCase),
+            "API tag 子超时不耗尽总预算，仍可走 SHA256SUMS.txt（CRLF/* 注释变体）降级成功");
+    }
+
+    internal static void TestApiPathRateLimitAndExtremeResetValues()
+    {
+        var fixedNowUtc = new DateTimeOffset(2026, 11, 24, 14, 0, 0, TimeSpan.Zero);
+        var chinaZone = TimeZoneInfo.CreateCustomTimeZone("TestUTC+8", TimeSpan.FromHours(8), "UTC+8", "UTC+8");
+        var clock = new FixedTimeProvider(fixedNowUtc, chinaZone);
+
+        // T3 & D9: 发现阶段回退到 api.github.com，API 返回 403 + X-RateLimit-Reset + 存在 10 分钟时钟偏差的 Date 头
+        var apiCalled = 0;
+        var serverNowUtc = fixedNowUtc.AddMinutes(-10); // 服务器时钟比本机慢 10 分钟
+        var serverResetUtc = serverNowUtc.AddMinutes(24); // 距服务器当前时间 24 分钟后重置 => 本地 22:24
+        var apiRateLimitHandler = new StubHandler(request =>
+        {
+            if (request.RequestUri!.Host == "github.com")
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK);
+            }
+            if (request.RequestUri.AbsoluteUri == UpdateService.LatestReleaseEndpoint)
+            {
+                apiCalled++;
+                var resp = new HttpResponseMessage(HttpStatusCode.Forbidden)
+                {
+                    ReasonPhrase = "rate limit exceeded"
+                };
+                resp.Headers.Date = serverNowUtc;
+                resp.Headers.Add("X-RateLimit-Remaining", "0");
+                resp.Headers.Add("X-RateLimit-Reset", serverResetUtc.ToUnixTimeSeconds().ToString());
+                return resp;
+            }
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        });
+
+        var apiLimited = UpdateService.Create(
+            new Version(0, 4, 6),
+            handler: apiRateLimitHandler,
+            noRedirectHandler: apiRateLimitHandler,
+            timeProvider: clock).CheckAsync().GetAwaiter().GetResult();
+        Check(apiCalled == 1 && apiLimited.Status == UpdateCheckStatus.Failed,
+            "回退到 API 路径后命中 403 限流应返回失败");
+        Check(apiLimited.RetryAfterUtc == fixedNowUtc.AddMinutes(24)
+            && apiLimited.ErrorMessage == "GitHub 访问受限（当前出口 IP 请求过多），请于 22:24 后重试或前往发布页查看",
+            $"API 路径限流应按响应 Date 校正偏差得到 22:24，实际：{apiLimited.ErrorMessage}");
+
+        // D1 & T5: 超大 X-RateLimit-Reset（超过 DateTimeOffset.MaxValue）与超大 Retry-After 均不抛异常且安全钳制
+        foreach (var rawReset in new[] { "999999999999999", long.MaxValue.ToString() })
+        {
+            var hugeResetHandler = new StubHandler(_ =>
+            {
+                var resp = new HttpResponseMessage(HttpStatusCode.Forbidden);
+                resp.Headers.Add("X-RateLimit-Remaining", "0");
+                resp.Headers.Add("X-RateLimit-Reset", rawReset);
+                return resp;
+            });
+            var hugeResetResult = UpdateService.Create(
+                new Version(0, 4, 6),
+                handler: hugeResetHandler,
+                noRedirectHandler: hugeResetHandler,
+                timeProvider: clock).CheckAsync().GetAwaiter().GetResult();
+            Check(hugeResetResult.Status == UpdateCheckStatus.Failed
+                && hugeResetResult.RetryAfterUtc == fixedNowUtc + UpdateService.MaxRateLimitCooldown,
+                $"超大 X-RateLimit-Reset={rawReset} 不崩溃且钳制到 MaxRateLimitCooldown");
+        }
+
+        var hugeRetryAfterHandler = new StubHandler(_ =>
+        {
+            var resp = new HttpResponseMessage(HttpStatusCode.TooManyRequests);
+            resp.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(TimeSpan.FromDays(365));
+            return resp;
+        });
+        var hugeRetryAfterResult = UpdateService.Create(
+            new Version(0, 4, 6),
+            handler: hugeRetryAfterHandler,
+            noRedirectHandler: hugeRetryAfterHandler,
+            timeProvider: clock).CheckAsync().GetAwaiter().GetResult();
+        Check(hugeRetryAfterResult.Status == UpdateCheckStatus.Failed
+            && hugeRetryAfterResult.RetryAfterUtc == fixedNowUtc + UpdateService.MaxRateLimitCooldown,
+            "超大 Retry-After 不崩溃且钳制到 MaxRateLimitCooldown");
+    }
+
     internal static void TestVerifiedDownload()
     {
         var directory = Path.Combine(Path.GetTempPath(), $"BingLan-update-{Guid.NewGuid():N}");
         try
         {
-            var asset = new UpdateAsset("BingLan-Setup-0.3.0.exe", new Uri("https://example.com/setup.exe"),
+            var trustedUrl = new Uri("https://github.com/keros68/binglan/releases/download/v0.3.0/BingLan-Setup-0.3.0.exe");
+            var asset = new UpdateAsset("BingLan-Setup-0.3.0.exe", trustedUrl,
                 InstallerBytes.Length, Sha256Hex(InstallerBytes));
             var service = new UpdateService(new Version(0, 2, 2), new StubHandler(_ => Bytes(InstallerBytes)));
             var path = service.DownloadAsync(asset, directory).GetAwaiter().GetResult();
@@ -413,6 +611,27 @@ internal static class UpdateServiceTests
             var truncated = new UpdateService(new Version(0, 2, 2),
                 new StubHandler(_ => Bytes(InstallerBytes[..5])));
             ExpectFailure(() => truncated.DownloadAsync(asset, directory), "下载的文件大小与发布信息不符");
+
+            // D8 & T1: 不可信初始 URL 与不可信最终重定向域名均被强制拒绝
+            var networkCalled = 0;
+            var untrustedAsset = new UpdateAsset("BingLan-Setup-0.3.0.exe",
+                new Uri("https://evil.example.com/BingLan-Setup-0.3.0.exe"),
+                InstallerBytes.Length, Sha256Hex(InstallerBytes));
+            var rejectInitial = new UpdateService(new Version(0, 2, 2), new StubHandler(_ =>
+            {
+                networkCalled++;
+                return Bytes(InstallerBytes);
+            }));
+            ExpectFailure(() => rejectInitial.DownloadAsync(untrustedAsset, directory), "下载地址不受信任");
+            Check(networkCalled == 0, "不可信初始下载 URL 在发起请求前即被拒绝");
+
+            var rejectRedirect = new UpdateService(new Version(0, 2, 2), new StubHandler(_ =>
+            {
+                var resp = Bytes(InstallerBytes);
+                resp.RequestMessage = new HttpRequestMessage(HttpMethod.Get, "https://evil.example.com/redirect.exe");
+                return resp;
+            }));
+            ExpectFailure(() => rejectRedirect.DownloadAsync(asset, directory), "下载地址不受信任");
         }
         finally
         {
@@ -516,6 +735,32 @@ internal static class UpdateServiceTests
     {
         public override DateTimeOffset GetUtcNow() => utcNow;
         public override TimeZoneInfo LocalTimeZone => localTimeZone;
+    }
+
+    private sealed class AsyncStubHandler(Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> respond)
+        : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken) =>
+            respond(request, cancellationToken);
+    }
+
+    private sealed class FailingReadStream : Stream
+    {
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+        public override void Flush() { }
+        public override int Read(byte[] buffer, int offset, int count) =>
+            throw new IOException("connection reset", new System.Net.Sockets.SocketException(10054));
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default) =>
+            throw new IOException("connection reset", new System.Net.Sockets.SocketException(10054));
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 
     private sealed class StubHandler(Func<HttpRequestMessage, HttpResponseMessage> respond) : HttpMessageHandler

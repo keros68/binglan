@@ -69,6 +69,8 @@ internal static class Program
         Run("三套布局预设与组件开关可应用", SettingsWindowTests.ApplyPresetAndComponents, failures);
         Run("统一设置卡片尺寸应用到已显示窗口", SettingsWindowTests.ComponentSizeAppliesToShownWindow, failures);
         Run("通用页显示新版本", SettingsWindowTests.UpdatePageShowsFoundRelease, failures);
+        Run("自动检查更新尊重限流冷却并在重置后恢复", AppUpdaterTests.AutoCheckRespectsRateLimitCooldownAndRecoversAfterReset, failures);
+        Run("检查与下载未预期异常复位忙状态并通知界面", AppUpdaterTests.UnexpectedExceptionsResetBusyAndNotifyChanged, failures);
         Run("卸载入口只在安装版显示", SettingsWindowTests.UninstallEntryFollowsInstallation, failures);
         Run("顶端信息条设置页开关与写入", SettingsWindowTests.TopBarSettingsPage, failures);
         Run("无底板推荐效果一键应用并保留自定义文字色", SettingsWindowTests.RecommendedClearLookAppliesAndPreservesCustomInk, failures);

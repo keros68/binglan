@@ -45,6 +45,9 @@ public sealed class UpdateService
     public const long MaximumInstallerBytes = 200L * 1024 * 1024;
 
     private static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(15);
+    private static readonly TimeSpan MaxTagApiTimeout = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan DefaultPooledConnectionLifetime = TimeSpan.FromMinutes(15);
+    private const long MaxValidUnixTimeSeconds = 253402300799L;
     private const string InstallerPrefix = "BingLan-Setup-";
     private const string ChecksumsFileName = "SHA256SUMS.txt";
     private const int MaxChecksumsBytes = 64 * 1024;
@@ -88,11 +91,20 @@ public sealed class UpdateService
         var userAgent = new ProductInfoHeaderValue("BingLan", CurrentVersion.ToString(3));
 
         _httpClient = CreateClient(
-            handler ?? new SocketsHttpHandler(),
+            handler ?? new SocketsHttpHandler
+            {
+                UseCookies = false,
+                PooledConnectionLifetime = DefaultPooledConnectionLifetime
+            },
             disposeHandler: handler is null,
             userAgent);
         _noRedirectClient = CreateClient(
-            noRedirectHandler ?? new SocketsHttpHandler { AllowAutoRedirect = false },
+            noRedirectHandler ?? new SocketsHttpHandler
+            {
+                AllowAutoRedirect = false,
+                UseCookies = false,
+                PooledConnectionLifetime = DefaultPooledConnectionLifetime
+            },
             disposeHandler: noRedirectHandler is null,
             userAgent);
     }
@@ -279,10 +291,10 @@ public sealed class UpdateService
         timeout.CancelAfter(CheckTimeout);
         try
         {
-            var discovery = await TryDiscoverLatestReleaseAsync(timeout.Token).ConfigureAwait(false);
-            if (discovery.Failure is { } discoveryFailure)
+            var discovery = await TryDiscoverLatestReleaseAsync(cancellationToken, timeout.Token).ConfigureAwait(false);
+            if (discovery.HardFailure is { } hardFailure)
             {
-                return discoveryFailure;
+                return hardFailure;
             }
 
             if (discovery.Discovered is { } latest)
@@ -318,10 +330,17 @@ public sealed class UpdateService
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(asset);
-        Directory.CreateDirectory(directory);
-        var path = Path.Combine(directory, Path.GetFileName(asset.Name));
+        string? path = null;
         try
         {
+            if (!IsTrustedDownloadUri(asset.DownloadUrl))
+            {
+                throw new UpdateDownloadException("下载地址不受信任");
+            }
+
+            Directory.CreateDirectory(directory);
+            path = Path.Combine(directory, Path.GetFileName(asset.Name));
+
             using var response = await _httpClient
                 .GetAsync(asset.DownloadUrl, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
                 .ConfigureAwait(false);
@@ -330,21 +349,43 @@ public sealed class UpdateService
                 var failure = await BuildFailureFromResponseAsync(response, cancellationToken).ConfigureAwait(false);
                 throw new UpdateDownloadException(failure.ErrorMessage ?? "网络请求失败");
             }
-            if (IsTrustedDownloadUri(asset.DownloadUrl)
-                && response.RequestMessage?.RequestUri is { } finalUri
+            if (response.RequestMessage?.RequestUri is { } finalUri
                 && !IsTrustedDownloadUri(finalUri))
             {
                 throw new UpdateDownloadException("下载地址不受信任");
             }
-            await using (var source = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false))
+
+            Stream source;
+            try
+            {
+                source = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+            }
+            catch (IOException)
+            {
+                throw new UpdateDownloadException("网络连接中断，请稍后重试");
+            }
+
+            await using (source)
             await using (var target = File.Create(path))
             {
                 using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
                 var buffer = new byte[81920];
                 long total = 0;
-                int read;
-                while ((read = await source.ReadAsync(buffer, cancellationToken).ConfigureAwait(false)) > 0)
+                while (true)
                 {
+                    int read;
+                    try
+                    {
+                        read = await source.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
+                    }
+                    catch (IOException)
+                    {
+                        throw new UpdateDownloadException("网络连接中断，请稍后重试");
+                    }
+                    if (read <= 0)
+                    {
+                        break;
+                    }
                     total += read;
                     if (total > asset.Size)
                     {
@@ -368,7 +409,10 @@ public sealed class UpdateService
         }
         catch (Exception exception)
         {
-            TryDelete(path);
+            if (path is not null)
+            {
+                TryDelete(path);
+            }
             throw exception switch
             {
                 UpdateDownloadException => exception,
@@ -384,60 +428,127 @@ public sealed class UpdateService
 
     private sealed record DiscoveredRelease(string Tag, Version Version, Uri PageUrl);
 
-    private sealed record DiscoveryOutcome(DiscoveredRelease? Discovered, UpdateCheckResult? Failure);
+    private sealed record DiscoveryOutcome(DiscoveredRelease? Discovered, UpdateCheckResult? HardFailure);
 
-    private async Task<DiscoveryOutcome> TryDiscoverLatestReleaseAsync(CancellationToken cancellationToken)
+    private async Task<DiscoveryOutcome> TryDiscoverLatestReleaseAsync(
+        CancellationToken callerToken,
+        CancellationToken timeoutToken)
     {
         var requestUri = new Uri(LatestReleasePageEndpoint);
-        using (var headRequest = new HttpRequestMessage(HttpMethod.Head, requestUri))
-        using (var headResponse = await _noRedirectClient
-            .SendAsync(headRequest, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
-            .ConfigureAwait(false))
+        // 发现阶段最多占总超时的一半，以便 github.com 阻塞时仍保留预算回退到 api.github.com。
+        var discoveryBudget = TimeSpan.FromTicks(Math.Max(1, CheckTimeout.Ticks / 2));
+        using var discoveryTimeout = CancellationTokenSource.CreateLinkedTokenSource(timeoutToken);
+        discoveryTimeout.CancelAfter(discoveryBudget);
+        var discoveryToken = discoveryTimeout.Token;
+
+        try
         {
-            if (IsRedirectStatus(headResponse.StatusCode))
+            using (var headRequest = new HttpRequestMessage(HttpMethod.Head, requestUri))
+            using (var headResponse = await _noRedirectClient
+                .SendAsync(headRequest, HttpCompletionOption.ResponseHeadersRead, discoveryToken)
+                .ConfigureAwait(false))
             {
-                return TryParseLatestRedirectLocation(headResponse.Headers.Location, requestUri, out var tag, out var version, out var pageUrl)
-                    ? new DiscoveryOutcome(new DiscoveredRelease(tag, version, pageUrl), null)
-                    : new DiscoveryOutcome(null, null);
+                if (TryExtractDiscoveredRelease(headResponse, requestUri, out var discovered))
+                {
+                    return new DiscoveryOutcome(discovered, null);
+                }
+
+                if (IsRateLimitedHeaderOrReason(headResponse))
+                {
+                    return new DiscoveryOutcome(null, BuildRateLimitFailure(headResponse));
+                }
+
+                if (headResponse.StatusCode == HttpStatusCode.ProxyAuthenticationRequired)
+                {
+                    return new DiscoveryOutcome(
+                        null,
+                        BuildFailureFromStatusCode(headResponse.StatusCode, retryAfterUtc: null, isRateLimited: false));
+                }
+
+                // 5xx 直接回退 API，无需再向 github.com 重复发 GET。
+                if ((int)headResponse.StatusCode is >= 500 and <= 599)
+                {
+                    return new DiscoveryOutcome(null, null);
+                }
             }
 
-            if (IsRateLimitedHeaderOrReason(headResponse))
+            // 部分代理或网关不支持 HEAD 或返回非 301/302 时，回退 GET（仅读响应头）。
+            using var getRequest = new HttpRequestMessage(HttpMethod.Get, requestUri);
+            using var getResponse = await _noRedirectClient
+                .SendAsync(getRequest, HttpCompletionOption.ResponseHeadersRead, discoveryToken)
+                .ConfigureAwait(false);
+            if (TryExtractDiscoveredRelease(getResponse, requestUri, out var getDiscovered))
             {
-                return new DiscoveryOutcome(null, BuildRateLimitFailure(headResponse));
+                return new DiscoveryOutcome(getDiscovered, null);
             }
 
-            if (headResponse.StatusCode == HttpStatusCode.ProxyAuthenticationRequired
-                || (int)headResponse.StatusCode is >= 500 and <= 599)
+            if (IsRateLimitedHeaderOrReason(getResponse))
+            {
+                return new DiscoveryOutcome(null, BuildRateLimitFailure(getResponse));
+            }
+
+            if (getResponse.StatusCode == HttpStatusCode.ProxyAuthenticationRequired)
             {
                 return new DiscoveryOutcome(
                     null,
-                    BuildFailureFromStatusCode(headResponse.StatusCode, retryAfterUtc: null, isRateLimited: false));
+                    BuildFailureFromStatusCode(getResponse.StatusCode, retryAfterUtc: null, isRateLimited: false));
             }
-        }
 
-        // 部分代理或网关不支持 HEAD 或返回非 301/302 时，回退 GET（仅读响应头）。
-        using var getRequest = new HttpRequestMessage(HttpMethod.Get, requestUri);
-        using var getResponse = await _noRedirectClient
-            .SendAsync(getRequest, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
-            .ConfigureAwait(false);
-        if (IsRedirectStatus(getResponse.StatusCode))
+            if (getResponse.StatusCode == HttpStatusCode.Forbidden)
+            {
+                var bodySnippet = await ReadBoundedStringAsync(getResponse.Content, MaxErrorBodyBytes, discoveryToken)
+                    .ConfigureAwait(false);
+                if (bodySnippet.Contains("rate limit", StringComparison.OrdinalIgnoreCase))
+                {
+                    return new DiscoveryOutcome(null, BuildRateLimitFailure(getResponse));
+                }
+                // 非限流 403 允许回退 api.github.com，避免仅 github.com 受阻时相对旧版退化。
+                return new DiscoveryOutcome(null, null);
+            }
+
+            return new DiscoveryOutcome(null, null);
+        }
+        catch (OperationCanceledException) when (callerToken.IsCancellationRequested)
         {
-            return TryParseLatestRedirectLocation(getResponse.Headers.Location, requestUri, out var tag, out var version, out var pageUrl)
-                ? new DiscoveryOutcome(new DiscoveredRelease(tag, version, pageUrl), null)
-                : new DiscoveryOutcome(null, null);
+            throw;
         }
-
-        if (getResponse.StatusCode is HttpStatusCode.TooManyRequests
-            or HttpStatusCode.Forbidden
-            or HttpStatusCode.ProxyAuthenticationRequired
-            || (int)getResponse.StatusCode is >= 500 and <= 599)
+        catch (HttpRequestException httpException)
+            when (httpException.HttpRequestError == HttpRequestError.ProxyTunnelError
+                || httpException.StatusCode == HttpStatusCode.ProxyAuthenticationRequired)
         {
-            return new DiscoveryOutcome(
-                null,
-                await BuildFailureFromResponseAsync(getResponse, cancellationToken).ConfigureAwait(false));
+            return new DiscoveryOutcome(null, ClassifyHttpRequestException(httpException));
+        }
+        catch (Exception exception) when (exception is OperationCanceledException
+            or HttpRequestException
+            or IOException)
+        {
+            // github.com 不可达或超时时回退尝试 api.github.com，避免相对旧版产生网络兼容性退化。
+            return new DiscoveryOutcome(null, null);
+        }
+    }
+
+    private static bool TryExtractDiscoveredRelease(
+        HttpResponseMessage response,
+        Uri requestUri,
+        out DiscoveredRelease? discovered)
+    {
+        discovered = null;
+        if (IsRedirectStatus(response.StatusCode)
+            && TryParseLatestRedirectLocation(response.Headers.Location, requestUri, out var tag, out var version, out var pageUrl))
+        {
+            discovered = new DiscoveredRelease(tag, version, pageUrl);
+            return true;
         }
 
-        return new DiscoveryOutcome(null, null);
+        // 若外部注入了自动跟随重定向的 handler，2xx 最终 RequestUri 仍指向 /releases/tag/ 时保留零 API 路径。
+        if (response.IsSuccessStatusCode
+            && TryParseLatestRedirectLocation(response.RequestMessage?.RequestUri, requestUri, out var finalTag, out var finalVersion, out var finalPageUrl))
+        {
+            discovered = new DiscoveredRelease(finalTag, finalVersion, finalPageUrl);
+            return true;
+        }
+
+        return false;
     }
 
     private async Task<UpdateCheckResult> ResolveNewerReleaseAsync(
@@ -471,19 +582,24 @@ public sealed class UpdateService
         CancellationToken callerToken,
         CancellationToken timeoutToken)
     {
+        // 给 API 详情查询独立子超时预算（最多 5s 且不超过总超时一半），防止耗尽后阻断 SHA256SUMS 降级。
+        var apiBudget = TimeSpan.FromTicks(Math.Min(MaxTagApiTimeout.Ticks, Math.Max(1, CheckTimeout.Ticks / 2)));
+        using var apiTimeout = CancellationTokenSource.CreateLinkedTokenSource(timeoutToken);
+        apiTimeout.CancelAfter(apiBudget);
+        var apiToken = apiTimeout.Token;
         try
         {
             var endpoint = $"{ReleaseByTagEndpointPrefix}{Uri.EscapeDataString(tag)}";
             using var request = new HttpRequestMessage(HttpMethod.Get, endpoint);
             request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
             using var response = await _httpClient
-                .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeoutToken)
+                .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, apiToken)
                 .ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
             {
                 return null;
             }
-            var json = await response.Content.ReadAsStringAsync(timeoutToken).ConfigureAwait(false);
+            var json = await response.Content.ReadAsStringAsync(apiToken).ConfigureAwait(false);
             var release = ParseRelease(json);
             return release is not null && release.Version == expectedVersion ? release : null;
         }
@@ -736,16 +852,19 @@ public sealed class UpdateService
 
     private static DateTimeOffset? TryParseRetryAfterUtc(HttpResponseMessage response, DateTimeOffset nowUtc)
     {
+        var maxAllowed = nowUtc + MaxRateLimitCooldown;
+        var serverDateUtc = response.Headers.Date?.ToUniversalTime();
         DateTimeOffset? candidate = null;
+
         if (response.Headers.RetryAfter is { } retryAfter)
         {
             if (retryAfter.Delta is { } delta && delta > TimeSpan.Zero)
             {
-                candidate = nowUtc + delta;
+                candidate = delta >= MaxRateLimitCooldown ? maxAllowed : nowUtc + delta;
             }
             else if (retryAfter.Date is { } retryDate)
             {
-                candidate = retryDate.ToUniversalTime();
+                candidate = AdjustForServerClock(retryDate.ToUniversalTime(), serverDateUtc, nowUtc, maxAllowed);
             }
         }
 
@@ -757,7 +876,15 @@ public sealed class UpdateService
                 if (long.TryParse(raw.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var unixSeconds)
                     && unixSeconds > 0)
                 {
-                    candidate = DateTimeOffset.FromUnixTimeSeconds(unixSeconds);
+                    if (unixSeconds > MaxValidUnixTimeSeconds)
+                    {
+                        candidate = maxAllowed;
+                    }
+                    else
+                    {
+                        var serverResetUtc = DateTimeOffset.FromUnixTimeSeconds(unixSeconds);
+                        candidate = AdjustForServerClock(serverResetUtc, serverDateUtc, nowUtc, maxAllowed);
+                    }
                     break;
                 }
             }
@@ -768,12 +895,29 @@ public sealed class UpdateService
             return null;
         }
 
-        var maxAllowed = nowUtc + MaxRateLimitCooldown;
         if (parsedUtc > maxAllowed)
         {
             return maxAllowed;
         }
         return parsedUtc <= nowUtc ? nowUtc + TimeSpan.FromMinutes(1) : parsedUtc;
+    }
+
+    private static DateTimeOffset AdjustForServerClock(
+        DateTimeOffset targetUtc,
+        DateTimeOffset? serverDateUtc,
+        DateTimeOffset nowUtc,
+        DateTimeOffset maxAllowed)
+    {
+        if (serverDateUtc is not { } serverNow)
+        {
+            return targetUtc;
+        }
+        var delta = targetUtc - serverNow;
+        if (delta <= TimeSpan.Zero)
+        {
+            return nowUtc + TimeSpan.FromMinutes(1);
+        }
+        return delta >= MaxRateLimitCooldown ? maxAllowed : nowUtc + delta;
     }
 
     private static async Task<string> ReadBoundedStringAsync(

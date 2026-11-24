@@ -124,10 +124,18 @@ public sealed class AppUpdater : IDisposable
         {
             result = await _service.CheckAsync();
         }
-        finally
+        catch (Exception exception)
         {
+            StartupLog.Write($"检查更新异常：{exception.GetType().Name}: {exception.Message}");
             IsBusy = false;
+            if (manual)
+            {
+                Status = "检查更新失败：发生意外错误，请稍后重试";
+            }
+            OnChanged();
+            return;
         }
+        IsBusy = false;
         if (result.Status == UpdateCheckStatus.Failed)
         {
             if (result.RetryAfterUtc is { } retryAfter)
@@ -177,51 +185,80 @@ public sealed class AppUpdater : IDisposable
         Status = "正在下载新版本…";
         OnChanged();
 
-        var progress = new Progress<double>(fraction =>
-        {
-            Status = $"正在下载新版本… {fraction * 100:0}%";
-            OnChanged();
-        });
-        string path;
+        var launched = false;
         try
         {
-            using var timeout = new CancellationTokenSource(DownloadTimeout);
-            path = await _service.DownloadAsync(
-                installer,
-                Path.Combine(Path.GetTempPath(), "BingLanUpdate"),
-                progress,
-                timeout.Token);
-        }
-        catch (UpdateDownloadException exception)
-        {
-            IsBusy = false;
-            Status = $"下载失败：{exception.Message}";
-            OnChanged();
-            return;
-        }
-
-        try
-        {
-            var logArg = TryBuildInstallLogArgument();
-            var arguments = string.IsNullOrEmpty(logArg)
-                ? "/SILENT /SUPPRESSMSGBOXES /NORESTART /NOCLOSEAPPLICATIONS /UPDATE=1"
-                : $"/SILENT /SUPPRESSMSGBOXES /NORESTART /NOCLOSEAPPLICATIONS /UPDATE=1 {logArg}";
-            Process.Start(new ProcessStartInfo(path, arguments)
+            var progress = new Progress<double>(fraction =>
             {
-                UseShellExecute = true
+                Status = $"正在下载新版本… {fraction * 100:0}%";
+                OnChanged();
             });
-        }
-        catch (Exception exception) when (exception is System.ComponentModel.Win32Exception
-            or InvalidOperationException or IOException or UnauthorizedAccessException)
-        {
-            IsBusy = false;
-            Status = $"无法启动安装程序：{exception.Message}";
-            OnChanged();
-            return;
-        }
+            string path;
+            try
+            {
+                using var timeout = new CancellationTokenSource(DownloadTimeout);
+                path = await _service.DownloadAsync(
+                    installer,
+                    Path.Combine(Path.GetTempPath(), "BingLanUpdate"),
+                    progress,
+                    timeout.Token);
+            }
+            catch (UpdateDownloadException exception)
+            {
+                IsBusy = false;
+                Status = $"下载失败：{exception.Message}";
+                OnChanged();
+                return;
+            }
+            catch (Exception exception)
+            {
+                StartupLog.Write($"下载更新异常：{exception.GetType().Name}: {exception.Message}");
+                IsBusy = false;
+                Status = "下载失败：发生意外错误，请稍后重试";
+                OnChanged();
+                return;
+            }
 
-        StartupLog.Write($"开始安装新版本 {Available.Version.ToString(3)}");
-        _exitApp();
+            try
+            {
+                var logArg = TryBuildInstallLogArgument();
+                var arguments = string.IsNullOrEmpty(logArg)
+                    ? "/SILENT /SUPPRESSMSGBOXES /NORESTART /NOCLOSEAPPLICATIONS /UPDATE=1"
+                    : $"/SILENT /SUPPRESSMSGBOXES /NORESTART /NOCLOSEAPPLICATIONS /UPDATE=1 {logArg}";
+                Process.Start(new ProcessStartInfo(path, arguments)
+                {
+                    UseShellExecute = true
+                });
+            }
+            catch (Exception exception) when (exception is System.ComponentModel.Win32Exception
+                or InvalidOperationException or IOException or UnauthorizedAccessException)
+            {
+                IsBusy = false;
+                Status = $"无法启动安装程序：{exception.Message}";
+                OnChanged();
+                return;
+            }
+            catch (Exception exception)
+            {
+                StartupLog.Write($"启动安装程序异常：{exception.GetType().Name}: {exception.Message}");
+                IsBusy = false;
+                Status = "无法启动安装程序：发生意外错误，请稍后重试";
+                OnChanged();
+                return;
+            }
+
+            launched = true;
+            StartupLog.Write($"开始安装新版本 {Available.Version.ToString(3)}");
+            _exitApp();
+        }
+        finally
+        {
+            if (!launched && IsBusy)
+            {
+                IsBusy = false;
+                OnChanged();
+            }
+        }
     }
 
     private static string TryBuildInstallLogArgument()
