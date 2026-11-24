@@ -22,6 +22,7 @@ public sealed class AppUpdater : IDisposable
     private readonly UpdateService _service;
     private readonly Action _saveState;
     private readonly Action _exitApp;
+    private readonly Action<string, string>? _launchInstaller;
     private readonly bool _canAutoCheck;
     private readonly TimeProvider _time;
     private readonly DispatcherTimer _timer = new() { Interval = TickInterval };
@@ -35,7 +36,8 @@ public sealed class AppUpdater : IDisposable
         Action exitApp,
         bool canAutoCheck,
         System.Net.Http.HttpMessageHandler? handler = null,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        Action<string, string>? launchInstaller = null)
     {
         _state = state;
         _time = timeProvider ?? TimeProvider.System;
@@ -47,6 +49,7 @@ public sealed class AppUpdater : IDisposable
             timeProvider: _time);
         _saveState = saveState;
         _exitApp = exitApp;
+        _launchInstaller = launchInstaller;
         _canAutoCheck = canAutoCheck;
         _timer.Tick += (_, _) => _ = CheckIfDueAsync();
     }
@@ -113,61 +116,68 @@ public sealed class AppUpdater : IDisposable
             return;
         }
         IsBusy = true;
-        if (manual)
-        {
-            Status = "正在检查更新…";
-        }
-        OnChanged();
-
-        UpdateCheckResult result;
         try
         {
-            result = await _service.CheckAsync();
-        }
-        catch (Exception exception)
-        {
-            StartupLog.Write($"检查更新异常：{exception.GetType().Name}: {exception.Message}");
-            IsBusy = false;
             if (manual)
             {
-                Status = "检查更新失败：发生意外错误，请稍后重试";
+                Status = "正在检查更新…";
             }
             OnChanged();
-            return;
-        }
-        IsBusy = false;
-        if (result.Status == UpdateCheckStatus.Failed)
-        {
-            if (result.RetryAfterUtc is { } retryAfter)
-            {
-                _retryAfterUtc = retryAfter;
-            }
-            else if (UpdateService.IsRetryAllowed(_retryAfterUtc, _time.GetUtcNow()))
-            {
-                _retryAfterUtc = null;
-            }
-            // An automatic check fails quietly and is tried again later (after any rate-limit cooldown).
-            if (manual)
-            {
-                Status = $"检查更新失败：{result.ErrorMessage}";
-            }
-            OnChanged();
-            return;
-        }
 
-        _retryAfterUtc = null;
-        _state.LastCheckedAt = _time.GetLocalNow();
-        _saveState();
-        Available = result.Release;
-        var checkedAt = _state.LastCheckedAt.Value.LocalDateTime.ToString("M月d日 HH:mm", CultureInfo.InvariantCulture);
-        Status = Available is { } release
-            ? $"发现新版本 {release.Version.ToString(3)}"
-            : $"已是最新版本（检查于 {checkedAt}）";
-        OnChanged();
-        if (Available is { } found && found.Version != _notifiedVersion)
+            UpdateCheckResult result;
+            try
+            {
+                result = await _service.CheckAsync();
+            }
+            catch (Exception exception)
+            {
+                StartupLog.Write($"检查更新异常：{exception.GetType().Name}: {exception.Message}");
+                IsBusy = false;
+                if (manual)
+                {
+                    Status = "检查更新失败：发生意外错误，请稍后重试";
+                }
+                OnChanged();
+                return;
+            }
+            IsBusy = false;
+            if (result.Status == UpdateCheckStatus.Failed)
+            {
+                if (result.RetryAfterUtc is { } retryAfter)
+                {
+                    _retryAfterUtc = retryAfter;
+                }
+                else if (UpdateService.IsRetryAllowed(_retryAfterUtc, _time.GetUtcNow()))
+                {
+                    _retryAfterUtc = null;
+                }
+                // An automatic check fails quietly and is tried again later (after any rate-limit cooldown).
+                if (manual)
+                {
+                    Status = $"检查更新失败：{result.ErrorMessage}";
+                }
+                OnChanged();
+                return;
+            }
+
+            _retryAfterUtc = null;
+            _state.LastCheckedAt = _time.GetLocalNow();
+            _saveState();
+            Available = result.Release;
+            var checkedAt = _state.LastCheckedAt.Value.LocalDateTime.ToString("M月d日 HH:mm", CultureInfo.InvariantCulture);
+            Status = Available is { } release
+                ? $"发现新版本 {release.Version.ToString(3)}"
+                : $"已是最新版本（检查于 {checkedAt}）";
+            OnChanged();
+            if (Available is { } found && found.Version != _notifiedVersion)
+            {
+                _notifiedVersion = found.Version;
+                ReleaseFound?.Invoke(found);
+            }
+        }
+        finally
         {
-            _notifiedVersion = found.Version;
-            ReleaseFound?.Invoke(found);
+            IsBusy = false;
         }
     }
 
@@ -182,12 +192,12 @@ public sealed class AppUpdater : IDisposable
             return;
         }
         IsBusy = true;
-        Status = "正在下载新版本…";
-        OnChanged();
-
-        var launched = false;
+        var exited = false;
         try
         {
+            Status = "正在下载新版本…";
+            OnChanged();
+
             var progress = new Progress<double>(fraction =>
             {
                 Status = $"正在下载新版本… {fraction * 100:0}%";
@@ -225,10 +235,17 @@ public sealed class AppUpdater : IDisposable
                 var arguments = string.IsNullOrEmpty(logArg)
                     ? "/SILENT /SUPPRESSMSGBOXES /NORESTART /NOCLOSEAPPLICATIONS /UPDATE=1"
                     : $"/SILENT /SUPPRESSMSGBOXES /NORESTART /NOCLOSEAPPLICATIONS /UPDATE=1 {logArg}";
-                Process.Start(new ProcessStartInfo(path, arguments)
+                if (_launchInstaller is not null)
                 {
-                    UseShellExecute = true
-                });
+                    _launchInstaller(path, arguments);
+                }
+                else
+                {
+                    Process.Start(new ProcessStartInfo(path, arguments)
+                    {
+                        UseShellExecute = true
+                    });
+                }
             }
             catch (Exception exception) when (exception is System.ComponentModel.Win32Exception
                 or InvalidOperationException or IOException or UnauthorizedAccessException)
@@ -247,16 +264,26 @@ public sealed class AppUpdater : IDisposable
                 return;
             }
 
-            launched = true;
             StartupLog.Write($"开始安装新版本 {Available.Version.ToString(3)}");
-            _exitApp();
+            try
+            {
+                _exitApp();
+                exited = true;
+            }
+            catch (Exception exception)
+            {
+                StartupLog.Write($"安装后自动退出异常：{exception.GetType().Name}: {exception.Message}");
+                IsBusy = false;
+                Status = "已启动安装程序，请手动关闭冰蓝桌面";
+                OnChanged();
+                return;
+            }
         }
         finally
         {
-            if (!launched && IsBusy)
+            if (!exited && IsBusy)
             {
                 IsBusy = false;
-                OnChanged();
             }
         }
     }

@@ -346,7 +346,15 @@ public sealed class UpdateService
                 .ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
             {
-                var failure = await BuildFailureFromResponseAsync(response, cancellationToken).ConfigureAwait(false);
+                UpdateCheckResult failure;
+                try
+                {
+                    failure = await BuildFailureFromResponseAsync(response, cancellationToken).ConfigureAwait(false);
+                }
+                catch (IOException)
+                {
+                    throw new UpdateDownloadException("网络连接中断，请稍后重试");
+                }
                 throw new UpdateDownloadException(failure.ErrorMessage ?? "网络请求失败");
             }
             if (response.RequestMessage?.RequestUri is { } finalUri

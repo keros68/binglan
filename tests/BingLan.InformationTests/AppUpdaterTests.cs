@@ -145,6 +145,123 @@ internal static class AppUpdaterTests
         Assert(changedStates.Count >= 2 && !changedStates[^1].IsBusy, "下载异常后应以 IsBusy=false 触发 Changed");
     }
 
+    public static void ChangedAndExitAppExceptionsStillResetBusy()
+    {
+        var installerBytes = Encoding.UTF8.GetBytes("installer payload");
+        var digest = Convert.ToHexString(SHA256.HashData(installerBytes)).ToLowerInvariant();
+        var releaseJson = $$"""
+            {
+              "tag_name": "v9.9.9",
+              "html_url": "https://github.com/keros68/binglan/releases/tag/v9.9.9",
+              "body": "新版本说明",
+              "assets": [
+                {
+                  "name": "BingLan-Setup-9.9.9.exe",
+                  "size": {{installerBytes.Length}},
+                  "digest": "sha256:{{digest}}",
+                  "browser_download_url": "https://github.com/keros68/binglan/releases/download/v9.9.9/BingLan-Setup-9.9.9.exe"
+                }
+              ]
+            }
+            """;
+
+        var stub = new StubHttpMessageHandler
+        {
+            Behavior = (request, _) =>
+            {
+                if (request.RequestUri!.AbsoluteUri.EndsWith(".exe", StringComparison.Ordinal))
+                {
+                    return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        Content = new ByteArrayContent(installerBytes)
+                    });
+                }
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(releaseJson, Encoding.UTF8, "application/json")
+                });
+            }
+        };
+
+        string? launchedPath = null;
+        var throwOnChanged = true;
+        var changedStates = new List<(bool IsBusy, string Status)>();
+        using var updater = new AppUpdater(
+            new UpdateState(),
+            new Version(0, 4, 8),
+            () => { },
+            () => throw new InvalidOperationException("exit failed"),
+            canAutoCheck: false,
+            handler: stub,
+            launchInstaller: (path, _) => launchedPath = path);
+
+        updater.Changed += () =>
+        {
+            if (throwOnChanged)
+            {
+                throw new InvalidOperationException("changed listener failed");
+            }
+            changedStates.Add((updater.IsBusy, updater.Status));
+        };
+
+        try
+        {
+            // 1. CheckAsync 首次 OnChanged 抛出时，IsBusy 必须立刻复位为 false
+            var checkThrew = false;
+            try
+            {
+                var task = updater.CheckNowAsync();
+                PumpUntil(() => task.IsCompleted, TimeSpan.FromSeconds(5), "Changed 抛出检查完成");
+                task.GetAwaiter().GetResult();
+            }
+            catch (InvalidOperationException)
+            {
+                checkThrew = true;
+            }
+            Assert(checkThrew && !updater.IsBusy, "CheckAsync 首次 OnChanged 抛出后必须复位 IsBusy");
+
+            // 正常检查发现新版本
+            throwOnChanged = false;
+            var okCheck = updater.CheckNowAsync();
+            PumpUntil(() => okCheck.IsCompleted, TimeSpan.FromSeconds(5), "正常检查发现新版本");
+            okCheck.GetAwaiter().GetResult();
+            Assert(updater.Available?.Installer is not null, "正常检查应拿到安装包信息");
+
+            // 2. DownloadAndInstallAsync 首次 OnChanged 抛出时，IsBusy 必须立刻复位为 false
+            throwOnChanged = true;
+            var downloadThrew = false;
+            try
+            {
+                var task = updater.DownloadAndInstallAsync();
+                PumpUntil(() => task.IsCompleted, TimeSpan.FromSeconds(5), "Changed 抛出下载完成");
+                task.GetAwaiter().GetResult();
+            }
+            catch (InvalidOperationException)
+            {
+                downloadThrew = true;
+            }
+            Assert(downloadThrew && !updater.IsBusy, "DownloadAndInstallAsync 首次 OnChanged 抛出后必须复位 IsBusy");
+
+            // 3. 安装程序启动后 _exitApp 抛出时，IsBusy 必须复位并更新提示且触发 Changed
+            throwOnChanged = false;
+            changedStates.Clear();
+            var exitFailTask = updater.DownloadAndInstallAsync();
+            PumpUntil(() => exitFailTask.IsCompleted, TimeSpan.FromSeconds(5), "_exitApp 抛出路径完成");
+            exitFailTask.GetAwaiter().GetResult();
+            Assert(launchedPath is not null, "安装程序应已被触发启动");
+            Assert(!updater.IsBusy, "_exitApp 抛出后必须复位 IsBusy");
+            AssertEqual("已启动安装程序，请手动关闭冰蓝桌面", updater.Status, "_exitApp 抛出后应给出明确提示");
+            Assert(changedStates.Count >= 2 && !changedStates[^1].IsBusy, "_exitApp 抛出后应以 IsBusy=false 通知 Changed");
+        }
+        finally
+        {
+            if (launchedPath is not null && System.IO.File.Exists(launchedPath))
+            {
+                System.IO.File.Delete(launchedPath);
+            }
+        }
+    }
+
     private sealed class MutableTimeProvider(DateTimeOffset utcNow) : TimeProvider
     {
         private DateTimeOffset _utcNow = utcNow;

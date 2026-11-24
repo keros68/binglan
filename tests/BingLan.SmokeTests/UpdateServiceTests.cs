@@ -382,17 +382,30 @@ internal static class UpdateServiceTests
             var trustedUrl = new Uri("https://github.com/keros68/binglan/releases/download/v0.4.8/BingLan-Setup-0.4.8.exe");
             var asset = new UpdateAsset("BingLan-Setup-0.4.8.exe", trustedUrl,
                 InstallerBytes.Length, Sha256Hex(InstallerBytes));
+            var expectedPath = Path.Combine(downloadDir, asset.Name);
+
             var downloadService = new UpdateService(new Version(0, 4, 6),
                 new StubHandler(_ => throw new HttpIOException(HttpRequestError.ResponseEnded, "stream cut")));
             ExpectFailure(() => downloadService.DownloadAsync(asset, downloadDir), "网络连接中断，请稍后重试");
+            Check(!File.Exists(expectedPath), "HttpIOException 中断后不应残留文件");
 
-            // 网络流读取期间抛出普通 IOException（如 SocketException）应报网络中断，而非本地写盘失败
+            // 写入部分字节后网络流抛出普通 IOException（含 SocketException），应报网络中断且清理半截残留文件
             var socketCutService = new UpdateService(new Version(0, 4, 6),
                 new StubHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
                 {
-                    Content = new StreamContent(new FailingReadStream())
+                    Content = new StreamContent(new FailingReadStream(InstallerBytes[..4]))
                 }));
             ExpectFailure(() => socketCutService.DownloadAsync(asset, downloadDir), "网络连接中断，请稍后重试");
+            Check(!File.Exists(expectedPath), "流读取中断后半截安装包文件必须被删除");
+
+            // 403 错误响应体读取流抛出普通 IOException 时，同样应报网络中断而非本地写盘失败
+            var forbiddenStreamCutService = new UpdateService(new Version(0, 4, 6),
+                new StubHandler(_ => new HttpResponseMessage(HttpStatusCode.Forbidden)
+                {
+                    Content = new StreamContent(new FailingReadStream([]))
+                }));
+            ExpectFailure(() => forbiddenStreamCutService.DownloadAsync(asset, downloadDir), "网络连接中断，请稍后重试");
+            Check(!File.Exists(expectedPath), "403 响应体读流中断后不应残留文件");
         }
         finally
         {
@@ -467,6 +480,26 @@ internal static class UpdateServiceTests
             .CheckAsync().GetAwaiter().GetResult();
         Check(autoRedirectResult.Status == UpdateCheckStatus.UpToDate && autoRedirectApiCalls == 0,
             "自动重定向 handler 返回 200 且终址为 /releases/tag/ 时仍保持零 API 调用");
+
+        // D7 新版本路径：自动重定向 200 终址指向 v0.4.9 时，即便 API 受限也保留准确版本号与规范 PageUrl
+        var autoRedirectNewerHandler = new StubHandler(request =>
+        {
+            if (request.RequestUri!.AbsoluteUri == UpdateService.LatestReleasePageEndpoint)
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    RequestMessage = new HttpRequestMessage(request.Method,
+                        "https://github.com/keros68/binglan/releases/tag/v0.4.9/")
+                };
+            }
+            return new HttpResponseMessage(HttpStatusCode.Forbidden);
+        });
+        var autoRedirectNewer = new UpdateService(new Version(0, 4, 8), autoRedirectNewerHandler)
+            .CheckAsync().GetAwaiter().GetResult();
+        Check(autoRedirectNewer is { Status: UpdateCheckStatus.Available, Release: { Installer: null } }
+            && autoRedirectNewer.Release!.Version == new Version(0, 4, 9)
+            && autoRedirectNewer.Release.PageUrl == new Uri("https://github.com/keros68/binglan/releases/tag/v0.4.9"),
+            "自动重定向 200 终址发现新版本时应保留 0.4.9 与规范 PageUrl");
 
         // D3: API tag 查询卡死触发子超时，不耗尽总超时，后续 SHA256SUMS.txt + HEAD 降级仍成功
         var expectedSha = Sha256Hex(InstallerBytes);
@@ -746,18 +779,37 @@ internal static class UpdateServiceTests
             respond(request, cancellationToken);
     }
 
-    private sealed class FailingReadStream : Stream
+    private sealed class FailingReadStream(byte[] prefix) : Stream
     {
+        private bool _sentPrefix;
         public override bool CanRead => true;
         public override bool CanSeek => false;
         public override bool CanWrite => false;
         public override long Length => throw new NotSupportedException();
         public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
         public override void Flush() { }
-        public override int Read(byte[] buffer, int offset, int count) =>
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            if (!_sentPrefix && prefix.Length > 0)
+            {
+                _sentPrefix = true;
+                var n = Math.Min(count, prefix.Length);
+                Array.Copy(prefix, 0, buffer, offset, n);
+                return n;
+            }
             throw new IOException("connection reset", new System.Net.Sockets.SocketException(10054));
-        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default) =>
+        }
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            if (!_sentPrefix && prefix.Length > 0)
+            {
+                _sentPrefix = true;
+                var n = Math.Min(buffer.Length, prefix.Length);
+                prefix.AsSpan(0, n).CopyTo(buffer.Span);
+                return ValueTask.FromResult(n);
+            }
             throw new IOException("connection reset", new System.Net.Sockets.SocketException(10054));
+        }
         public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
         public override void SetLength(long value) => throw new NotSupportedException();
         public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
