@@ -2565,11 +2565,12 @@ internal static class Program
             window.Left = SystemParameters.WorkArea.Right - window.ActualWidth;
             window.Top = SystemParameters.WorkArea.Bottom - window.ActualHeight;
             Pump();
+            var handle = new WindowInteropHelper(window).Handle;
+            Assert(GetWindowRect(handle, out var originRect), "应能读取切换前卡片位置");
             Require<Button>(window, "ViewModeButton").RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
             Pump();
             Pump();
 
-            var handle = new WindowInteropHelper(window).Handle;
             Assert(GetWindowRect(handle, out var rect), "应能读取卡片位置");
             var primary = MonitorCatalog.GetAll().First(monitor => monitor.IsPrimary);
             Assert(
@@ -2578,6 +2579,18 @@ internal static class Program
                 $"切到周历后卡片应完整留在主工作区内：({rect.Left},{rect.Top})-({rect.Right},{rect.Bottom})，"
                 + $"工作区 ({primary.WorkingArea.Left},{primary.WorkingArea.Top})-({primary.WorkingArea.Right},{primary.WorkingArea.Bottom})");
             Assert(window.ActualWidth >= 520, "周历视图应保持可读的最小宽度");
+            Assert(Math.Abs(rect.Right - originRect.Right) <= 4,
+                $"右侧待办切到周历时应保持右边缘贴齐：原右沿 {originRect.Right}，展开后 {rect.Right}");
+
+            // 再切回列表：卡片必须回到原本右侧位置，不能被挤在偏左位置。
+            Require<Button>(window, "ViewModeButton").RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            Pump();
+            Pump();
+            Assert(GetWindowRect(handle, out var restoredRect), "应能读取切回列表后的卡片位置");
+            Assert(
+                Math.Abs(restoredRect.Left - originRect.Left) <= 4
+                && Math.Abs(restoredRect.Top - originRect.Top) <= 4,
+                $"切回列表后卡片应回到原右侧位置：原 ({originRect.Left},{originRect.Top})，切回后 ({restoredRect.Left},{restoredRect.Top})");
         }
         finally
         {

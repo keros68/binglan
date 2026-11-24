@@ -118,6 +118,7 @@ Run("Dock 不透明度对照与迁移后一致性", ThemeStyleTests.TestDockOpac
 Run("四种竖屏预设边界、最小尺寸与横屏坐标", ThemeStyleTests.TestPortraitPresets);
 Run("任务栏只在两角唤出时底边细条的位置", ThemeStyleTests.TestTaskbarCornerStrip);
 Run("任务栏底边夹紧区域与两角留空", TaskbarEdgeGuardTests.Run);
+Run("待办切换周历与列表时保持近侧边缘对齐与原位恢复", TestTodoViewPlacementRules);
 Run("主题包整体风格与自定义图标往返", ThemeStyleTests.TestStyleAndIconsRoundTrip);
 Run("主题包丢弃不安全图标", ThemeStyleTests.TestUnsafeIconsAreDropped);
 Run("主题包清单校验", ThemeStyleTests.TestManifestIsValidated);
@@ -2883,6 +2884,40 @@ static void TestEmptyTodoAndHiddenQuickLaunchDoNotResurrect()
     {
         temp.Delete(recursive: true);
     }
+}
+
+static void TestTodoViewPlacementRules()
+{
+    var work = new CardRect(0, 32, 1920, 1008);
+
+    // 贴右侧的待办切到更宽的周历：右边缘保持不动、向左展开；再切回列表回到原坐标。
+    var rightList = new CardRect(1580, 100, 300, 336);
+    var (weekLeft, weekTop) = TodoViewPlacementRules.ComputeToggledPosition(rightList, 520, 460, work);
+    Assert(Math.Abs(weekLeft + 520 - rightList.Right) < 0.01 && Math.Abs(weekTop - 100) < 0.01,
+        "右侧待办展开周历应保持右沿贴齐并向左展开");
+    var (backLeft, backTop) = TodoViewPlacementRules.ComputeToggledPosition(
+        new CardRect(weekLeft, weekTop, 520, 460), 300, 336, work, (rightList.Left, rightList.Top));
+    Assert(Math.Abs(backLeft - rightList.Left) < 0.01 && Math.Abs(backTop - rightList.Top) < 0.01,
+        "未拖动时切回列表应精准回到展开前的右侧原位");
+
+    // 即使没有 savedAnchor（如重启后在周历切回列表），右侧半区卡片仍应保持右沿对齐而非留在偏左位置。
+    var (noAnchorLeft, _) = TodoViewPlacementRules.ComputeToggledPosition(
+        new CardRect(weekLeft, weekTop, 520, 460), 300, 336, work);
+    Assert(Math.Abs(noAnchorLeft - rightList.Left) < 0.01,
+        "右侧半区周历切回列表即使无暂存锚点也应保持右沿对齐");
+
+    // 贴右下角的待办：同时保持右沿与底沿，切回列表回到原位。
+    var bottomRight = new CardRect(1600, 680, 300, 340);
+    var (brWeekLeft, brWeekTop) = TodoViewPlacementRules.ComputeToggledPosition(bottomRight, 520, 460, work);
+    Assert(Math.Abs(brWeekLeft + 520 - bottomRight.Right) < 0.01
+        && Math.Abs(brWeekTop + 460 - bottomRight.Bottom) < 0.01,
+        "右下角待办展开周历应同时向左、向上展开并贴齐右下沿");
+
+    // 贴左侧的待办：保持左沿不动、向右展开。
+    var leftList = new CardRect(40, 100, 300, 336);
+    var (lWeekLeft, lWeekTop) = TodoViewPlacementRules.ComputeToggledPosition(leftList, 520, 460, work);
+    Assert(Math.Abs(lWeekLeft - 40) < 0.01 && Math.Abs(lWeekTop - 100) < 0.01,
+        "左侧待办展开周历应保持左沿不动并向右展开");
 }
 
 static void Assert(bool condition, string message)

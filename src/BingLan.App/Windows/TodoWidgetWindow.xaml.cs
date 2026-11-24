@@ -48,6 +48,7 @@ public partial class TodoWidgetWindow : WidgetWindowBase
     private DateTime _lastMovedFrom;
     private int _lastMovedOrder;
     private DispatcherTimer? _moveToastTimer;
+    private (double Left, double Top)? _preWeeklyAnchor;
     private DispatcherTimer? _peekDwellTimer;
     private DispatcherTimer? _todayRefreshTimer;
     internal System.Windows.Controls.Primitives.Popup? DeadlinePopup { get; private set; }
@@ -1028,34 +1029,91 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         NotifyStateChanged();
     }
 
+    protected override void OnDragEnded()
+    {
+        _preWeeklyAnchor = null;
+        base.OnDragEnded();
+    }
+
     private void ToggleViewMode_Click(object sender, RoutedEventArgs e)
     {
         _foldAnimator.Snap();
         TodoMotionOverlay.Children.Clear();
+        var currentWidth = ActualWidth > 0 ? ActualWidth : Width;
+        var currentHeight = ActualHeight > 0 ? ActualHeight : Height;
+        var currentRect = new CardRect(Left, Top, currentWidth, currentHeight);
+        var wasWeekly = State.WeeklyView;
+
         // 列表和周历各记一份尺寸：周历会把卡片撑大，切回列表时回到列表离开时的大小
         // （从没记过就用新卡片的默认大小），再切到周历时回到周历上次的大小。
-        if (State.WeeklyView)
+        if (wasWeekly)
         {
-            (State.WeeklyWidth, State.WeeklyHeight) = (Width, Height);
+            (State.WeeklyWidth, State.WeeklyHeight) = (currentWidth, currentHeight);
         }
         else
         {
-            (State.ListWidth, State.ListHeight) = (Width, Height);
+            (State.ListWidth, State.ListHeight) = (currentWidth, currentHeight);
+            _preWeeklyAnchor = (Left, Top);
         }
-        State.WeeklyView = !State.WeeklyView;
+        State.WeeklyView = !wasWeekly;
         var defaults = new WindowPlacement();
         var (width, height) = State.WeeklyView
-            ? (State.WeeklyWidth, State.WeeklyHeight)
+            ? (Math.Max(State.WeeklyWidth > 0 ? State.WeeklyWidth : currentWidth, WeeklyMinimumWidth),
+               Math.Max(State.WeeklyHeight > 0 ? State.WeeklyHeight : currentHeight, WeeklyMinimumHeight))
             : State.ListWidth > 0 ? (State.ListWidth, State.ListHeight) : (defaults.Width, defaults.Height);
+        var savedAnchor = wasWeekly ? _preWeeklyAnchor : null;
+        if (wasWeekly)
+        {
+            _preWeeklyAnchor = null;
+        }
         if (width > 0 && height > 0)
         {
+            var (nextLeft, nextTop) = TodoViewPlacementRules.ComputeToggledPosition(
+                currentRect,
+                width,
+                height,
+                CurrentWorkAreaDip(),
+                savedAnchor);
             MinWidth = State.WeeklyView ? WeeklyMinimumWidth : ListMinimumWidth;
             MinHeight = State.WeeklyView ? WeeklyMinimumHeight : ListMinimumHeight;
+            Left = nextLeft;
+            Top = nextTop;
             Width = width;
             Height = height;
         }
         ApplyViewMode();
         NotifyStateChanged();
+    }
+
+    private CardRect CurrentWorkAreaDip()
+    {
+        var handle = WindowHandle;
+        if (handle != 0 && BingLan.App.Interop.DockNativeMethods.GetWindowRect(handle, out var native))
+        {
+            var monitors = BingLan.App.Dock.MonitorCatalog.GetAll();
+            if (monitors.Count > 0)
+            {
+                var centerX = (native.Left + native.Right) / 2;
+                var centerY = (native.Top + native.Bottom) / 2;
+                var monitor = monitors.FirstOrDefault(candidate =>
+                        centerX >= candidate.Bounds.Left && centerX < candidate.Bounds.Right
+                        && centerY >= candidate.Bounds.Top && centerY < candidate.Bounds.Bottom)
+                    ?? monitors.FirstOrDefault(candidate => candidate.IsPrimary)
+                    ?? monitors[0];
+                var dpi = System.Windows.Media.VisualTreeHelper.GetDpi(this);
+                var scaleX = dpi.DpiScaleX > 0 ? dpi.DpiScaleX : monitor.Dpi / 96d;
+                var scaleY = dpi.DpiScaleY > 0 ? dpi.DpiScaleY : monitor.Dpi / 96d;
+                var work = monitor.WorkingArea;
+                return new CardRect(
+                    work.Left / scaleX,
+                    work.Top / scaleY,
+                    work.Width / scaleX,
+                    work.Height / scaleY);
+            }
+        }
+
+        var fallback = SystemParameters.WorkArea;
+        return new CardRect(fallback.Left, fallback.Top, fallback.Width, fallback.Height);
     }
 
     // 与分组盒一致：收起成一条标题栏，展开时回到记住的高度。
