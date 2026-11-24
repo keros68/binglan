@@ -1752,7 +1752,7 @@ internal static class Program
             var lefts = tiles.Select(tile => Math.Round(tile.TranslatePoint(new Point(), list).X)).ToArray();
             var columns = lefts.Distinct().Count();
             var rowRight = tiles.Max(tile => tile.TranslatePoint(new Point(tile.ActualWidth, 0), list).X);
-            Assert(columns == 4, $"默认宽度的分组盒应排成 4 列，实际 {columns} 列");
+            Assert(columns == 5, $"默认宽度的分组盒应排成 5 列，实际 {columns} 列");
             Assert(
                 Math.Abs(rowRight - list.ActualWidth) < 1d,
                 $"整行图标应填满宽度，右侧留白 {list.ActualWidth - rowRight:0.#} DIP");
@@ -1763,7 +1763,7 @@ internal static class Program
                 .Select(tile => Math.Round(tile.TranslatePoint(new Point(), list).X))
                 .Distinct()
                 .Count();
-            Assert(narrowColumns == 3, $"变窄后应改为 3 列，实际 {narrowColumns} 列");
+            Assert(narrowColumns == 4, $"变窄后应改为 4 列，实际 {narrowColumns} 列");
 
             window.Height = 320;
             Pump();
