@@ -21,23 +21,36 @@ public sealed class AppUpdater : IDisposable
     private readonly UpdateState _state;
     private readonly UpdateService _service;
     private readonly Action _saveState;
-    private readonly Action _exitApp;
+    private readonly Func<Task> _exitApp;
+    private readonly Action<string, string>? _launchInstaller;
     private readonly bool _canAutoCheck;
+    private readonly TimeProvider _time;
     private readonly DispatcherTimer _timer = new() { Interval = TickInterval };
     private Version? _notifiedVersion;
+    private DateTimeOffset? _retryAfterUtc;
+    private bool _needsInstallerRetry;
 
     public AppUpdater(
         UpdateState state,
         Version currentVersion,
         Action saveState,
-        Action exitApp,
+        Func<Task> exitApp,
         bool canAutoCheck,
-        System.Net.Http.HttpMessageHandler? handler = null)
+        System.Net.Http.HttpMessageHandler? handler = null,
+        TimeProvider? timeProvider = null,
+        Action<string, string>? launchInstaller = null)
     {
         _state = state;
-        _service = new UpdateService(currentVersion, handler);
+        _time = timeProvider ?? TimeProvider.System;
+        _service = UpdateService.Create(
+            currentVersion,
+            handler: handler,
+            noRedirectHandler: handler,
+            timeout: null,
+            timeProvider: _time);
         _saveState = saveState;
         _exitApp = exitApp;
+        _launchInstaller = launchInstaller;
         _canAutoCheck = canAutoCheck;
         _timer.Tick += (_, _) => _ = CheckIfDueAsync();
     }
@@ -52,6 +65,7 @@ public sealed class AppUpdater : IDisposable
     public UpdateRelease? Available { get; private set; }
     public bool IsBusy { get; private set; }
     public string Status { get; private set; } = string.Empty;
+    public DateTimeOffset? RetryAfterUtc => _retryAfterUtc;
 
     public bool AutoCheck
     {
@@ -84,7 +98,10 @@ public sealed class AppUpdater : IDisposable
     public Task CheckNowAsync() => CheckAsync(manual: true);
 
     private Task CheckIfDueAsync() =>
-        _canAutoCheck && _state.AutoCheck && UpdateService.IsAutoCheckDue(_state.LastCheckedAt, DateTimeOffset.Now)
+        _canAutoCheck
+        && _state.AutoCheck
+        && (UpdateService.IsAutoCheckDue(_state.LastCheckedAt, _time.GetLocalNow(), _retryAfterUtc)
+            || (_needsInstallerRetry && UpdateService.IsRetryAllowed(_retryAfterUtc, _time.GetUtcNow())))
             ? CheckAsync(manual: false)
             : Task.CompletedTask;
 
@@ -94,38 +111,100 @@ public sealed class AppUpdater : IDisposable
         {
             return;
         }
-        IsBusy = true;
-        if (manual)
+        // Automatic checks wait until the RetryAfterUtc cooldown expires; explicit manual
+        // checks remain allowed so the user can retry immediately after switching proxy/network.
+        if (!manual && !UpdateService.IsRetryAllowed(_retryAfterUtc, _time.GetUtcNow()))
         {
-            Status = "正在检查更新…";
-        }
-        OnChanged();
-
-        var result = await _service.CheckAsync();
-        IsBusy = false;
-        if (result.Status == UpdateCheckStatus.Failed)
-        {
-            // An automatic check fails quietly and is tried again later.
-            if (manual)
-            {
-                Status = $"检查更新失败：{result.ErrorMessage}";
-            }
-            OnChanged();
             return;
         }
-
-        _state.LastCheckedAt = DateTimeOffset.Now;
-        _saveState();
-        Available = result.Release;
-        var checkedAt = _state.LastCheckedAt.Value.LocalDateTime.ToString("M月d日 HH:mm", CultureInfo.InvariantCulture);
-        Status = Available is { } release
-            ? $"发现新版本 {release.Version.ToString(3)}"
-            : $"已是最新版本（检查于 {checkedAt}）";
-        OnChanged();
-        if (Available is { } found && found.Version != _notifiedVersion)
+        IsBusy = true;
+        try
         {
-            _notifiedVersion = found.Version;
-            ReleaseFound?.Invoke(found);
+            if (manual)
+            {
+                Status = "正在检查更新…";
+            }
+            OnChanged();
+
+            UpdateCheckResult result;
+            try
+            {
+                result = await _service.CheckAsync();
+            }
+            catch (Exception exception)
+            {
+                StartupLog.Write($"检查更新异常：{exception.GetType().Name}: {exception.Message}");
+                IsBusy = false;
+                if (manual)
+                {
+                    Status = "检查更新失败：发生意外错误，请稍后重试";
+                }
+                OnChanged();
+                return;
+            }
+            IsBusy = false;
+            if (result.Status == UpdateCheckStatus.Failed)
+            {
+                if (result.RetryAfterUtc is { } retryAfter)
+                {
+                    _retryAfterUtc = retryAfter;
+                }
+                else if (UpdateService.IsRetryAllowed(_retryAfterUtc, _time.GetUtcNow()))
+                {
+                    _retryAfterUtc = null;
+                }
+                // An automatic check fails quietly and is tried again later (after any rate-limit cooldown).
+                if (manual)
+                {
+                    Status = $"检查更新失败：{result.ErrorMessage}";
+                }
+                OnChanged();
+                return;
+            }
+
+            var foundRelease = result.Release;
+            if (foundRelease is not null
+                && foundRelease.Installer is null
+                && Available is { Installer: not null } existing
+                && UpdateService.Normalize(existing.Version) == UpdateService.Normalize(foundRelease.Version))
+            {
+                foundRelease = existing;
+            }
+
+            if (result.RetryAfterUtc is { } partialRetryAfter && foundRelease?.Installer is null)
+            {
+                _retryAfterUtc = partialRetryAfter;
+                _needsInstallerRetry = true;
+            }
+            else
+            {
+                _retryAfterUtc = null;
+                _needsInstallerRetry = false;
+                _state.LastCheckedAt = _time.GetLocalNow();
+                _saveState();
+            }
+
+            Available = foundRelease;
+            if (Available is { } release)
+            {
+                Status = $"发现新版本 {release.Version.ToString(3)}";
+            }
+            else
+            {
+                var checkedAt = (_state.LastCheckedAt ?? _time.GetLocalNow()).LocalDateTime
+                    .ToString("M月d日 HH:mm", CultureInfo.InvariantCulture);
+                Status = $"已是最新版本（检查于 {checkedAt}）";
+            }
+            OnChanged();
+            if (Available is { } found && found.Version != _notifiedVersion)
+            {
+                _notifiedVersion = found.Version;
+                ReleaseFound?.Invoke(found);
+            }
+        }
+        finally
+        {
+            IsBusy = false;
         }
     }
 
@@ -140,54 +219,100 @@ public sealed class AppUpdater : IDisposable
             return;
         }
         IsBusy = true;
-        Status = "正在下载新版本…";
-        OnChanged();
-
-        var progress = new Progress<double>(fraction =>
-        {
-            Status = $"正在下载新版本… {fraction * 100:0}%";
-            OnChanged();
-        });
-        string path;
+        var exited = false;
         try
         {
-            using var timeout = new CancellationTokenSource(DownloadTimeout);
-            path = await _service.DownloadAsync(
-                installer,
-                Path.Combine(Path.GetTempPath(), "BingLanUpdate"),
-                progress,
-                timeout.Token);
-        }
-        catch (UpdateDownloadException exception)
-        {
-            IsBusy = false;
-            Status = $"下载失败：{exception.Message}";
+            Status = "正在下载新版本…";
             OnChanged();
-            return;
-        }
 
-        try
-        {
-            var logArg = TryBuildInstallLogArgument();
-            var arguments = string.IsNullOrEmpty(logArg)
-                ? "/SILENT /SUPPRESSMSGBOXES /NORESTART /NOCLOSEAPPLICATIONS /UPDATE=1"
-                : $"/SILENT /SUPPRESSMSGBOXES /NORESTART /NOCLOSEAPPLICATIONS /UPDATE=1 {logArg}";
-            Process.Start(new ProcessStartInfo(path, arguments)
+            var progress = new Progress<double>(fraction =>
             {
-                UseShellExecute = true
+                Status = $"正在下载新版本… {fraction * 100:0}%";
+                OnChanged();
             });
-        }
-        catch (Exception exception) when (exception is System.ComponentModel.Win32Exception
-            or InvalidOperationException or IOException or UnauthorizedAccessException)
-        {
-            IsBusy = false;
-            Status = $"无法启动安装程序：{exception.Message}";
-            OnChanged();
-            return;
-        }
+            string path;
+            try
+            {
+                using var timeout = new CancellationTokenSource(DownloadTimeout);
+                path = await _service.DownloadAsync(
+                    installer,
+                    Path.Combine(Path.GetTempPath(), "BingLanUpdate"),
+                    progress,
+                    timeout.Token);
+            }
+            catch (UpdateDownloadException exception)
+            {
+                IsBusy = false;
+                Status = $"下载失败：{exception.Message}";
+                OnChanged();
+                return;
+            }
+            catch (Exception exception)
+            {
+                StartupLog.Write($"下载更新异常：{exception.GetType().Name}: {exception.Message}");
+                IsBusy = false;
+                Status = "下载失败：发生意外错误，请稍后重试";
+                OnChanged();
+                return;
+            }
 
-        StartupLog.Write($"开始安装新版本 {Available.Version.ToString(3)}");
-        _exitApp();
+            try
+            {
+                var logArg = TryBuildInstallLogArgument();
+                var arguments = string.IsNullOrEmpty(logArg)
+                    ? "/SILENT /SUPPRESSMSGBOXES /NORESTART /NOCLOSEAPPLICATIONS /UPDATE=1"
+                    : $"/SILENT /SUPPRESSMSGBOXES /NORESTART /NOCLOSEAPPLICATIONS /UPDATE=1 {logArg}";
+                if (_launchInstaller is not null)
+                {
+                    _launchInstaller(path, arguments);
+                }
+                else
+                {
+                    Process.Start(new ProcessStartInfo(path, arguments)
+                    {
+                        UseShellExecute = true
+                    });
+                }
+            }
+            catch (Exception exception) when (exception is System.ComponentModel.Win32Exception
+                or InvalidOperationException or IOException or UnauthorizedAccessException)
+            {
+                IsBusy = false;
+                Status = $"无法启动安装程序：{exception.Message}";
+                OnChanged();
+                return;
+            }
+            catch (Exception exception)
+            {
+                StartupLog.Write($"启动安装程序异常：{exception.GetType().Name}: {exception.Message}");
+                IsBusy = false;
+                Status = "无法启动安装程序：发生意外错误，请稍后重试";
+                OnChanged();
+                return;
+            }
+
+            StartupLog.Write($"开始安装新版本 {Available.Version.ToString(3)}");
+            try
+            {
+                await _exitApp();
+                exited = true;
+            }
+            catch (Exception exception)
+            {
+                StartupLog.Write($"安装后自动退出异常：{exception.GetType().Name}: {exception.Message}");
+                IsBusy = false;
+                Status = "已启动安装程序，请手动关闭冰蓝桌面";
+                OnChanged();
+                return;
+            }
+        }
+        finally
+        {
+            if (!exited && IsBusy)
+            {
+                IsBusy = false;
+            }
+        }
     }
 
     private static string TryBuildInstallLogArgument()

@@ -4303,17 +4303,44 @@ public partial class SettingsWindow : Window
 
     private async void CheckUpdates_Click(object sender, RoutedEventArgs e)
     {
-        if (_maintenance.Updater is { } updater)
+        if (_maintenance.Updater is not { } updater)
+        {
+            return;
+        }
+        try
         {
             await updater.CheckNowAsync();
+        }
+        catch (Exception exception)
+        {
+            Services.StartupLog.Write($"检查更新点击异常：{exception.GetType().Name}: {exception.Message}");
+            if (!_isClosed)
+            {
+                UpdateStatusText.Text = "检查更新失败：发生意外错误，请稍后重试";
+                CheckUpdatesButton.IsEnabled = !updater.IsBusy;
+            }
         }
     }
 
     private async void InstallUpdate_Click(object sender, RoutedEventArgs e)
     {
-        if (_maintenance.Updater is { } updater)
+        if (_maintenance.Updater is not { } updater)
+        {
+            return;
+        }
+        try
         {
             await updater.DownloadAndInstallAsync();
+        }
+        catch (Exception exception)
+        {
+            Services.StartupLog.Write($"安装更新点击异常：{exception.GetType().Name}: {exception.Message}");
+            if (!_isClosed)
+            {
+                UpdateStatusText.Text = "下载失败：发生意外错误，请稍后重试";
+                CheckUpdatesButton.IsEnabled = !updater.IsBusy;
+                InstallUpdateButton.IsEnabled = !updater.IsBusy;
+            }
         }
     }
 
