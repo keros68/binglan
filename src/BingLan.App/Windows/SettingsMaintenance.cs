@@ -73,6 +73,8 @@ public sealed class SettingsMaintenance
     public Action<bool> SetLauncherShowRecentFiles { get; init; } = _ => { };
     public Func<bool> IsLauncherUseEverything { get; init; } = () => false;
     public Action<bool> SetLauncherUseEverything { get; init; } = _ => { };
+    public Func<bool> IsLauncherSearchInline { get; init; } = () => false;
+    public Action<bool> SetLauncherSearchInline { get; init; } = _ => { };
     public Func<BingLan.Core.Models.LauncherFavoriteMode> GetLauncherFavoriteMode { get; init; } =
         () => BingLan.Core.Models.LauncherFavoriteMode.FollowDock;
     public Action<BingLan.Core.Models.LauncherFavoriteMode> SetLauncherFavoriteMode { get; init; } = _ => { };

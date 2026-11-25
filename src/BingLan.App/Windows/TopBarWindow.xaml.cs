@@ -85,6 +85,9 @@ internal interface ITopBarEnvironment
 
     bool IsLauncherEnabled { get; }
 
+    /// <summary>Whether file results may come from the running Everything instance.</summary>
+    bool IsEverythingSearchEnabled { get; }
+
     void ToggleLauncherPanel();
 
     void ExitApp();
@@ -195,6 +198,7 @@ public sealed partial class TopBarWindow : Window
     private const int SearchHotkeyId = 0x5E41;
 
     private Button? _searchButton;
+    private TopBarSearchWindow? _searchPopup;
     private int _moduleMask = -1;
     private string _orderSignature = string.Empty;
     private bool? _appliedAcrylic;
@@ -202,7 +206,8 @@ public sealed partial class TopBarWindow : Window
     private bool _searchHotkeyRegistered;
 
     private bool IsSearchEntryEnabled =>
-        TopBarRules.IsModuleOn(_state.Modules, TopBarModuleKind.Search) && _environment.IsLauncherEnabled;
+        TopBarRules.IsModuleOn(_state.Modules, TopBarModuleKind.Search)
+        && (_state.SearchInline == true || _environment.IsLauncherEnabled);
 
     private const int HshellWindowDestroyed = 2;
     private const int HshellWindowActivated = 4;
@@ -590,6 +595,11 @@ public sealed partial class TopBarWindow : Window
         CloseTodoFlyout(animate: false);
         CloseClockFlyout();
         CloseInputMethodFlyout();
+        if (_searchPopup is { } searchPopup)
+        {
+            _searchPopup = null;
+            searchPopup.Close();
+        }
         _inputMethodSubscription?.Dispose();
         _inputMethodSubscription = null;
         _foregroundTimer.Stop();
@@ -2424,7 +2434,77 @@ public sealed partial class TopBarWindow : Window
         CloseTodoFlyout(animate: false);
         CloseClockFlyout();
         CloseInputMethodFlyout();
+        if (_state.SearchInline == true)
+        {
+            OpenSearchPopup();
+            return;
+        }
         _environment.ToggleLauncherPanel();
+    }
+
+    /// <summary>
+    /// Drops the search popup under the centered entry. A second invocation closes it, so
+    /// the button and the global hotkey behave the same way.
+    /// </summary>
+    private void OpenSearchPopup()
+    {
+        if (_searchPopup is { } open)
+        {
+            open.Close();
+            return;
+        }
+        if (_searchButton is not { } button || button.ActualWidth <= 0d)
+        {
+            return;
+        }
+
+        var anchorPixels = button.PointToScreen(
+            new System.Windows.Point(button.ActualWidth / 2d, button.ActualHeight));
+        var dpi = System.Windows.Media.VisualTreeHelper.GetDpi(this);
+        var anchor = new System.Windows.Point(anchorPixels.X / dpi.DpiScaleX, anchorPixels.Y / dpi.DpiScaleY);
+        // The bar's own colour comes from the wallpaper behind it, so a fixed tint can
+        // never match it. Sample the screen area the panel is about to cover, in physical
+        // pixels, and fall back to the bar's flat colour only when the read fails.
+        var flat = (Color)ColorConverter.ConvertFromString(DesktopStyleRules.TopBar(_style, _state).Surface);
+        var sampleLeft = (int)Math.Round((anchor.X - TopBarSearchWindow.SurfaceWidth / 2d) * dpi.DpiScaleX);
+        var sampleTop = (int)Math.Round(anchor.Y * dpi.DpiScaleY);
+        var sampleWidth = (int)Math.Round(TopBarSearchWindow.SurfaceWidth * dpi.DpiScaleX);
+        var sampleHeight = (int)Math.Round(120d * dpi.DpiScaleY);
+        var look = SampleBarPixels()
+            ?? TopBarSearchLook.FromBackdrop(sampleLeft, sampleTop, sampleWidth, sampleHeight)
+            ?? TopBarSearchLook.FromBar(flat, _palette);
+        var popup = new TopBarSearchWindow(look, anchor, _environment.IsEverythingSearchEnabled);
+        popup.Closed += (_, _) =>
+        {
+            if (ReferenceEquals(_searchPopup, popup))
+            {
+                _searchPopup = null;
+            }
+        };
+        _searchPopup = popup;
+        popup.Show();
+    }
+
+    /// <summary>
+    /// Reads the bar's own rendered pixels so the panel inherits the material hue the user
+    /// actually sees. The band sits below the glyph baseline so text biases the average as
+    /// little as possible. Null when the bar is gone or the screen cannot be read.
+    /// </summary>
+    private TopBarSearchLook? SampleBarPixels()
+    {
+        if (_handle == 0 || !DockNativeMethods.GetWindowRect(_handle, out var rect))
+        {
+            return null;
+        }
+        var width = rect.Right - rect.Left;
+        var height = rect.Bottom - rect.Top;
+        if (width <= 24 || height <= 8)
+        {
+            return null;
+        }
+        var bandTop = rect.Top + (int)(height * 0.78);
+        var bandHeight = Math.Max(2, rect.Bottom - bandTop - 2);
+        return TopBarSearchLook.FromBarStrip(rect.Left + 8, bandTop, width - 16, bandHeight);
     }
 
 
@@ -2488,6 +2568,9 @@ public sealed partial class TopBarWindow : Window
 
     /// <summary>The centered search entry button, for tests.</summary>
     internal Button? SearchEntryButton => _searchButton;
+
+    /// <summary>The inline search popup while it is open, for tests.</summary>
+    internal TopBarSearchWindow? SearchPopup => _searchPopup;
 
     private static System.Windows.Media.SolidColorBrush FrozenBrush(string color) =>
         CreateFrozenColorBrush((Color)ColorConverter.ConvertFromString(color));

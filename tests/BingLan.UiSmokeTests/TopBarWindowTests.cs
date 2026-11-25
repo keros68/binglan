@@ -572,7 +572,9 @@ internal static class TopBarWindowTests
         }
     }
 
-    private static TopBarState BarState() => new() { IsEnabled = true };
+    // The search-entry tests assert the inline popup, so the shared state opts into it the
+    // same way the settings switch does; the launcher path is asserted in the same test.
+    private static TopBarState BarState() => new() { IsEnabled = true, SearchInline = true };
 
     private static IReadOnlyList<Button> AllButtons(DependencyObject root)
     {
@@ -654,9 +656,17 @@ internal static class TopBarWindowTests
                 ?? throw new InvalidOperationException("搜索模块应提供顶栏入口按钮");
             Assert(AutomationProperties.GetName(entry) == "搜索入口", "搜索入口按钮应保留自动化名称");
             Invoke(entry);
-            Assert(WaitUntil(pump, () => environment.LauncherToggles == 1), "点击搜索入口应打开/切换冰蓝总览卡");
+            Assert(WaitUntil(pump, () => bar.SearchPopup is not null), "点击搜索入口应弹出内联搜索窗口");
             bar.TriggerSearch();
-            Assert(environment.LauncherToggles == 2, "全局热键入口应复用同一总览卡切换逻辑");
+            Assert(bar.SearchPopup is null, "再次触发应关闭内联搜索窗口");
+            // Turning the switch off has to restore the previous behaviour: the same click
+            // opens the overview card and no popup appears.
+            state.SearchInline = null;
+            bar.ApplyState();
+            pump();
+            bar.TriggerSearch();
+            Assert(bar.SearchPopup is null && environment.LauncherToggles == 1,
+                "关闭开关后搜索入口应重新打开冰蓝总览卡");
             var style = (long)GetWindowLongPtr(new WindowInteropHelper(bar).Handle, GwlExStyle);
             Assert((style & DockNativeMethods.WsExNoActivate) != 0, "触发总览卡后顶栏应保持永不激活");
         }
@@ -681,7 +691,7 @@ internal static class TopBarWindowTests
             Assert(bar.SearchEntryButton is null, "关闭搜索模块后不应有搜索入口按钮");
             bar.TriggerSearch();
             pump();
-            Assert(environment.LauncherToggles == 0, "模块关闭时热键触发不应切换总览卡");
+            Assert(bar.SearchPopup is null, "模块关闭时热键触发不应弹出搜索窗口");
 
             state.Modules.Search = true;
             bar.ApplyState();
@@ -694,7 +704,7 @@ internal static class TopBarWindowTests
             Assert(bar.SearchEntryButton is null, "关闭冰蓝总览卡时应隐藏顶栏搜索入口");
             bar.TriggerSearch();
             pump();
-            Assert(environment.LauncherToggles == 0, "总览卡关闭时不应响应顶栏搜索触发");
+            Assert(bar.SearchPopup is null, "总览卡关闭时不应响应顶栏搜索触发");
         }
         finally
         {
@@ -1006,6 +1016,8 @@ internal static class TopBarWindowTests
 
         public bool IsLauncherEnabled => LauncherEnabled;
 
+        public bool IsEverythingSearchEnabled => false;
+
         public void ToggleLauncherPanel() => LauncherToggles++;
 
         public void OpenTopBarSettings() => TopBarPageRequested++;
@@ -1219,8 +1231,8 @@ internal static class TopBarWindowTests
                 && surface.Width <= 180 && surface.Height == 40, "再次点击应收起并恢复紧凑尺寸");
             Invoke(summary);
             bar.TriggerSearch();
-            Assert(!bar.CapsuleDetailsExpanded && environment.LauncherToggles == 1,
-                "保留的搜索入口应收起待办并切换冰蓝总览卡");
+            Assert(!bar.CapsuleDetailsExpanded && bar.SearchPopup is not null,
+                "保留的搜索入口应收起待办并弹出内联搜索窗口");
         }
         finally
         {
