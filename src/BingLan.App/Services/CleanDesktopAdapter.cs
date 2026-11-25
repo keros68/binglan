@@ -473,7 +473,7 @@ internal sealed class CleanDesktopAdapter : IDisposable
 
     private async Task CheckTakeoverAsync()
     {
-        if (_checking || !IsActive)
+        if (_disableShellMutations || _checking || !IsActive)
         {
             return;
         }

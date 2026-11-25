@@ -34,7 +34,7 @@ internal static class BugFixRegressionTests
         TestWidgetCoordinatorDisposeStopsTimerAndDisposesServices(pump, pumpUntil);
         TestUiDiagnosticsUntrackedDescription();
         TestUiDiagnosticsKeepsSystemEventsHealthy(pump, pumpUntil);
-        TestInteractiveQaCleanDesktopIsolation();
+        TestInteractiveQaCleanDesktopIsolation(pump);
     }
 
     private static void TestBackgroundWinEventPumpLifecycle()
@@ -487,7 +487,7 @@ internal static class BugFixRegressionTests
         }
     }
 
-    private static void TestInteractiveQaCleanDesktopIsolation()
+    private static void TestInteractiveQaCleanDesktopIsolation(Action pump)
     {
         var temp = Path.Combine(Path.GetTempPath(), $"BingLan-cleandesktop-qa-{Guid.NewGuid():N}");
         Directory.CreateDirectory(temp);
@@ -522,6 +522,37 @@ internal static class BugFixRegressionTests
         finally
         {
             try { Directory.Delete(temp, true); } catch (IOException) { }
+        }
+
+        var coordinatorDir = Path.Combine(Path.GetTempPath(), $"BingLan-qa-coord-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(coordinatorDir);
+        var sentinelCheckpoint = WidgetCoordinator.CleanDesktopCheckpointPath(coordinatorDir);
+        const string sentinelContent = "sentinel-qa-do-not-touch";
+        File.WriteAllText(sentinelCheckpoint, sentinelContent);
+        new BingLan.Core.Services.LocalStateStore(coordinatorDir).Save(new AppState { CleanDesktopEnabled = true });
+        var coordinator = new WidgetCoordinator(interactiveQa: true, dataDirectory: coordinatorDir);
+        try
+        {
+            coordinator.Start();
+            pump();
+            Check(File.Exists(sentinelCheckpoint) && File.ReadAllText(sentinelCheckpoint) == sentinelContent,
+                "interactive-QA WidgetCoordinator 不得触碰或清除预置桌面图标检查点");
+            var cleanDesktop = (CleanDesktopAdapter)typeof(WidgetCoordinator)
+                .GetField("_cleanDesktop", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .GetValue(coordinator)!;
+            Check(cleanDesktop.IsShellMutationDisabled,
+                "interactive-QA WidgetCoordinator 的 _cleanDesktop 必须启用 Shell 变更隔离");
+        }
+        finally
+        {
+            coordinator.Dispose();
+            foreach (var window in Application.Current.Windows.OfType<WidgetWindowBase>().ToList())
+            {
+                window.CanClose = true;
+                window.Close();
+            }
+            pump();
+            try { Directory.Delete(coordinatorDir, true); } catch (IOException) { }
         }
     }
 
