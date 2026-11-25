@@ -61,6 +61,18 @@ internal static class WindowScreenRecovery
         _layoutChangeRaised = false;
     }
 
+    internal static bool IsLayoutTransitioning() =>
+        _settledLayout is not null && CurrentLayout() != _settledLayout;
+
+    internal static void NotifyLayoutChangedIfNeeded()
+    {
+        if (_settledLayout is not null && CurrentLayout() != _settledLayout && !_layoutChangeRaised)
+        {
+            _layoutChangeRaised = true;
+            LayoutChanged?.Invoke();
+        }
+    }
+
     /// <summary>
     /// Remembers the card's spot for the arrangement now in use: its current bounds, or
     /// <paramref name="bounds"/> when the card sits pushed aside from where the user put it.

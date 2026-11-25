@@ -11,7 +11,12 @@ public sealed partial class WidgetCoordinator
     private FileBoxWindow? _dragMergeTarget;
 
     private FileBoxWindow? FindFileBoxWindow(Guid boxId) =>
-        _windows.OfType<FileBoxWindow>().FirstOrDefault(window => window.ContainsBox(boxId));
+        _windows.OfType<FileBoxWindow>()
+            .FirstOrDefault(window => window.ContainsBox(boxId));
+
+    private FileBoxWindow? FindPrimaryFileBoxWindow(Guid boxId) =>
+        _windows.OfType<FileBoxWindow>()
+            .FirstOrDefault(window => !IsSecondaryWindow(window) && window.ContainsBox(boxId));
 
     private FileBoxWindow ShowFileBoxGroup(IReadOnlyList<FileBoxState> members)
     {
@@ -134,6 +139,7 @@ public sealed partial class WidgetCoordinator
         var activateId = source.State.Id;
         var groupId = FileBoxGroupRules.Merge(source.Tabs, target.Tabs, activateFirstMergedSource: true);
 
+        _multiScreen?.UntrackSecondaryWindow(source);
         _windows.Remove(source);
         _windowsHiddenFromTray.Remove(source);
         source.CanClose = true;
@@ -145,6 +151,7 @@ public sealed partial class WidgetCoordinator
             .ToList();
         target.SyncTabsFromStates(combined, activateBoxId: activateId);
         target.SetOperationStatus($"已合并为 {combined.Count} 页组合收纳盒");
+        NotifyMultiScreenUiChanged(refreshComponentList: false);
         _settingsWindow?.RefreshWidgetsAfterGroupChange(target);
         SaveNow();
         return target;
@@ -158,10 +165,14 @@ public sealed partial class WidgetCoordinator
         }
 
         host.CaptureState();
+        var secondaryKey = _multiScreen?.TryGetScreenKey(host);
         var remaining = FileBoxGroupRules.Detach(tab, host.Tabs);
         host.SyncTabsFromStates(remaining);
-        var detachedWindow = ShowFileBox(tab);
+        var detachedWindow = secondaryKey is not null
+            ? _multiScreen!.ShowDetachedFileBoxOnScreen(secondaryKey, tab) ?? ShowFileBox(tab)
+            : ShowFileBox(tab);
         detachedWindow.SetOperationStatus($"已从组合收纳盒移出“{tab.Title}”");
+        NotifyMultiScreenUiChanged(refreshComponentList: false);
         _settingsWindow?.RefreshWidgetsAfterGroupChange(host);
         SaveNow();
         return detachedWindow;
@@ -175,6 +186,7 @@ public sealed partial class WidgetCoordinator
         }
 
         host.CaptureState();
+        var secondaryKey = _multiScreen?.TryGetScreenKey(host);
         var splitBoxes = FileBoxGroupRules.SplitAll(host.Tabs);
         if (splitBoxes.Count == 0)
         {
@@ -184,9 +196,18 @@ public sealed partial class WidgetCoordinator
         host.SyncTabsFromStates([splitBoxes[0]]);
         for (var i = 1; i < splitBoxes.Count; i++)
         {
-            ShowFileBox(splitBoxes[i]);
+            if (secondaryKey is not null)
+            {
+                _ = _multiScreen!.ShowDetachedFileBoxOnScreen(secondaryKey, splitBoxes[i])
+                    ?? ShowFileBox(splitBoxes[i]);
+            }
+            else
+            {
+                ShowFileBox(splitBoxes[i]);
+            }
         }
         host.SetOperationStatus($"已拆分为 {splitBoxes.Count} 个独立收纳盒");
+        NotifyMultiScreenUiChanged(refreshComponentList: false);
         _settingsWindow?.RefreshWidgetsAfterGroupChange(host);
         SaveNow();
     }

@@ -262,6 +262,7 @@ internal static class Program
         Run("首次使用引导逐步应用设置", TestOnboardingWizard, failures);
         Run("卡片拖动吸附到相邻卡片且不会被系统吸附成半屏", () => SnapMoveTests.Run(ShowAndPump, Pump), failures);
         Run("显示器排列切换后卡片回到该排列下的位置", () => DisplayLayoutWindowTests.Run(ShowAndPump, Pump), failures);
+        Run("多屏独立卡片方案、负Y混合DPI落点、跨屏迁移与热拔插彻底销毁", () => MultiScreenUiTests.Run(ShowAndPump, Pump), failures);
         Run("Dock 隐藏把手的窗口样式、拖动与显隐", () => DockHandleTests.Run(ShowAndPump, Pump), failures);
         Run("Dock 形变动画的收敛点、完成与打断", () => DockMorphAnimatorTests.Run(ShowAndPump, Pump, PumpUntil), failures);
         Run("Dock 原生玻璃形变、层级、回退与窗口清理", () => DockGlassSurfaceTests.Run(ShowAndPump, Pump, PumpUntil), failures);

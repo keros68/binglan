@@ -209,18 +209,20 @@ public sealed partial class WidgetCoordinator : IDisposable
             }
             ApplyQuickPlaces();
             var todoComponent = _state.DesktopExperience.GetComponent(DesktopComponentKind.Todo);
+            var primaryTodos = ScreenProfileAccessor.GetTodosForScreen(_state, screenKey: null);
             // Reconcile legacy/inconsistent state where Todo remained marked visible with no cards,
             // so later unrelated settings changes cannot resurrect a default to-do card.
-            if (todoComponent.IsVisible && _state.TodoWidgets.Count == 0)
+            if (todoComponent.IsVisible && primaryTodos.Count == 0)
             {
                 todoComponent.IsVisible = false;
             }
             var todoVisible = todoComponent.IsVisible;
-            foreach (var todo in _state.TodoWidgets.ToList())
+            var primaryTodoId = primaryTodos.FirstOrDefault()?.Id;
+            foreach (var todo in primaryTodos)
             {
                 if (todoVisible)
                 {
-                    if (ReferenceEquals(todo, _state.TodoWidgets.FirstOrDefault()))
+                    if (todo.Id == primaryTodoId)
                     {
                         todo.Placement = todoComponent.Placement;
                         todo.IsLocked = todoComponent.IsLocked;
@@ -228,15 +230,17 @@ public sealed partial class WidgetCoordinator : IDisposable
                     ShowTodo(todo);
                 }
             }
-            foreach (var note in _state.NoteWidgets.ToList())
+            foreach (var note in ScreenProfileAccessor.GetNotesForScreen(_state, screenKey: null))
             {
                 ShowNote(note);
             }
-            foreach (var group in FileBoxGroupRules.PartitionIntoHosts(_state.FileBoxes))
+            foreach (var group in FileBoxGroupRules.PartitionIntoHosts(
+                         ScreenProfileAccessor.FilterPrimaryFileBoxes(_state.FileBoxes)))
             {
                 ShowFileBoxGroup(group);
             }
         }
+        SyncMultiScreenRuntime();
         ApplyDisplayRecovery();
         WindowScreenRecovery.SettleLayout();
         // Catches deletions that happened while the app was off; later ones arrive through
@@ -563,7 +567,7 @@ public sealed partial class WidgetCoordinator : IDisposable
         state.Use24HourClock = use24HourClock;
         foreach (var information in _windows.OfType<InformationWidgetWindow>())
         {
-            information.ApplyDesktopExperience(_state.DesktopExperience);
+            information.ApplyDesktopExperience(GetExperienceForWindow(information));
             information.RefreshConfiguredValues(false);
         }
         _topBar?.RefreshClock();
@@ -710,11 +714,23 @@ public sealed partial class WidgetCoordinator : IDisposable
 
     // Cards go back to where they last sat on the arrangement now in use; an arrangement
     // seen for the first time gathers its cards fully into view.
-    private void OnDisplayLayoutChanged() =>
+    private void OnDisplayLayoutChanged()
+    {
+        if (_isExiting)
+        {
+            return;
+        }
+
         System.Windows.Application.Current?.Dispatcher.BeginInvoke(
             DispatcherPriority.ContextIdle,
             () =>
             {
+                if (_isExiting)
+                {
+                    return;
+                }
+
+                HandleMultiScreenDisplayLayoutChanged();
                 ApplyDisplayRecovery();
                 // A restored spot can sit under the taskbar or dock of this arrangement.
                 foreach (var window in _windows)
@@ -732,6 +748,7 @@ public sealed partial class WidgetCoordinator : IDisposable
                 _settingsWindow?.RefreshTaskbarSettings();
                 ScheduleSave();
             });
+    }
 
     // Cards meet the arrangement of monitors now in use: ones that sat on it before go
     // back to their remembered spot, first-time arrivals are gathered into view clear
@@ -742,6 +759,11 @@ public sealed partial class WidgetCoordinator : IDisposable
         var settled = new List<WidgetWindowBase>();
         foreach (var window in _windows)
         {
+            if (IsSecondaryWindow(window))
+            {
+                continue;
+            }
+
             if (window.HasDisplayLayoutMemory())
             {
                 window.RestoreDisplayLayout();
@@ -767,6 +789,7 @@ public sealed partial class WidgetCoordinator : IDisposable
             }
             _windowsHiddenFromTray.Clear();
             _desktopHidden = false;
+            SyncMultiScreenRuntime();
         }
         else
         {
@@ -893,12 +916,16 @@ public sealed partial class WidgetCoordinator : IDisposable
         {
             FinalizeSessionEnd();
         }
+        var canCaptureSecondaryPlacement = !WindowScreenRecovery.IsLayoutTransitioning()
+            && MonitorIdentityResolver.HasMultipleMonitors();
+        DisposeMultiScreenHost(capturePlacement: canCaptureSecondaryPlacement);
         if (!_isExiting)
         {
             SaveNow();
         }
         _isExiting = true;
         StopIdleMemoryTrimTimer();
+        _saveTimer.Stop();
         _trayIcon.Visible = false;
         _trayIcon.Dispose();
         _launcherPanel?.Close();
@@ -926,7 +953,7 @@ public sealed partial class WidgetCoordinator : IDisposable
     }
 
     private bool IsPrimaryTodo(TodoWidgetState state) =>
-        _state.TodoWidgets.FirstOrDefault()?.Id == state.Id;
+        ScreenProfileAccessor.GetPrimaryTodoId(_state, screenKey: null) == state.Id;
 
     private TodoWidgetWindow CreateTodoWindow(TodoWidgetState state)
     {
@@ -1105,6 +1132,7 @@ public sealed partial class WidgetCoordinator : IDisposable
             _desktopSurfaceWatcher.ScheduleCheck();
         };
         window.WidgetChanged += OnWindowStateChanged;
+        window.DragCompleted += OnWindowDragCompleted;
         window.Selected += selected =>
         {
             foreach (var candidate in _windows)
@@ -1213,9 +1241,23 @@ public sealed partial class WidgetCoordinator : IDisposable
             : DockNativeMethods.HwndTopmost;
     }
 
+    private void OnWindowDragCompleted(WidgetWindowBase window)
+    {
+        if (_isApplyingDesktopExperience || window.IsClosingOrClosed || !_windows.Contains(window))
+        {
+            return;
+        }
+
+        if (_multiScreen?.ReconcileWindowScreenAfterMove(window) == true)
+        {
+            Capture(window);
+            ScheduleSave();
+        }
+    }
+
     private void OnWindowStateChanged(WidgetWindowBase window)
     {
-        if (_isApplyingDesktopExperience)
+        if (_isApplyingDesktopExperience || window.IsClosingOrClosed || !_windows.Contains(window))
         {
             return;
         }
@@ -1235,11 +1277,26 @@ public sealed partial class WidgetCoordinator : IDisposable
 
     private void Capture(WidgetWindowBase window)
     {
+        if (window.IsClosingOrClosed || !_windows.Contains(window))
+        {
+            return;
+        }
+
+        if (_multiScreen?.TryCaptureSecondaryWindow(window) == true)
+        {
+            return;
+        }
+
+        if (IsModelOwnedBySecondaryScreen(window))
+        {
+            return;
+        }
+
         switch (window)
         {
             case TodoWidgetWindow todo:
                 todo.CaptureState();
-                if (_state.TodoWidgets.FirstOrDefault()?.Id == todo.State.Id)
+                if (IsPrimaryTodo(todo.State))
                 {
                     var component = _state.DesktopExperience
                         .GetComponent(DesktopComponentKind.Todo);
@@ -1270,19 +1327,29 @@ public sealed partial class WidgetCoordinator : IDisposable
         }
     }
 
+    private static bool IsModelOwnedBySecondaryScreen(WidgetWindowBase window) =>
+        window switch
+        {
+            TodoWidgetWindow todo => !ScreenProfileAccessor.IsPrimary(todo.State.ScreenKey),
+            NoteWidgetWindow note => !ScreenProfileAccessor.IsPrimary(note.State.ScreenKey),
+            FileBoxWindow box => !ScreenProfileAccessor.IsPrimary(box.State.ScreenKey),
+            _ => false
+        };
+
     private void AddTodo()
     {
         var todoComponent = _state.DesktopExperience.GetComponent(DesktopComponentKind.Todo);
         todoComponent.IsVisible = true;
-        var offset = _state.TodoWidgets.Count * 24;
+        var primaryTodoCount = ScreenProfileAccessor.GetTodosForScreen(_state, screenKey: null).Count;
+        var offset = primaryTodoCount * 24;
         var state = TodoService.CreateDefaultWidget();
         state.Title = WidgetTitleRules.NextTitle(state.Title, _state.TodoWidgets.Select(todo => todo.Title));
         CopyTodoLookFromComponent(state, todoComponent);
-        if (_state.TodoWidgets.Count == 0)
+        if (primaryTodoCount == 0)
         {
             state.IsLocked = todoComponent.IsLocked;
         }
-        state.Placement = _state.TodoWidgets.Count == 0
+        state.Placement = primaryTodoCount == 0
             ? todoComponent.Placement
             : new WindowPlacement
             {
@@ -1298,7 +1365,7 @@ public sealed partial class WidgetCoordinator : IDisposable
 
     private void AddFileBox(WindowPlacement? placement = null)
     {
-        var offset = _state.FileBoxes.Count * 24;
+        var offset = ScreenProfileAccessor.GetFileBoxesForScreen(_state, screenKey: null).Count * 24;
         var state = new FileBoxState
         {
             Placement = placement ?? new WindowPlacement
@@ -1312,7 +1379,24 @@ public sealed partial class WidgetCoordinator : IDisposable
         state.Title = WidgetTitleRules.NextTitle(state.Title, _state.FileBoxes.Select(box => box.Title));
         UseSharedLook(state.Appearance);
         _state.FileBoxes.Add(state);
-        ShowFileBox(state);
+        var created = ShowFileBox(state);
+        if (placement is not null && _multiScreen is not null)
+        {
+            if (_multiScreen.ReconcileWindowScreenAfterMove(created))
+            {
+                Capture(created);
+            }
+            created.Dispatcher.BeginInvoke(DispatcherPriority.Loaded, () =>
+            {
+                if (!_isExiting
+                    && _windows.Contains(created)
+                    && _multiScreen?.ReconcileWindowScreenAfterMove(created) == true)
+                {
+                    Capture(created);
+                    ScheduleSave();
+                }
+            });
+        }
         ScheduleSave();
     }
 
@@ -1427,7 +1511,7 @@ public sealed partial class WidgetCoordinator : IDisposable
 
     private void AddNote()
     {
-        var offset = _state.NoteWidgets.Count * 24;
+        var offset = ScreenProfileAccessor.GetNotesForScreen(_state, screenKey: null).Count * 24;
         var state = NoteService.CreateDefaultWidget();
         state.Title = WidgetTitleRules.NextTitle(state.Title, _state.NoteWidgets.Select(note => note.Title));
         UseSharedLook(state.Appearance);
@@ -1549,7 +1633,7 @@ public sealed partial class WidgetCoordinator : IDisposable
                 CanChangeStartup = _startup.CanModify,
                 IsStartupEnabled = _startup.IsEnabled,
                 SetStartupEnabled = _startup.SetEnabled,
-                PrimaryTodoId = () => _state.TodoWidgets.FirstOrDefault()?.Id,
+                PrimaryTodoId = () => ScreenProfileAccessor.GetPrimaryTodoId(_state, screenKey: null),
                 DataDirectory = _store.DataDirectory,
                 OpenDataDirectory = OpenDataDirectory,
                 CreateBackup = () =>
@@ -1759,11 +1843,13 @@ public sealed partial class WidgetCoordinator : IDisposable
             _state.InformationWidgets.Add(new InformationWidgetState());
         }
         var todoComponent = experience.GetComponent(DesktopComponentKind.Todo);
-        if (todoComponent.IsVisible && !_state.TodoWidgets.Any())
+        var primaryTodos = ScreenProfileAccessor.GetTodosForScreen(_state, screenKey: null);
+        if (todoComponent.IsVisible && primaryTodos.Count == 0)
         {
             var created = TodoService.CreateDefaultWidget();
             CopyTodoLookFromComponent(created, todoComponent);
             _state.TodoWidgets.Add(created);
+            primaryTodos = [created];
         }
         if (HasVisibleInformationComponent())
         {
@@ -1775,6 +1861,7 @@ public sealed partial class WidgetCoordinator : IDisposable
                     var window = _windows
                         .OfType<InformationWidgetWindow>()
                         .FirstOrDefault(candidate =>
+                            !IsSecondaryWindow(candidate) &&
                             candidate.State.Id == state.Id &&
                             candidate.ComponentKind == kind);
                     if (!component.IsVisible)
@@ -1794,7 +1881,7 @@ public sealed partial class WidgetCoordinator : IDisposable
         }
         else
         {
-            foreach (var window in _windows.OfType<InformationWidgetWindow>())
+            foreach (var window in _windows.OfType<InformationWidgetWindow>().Where(win => !IsSecondaryWindow(win)))
             {
                 window.HideFromApp();
             }
@@ -1802,11 +1889,11 @@ public sealed partial class WidgetCoordinator : IDisposable
 
         if (todoComponent.IsVisible)
         {
-            foreach (var state in _state.TodoWidgets)
+            foreach (var state in primaryTodos)
             {
                 var window = _windows
                     .OfType<TodoWidgetWindow>()
-                    .FirstOrDefault(candidate => candidate.State.Id == state.Id);
+                    .FirstOrDefault(candidate => !IsSecondaryWindow(candidate) && candidate.State.Id == state.Id);
                 if (window is null)
                 {
                     window = CreateTodoWindow(state);
@@ -1825,7 +1912,7 @@ public sealed partial class WidgetCoordinator : IDisposable
         }
         else
         {
-            foreach (var window in _windows.OfType<TodoWidgetWindow>())
+            foreach (var window in _windows.OfType<TodoWidgetWindow>().Where(win => !IsSecondaryWindow(win)))
             {
                 window.HideFromApp();
             }
@@ -1847,7 +1934,7 @@ public sealed partial class WidgetCoordinator : IDisposable
     private void ApplyQuickPlaces()
     {
         var component = _state.DesktopExperience.GetComponent(DesktopComponentKind.QuickLaunch);
-        var window = _windows.OfType<QuickPlacesWindow>().FirstOrDefault();
+        var window = _windows.OfType<QuickPlacesWindow>().FirstOrDefault(win => !IsSecondaryWindow(win));
         if (!component.IsVisible)
         {
             window?.HideFromApp();
@@ -2449,6 +2536,7 @@ public sealed partial class WidgetCoordinator : IDisposable
                     style);
             }
         }
+        ApplyGlassToSecondaryProfiles(_lastAppliedStyle, style);
         ApplyDesktopExperienceWithSave(_state.DesktopExperience, saveImmediate: false);
         _lastAppliedStyle = style.Clone();
     }
@@ -2546,6 +2634,12 @@ public sealed partial class WidgetCoordinator : IDisposable
 
     private void ApplyWidgetLock(WidgetWindowBase window, bool isLocked)
     {
+        if (_multiScreen?.TryApplyWidgetLock(window, isLocked) == true)
+        {
+            SaveNow();
+            return;
+        }
+
         window.ApplyWidgetLock(isLocked);
         switch (window)
         {
@@ -2553,7 +2647,7 @@ public sealed partial class WidgetCoordinator : IDisposable
                 _state.DesktopExperience.GetComponent(kind).IsLocked = isLocked;
                 break;
             case TodoWidgetWindow todo
-                when _state.TodoWidgets.FirstOrDefault()?.Id == todo.State.Id:
+                when IsPrimaryTodo(todo.State):
                 _state.DesktopExperience
                     .GetComponent(DesktopComponentKind.Todo)
                     .IsLocked = isLocked;
@@ -2573,7 +2667,7 @@ public sealed partial class WidgetCoordinator : IDisposable
         {
             _state.DesktopExperience.GetComponent(kind).Placement = placement;
         }
-        if (_state.TodoWidgets.FirstOrDefault() is { } todo)
+        if (_state.TodoWidgets.FirstOrDefault(item => ScreenProfileAccessor.IsPrimary(item.ScreenKey)) is { } todo)
         {
             todo.Placement = _state.DesktopExperience.GetComponent(DesktopComponentKind.Todo).Placement;
         }
@@ -2593,7 +2687,8 @@ public sealed partial class WidgetCoordinator : IDisposable
             && PresetPlacements(_state.DesktopExperience.ActivePreset).TryGetValue(componentKind, out var preset))
         {
             _state.DesktopExperience.GetComponent(componentKind).Placement = preset;
-            if (componentKind == DesktopComponentKind.Todo && _state.TodoWidgets.FirstOrDefault() is { } todo)
+            if (componentKind == DesktopComponentKind.Todo
+                && _state.TodoWidgets.FirstOrDefault(item => ScreenProfileAccessor.IsPrimary(item.ScreenKey)) is { } todo)
             {
                 todo.Placement = preset;
             }
@@ -2624,6 +2719,11 @@ public sealed partial class WidgetCoordinator : IDisposable
 
     private void SetWidgetVisibility(WidgetWindowBase window, bool visible)
     {
+        if (_isExiting || window.IsClosingOrClosed || !_windows.Contains(window))
+        {
+            return;
+        }
+
         switch (window)
         {
             case FileBoxWindow box:
@@ -2632,7 +2732,19 @@ public sealed partial class WidgetCoordinator : IDisposable
                 if (visible)
                 {
                     _windowsHiddenFromTray.Remove(box);
-                    box.Show();
+                    if (IsSecondaryWindow(box))
+                    {
+                        if (_multiScreen?.TryShowSecondaryWindow(box) != true)
+                        {
+                            box.State.IsHidden = true;
+                            box.SyncGroupSharedProperties();
+                            return;
+                        }
+                    }
+                    else
+                    {
+                        box.Show();
+                    }
                     if (box.IsEdgeDocked)
                     {
                         _edgeDock.ApplyAll();
@@ -2653,7 +2765,18 @@ public sealed partial class WidgetCoordinator : IDisposable
                 _windowsHiddenFromTray.Remove(note);
                 if (visible)
                 {
-                    note.Show();
+                    if (IsSecondaryWindow(note))
+                    {
+                        if (_multiScreen?.TryShowSecondaryWindow(note) != true)
+                        {
+                            note.State.IsHidden = true;
+                            return;
+                        }
+                    }
+                    else
+                    {
+                        note.Show();
+                    }
                 }
                 else
                 {
@@ -2698,14 +2821,20 @@ public sealed partial class WidgetCoordinator : IDisposable
 
     private void RemoveWidget(WidgetWindowBase window)
     {
+        if (_multiScreen?.TryRemoveSecondaryWindow(window) == true)
+        {
+            return;
+        }
+
         switch (window)
         {
             case TodoWidgetWindow todo:
                 var wasPrimary = IsPrimaryTodo(todo.State);
                 _state.TodoWidgets.RemoveAll(x => x.Id == todo.State.Id);
+                var remainingPrimary = ScreenProfileAccessor.GetTodosForScreen(_state, screenKey: null);
                 // With the last one gone the to-do card is off, so a later settings change
                 // does not bring back an empty one.
-                if (_state.TodoWidgets.Count == 0)
+                if (remainingPrimary.Count == 0)
                 {
                     _state.DesktopExperience.GetComponent(DesktopComponentKind.Todo).IsVisible = false;
                     _settingsWindow?.RefreshDesktopExperience();
@@ -2714,7 +2843,7 @@ public sealed partial class WidgetCoordinator : IDisposable
                 {
                     SyncComponentFromTodo(
                         _state.DesktopExperience.GetComponent(DesktopComponentKind.Todo),
-                        _state.TodoWidgets[0]);
+                        remainingPrimary[0]);
                     _settingsWindow?.RefreshDesktopExperience();
                 }
                 break;
@@ -3048,7 +3177,7 @@ public sealed partial class WidgetCoordinator : IDisposable
             do
             {
                 _importDesktopAgain = false;
-                var boxes = _state.FileBoxes.ToList();
+                var boxes = ScreenProfileAccessor.FilterPrimaryFileBoxes(_state.FileBoxes);
                 var distribution = await Task.Run(() =>
                     FileMappingService.Distribute(CollectImportableDesktopEntries(), boxes));
                 if (_isExiting)
@@ -3058,7 +3187,7 @@ public sealed partial class WidgetCoordinator : IDisposable
 
                 foreach (var (boxId, paths) in distribution.ByBox)
                 {
-                    if (FindFileBoxWindow(boxId) is { } boxWindow)
+                    if (FindPrimaryFileBoxWindow(boxId) is { } boxWindow)
                     {
                         var added = await boxWindow.AddMappingsToBoxAsync(boxId, paths);
                         if (added > 0)
@@ -3087,13 +3216,13 @@ public sealed partial class WidgetCoordinator : IDisposable
         try
         {
             CaptureAll();
-            var boxes = _state.FileBoxes.ToList();
+            var boxes = ScreenProfileAccessor.FilterPrimaryFileBoxes(_state.FileBoxes);
             var goneIds = await Task.Run(() =>
                 FileMappingService.CollectGoneIds(boxes.SelectMany(box => box.Items)));
             var cleared = 0;
             if (goneIds.Count > 0)
             {
-                foreach (var box in _windows.OfType<FileBoxWindow>())
+                foreach (var box in _windows.OfType<FileBoxWindow>().Where(box => !IsSecondaryWindow(box)))
                 {
                     cleared += box.RemoveGoneMappings(goneIds);
                 }
@@ -3107,7 +3236,7 @@ public sealed partial class WidgetCoordinator : IDisposable
             var left = 0;
             foreach (var (boxId, paths) in distribution.ByBox)
             {
-                if (FindFileBoxWindow(boxId) is { } boxWindow)
+                if (FindPrimaryFileBoxWindow(boxId) is { } boxWindow)
                 {
                     added += await boxWindow.AddMappingsToBoxAsync(boxId, paths);
                 }
@@ -3133,7 +3262,8 @@ public sealed partial class WidgetCoordinator : IDisposable
 
                 FileBoxWindow window;
                 var state = _state.FileBoxes.FirstOrDefault(
-                    box => box.DesktopCategory == DesktopGroupCategory.None &&
+                    box => ScreenProfileAccessor.IsPrimary(box.ScreenKey) &&
+                           box.DesktopCategory == DesktopGroupCategory.None &&
                            box.Items.Count == 0 &&
                            box.CollectExtensions.Count == 0 &&
                            !box.CollectFolders &&
@@ -3147,7 +3277,7 @@ public sealed partial class WidgetCoordinator : IDisposable
                 }
                 else
                 {
-                    window = FindFileBoxWindow(state.Id)!;
+                    window = FindPrimaryFileBoxWindow(state.Id)!;
                     if (window.State.Id == state.Id)
                     {
                         window.AssignDesktopCategory(category, GetCategoryTitle(category));
@@ -3175,7 +3305,7 @@ public sealed partial class WidgetCoordinator : IDisposable
                 // Deleted category boxes stay deleted; a box with a collect rule takes them.
                 status += $"；{left} 项的分类盒已删除，留在桌面（可给文件收纳盒设置收集规则）";
             }
-            foreach (var box in _windows.OfType<FileBoxWindow>())
+            foreach (var box in _windows.OfType<FileBoxWindow>().Where(box => !IsSecondaryWindow(box)))
             {
                 box.SetOperationStatus(status);
             }
@@ -3194,7 +3324,7 @@ public sealed partial class WidgetCoordinator : IDisposable
         }
         catch (Exception ex)
         {
-            foreach (var box in _windows.OfType<FileBoxWindow>())
+            foreach (var box in _windows.OfType<FileBoxWindow>().Where(box => !IsSecondaryWindow(box)))
             {
                 box.SetOperationStatus("整理未完成");
             }
@@ -3214,14 +3344,14 @@ public sealed partial class WidgetCoordinator : IDisposable
     // the folder box: the desktop-folder category box, or a box that collects folders.
     private (FileBoxWindow Window, FileBoxState Tab)? FolderBoxTarget()
     {
-        foreach (var box in _windows.OfType<FileBoxWindow>())
+        foreach (var box in _windows.OfType<FileBoxWindow>().Where(box => !IsSecondaryWindow(box)))
         {
             if (box.Tabs.FirstOrDefault(tab => tab.DesktopCategory == DesktopGroupCategory.Folders) is { } catTab)
             {
                 return (box, catTab);
             }
         }
-        foreach (var box in _windows.OfType<FileBoxWindow>())
+        foreach (var box in _windows.OfType<FileBoxWindow>().Where(box => !IsSecondaryWindow(box)))
         {
             if (box.Tabs.FirstOrDefault(tab => tab.CollectFolders) is { } collectTab)
             {
@@ -3237,7 +3367,7 @@ public sealed partial class WidgetCoordinator : IDisposable
         {
             return;
         }
-        foreach (var box in _windows.OfType<FileBoxWindow>().ToList())
+        foreach (var box in _windows.OfType<FileBoxWindow>().Where(box => !IsSecondaryWindow(box)).ToList())
         {
             box.MoveSystemPlacesToTab(target.Window, target.Tab);
         }
@@ -3278,6 +3408,11 @@ public sealed partial class WidgetCoordinator : IDisposable
 
     private void ScheduleSave()
     {
+        if (_isExiting)
+        {
+            return;
+        }
+
         _saveTimer.Stop();
         _saveTimer.Start();
     }
@@ -3367,6 +3502,9 @@ public sealed partial class WidgetCoordinator : IDisposable
         }
         _isExiting = true;
         _saveTimer.Stop();
+        var canCaptureSecondaryPlacement = !WindowScreenRecovery.IsLayoutTransitioning()
+            && MonitorIdentityResolver.HasMultipleMonitors();
+        DisposeMultiScreenHost(capturePlacement: canCaptureSecondaryPlacement);
         SaveNow();
         _settingsWindow?.Close();
         _settingsWindow = null;

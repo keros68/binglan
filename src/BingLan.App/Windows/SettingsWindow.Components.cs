@@ -57,7 +57,9 @@ public partial class SettingsWindow
             Dispatcher.BeginInvoke(() => RefreshWidgetsAfterGroupChange(preferred));
             return;
         }
-        RefreshComponentList(preferredWindow: preferred);
+        RefreshComponentList(
+            preferredWindow: preferred ?? _selectedComponentEntry?.Window,
+            preferredKind: preferred is null ? _selectedComponentEntry?.Kind : null);
     }
 
     private void OnObservedFileBoxActiveTabChanged(FileBoxWindow box)
