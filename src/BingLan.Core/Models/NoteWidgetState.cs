@@ -111,6 +111,12 @@ public sealed class NoteWidgetState
     };
     public NoteBodyTypography BodyTypography { get; set; } = new();
 
+    /// <summary>
+    /// Stable hardware monitor key owning this note; null belongs to the primary screen.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? ScreenKey { get; set; }
+
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? ExtensionData { get; set; }
 }

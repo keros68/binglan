@@ -182,6 +182,7 @@ public static class FileBoxGroupRules
             member.EdgeDockMonitorDeviceName = source.EdgeDockMonitorDeviceName;
             member.HoverSwitchTabs = source.HoverSwitchTabs;
             member.CornerRadius = source.CornerRadius;
+            member.ScreenKey = MultiScreenRules.NormalizeScreenKey(source.ScreenKey);
             CopyAppearance(source.Appearance, member.Appearance);
             CopyPlacement(source.Placement, member.Placement);
         }
@@ -295,8 +296,14 @@ public static class FileBoxGroupRules
 
         // Give the detached box a clean standalone placement offset from the group host.
         CopyPlacement(savedPlacement, tab.Placement);
+        tab.ScreenKey = MultiScreenRules.NormalizeScreenKey(host.ScreenKey);
         tab.Placement.Left += offsetDip;
         tab.Placement.Top += offsetDip;
+        if (tab.Placement.MonitorLocal is { } detachedLocal)
+        {
+            detachedLocal.LocalLeftDip += offsetDip;
+            detachedLocal.LocalTopDip += offsetDip;
+        }
         tab.Placement.DisplayLayouts = [];
         if (tab.IsCollapsed)
         {
@@ -337,10 +344,16 @@ public static class FileBoxGroupRules
         {
             var box = ordered[i];
             CopyPlacement(basePlacement, box.Placement);
+            box.ScreenKey = MultiScreenRules.NormalizeScreenKey(host.ScreenKey);
             if (i > 0)
             {
                 box.Placement.Left += i * cascadeStepDip;
                 box.Placement.Top += i * cascadeStepDip;
+                if (box.Placement.MonitorLocal is { } splitLocal)
+                {
+                    splitLocal.LocalLeftDip += i * cascadeStepDip;
+                    splitLocal.LocalTopDip += i * cascadeStepDip;
+                }
                 box.Placement.DisplayLayouts = [];
                 box.EdgeDockSide = null;
                 box.EdgeDockOffsetDip = null;
@@ -452,5 +465,18 @@ public static class FileBoxGroupRules
                 Bottom = layout.Bottom
             })
             .ToList();
+        target.MonitorLocal = source.MonitorLocal is null
+            ? null
+            : new MonitorLocalPlacement
+            {
+                LocalLeftDip = source.MonitorLocal.LocalLeftDip,
+                LocalTopDip = source.MonitorLocal.LocalTopDip,
+                WidthDip = source.MonitorLocal.WidthDip,
+                HeightDip = source.MonitorLocal.HeightDip,
+                AnchorX = source.MonitorLocal.AnchorX,
+                AnchorY = source.MonitorLocal.AnchorY,
+                SourceWorkWidthDip = source.MonitorLocal.SourceWorkWidthDip,
+                SourceWorkHeightDip = source.MonitorLocal.SourceWorkHeightDip
+            };
     }
 }
