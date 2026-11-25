@@ -12,6 +12,7 @@ public sealed partial class WidgetCoordinator
     private static readonly TimeSpan WindowClosedMemoryTrimDelay = TimeSpan.FromSeconds(2);
     internal static readonly TimeSpan MinimumMemoryTrimInterval = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan DragDeferralRetryDelay = TimeSpan.FromSeconds(5);
+    internal static readonly TimeSpan FullScreenDeferralRetryDelay = TimeSpan.FromSeconds(15);
     internal static readonly TimeSpan CooldownRescheduleMargin = TimeSpan.FromSeconds(1);
 
     private DispatcherTimer? _memoryTrimTimer;
@@ -36,11 +37,17 @@ public sealed partial class WidgetCoordinator
     internal static (bool ShouldRun, TimeSpan? RetryAfter) EvaluateIdleMemoryTrim(
         long nowTick,
         long lastTrimTick,
-        bool isDragging)
+        bool isDragging,
+        bool isFullScreenOrGameMode = false)
     {
         if (isDragging)
         {
             return (false, DragDeferralRetryDelay);
+        }
+
+        if (isFullScreenOrGameMode)
+        {
+            return (false, FullScreenDeferralRetryDelay);
         }
 
         if (lastTrimTick != 0)
@@ -120,7 +127,11 @@ public sealed partial class WidgetCoordinator
         }
 
         var now = Environment.TickCount64;
-        var (shouldRun, retryAfter) = EvaluateIdleMemoryTrim(now, _lastMemoryTrimTick, IsAnyWidgetDragging());
+        var (shouldRun, retryAfter) = EvaluateIdleMemoryTrim(
+            now,
+            _lastMemoryTrimTick,
+            IsAnyWidgetDragging(),
+            _fullScreenWatcher.IsFullScreenInFront || _gameModeActive);
         if (!shouldRun)
         {
             if (retryAfter is { } delay)
@@ -153,5 +164,17 @@ public sealed partial class WidgetCoordinator
             }
         }
         return false;
+    }
+
+    private void StopIdleMemoryTrimTimer()
+    {
+        _memoryTrimIdleQueued = false;
+        if (_memoryTrimTimer is not { } timer)
+        {
+            return;
+        }
+        timer.Stop();
+        timer.Tick -= OnMemoryTrimTimerTick;
+        _memoryTrimTimer = null;
     }
 }

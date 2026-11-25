@@ -220,6 +220,24 @@ internal static class MemoryOptimizationTests
             Check(asyncLoaderCalls == 1 && ReferenceEquals(r1, halfA) && ReferenceEquals(r2, halfA),
                 "GetOrLoadSync 不应破坏并发 GetOrLoadAsync 去重，且应收敛到同一规范实例");
 
+            // Stale inflight completion after Clear() must NOT backfill icons from before Explorer restart.
+            LauncherIconCache.Clear();
+            var staleGate = new TaskCompletionSource<ImageSource?>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var staleTask = LauncherIconCache.GetOrLoadAsync("stale-after-clear-key", () => staleGate.Task);
+            LauncherIconCache.Clear();
+            staleGate.SetResult(halfA);
+            _ = staleTask.GetAwaiter().GetResult();
+            Check(!LauncherIconCache.TryGet("stale-after-clear-key", out _),
+                "Clear() 之后晚到的旧在途图标不得回填缓存");
+
+            var fullScreenTrim = WidgetCoordinator.EvaluateIdleMemoryTrim(
+                nowTick: 120_000,
+                lastTrimTick: 0,
+                isDragging: false,
+                isFullScreenOrGameMode: true);
+            Check(!fullScreenTrim.ShouldRun && fullScreenTrim.RetryAfter == WidgetCoordinator.FullScreenDeferralRetryDelay,
+                "全屏或游戏免打扰期间应延后空闲压缩");
+
             // Verify LauncherIconCache 256 cap, LRU eviction, and 5-minute idle expiration.
             LauncherIconCache.Clear();
             var totalInserted = LauncherIconCache.MaxEntries + 44;

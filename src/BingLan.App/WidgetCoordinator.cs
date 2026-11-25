@@ -867,6 +867,7 @@ public sealed partial class WidgetCoordinator : IDisposable
         _sessionEndingPending = false;
         Dock.DockCompositionBackdrop.MarkSessionEnding();
         _saveTimer.Stop();
+        StopIdleMemoryTrimTimer();
         SaveNow();
         if (_cleanDesktop.IsActive && _state.CleanDesktopEnabled && _startup.IsEnabled())
         {
@@ -893,6 +894,7 @@ public sealed partial class WidgetCoordinator : IDisposable
             SaveNow();
         }
         _isExiting = true;
+        StopIdleMemoryTrimTimer();
         _trayIcon.Visible = false;
         _trayIcon.Dispose();
         _launcherPanel?.Close();

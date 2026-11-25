@@ -19,6 +19,7 @@ internal static class LauncherIconCache
     private static readonly Dictionary<string, Task<ImageSource?>> Inflight = new(StringComparer.OrdinalIgnoreCase);
     private static System.Threading.Timer? _idleTrimTimer;
     private static bool _idleTrimArmed;
+    private static long _generation;
 
     private sealed class CacheEntry(ImageSource icon, LinkedListNode<string> node, long lastAccessedTick)
     {
@@ -68,9 +69,15 @@ internal static class LauncherIconCache
     /// </summary>
     internal static ImageSource? GetOrLoadSync(string key, Func<ImageSource?> loader)
     {
-        if (TryGet(key, out var cached))
+        long generation;
+        lock (Gate)
         {
-            return cached;
+            if (Icons.TryGetValue(key, out var found))
+            {
+                TouchLocked(found, Environment.TickCount64);
+                return found.Icon;
+            }
+            generation = _generation;
         }
 
         var loaded = loader();
@@ -78,7 +85,7 @@ internal static class LauncherIconCache
         {
             freezable.Freeze();
         }
-        return StoreIcon(key, loaded);
+        return StoreIcon(key, loaded, generation);
     }
 
     /// <summary>
@@ -88,6 +95,7 @@ internal static class LauncherIconCache
     internal static Task<ImageSource?> GetOrLoadAsync(string key, Func<Task<ImageSource?>> loader)
     {
         TaskCompletionSource<ImageSource?> created;
+        long generation;
         lock (Gate)
         {
             if (Icons.TryGetValue(key, out var found))
@@ -99,18 +107,20 @@ internal static class LauncherIconCache
             {
                 return existing;
             }
+            generation = _generation;
             created = new TaskCompletionSource<ImageSource?>(TaskCreationOptions.RunContinuationsAsynchronously);
             Inflight[key] = created.Task;
         }
 
-        _ = RunLoaderAsync(key, loader, created);
+        _ = RunLoaderAsync(key, loader, created, generation);
         return created.Task;
     }
 
     private static async Task RunLoaderAsync(
         string key,
         Func<Task<ImageSource?>> loader,
-        TaskCompletionSource<ImageSource?> tcs)
+        TaskCompletionSource<ImageSource?> tcs,
+        long generation)
     {
         ImageSource? resolved = null;
         try
@@ -123,12 +133,12 @@ internal static class LauncherIconCache
         }
         finally
         {
-            var canonical = CompleteInflight(key, tcs.Task, resolved);
+            var canonical = CompleteInflight(key, tcs.Task, resolved, generation);
             tcs.TrySetResult(canonical);
         }
     }
 
-    private static ImageSource? StoreIcon(string key, ImageSource? icon)
+    private static ImageSource? StoreIcon(string key, ImageSource? icon, long expectedGeneration)
     {
         if (icon is null)
         {
@@ -137,11 +147,19 @@ internal static class LauncherIconCache
 
         lock (Gate)
         {
+            if (expectedGeneration != _generation)
+            {
+                return icon;
+            }
             return StoreIconLocked(key, icon);
         }
     }
 
-    private static ImageSource? CompleteInflight(string key, Task<ImageSource?> expectedTask, ImageSource? icon)
+    private static ImageSource? CompleteInflight(
+        string key,
+        Task<ImageSource?> expectedTask,
+        ImageSource? icon,
+        long expectedGeneration)
     {
         lock (Gate)
         {
@@ -149,7 +167,11 @@ internal static class LauncherIconCache
             {
                 Inflight.Remove(key);
             }
-            return icon is null ? null : StoreIconLocked(key, icon);
+            if (icon is null || expectedGeneration != _generation)
+            {
+                return icon;
+            }
+            return StoreIconLocked(key, icon);
         }
     }
 
@@ -196,8 +218,10 @@ internal static class LauncherIconCache
     {
         lock (Gate)
         {
+            _generation++;
             Icons.Clear();
             AccessOrder.Clear();
+            Inflight.Clear();
             StopIdleTrimLocked();
         }
     }

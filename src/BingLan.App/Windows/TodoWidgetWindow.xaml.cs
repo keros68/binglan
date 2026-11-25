@@ -2563,7 +2563,7 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         }
         if (sender is FrameworkElement row
             && row.ContextMenu is { } menu
-            && ReferenceEquals(e.Source, sender))
+            && e.Source is not System.Windows.Controls.TextBox)
         {
             ConfigureTodoItemContextMenu(menu, row);
         }
