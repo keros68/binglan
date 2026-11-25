@@ -517,14 +517,19 @@ public static class ScreenProfileAccessor
         };
         DesktopExperienceRules.Normalize(copiedExperience);
         profile.Experience = copiedExperience;
-        profile.QuickPlaces = state.QuickPlaces
-            .Select(place => new QuickPlaceState
-            {
-                Icon = place.Icon,
-                Name = place.Name,
-                Target = place.Target
-            })
-            .ToList();
+        var existingQuickPlaces = QuickPlaceRules.Normalize(profile.QuickPlaces);
+        var hasCustomQuickPlaces = !AreQuickPlacesEquivalent(existingQuickPlaces, QuickPlaceRules.CreateDefaults());
+        if (!hasCustomQuickPlaces)
+        {
+            profile.QuickPlaces = state.QuickPlaces
+                .Select(place => new QuickPlaceState
+                {
+                    Icon = place.Icon,
+                    Name = place.Name,
+                    Target = place.Target
+                })
+                .ToList();
+        }
 
         var pixelMap = ApplyPresetToScreen(
             state,

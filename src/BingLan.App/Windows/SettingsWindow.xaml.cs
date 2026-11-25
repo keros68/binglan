@@ -1359,6 +1359,8 @@ public partial class SettingsWindow : Window
                 WidgetAppearanceRules.CoerceHeaderOpacity(
                     SelectedComponentHeaderOpacitySlider.Value);
             component.CornerRadius = SelectedComponentCornerRadiusSlider.Value;
+            var previousWidth = component.Placement.Width;
+            var previousHeight = component.Placement.Height;
             component.Placement.Width = ParseSize(
                 SelectedComponentWidthEditor.Text,
                 component.Placement.Width,
@@ -1372,17 +1374,38 @@ public partial class SettingsWindow : Window
                     minimumHeight,
                     1200d);
             }
+            var sizeEdited = Math.Abs(component.Placement.Width - previousWidth) > 0.5d
+                || Math.Abs(component.Placement.Height - previousHeight) > 0.5d;
+            if (sizeEdited && _activeScreenKey is not null)
+            {
+                if (component.Placement.MonitorLocal is { } editedLocal)
+                {
+                    editedLocal.WidthDip = component.Placement.Width;
+                    editedLocal.HeightDip = component.Placement.Height;
+                }
+                // Drop only the current arrangement's stale layout entry so MultiScreenHost applies
+                // the edited DIP size while preserving saved placements for other monitor arrangements.
+                var currentLayoutKey = _multiScreenOptions.Count > 0
+                    ? DisplayLayoutRules.Key(_multiScreenOptions.Select(option => (option.Bounds, option.Dpi)))
+                    : BingLan.App.Services.WindowScreenRecovery.CurrentLayout();
+                component.Placement.DisplayLayouts.RemoveAll(layout =>
+                    layout is null || string.Equals(layout.Layout, currentLayoutKey, StringComparison.Ordinal));
+            }
             component.Density = density;
             if (_selectedComponentEntry.Window is { } targetWindow)
             {
+                component.IsLocked = SelectedComponentLockedCheckBox.IsChecked == true;
                 // 先应用组件状态、再应用锁定：ApplyWidgetLock 会触发窗口状态回写，
                 // 把窗口当前尺寸写回组件 Placement。放在后面时窗口已拿到上面写入的
-                // 新尺寸，回写与设置一致；放在前面则会用旧尺寸覆盖，卡片尺寸设置
-                // 永远不生效。
+                // 新尺寸，回写与设置一致；若本次把卡片设为隐藏导致窗口已关闭，则跳过
+                // 窗口回调避免把已退休的副屏窗口误判为主屏。
                 ApplyActiveDesktopExperience(activeExperience);
-                _applyWidgetLock(
-                    targetWindow,
-                    SelectedComponentLockedCheckBox.IsChecked == true);
+                if (component.IsVisible && !targetWindow.IsClosingOrClosed)
+                {
+                    _applyWidgetLock(
+                        targetWindow,
+                        SelectedComponentLockedCheckBox.IsChecked == true);
+                }
             }
             else
             {
@@ -1442,10 +1465,14 @@ public partial class SettingsWindow : Window
             : $"当前跟随全局（{summary}）。{scopeNoun}可在“外观样式”页统一改色；单独定制此卡片请展开下方“独立外观”";
     }
 
-    private bool HasOwnLook(DesktopComponentKind kind) => !DesktopStyleRules.FollowsSharedLook(
-        ActiveDesktopExperience.GetComponent(kind),
-        _maintenance.Style,
-        QuickPlacesWindow.ClearBarOpacity);
+    private bool HasOwnLook(DesktopComponentKind kind) =>
+        HasOwnLook(ActiveDesktopExperience, kind);
+
+    private bool HasOwnLook(DesktopExperienceState experience, DesktopComponentKind kind) =>
+        !DesktopStyleRules.FollowsSharedLook(
+            experience.GetComponent(kind),
+            _maintenance.Style,
+            QuickPlacesWindow.ClearBarOpacity);
 
     // Gives one card the colours of the shared material again, as applying the global
     // material would.
@@ -4662,11 +4689,30 @@ public partial class SettingsWindow : Window
     private void RenderPresetPreviews(DesktopLayoutPreset preset)
     {
         var experience = ActiveDesktopExperience;
-        PresetPreviewImage.Source = ThemePreviewRenderer.RenderPreset(preset, experience);
-        QuietPresetThumb.Source = ThemePreviewRenderer.RenderPreset(DesktopLayoutPreset.QuietInformation, experience);
-        GlacierPresetThumb.Source = ThemePreviewRenderer.RenderPreset(DesktopLayoutPreset.GlacierWorkbench, experience);
-        ApplePresetThumb.Source = ThemePreviewRenderer.RenderPreset(DesktopLayoutPreset.TransparentApple, experience);
-        CenterClockPresetThumb.Source = ThemePreviewRenderer.RenderPreset(DesktopLayoutPreset.CenterClock, experience);
+        var area = GetActiveScreenPreviewWorkAreaDip();
+        PresetPreviewImage.Source = ThemePreviewRenderer.RenderPreset(preset, experience, area);
+        QuietPresetThumb.Source = ThemePreviewRenderer.RenderPreset(DesktopLayoutPreset.QuietInformation, experience, area);
+        GlacierPresetThumb.Source = ThemePreviewRenderer.RenderPreset(DesktopLayoutPreset.GlacierWorkbench, experience, area);
+        ApplePresetThumb.Source = ThemePreviewRenderer.RenderPreset(DesktopLayoutPreset.TransparentApple, experience, area);
+        CenterClockPresetThumb.Source = ThemePreviewRenderer.RenderPreset(DesktopLayoutPreset.CenterClock, experience, area);
+    }
+
+    private Rect GetActiveScreenPreviewWorkAreaDip()
+    {
+        if (IsMultiScreenActive
+            && _multiScreenOptions.FirstOrDefault(option =>
+                string.Equals(option.ScreenKey, _activeScreenKey, StringComparison.Ordinal)) is { } selected
+            && selected.WorkingArea.HasArea)
+        {
+            var scale = ScreenProfileAccessor.ResolveScale(selected.Dpi);
+            return new Rect(
+                selected.WorkingArea.Left / scale,
+                selected.WorkingArea.Top / scale,
+                selected.WorkingArea.Width / scale,
+                selected.WorkingArea.Height / scale);
+        }
+
+        return SystemParameters.WorkArea;
     }
 
     private void ApplyLayout_Click(object sender, RoutedEventArgs e)

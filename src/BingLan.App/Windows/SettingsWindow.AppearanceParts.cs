@@ -105,8 +105,12 @@ public partial class SettingsWindow
     private void AppearanceViewCustomCards_Click(object sender, RoutedEventArgs e)
     {
         var firstCustom = FindFirstCustomLookCard();
-        if (firstCustom is { BuiltInKind: { } kind })
+        if (firstCustom is { BuiltInKind: { } kind } foundBuiltIn)
         {
+            if (!string.Equals(_activeScreenKey, foundBuiltIn.ScreenKey, StringComparison.Ordinal))
+            {
+                SelectActiveScreen(foundBuiltIn.ScreenKey);
+            }
             SelectNavigationPage(SettingsNavigationRules.ComponentsPageKey);
             RefreshComponentList(null, kind);
             ComponentOwnLookFold.IsExpanded = true;
@@ -116,6 +120,7 @@ public partial class SettingsWindow
 
         if (firstCustom is { SecondaryTodo: { } todo })
         {
+            SyncActiveScreenForTargetWindow(todo);
             SelectNavigationPage(SettingsNavigationRules.ComponentsPageKey);
             RefreshComponentList(todo);
             ComponentOwnLookFold.IsExpanded = true;
@@ -125,6 +130,7 @@ public partial class SettingsWindow
 
         if (firstCustom is { Widget: { } widget })
         {
+            SyncActiveScreenForTargetWindow(widget);
             SelectNavigationPage(SettingsNavigationRules.ComponentsPageKey);
             RefreshComponentList(widget);
             SelectedWidgetOwnLookFold.IsExpanded = true;
@@ -157,43 +163,91 @@ public partial class SettingsWindow
         }
     }
 
+    private IReadOnlyList<(string? ScreenKey, DesktopExperienceState Experience)> EnumerateAppearanceScopes()
+    {
+        var scopes = new List<(string? ScreenKey, DesktopExperienceState Experience)>
+        {
+            (null, _desktopExperience)
+        };
+        if (_maintenance.MultiScreen is { } bridge && bridge.IsEnabled())
+        {
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var screen in _multiScreenOptions)
+            {
+                if (screen.ScreenKey is { } key && seen.Add(key))
+                {
+                    scopes.Add((key, bridge.GetExperience(key)));
+                }
+            }
+        }
+        return scopes;
+    }
+
     private void RestoreAllDesktopCardsToGlobalLook()
     {
+        var scopes = EnumerateAppearanceScopes();
         var anyBuiltIn = false;
-        foreach (var kind in CurrentComponentKinds.Where(kind =>
-                     _desktopExperience.GetComponent(kind).IsVisible && HasOwnLook(kind)).ToList())
+        foreach (var (screenKey, experience) in scopes)
         {
-            var component = _desktopExperience.GetComponent(kind);
-            var look = DesktopStyleRules.ComponentLook(kind, _maintenance.Style, QuickPlacesWindow.ClearBarOpacity);
-            component.Appearance.BackgroundColor = look.BackgroundColor;
-            component.Appearance.BackgroundOpacity = look.BackgroundOpacity;
-            component.Appearance.TextColor = look.TextColor;
-            if (kind == DesktopComponentKind.Todo)
+            var changedScope = false;
+            foreach (var kind in CurrentComponentKinds.Where(kind =>
+                         experience.GetComponent(kind).IsVisible && HasOwnLook(experience, kind)).ToList())
             {
-                var glass = DesktopStyleRules.Appearance(_maintenance.Style);
-                component.Appearance.HeaderColor = glass.HeaderColor;
-                component.Appearance.HeaderOpacity = glass.HeaderOpacity;
+                var component = experience.GetComponent(kind);
+                var look = DesktopStyleRules.ComponentLook(kind, _maintenance.Style, QuickPlacesWindow.ClearBarOpacity);
+                component.Appearance.BackgroundColor = look.BackgroundColor;
+                component.Appearance.BackgroundOpacity = look.BackgroundOpacity;
+                component.Appearance.TextColor = look.TextColor;
+                if (kind == DesktopComponentKind.Todo)
+                {
+                    var glass = DesktopStyleRules.Appearance(_maintenance.Style);
+                    component.Appearance.HeaderColor = glass.HeaderColor;
+                    component.Appearance.HeaderOpacity = glass.HeaderOpacity;
+                }
+                changedScope = true;
+                anyBuiltIn = true;
             }
-            anyBuiltIn = true;
+
+            if (changedScope)
+            {
+                if (screenKey is null)
+                {
+                    _applyDesktopExperience(experience);
+                }
+                else
+                {
+                    _maintenance.MultiScreen?.ApplyExperience(screenKey, experience);
+                }
+            }
         }
 
-        if (anyBuiltIn)
+        if (anyBuiltIn
+            && _selectedComponentEntry?.Kind is { } selectedKind
+            && !IsSecondaryTodoWindow(_selectedComponentEntry.Window, out _))
         {
-            _applyDesktopExperience(_desktopExperience);
-            if (_selectedComponentEntry?.Kind is { } selectedKind
-                && !IsSecondaryTodoWindow(_selectedComponentEntry.Window, out _))
-            {
-                _componentApplyTimer.Stop();
-                LoadSelectedComponentEditor(selectedKind, _selectedComponentEntry.Window);
-                UpdateOwnLookSummary(selectedKind);
-            }
+            _componentApplyTimer.Stop();
+            LoadSelectedComponentEditor(selectedKind, _selectedComponentEntry.Window);
+            UpdateOwnLookSummary(selectedKind);
         }
 
-        if (_desktopExperience.GetComponent(DesktopComponentKind.Todo).IsVisible)
+        foreach (var (screenKey, experience) in scopes)
         {
-            foreach (var todoWindow in _widgetProvider()
+            if (!experience.GetComponent(DesktopComponentKind.Todo).IsVisible)
+            {
+                continue;
+            }
+
+            var screenWindows = screenKey is null && _maintenance.MultiScreen is not { }
+                ? _widgetProvider()
+                : (_maintenance.MultiScreen?.IsEnabled() == true
+                    ? _maintenance.MultiScreen.GetWindowsForScreen(screenKey)
+                    : _widgetProvider());
+            var screenPrimaryTodoId = screenKey is null
+                ? _maintenance.PrimaryTodoId()
+                : _maintenance.MultiScreen?.GetPrimaryTodoId(screenKey);
+            foreach (var todoWindow in screenWindows
                          .OfType<TodoWidgetWindow>()
-                         .Where(todo => IsSecondaryTodoWindow(todo, out _)
+                         .Where(todo => screenPrimaryTodoId is { } id && id != todo.State.Id
                              && !DesktopStyleRules.FollowsSharedCardLook(todo.State.Appearance, _maintenance.Style))
                          .ToList())
             {
@@ -228,21 +282,31 @@ public partial class SettingsWindow
 
     private int CountCustomLookDesktopCards()
     {
+        var scopes = EnumerateAppearanceScopes();
         var count = 0;
-        foreach (var kind in CurrentComponentKinds)
+        foreach (var (screenKey, experience) in scopes)
         {
-            if (_desktopExperience.GetComponent(kind).IsVisible && HasOwnLook(kind))
+            foreach (var kind in CurrentComponentKinds)
             {
-                count++;
+                if (experience.GetComponent(kind).IsVisible && HasOwnLook(experience, kind))
+                {
+                    count++;
+                }
             }
-        }
 
-        if (_desktopExperience.GetComponent(DesktopComponentKind.Todo).IsVisible)
-        {
-            count += _widgetProvider()
-                .OfType<TodoWidgetWindow>()
-                .Count(todo => IsSecondaryTodoWindow(todo, out _)
-                    && !DesktopStyleRules.FollowsSharedCardLook(todo.State.Appearance, _maintenance.Style));
+            if (experience.GetComponent(DesktopComponentKind.Todo).IsVisible)
+            {
+                var screenWindows = _maintenance.MultiScreen?.IsEnabled() == true
+                    ? _maintenance.MultiScreen.GetWindowsForScreen(screenKey)
+                    : _widgetProvider();
+                var screenPrimaryTodoId = screenKey is null
+                    ? _maintenance.PrimaryTodoId()
+                    : _maintenance.MultiScreen?.GetPrimaryTodoId(screenKey);
+                count += screenWindows
+                    .OfType<TodoWidgetWindow>()
+                    .Count(todo => screenPrimaryTodoId is { } id && id != todo.State.Id
+                        && !DesktopStyleRules.FollowsSharedCardLook(todo.State.Appearance, _maintenance.Style));
+            }
         }
 
         count += _widgetProvider()
@@ -252,32 +316,42 @@ public partial class SettingsWindow
         return count;
     }
 
-    private (DesktopComponentKind? BuiltInKind, TodoWidgetWindow? SecondaryTodo, WidgetWindowBase? Widget)? FindFirstCustomLookCard()
+    private (string? ScreenKey, DesktopComponentKind? BuiltInKind, TodoWidgetWindow? SecondaryTodo, WidgetWindowBase? Widget)? FindFirstCustomLookCard()
     {
-        foreach (var kind in CurrentComponentKinds)
+        var scopes = EnumerateAppearanceScopes();
+        foreach (var (screenKey, experience) in scopes)
         {
-            if (_desktopExperience.GetComponent(kind).IsVisible && HasOwnLook(kind))
+            foreach (var kind in CurrentComponentKinds)
             {
-                return (kind, null, null);
+                if (experience.GetComponent(kind).IsVisible && HasOwnLook(experience, kind))
+                {
+                    return (screenKey, kind, null, null);
+                }
             }
-        }
 
-        if (_desktopExperience.GetComponent(DesktopComponentKind.Todo).IsVisible)
-        {
-            var todo = _widgetProvider()
-                .OfType<TodoWidgetWindow>()
-                .FirstOrDefault(candidate => IsSecondaryTodoWindow(candidate, out _)
-                    && !DesktopStyleRules.FollowsSharedCardLook(candidate.State.Appearance, _maintenance.Style));
-            if (todo is not null)
+            if (experience.GetComponent(DesktopComponentKind.Todo).IsVisible)
             {
-                return (null, todo, null);
+                var screenWindows = _maintenance.MultiScreen?.IsEnabled() == true
+                    ? _maintenance.MultiScreen.GetWindowsForScreen(screenKey)
+                    : _widgetProvider();
+                var screenPrimaryTodoId = screenKey is null
+                    ? _maintenance.PrimaryTodoId()
+                    : _maintenance.MultiScreen?.GetPrimaryTodoId(screenKey);
+                var todo = screenWindows
+                    .OfType<TodoWidgetWindow>()
+                    .FirstOrDefault(candidate => screenPrimaryTodoId is { } id && id != candidate.State.Id
+                        && !DesktopStyleRules.FollowsSharedCardLook(candidate.State.Appearance, _maintenance.Style));
+                if (todo is not null)
+                {
+                    return (screenKey, null, todo, null);
+                }
             }
         }
 
         var widget = _widgetProvider()
             .FirstOrDefault(candidate => candidate is FileBoxWindow or NoteWidgetWindow
                 && !DesktopStyleRules.FollowsSharedCardLook(candidate.WidgetAppearance, _maintenance.Style));
-        return widget is not null ? (null, null, widget) : null;
+        return widget is not null ? (null, null, null, widget) : null;
     }
 
     /// <summary>

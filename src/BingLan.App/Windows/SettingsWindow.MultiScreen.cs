@@ -172,6 +172,7 @@ public partial class SettingsWindow
     {
         if (_maintenance.MultiScreen is not { } bridge || !bridge.IsEnabled())
         {
+            FlushPendingComponentEditsBeforeScreenSwitch();
             _activeScreenKey = null;
             return;
         }
@@ -179,8 +180,21 @@ public partial class SettingsWindow
         var key = bridge.GetScreenKeyForWindow(window);
         if (!string.Equals(_activeScreenKey, key, StringComparison.Ordinal))
         {
+            FlushPendingComponentEditsBeforeScreenSwitch();
             _activeScreenKey = key;
             RefreshMultiScreenUi();
+            SyncPresetRadiosForActiveScreen();
+            UpdatePresetPreview(GetSelectedPreset());
+        }
+    }
+
+    private void FlushPendingComponentEditsBeforeScreenSwitch()
+    {
+        CommitPendingTitleEdits();
+        if (_componentApplyTimer.IsEnabled)
+        {
+            _componentApplyTimer.Stop();
+            ApplySelectedComponent(refreshList: false);
         }
     }
 
@@ -226,6 +240,7 @@ public partial class SettingsWindow
             || _activeScreenKey is not null
             && !screens.Any(option => string.Equals(option.ScreenKey, _activeScreenKey, StringComparison.Ordinal)))
         {
+            FlushPendingComponentEditsBeforeScreenSwitch();
             _activeScreenKey = null;
         }
 
@@ -272,9 +287,13 @@ public partial class SettingsWindow
             _updatingMultiScreenUi = false;
         }
 
-        if (refreshComponentList && !_isClosed)
+        if (!_isClosed)
         {
-            RefreshComponentList(_selectedComponentEntry?.Window, _selectedComponentEntry?.Kind);
+            if (refreshComponentList)
+            {
+                RefreshComponentList(_selectedComponentEntry?.Window, _selectedComponentEntry?.Kind);
+            }
+            RefreshAppearanceOverrides();
         }
     }
 
@@ -320,6 +339,7 @@ public partial class SettingsWindow
         _activeScreenKey = normalized;
         RefreshMultiScreenUi();
         SyncPresetRadiosForActiveScreen();
+        UpdatePresetPreview(GetSelectedPreset());
         RefreshComponentList();
     }
 
@@ -342,6 +362,10 @@ public partial class SettingsWindow
 
     private void CollapseAllMultiScreenHosts()
     {
+        if (_activeScreenKey is not null)
+        {
+            FlushPendingComponentEditsBeforeScreenSwitch();
+        }
         _activeScreenKey = null;
         _multiScreenOptions = [];
         if (SchemeMultiScreenHost is not null)
@@ -737,8 +761,8 @@ public partial class SettingsWindow
         headerGrid.Children.Add(moveAllButton);
         stack.Children.Add(headerGrid);
 
-        var itemWrap = new WrapPanel { Margin = new Thickness(0, 6, 0, 0) };
-        foreach (var item in disconnected.Take(6))
+        var itemWrap = new WrapPanel();
+        foreach (var item in disconnected)
         {
             var moveOne = new Button
             {
@@ -765,7 +789,15 @@ public partial class SettingsWindow
             };
             itemWrap.Children.Add(moveOne);
         }
-        stack.Children.Add(itemWrap);
+        var scrollHost = new ScrollViewer
+        {
+            Margin = new Thickness(0, 6, 0, 0),
+            MaxHeight = 128,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            Content = itemWrap
+        };
+        stack.Children.Add(scrollHost);
 
         banner.Child = stack;
         return banner;

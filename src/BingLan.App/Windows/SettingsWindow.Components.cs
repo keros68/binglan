@@ -261,7 +261,7 @@ public partial class SettingsWindow
         DesktopComponentKind kind,
         DesktopComponentSettingsEntry entry)
     {
-        var component = _desktopExperience.GetComponent(kind);
+        var component = ActiveDesktopExperience.GetComponent(kind);
         var isTodo = kind == DesktopComponentKind.Todo;
         var canRename = isTodo && entry.Window is TodoWidgetWindow;
 
