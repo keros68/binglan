@@ -27,6 +27,7 @@ internal static class MultiScreenTests
         TestMonitorLocalPlacementAndPortMigrationRules();
         TestQuickPlacesMergeTodoOwnershipAndLayoutOrder();
         TestGroupedFileBoxMultiScreenSync();
+        TestCodexReviewEdgeCases();
     }
 
     private static void TestSchemaV64ToV65MigrationAndNullZeroOverhead()
@@ -668,6 +669,214 @@ internal static class MultiScreenTests
             && split[1].Placement.MonitorLocal is not null
             && split[1].Placement.MonitorLocal!.LocalLeftDip > split[0].Placement.MonitorLocal!.LocalLeftDip,
             "SplitAll 后所有拆出成员应保留所属 ScreenKey 且 MonitorLocal 带级联偏移");
+    }
+
+    private static void TestCodexReviewEdgeCases()
+    {
+        // 1. Full destination QuickPlaces must keep untransferred shortcuts on source without data loss.
+        var qpState = LocalStateStore.CreateDefault();
+        qpState.MultiScreen = new MultiScreenState { IsEnabled = true };
+        qpState.DesktopExperience.GetComponent(DesktopComponentKind.QuickLaunch).IsVisible = true;
+        qpState.QuickPlaces = Enumerable.Range(0, QuickPlaceRules.MaximumItems)
+            .Select(i => new QuickPlaceState { Icon = "\uE8B7", Name = $"主屏{i}", Target = $@"C:\Primary\{i}" })
+            .ToList();
+        var secProfile = ScreenProfileAccessor.EnsureScreenProfile(qpState, SecondaryKey);
+        secProfile.Experience.GetComponent(DesktopComponentKind.QuickLaunch).IsVisible = true;
+        secProfile.QuickPlaces =
+        [
+            new QuickPlaceState { Icon = "\uE8B7", Name = "副屏专属", Target = @"D:\Secondary\Only" }
+        ];
+        var moved = ScreenProfileAccessor.MoveDisconnectedQuickPlacesToPrimary(qpState, SecondaryKey);
+        Check(!moved && secProfile.QuickPlaces.Any(p => p.Target == @"D:\Secondary\Only")
+            && secProfile.Experience.GetComponent(DesktopComponentKind.QuickLaunch).IsVisible,
+            "主屏快捷入口已满 12 条时迁移不得丢失副屏快捷入口");
+
+        // Moving an intentionally emptied secondary QuickPlaces card to a hidden default primary must keep it empty.
+        var emptyQpState = LocalStateStore.CreateDefault();
+        emptyQpState.MultiScreen = new MultiScreenState { IsEnabled = true };
+        emptyQpState.DesktopExperience.GetComponent(DesktopComponentKind.QuickLaunch).IsVisible = false;
+        var emptySecProfile = ScreenProfileAccessor.EnsureScreenProfile(emptyQpState, SecondaryKey);
+        emptySecProfile.Experience.GetComponent(DesktopComponentKind.QuickLaunch).IsVisible = true;
+        emptySecProfile.QuickPlaces = [];
+        Check(ScreenProfileAccessor.MoveDisconnectedQuickPlacesToPrimary(emptyQpState, SecondaryKey)
+            && emptyQpState.QuickPlaces.Count == 0
+            && emptyQpState.DesktopExperience.GetComponent(DesktopComponentKind.QuickLaunch).IsVisible,
+            "副屏清空的快捷入口移回隐藏默认主屏时必须保留空列表，不得复活默认 6 项");
+
+        // 2. Friendly-name pass must respect primary model exclusion AND preserve ambiguity before exclusion.
+        var modelState = LocalStateStore.CreateDefault();
+        modelState.MultiScreen = new MultiScreenState { IsEnabled = true };
+        var oldSameModel = ScreenProfileAccessor.EnsureScreenProfile(
+            modelState, @"DISPLAY#DELA001#4&1111&0&UID1", @"\\.\DISPLAY2", "Dell U2723QE");
+        oldSameModel.FriendlyName = "Dell U2723QE";
+        var migratedCount = ScreenProfileAccessor.ReconcileConnectedProfileKeys(
+            modelState,
+            [new MonitorIdentityCandidate(
+                MonitorKey: @"DISPLAY#DELA001#4&2222&0&UID2",
+                HardwareId: @"DISPLAY#DELA001#4&2222&0&UID2",
+                DeviceName: @"\\.\DISPLAY3",
+                FriendlyName: "Dell U2723QE",
+                DisplayLabel: "Dell U2723QE")],
+            primaryHardwareId: @"DISPLAY#DELA001#4&0000&0&UID0",
+            primaryModelId: "DISPLAY#DELA001",
+            primaryFriendlyName: null);
+        Check(migratedCount == 0 && modelState.MultiScreen.Screens.ContainsKey(@"DISPLAY#DELA001#4&1111&0&UID1"),
+            "主屏与副屏同型号且主屏友好名缺失时，友好名回退同样必须排除主屏型号");
+
+        var oldModelLess = ScreenProfileAccessor.EnsureScreenProfile(
+            modelState, @"FALLBACK_DELL_B", @"\\.\DISPLAY4", "Dell U2723QE");
+        oldModelLess.FriendlyName = "Dell U2723QE";
+        var ambiguousCount = ScreenProfileAccessor.ReconcileConnectedProfileKeys(
+            modelState,
+            [new MonitorIdentityCandidate(
+                MonitorKey: @"FALLBACK_DELL_NEW",
+                HardwareId: null,
+                DeviceName: @"\\.\DISPLAY5",
+                FriendlyName: "Dell U2723QE",
+                DisplayLabel: "Dell U2723QE")],
+            primaryHardwareId: @"DISPLAY#DELA001#4&0000&0&UID0",
+            primaryModelId: "DISPLAY#DELA001",
+            primaryFriendlyName: null);
+        Check(ambiguousCount == 0 && modelState.MultiScreen.Screens.ContainsKey(@"FALLBACK_DELL_B"),
+            "两条离线配置同名时须先判歧义再排主屏型号，不得把无型号配置误当唯一匹配");
+
+        // 3. Cross-screen move clears stale source DisplayLayouts.
+        var moveState = LocalStateStore.CreateDefault();
+        moveState.MultiScreen = new MultiScreenState { IsEnabled = true };
+        var note = new NoteWidgetState { Id = Guid.NewGuid(), Title = "便签", ScreenKey = null };
+        DisplayLayoutRules.Remember(note.Placement, "old-layout", new PixelRect(100, 100, 400, 360));
+        moveState.NoteWidgets.Add(note);
+        _ = ScreenProfileAccessor.MoveNoteToScreen(
+            moveState, note.Id, SecondaryKey, SecondaryWorkPx, SecondaryDpi, currentLayoutKey: "new-layout");
+        Check(note.Placement.DisplayLayouts.Count == 1 && note.Placement.DisplayLayouts[0].Layout == "new-layout",
+            "跨屏移动后必须清除原屏幕旧布局历史，避免切回旧拓扑时跳回原屏");
+
+        // 4. MigrateScreenKey refreshes EdgeDockMonitorDeviceName (and clears when device name missing).
+        var dockBox = new FileBoxState
+        {
+            Id = Guid.NewGuid(),
+            Title = "贴边盒",
+            ScreenKey = SecondaryKey,
+            EdgeDockSide = FileBoxEdgeDockSide.Right,
+            EdgeDockMonitorDeviceName = @"\\.\DISPLAY2"
+        };
+        moveState.FileBoxes.Add(dockBox);
+        Check(ScreenProfileAccessor.MigrateScreenKey(moveState, SecondaryKey, SecondaryKey + "_V2", deviceName: @"\\.\DISPLAY5")
+            && dockBox.EdgeDockMonitorDeviceName == @"\\.\DISPLAY5",
+            "MigrateScreenKey 应同步更新文件盒的 EdgeDockMonitorDeviceName");
+        Check(ScreenProfileAccessor.MigrateScreenKey(moveState, SecondaryKey + "_V2", SecondaryKey + "_V3", deviceName: null)
+            && dockBox.EdgeDockSide is null && dockBox.EdgeDockMonitorDeviceName is null,
+            "MigrateScreenKey 无新设备名时应清除陈旧贴边停靠锚点");
+
+        // 5. Detach of collapsed secondary box updates MonitorLocal height and anchors.
+        var collapsedTab = new FileBoxState
+        {
+            Id = Guid.NewGuid(),
+            Title = "折叠页",
+            ScreenKey = SecondaryKey,
+            IsCollapsed = true,
+            ExpandedHeight = 360d,
+            Placement = new WindowPlacement
+            {
+                Width = 320d,
+                Height = 40d,
+                MonitorLocal = new MonitorLocalPlacement
+                {
+                    LocalLeftDip = 100d,
+                    LocalTopDip = 100d,
+                    WidthDip = 320d,
+                    HeightDip = 40d,
+                    AnchorX = 0.05d,
+                    AnchorY = 0.05d,
+                    SourceWorkWidthDip = 1280d,
+                    SourceWorkHeightDip = 720d
+                }
+            }
+        };
+        var hostTab = new FileBoxState { Id = Guid.NewGuid(), Title = "主标签", ScreenKey = SecondaryKey };
+        FileBoxGroupRules.Merge([collapsedTab], [hostTab]);
+        collapsedTab.IsCollapsed = true;
+        collapsedTab.ExpandedHeight = 360d;
+        collapsedTab.Placement.Width = 320d;
+        collapsedTab.Placement.Height = 40d;
+        collapsedTab.Placement.MonitorLocal = new MonitorLocalPlacement
+        {
+            LocalLeftDip = 100d,
+            LocalTopDip = 100d,
+            WidthDip = 320d,
+            HeightDip = 40d,
+            AnchorX = 0.1d,
+            AnchorY = 0.1d,
+            SourceWorkWidthDip = 1280d,
+            SourceWorkHeightDip = 720d
+        };
+        hostTab.Placement = ScreenProfileAccessor.ClonePlacement(collapsedTab.Placement);
+        _ = FileBoxGroupRules.Detach(collapsedTab, [hostTab, collapsedTab]);
+        var expectedLeft = 100d + FileBoxGroupRules.DefaultDetachOffsetDip;
+        var expectedAnchorX = expectedLeft / (1280d - 320d);
+        Check(Math.Abs((collapsedTab.Placement.MonitorLocal?.HeightDip ?? 0d) - 360d) < 0.01d
+            && Math.Abs((collapsedTab.Placement.MonitorLocal?.AnchorX ?? 0d) - expectedAnchorX) < 0.01d,
+            "拆出折叠副屏标签页时应同步更新 MonitorLocal 展开高度与锚点");
+
+        // 6. WeatherService honors failure backoff for concurrent non-forced automatic calls.
+        var failCalls = 0;
+        var weatherService = new WeatherService(new StubWeatherHandler(() =>
+        {
+            failCalls++;
+            throw new HttpRequestException("simulated outage");
+        }));
+        var w1 = weatherService.RefreshAsync("上海", 31.23, 121.47, forceRefresh: false).GetAwaiter().GetResult();
+        var w2 = weatherService.RefreshAsync("上海", 31.23, 121.47, forceRefresh: false).GetAwaiter().GetResult();
+        Check(failCalls == 1 && w1.Status == WeatherStatus.Failed && w2.Status == WeatherStatus.Failed,
+            "自动天气刷新失败进入退避后，同周期第二次非强制请求应直接复用失败快照，不得重复请求");
+
+        // 7. Secondary PrimaryTodoId reassignment syncs Todo component slot from remaining card.
+        var todoState = LocalStateStore.CreateDefault();
+        todoState.MultiScreen = new MultiScreenState { IsEnabled = true };
+        var todoA = TodoService.CreateDefaultWidget();
+        todoA.ScreenKey = SecondaryKey;
+        todoA.CornerRadius = 12;
+        var todoB = TodoService.CreateDefaultWidget();
+        todoB.ScreenKey = SecondaryKey;
+        todoB.CornerRadius = 26;
+        todoState.TodoWidgets.Add(todoA);
+        todoState.TodoWidgets.Add(todoB);
+        var todoSecProfile = ScreenProfileAccessor.EnsureScreenProfile(todoState, SecondaryKey);
+        todoSecProfile.PrimaryTodoId = todoA.Id.ToString("D");
+        ScreenProfileAccessor.MoveTodoToScreen(todoState, todoA.Id, null, PrimaryWorkPx, PrimaryDpi);
+        Check(todoSecProfile.ParsedPrimaryTodoId == todoB.Id
+            && todoSecProfile.Experience.GetComponent(DesktopComponentKind.Todo).CornerRadius == 26,
+            "副屏主待办移走后重绑剩余待办时应同步槽位外观与位置");
+
+        // 8. Malformed secondary Components:[null] does not crash MultiScreenRules.Normalize.
+        var badMulti = new MultiScreenState { IsEnabled = true };
+        badMulti.Screens[SecondaryKey] = new ScreenProfileState
+        {
+            MonitorKey = SecondaryKey,
+            Experience = new DesktopExperienceState { Components = [null!] }
+        };
+        MultiScreenRules.Normalize(badMulti);
+        Check(badMulti.Screens[SecondaryKey].Experience.Components.All(c => c is not null),
+            "副屏配置含 null 组件项时 Normalize 应过滤而非抛出 NullReferenceException");
+
+        // 9 & 10. CopyPrimaryProfileToScreen preserves greeting color; primary preset clears MonitorLocal.
+        var copyState = LocalStateStore.CreateDefault();
+        copyState.MultiScreen = new MultiScreenState { IsEnabled = true };
+        copyState.DesktopExperience.GetComponent(DesktopComponentKind.Greeting).Appearance.TextColor = "#FFD166";
+        var copied = ScreenProfileAccessor.CopyPrimaryProfileToScreen(
+            copyState, SecondaryKey, SecondaryWorkPx, SecondaryDpi);
+        Check(copied.Profile.Experience.GetComponent(DesktopComponentKind.Greeting).Appearance.TextColor == "#FFD166",
+            "CopyPrimaryProfileToScreen 应保留主屏自定义问候文字颜色");
+        _ = ScreenProfileAccessor.ApplyPresetToScreen(
+            copyState, null, DesktopLayoutPreset.GlacierWorkbench, PrimaryWorkPx, PrimaryDpi);
+        Check(copyState.DesktopExperience.Components.All(c => c.Placement.MonitorLocal is null),
+            "主屏应用布局预设后不得写入副屏专用的 MonitorLocal 元数据");
+    }
+
+    private sealed class StubWeatherHandler(Func<HttpResponseMessage> factory) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
+            Task.FromResult(factory());
     }
 
     private static void Check(bool condition, string message)

@@ -236,6 +236,8 @@ public static class MultiScreenRules
                     ?? ExtractHardwareModelId(key);
                 rawProfile.FriendlyName = NormalizeFriendlyName(rawProfile.FriendlyName);
                 rawProfile.Experience ??= CreateBlankExperience();
+                rawProfile.Experience.Components ??= [];
+                rawProfile.Experience.Components.RemoveAll(static component => component is null);
                 DesktopExperienceRules.Normalize(rawProfile.Experience);
                 rawProfile.QuickPlaces = QuickPlaceRules.Normalize(rawProfile.QuickPlaces);
 

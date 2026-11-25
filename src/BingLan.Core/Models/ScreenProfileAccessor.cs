@@ -393,7 +393,8 @@ public static class ScreenProfileAccessor
         DesktopLayoutPreset preset,
         PixelRect targetWorkAreaPx,
         uint targetDpi,
-        string? currentLayoutKey = null)
+        string? currentLayoutKey = null,
+        bool preserveGreetingColor = false)
     {
         ArgumentNullException.ThrowIfNull(state);
         var normalizedKey = MultiScreenRules.NormalizeScreenKey(screenKey);
@@ -402,7 +403,10 @@ public static class ScreenProfileAccessor
             : EnsureScreenProfile(state, normalizedKey).Experience;
         DesktopExperienceRules.Normalize(experience);
         experience.ActivePreset = preset;
-        experience.GetComponent(DesktopComponentKind.Greeting).Appearance.TextColor = "#FFFFFF";
+        if (!preserveGreetingColor)
+        {
+            experience.GetComponent(DesktopComponentKind.Greeting).Appearance.TextColor = "#FFFFFF";
+        }
 
         var computed = ComputePresetPlacementsForMonitor(preset, targetWorkAreaPx, targetDpi, currentLayoutKey);
         var pixelMap = new Dictionary<DesktopComponentKind, PixelRect>(computed.Count);
@@ -410,6 +414,10 @@ public static class ScreenProfileAccessor
         {
             var component = experience.GetComponent(kind);
             var existingLayouts = component.Placement.DisplayLayouts;
+            if (normalizedKey is null)
+            {
+                entry.Placement.MonitorLocal = null;
+            }
             component.Placement = entry.Placement;
             if (existingLayouts is { Count: > 0 })
             {
@@ -524,7 +532,8 @@ public static class ScreenProfileAccessor
             copiedExperience.ActivePreset,
             targetWorkAreaPx,
             targetDpi,
-            currentLayoutKey);
+            currentLayoutKey,
+            preserveGreetingColor: true);
 
         TodoWidgetState? createdTodo = null;
         PixelRect? createdTodoPixels = null;
@@ -604,6 +613,7 @@ public static class ScreenProfileAccessor
         {
             todo.Placement.MonitorLocal = null;
         }
+        todo.Placement.DisplayLayouts = [];
         if (!string.IsNullOrEmpty(currentLayoutKey))
         {
             DisplayLayoutRules.Remember(todo.Placement, currentLayoutKey, targetPx);
@@ -665,6 +675,7 @@ public static class ScreenProfileAccessor
         {
             note.Placement.MonitorLocal = null;
         }
+        note.Placement.DisplayLayouts = [];
         if (!string.IsNullOrEmpty(currentLayoutKey))
         {
             DisplayLayoutRules.Remember(note.Placement, currentLayoutKey, targetPx);
@@ -731,6 +742,7 @@ public static class ScreenProfileAccessor
         {
             box.Placement.MonitorLocal = null;
         }
+        box.Placement.DisplayLayouts = [];
         if (!string.IsNullOrEmpty(currentLayoutKey))
         {
             DisplayLayoutRules.Remember(box.Placement, currentLayoutKey, targetPx);
@@ -798,6 +810,7 @@ public static class ScreenProfileAccessor
             else if (prevProfile.ParsedPrimaryTodoId == todo.Id || prevProfile.ParsedPrimaryTodoId is null)
             {
                 prevProfile.PrimaryTodoId = remaining.Id.ToString("D");
+                SyncTodoComponentFromWidget(prevProfile.Experience.GetComponent(DesktopComponentKind.Todo), remaining);
             }
         }
 
@@ -824,7 +837,7 @@ public static class ScreenProfileAccessor
             if (destProfile.ParsedPrimaryTodoId is null)
             {
                 destProfile.PrimaryTodoId = todo.Id.ToString("D");
-                destProfile.Experience.GetComponent(DesktopComponentKind.Todo).Placement = ClonePlacement(todo.Placement);
+                SyncTodoComponentFromWidget(destProfile.Experience.GetComponent(DesktopComponentKind.Todo), todo);
             }
         }
     }
@@ -847,7 +860,14 @@ public static class ScreenProfileAccessor
     public static List<QuickPlaceState> MoveQuickPlacesToScreen(
         AppState state,
         string? sourceScreenKey,
-        string? targetScreenKey)
+        string? targetScreenKey) =>
+        MoveQuickPlacesCore(state, sourceScreenKey, targetScreenKey).DestinationItems;
+
+    private static (List<QuickPlaceState> DestinationItems, List<QuickPlaceState> LeftoverItems, bool TransferredAny)
+        MoveQuickPlacesCore(
+            AppState state,
+            string? sourceScreenKey,
+            string? targetScreenKey)
     {
         ArgumentNullException.ThrowIfNull(state);
         var srcKey = MultiScreenRules.NormalizeScreenKey(sourceScreenKey);
@@ -863,7 +883,7 @@ public static class ScreenProfileAccessor
         var normalized = QuickPlaceRules.Normalize(sourceItems);
         if (string.Equals(srcKey, dstKey, StringComparison.Ordinal))
         {
-            return normalized;
+            return (normalized, [], false);
         }
 
         var destComponent = GetExperience(state, dstKey).GetComponent(DesktopComponentKind.QuickLaunch);
@@ -871,12 +891,18 @@ public static class ScreenProfileAccessor
         var shouldMerge = destComponent.IsVisible
             || !AreQuickPlacesEquivalent(destExisting, QuickPlaceRules.CreateDefaults());
         List<QuickPlaceState> resultItems;
+        var leftover = new List<QuickPlaceState>();
+        var transferredAny = false;
         if (shouldMerge)
         {
             var seenTargets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var merged = new List<QuickPlaceState>(QuickPlaceRules.MaximumItems);
             foreach (var item in destExisting)
             {
+                if (merged.Count >= QuickPlaceRules.MaximumItems)
+                {
+                    break;
+                }
                 if (seenTargets.Add(item.Target))
                 {
                     merged.Add(item);
@@ -884,9 +910,20 @@ public static class ScreenProfileAccessor
             }
             foreach (var item in normalized)
             {
-                if (seenTargets.Add(item.Target))
+                if (seenTargets.Contains(item.Target))
                 {
+                    transferredAny = true;
+                    continue;
+                }
+                if (merged.Count < QuickPlaceRules.MaximumItems)
+                {
+                    seenTargets.Add(item.Target);
                     merged.Add(item);
+                    transferredAny = true;
+                }
+                else
+                {
+                    leftover.Add(item);
                 }
             }
             resultItems = QuickPlaceRules.Normalize(merged);
@@ -894,11 +931,18 @@ public static class ScreenProfileAccessor
         else
         {
             resultItems = normalized;
+            transferredAny = true;
         }
 
-        SetQuickPlaces(state, dstKey, resultItems);
-        SetQuickPlaces(state, srcKey, QuickPlaceRules.CreateDefaults());
-        return GetQuickPlaces(state, dstKey);
+        if (transferredAny)
+        {
+            SetQuickPlaces(state, dstKey, resultItems);
+            SetQuickPlaces(
+                state,
+                srcKey,
+                leftover.Count > 0 ? QuickPlaceRules.Normalize(leftover) : QuickPlaceRules.CreateDefaults());
+        }
+        return (GetQuickPlaces(state, dstKey), leftover, transferredAny);
     }
 
     public static bool MoveDisconnectedQuickPlacesToPrimary(AppState state, string sourceScreenKey)
@@ -922,7 +966,11 @@ public static class ScreenProfileAccessor
         }
 
         var primaryComponent = state.DesktopExperience.GetComponent(DesktopComponentKind.QuickLaunch);
-        MoveQuickPlacesToScreen(state, srcKey, targetScreenKey: null);
+        var (_, leftover, transferredAny) = MoveQuickPlacesCore(state, srcKey, targetScreenKey: null);
+        if (!transferredAny && leftover.Count > 0)
+        {
+            return false;
+        }
         if (!primaryComponent.IsVisible)
         {
             primaryComponent.IsVisible = true;
@@ -930,7 +978,10 @@ public static class ScreenProfileAccessor
             primaryComponent.CornerRadius = srcComponent.CornerRadius;
             primaryComponent.FontScale = srcComponent.FontScale;
         }
-        srcComponent.IsVisible = false;
+        if (leftover.Count == 0)
+        {
+            srcComponent.IsVisible = false;
+        }
         return true;
     }
 
@@ -1223,11 +1274,12 @@ public static class ScreenProfileAccessor
             return false;
         }
 
+        var normalizedDeviceName = string.IsNullOrWhiteSpace(deviceName) ? null : deviceName.Trim();
         screens.Remove(normalizedOld);
         profile.MonitorKey = normalizedNew;
-        if (!string.IsNullOrWhiteSpace(deviceName))
+        if (normalizedDeviceName is not null)
         {
-            profile.LastKnownDeviceName = deviceName.Trim();
+            profile.LastKnownDeviceName = normalizedDeviceName;
         }
         if (!string.IsNullOrWhiteSpace(displayLabel))
         {
@@ -1259,6 +1311,19 @@ public static class ScreenProfileAccessor
             if (MatchesScreen(box.ScreenKey, normalizedOld))
             {
                 box.ScreenKey = normalizedNew;
+                if (box.EdgeDockSide is not null || !string.IsNullOrWhiteSpace(box.EdgeDockMonitorDeviceName))
+                {
+                    if (normalizedDeviceName is not null)
+                    {
+                        box.EdgeDockMonitorDeviceName = normalizedDeviceName;
+                    }
+                    else
+                    {
+                        box.EdgeDockSide = null;
+                        box.EdgeDockOffsetDip = null;
+                        box.EdgeDockMonitorDeviceName = null;
+                    }
+                }
             }
         }
 
@@ -1366,6 +1431,8 @@ public static class ScreenProfileAccessor
         }
 
         // Pass 3: 1-to-1 unambiguous non-generic FriendlyName fallback when hardware models do not conflict.
+        // Group before excluding primary-model entries so two displays/profiles sharing a friendly name
+        // remain ambiguous even if only one carries a known primary model ID.
         var remainingMonitorsByFriendly = connectedSecondary
             .Where(m => MultiScreenRules.NormalizeScreenKey(m.MonitorKey) is { } k && !claimedMonitors.Contains(k))
             .Select(m => (Candidate: m, Friendly: MultiScreenRules.NormalizeFriendlyName(m.FriendlyName)))
@@ -1396,6 +1463,12 @@ public static class ScreenProfileAccessor
             var sourceOldKey = profileGroup[0].Key;
             var monitorModel = EffectiveMonitorModel(targetMonitor);
             var profileModel = EffectiveProfileModel(sourceOldKey, profileGroup[0].Profile);
+            if (excludedPrimaryModel is not null
+                && (string.Equals(monitorModel, excludedPrimaryModel, StringComparison.Ordinal)
+                    || string.Equals(profileModel, excludedPrimaryModel, StringComparison.Ordinal)))
+            {
+                continue;
+            }
             if (monitorModel is not null
                 && profileModel is not null
                 && !string.Equals(monitorModel, profileModel, StringComparison.Ordinal))

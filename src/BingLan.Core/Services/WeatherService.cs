@@ -130,8 +130,13 @@ public sealed class WeatherService
             }
             else if (!forceRefresh)
             {
-                // Deduplicate concurrent/automatic refreshes across multiple monitors sharing one WeatherService.
+                // Deduplicate concurrent/automatic refreshes across multiple monitors sharing one WeatherService,
+                // honoring both the fresh interval and any active failure backoff set inside the gate.
                 var now = _time.GetLocalNow();
+                if (!ShouldAttemptRefresh(state, now) && state.LastSnapshot is not null)
+                {
+                    return state.LastSnapshot;
+                }
                 if (state.LastSnapshot is { Status: WeatherStatus.Fresh, UpdatedAt: { } last }
                     && now - last < SuccessRefreshInterval)
                 {

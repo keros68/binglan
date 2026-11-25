@@ -299,16 +299,20 @@ public static class FileBoxGroupRules
         tab.ScreenKey = MultiScreenRules.NormalizeScreenKey(host.ScreenKey);
         tab.Placement.Left += offsetDip;
         tab.Placement.Top += offsetDip;
-        if (tab.Placement.MonitorLocal is { } detachedLocal)
-        {
-            detachedLocal.LocalLeftDip += offsetDip;
-            detachedLocal.LocalTopDip += offsetDip;
-        }
         tab.Placement.DisplayLayouts = [];
         if (tab.IsCollapsed)
         {
             tab.IsCollapsed = false;
             tab.Placement.Height = Math.Max(166d, tab.ExpandedHeight > 0 ? tab.ExpandedHeight : 306d);
+        }
+        if (tab.Placement.MonitorLocal is { } detachedLocal)
+        {
+            UpdateMonitorLocalAfterStandaloneOffset(
+                detachedLocal,
+                offsetDip,
+                offsetDip,
+                tab.Placement.Width,
+                tab.Placement.Height);
         }
         tab.EdgeDockSide = null;
         tab.EdgeDockOffsetDip = null;
@@ -351,8 +355,12 @@ public static class FileBoxGroupRules
                 box.Placement.Top += i * cascadeStepDip;
                 if (box.Placement.MonitorLocal is { } splitLocal)
                 {
-                    splitLocal.LocalLeftDip += i * cascadeStepDip;
-                    splitLocal.LocalTopDip += i * cascadeStepDip;
+                    UpdateMonitorLocalAfterStandaloneOffset(
+                        splitLocal,
+                        i * cascadeStepDip,
+                        i * cascadeStepDip,
+                        box.Placement.Width,
+                        box.Placement.Height);
                 }
                 box.Placement.DisplayLayouts = [];
                 box.EdgeDockSide = null;
@@ -478,5 +486,36 @@ public static class FileBoxGroupRules
                 SourceWorkWidthDip = source.MonitorLocal.SourceWorkWidthDip,
                 SourceWorkHeightDip = source.MonitorLocal.SourceWorkHeightDip
             };
+    }
+
+    private static void UpdateMonitorLocalAfterStandaloneOffset(
+        MonitorLocalPlacement local,
+        double offsetX,
+        double offsetY,
+        double finalWidthDip,
+        double finalHeightDip)
+    {
+        local.LocalLeftDip = Math.Max(0d, local.LocalLeftDip + offsetX);
+        local.LocalTopDip = Math.Max(0d, local.LocalTopDip + offsetY);
+        if (finalWidthDip > 0d)
+        {
+            local.WidthDip = finalWidthDip;
+        }
+        if (finalHeightDip > 0d)
+        {
+            local.HeightDip = finalHeightDip;
+        }
+        if (local.SourceWorkWidthDip > 0d)
+        {
+            var freeX = Math.Max(0d, local.SourceWorkWidthDip - local.WidthDip);
+            local.LocalLeftDip = Math.Min(local.LocalLeftDip, freeX);
+            local.AnchorX = freeX > 0d ? Math.Clamp(local.LocalLeftDip / freeX, 0d, 1d) : 0d;
+        }
+        if (local.SourceWorkHeightDip > 0d)
+        {
+            var freeY = Math.Max(0d, local.SourceWorkHeightDip - local.HeightDip);
+            local.LocalTopDip = Math.Min(local.LocalTopDip, freeY);
+            local.AnchorY = freeY > 0d ? Math.Clamp(local.LocalTopDip / freeY, 0d, 1d) : 0d;
+        }
     }
 }
