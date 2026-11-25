@@ -34,6 +34,7 @@ internal static class BugFixRegressionTests
         TestWidgetCoordinatorDisposeStopsTimerAndDisposesServices(pump, pumpUntil);
         TestUiDiagnosticsUntrackedDescription();
         TestUiDiagnosticsKeepsSystemEventsHealthy(pump, pumpUntil);
+        TestInteractiveQaCleanDesktopIsolation();
     }
 
     private static void TestBackgroundWinEventPumpLifecycle()
@@ -482,6 +483,44 @@ internal static class BugFixRegressionTests
         finally
         {
             Microsoft.Win32.SystemEvents.DisplaySettingsChanged -= dummyDisplayHandler;
+            try { Directory.Delete(temp, true); } catch (IOException) { }
+        }
+    }
+
+    private static void TestInteractiveQaCleanDesktopIsolation()
+    {
+        var temp = Path.Combine(Path.GetTempPath(), $"BingLan-cleandesktop-qa-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(temp);
+        try
+        {
+            var checkpointPath = WidgetCoordinator.CleanDesktopCheckpointPath(temp);
+            var adapter = new CleanDesktopAdapter(checkpointPath, disableShellMutations: true);
+            Check(adapter.IsShellMutationDisabled, "启用 disableShellMutations 时只读隔离属性必须为 true");
+
+            var resume = adapter.ResumeOrEnableAsync().GetAwaiter().GetResult();
+            Check(resume.Succeeded && resume.RestoredWhenFailed && resume.OriginalStateKnown && resume.Problem.Length == 0
+                && adapter.IsActive,
+                "QA 隔离模式下 ResumeOrEnableAsync 应直接成功返回且不创建检查点");
+            Check(!File.Exists(checkpointPath), "QA 隔离模式严禁写入桌面图标检查点文件");
+
+            var enableErr = adapter.EnableAsync().GetAwaiter().GetResult();
+            Check(enableErr.Length == 0 && adapter.IsActive && !File.Exists(checkpointPath),
+                "QA 隔离模式下 EnableAsync 不得写入检查点或调用 Shell");
+
+            var hiddenNow = adapter.AreIconsHiddenNowAsync().GetAwaiter().GetResult();
+            Check(!hiddenNow, "QA 隔离模式下 AreIconsHiddenNowAsync 应安全返回 false");
+
+            var restoredFromSettings = adapter.RestoreIconsFromSettingsAsync().GetAwaiter().GetResult();
+            Check(restoredFromSettings, "QA 隔离模式下 RestoreIconsFromSettingsAsync 应安全返回 true");
+
+            var disabled = adapter.DisableAsync().GetAwaiter().GetResult();
+            Check(disabled && !adapter.IsActive, "QA 隔离模式下 DisableAsync 应安全返回 true 并清除激活状态");
+
+            adapter.Dispose();
+            Check(!File.Exists(checkpointPath), "QA 隔离模式下 Dispose 不得写删检查点或恢复真实桌面图标");
+        }
+        finally
+        {
             try { Directory.Delete(temp, true); } catch (IOException) { }
         }
     }

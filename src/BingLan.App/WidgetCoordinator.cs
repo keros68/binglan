@@ -169,7 +169,9 @@ public sealed partial class WidgetCoordinator : IDisposable
             Dispatcher.CurrentDispatcher,
             _store.DataDirectory,
             trackOperations: Environment.GetEnvironmentVariable("BINGLAN_DIAG_HOOKS") == "1");
-        _cleanDesktop = new CleanDesktopAdapter(CleanDesktopCheckpointPath(_store.DataDirectory));
+        _cleanDesktop = new CleanDesktopAdapter(
+            CleanDesktopCheckpointPath(_store.DataDirectory),
+            disableShellMutations: interactiveQa);
         _cleanDesktop.TakenOver += () =>
         {
             _state.CleanDesktopEnabled = false;
@@ -312,9 +314,11 @@ public sealed partial class WidgetCoordinator : IDisposable
             }
             else
             {
-                var restored = await Task.Run(() => CleanDesktopAdapter.RecoverNow(path));
+                var restored = _cleanDesktop.IsShellMutationDisabled
+                    || await Task.Run(() => CleanDesktopAdapter.RecoverNow(path));
                 _cleanDesktopRestoreFailed = !restored;
-                _cleanDesktopRecovered = restored && CleanDesktopAdapter.IsOriginalStateKnown(path);
+                _cleanDesktopRecovered = restored
+                    && (_cleanDesktop.IsShellMutationDisabled || CleanDesktopAdapter.IsOriginalStateKnown(path));
             }
         }
         finally

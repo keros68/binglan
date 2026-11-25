@@ -31,17 +31,21 @@ internal sealed class CleanDesktopAdapter : IDisposable
     private const string MachineLockName = @"Local\BingLan.DesktopIcons";
 
     private readonly string _checkpointPath;
+    private readonly bool _disableShellMutations;
     private readonly DispatcherTimer _takeoverTimer;
     private bool _checking;
     private bool _keepOnDispose;
     private bool _disposed;
 
-    internal CleanDesktopAdapter(string checkpointPath)
+    internal CleanDesktopAdapter(string checkpointPath, bool disableShellMutations = false)
     {
         _checkpointPath = checkpointPath;
+        _disableShellMutations = disableShellMutations;
         _takeoverTimer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TakeoverCheckInterval };
         _takeoverTimer.Tick += async (_, _) => await CheckTakeoverAsync();
     }
+
+    internal bool IsShellMutationDisabled => _disableShellMutations;
 
     /// <summary>Whether clean desktop currently keeps the icons hidden.</summary>
     internal bool IsActive { get; private set; }
@@ -58,6 +62,11 @@ internal sealed class CleanDesktopAdapter : IDisposable
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         _keepOnDispose = false;
+        if (_disableShellMutations)
+        {
+            IsActive = true;
+            return string.Empty;
+        }
         var problem = await RunShellAsync(
             () => WithMachineLock(() => Hide(_checkpointPath), "桌面图标正由另一个冰蓝桌面进程处理，请稍后再试"));
         IsActive = problem.Length == 0 && !_disposed;
@@ -77,6 +86,11 @@ internal sealed class CleanDesktopAdapter : IDisposable
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         _keepOnDispose = false;
+        if (_disableShellMutations)
+        {
+            IsActive = true;
+            return (true, true, true, string.Empty);
+        }
         var outcome = await RunShellAsync(
             () => WithMachineLock<(bool Succeeded, bool RestoredWhenFailed, bool OriginalStateKnown, string Problem)>(
                 () => ResumeOrHide(_checkpointPath),
@@ -103,6 +117,10 @@ internal sealed class CleanDesktopAdapter : IDisposable
         _keepOnDispose = false;
         _takeoverTimer.Stop();
         IsActive = false;
+        if (_disableShellMutations)
+        {
+            return true;
+        }
         return await RunShellAsync(() => WithMachineLock(() => ShowIconsForTurnOff(_checkpointPath), false));
     }
 
@@ -114,6 +132,10 @@ internal sealed class CleanDesktopAdapter : IDisposable
     internal async Task<bool> AreIconsHiddenNowAsync()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+        if (_disableShellMutations)
+        {
+            return false;
+        }
         return await RunShellAsync(() =>
         {
             try
@@ -139,6 +161,10 @@ internal sealed class CleanDesktopAdapter : IDisposable
     internal async Task<bool> RestoreIconsFromSettingsAsync()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+        if (_disableShellMutations)
+        {
+            return true;
+        }
         return await RunShellAsync(() => WithMachineLock(() =>
         {
             var shown = ShowIconsForTurnOff(_checkpointPath);
@@ -209,7 +235,7 @@ internal sealed class CleanDesktopAdapter : IDisposable
         _disposed = true;
         _takeoverTimer.Stop();
         IsActive = false;
-        if (_keepOnDispose)
+        if (_keepOnDispose || _disableShellMutations)
         {
             return;
         }
