@@ -20,6 +20,116 @@ public static class DockVacateRules
         && foregroundMaximizedOnDockMonitor;
 
     /// <summary>
+    /// Per-edge tolerance in physical pixels when deciding whether a foreground window covers a
+    /// monitor. Fractional DPI scales (such as 125% or 150%, e.g. 2560x1600 -> 1706.67x1066.67 DIP)
+    /// can round a full-screen window's DWM extended frame bounds inward by 1-2 physical pixels.
+    /// </summary>
+    public const int FullScreenEdgeTolerancePixels = 2;
+
+    /// <summary>
+    /// Intrusion tolerance in physical pixels along the dock's inner edge so minor frame rounding
+    /// next to the work-area boundary does not count as covering a reserved dock.
+    /// </summary>
+    public const int ReservedDockIntrusionTolerancePixels = 4;
+
+    public static bool CoversMonitor(
+        PixelRect windowBounds,
+        PixelRect monitorBounds,
+        int edgeTolerancePixels = FullScreenEdgeTolerancePixels)
+    {
+        if (!windowBounds.HasArea || !monitorBounds.HasArea)
+        {
+            return false;
+        }
+
+        var tolerance = Math.Max(0, edgeTolerancePixels);
+        return windowBounds.Left <= monitorBounds.Left + tolerance
+            && windowBounds.Top <= monitorBounds.Top + tolerance
+            && windowBounds.Right >= monitorBounds.Right - tolerance
+            && windowBounds.Bottom >= monitorBounds.Bottom - tolerance;
+    }
+
+    /// <summary>
+    /// Whether an external non-overlay foreground window spans along the dock's screen edge and
+    /// intrudes into the reserved dock strip (for example a fullscreen video clipped below a top bar
+    /// or a maximized browser that ignored the AppBar work-area reservation). Ordinary floating
+    /// windows dragged partway onto the dock do not span the monitor edge and return false.
+    /// </summary>
+    public static bool IsSpanningWindowCoveringReservedDock(
+        PixelRect foregroundBounds,
+        PixelRect dockBounds,
+        PixelRect monitorBounds,
+        DockEdge edge)
+    {
+        if (!foregroundBounds.HasArea || !dockBounds.HasArea || !monitorBounds.HasArea)
+        {
+            return false;
+        }
+
+        var normalizedEdge = DockEdgeRules.Normalize(edge);
+        var edgeTol = FullScreenEdgeTolerancePixels;
+        var seamTol = ReservedDockIntrusionTolerancePixels;
+
+        return normalizedEdge switch
+        {
+            DockEdge.Left =>
+                foregroundBounds.Left <= monitorBounds.Left + edgeTol
+                && foregroundBounds.Left < dockBounds.Right - seamTol
+                && foregroundBounds.Right > dockBounds.Left
+                && (foregroundBounds.Top <= monitorBounds.Top + edgeTol
+                    || foregroundBounds.Bottom >= monitorBounds.Bottom - edgeTol)
+                && foregroundBounds.Height >= monitorBounds.Height * 85 / 100,
+            DockEdge.Right =>
+                foregroundBounds.Right >= monitorBounds.Right - edgeTol
+                && foregroundBounds.Right > dockBounds.Left + seamTol
+                && foregroundBounds.Left < dockBounds.Right
+                && (foregroundBounds.Top <= monitorBounds.Top + edgeTol
+                    || foregroundBounds.Bottom >= monitorBounds.Bottom - edgeTol)
+                && foregroundBounds.Height >= monitorBounds.Height * 85 / 100,
+            _ =>
+                foregroundBounds.Bottom >= monitorBounds.Bottom - edgeTol
+                && foregroundBounds.Bottom > dockBounds.Top + seamTol
+                && foregroundBounds.Top < dockBounds.Bottom
+                && foregroundBounds.Left <= monitorBounds.Left + edgeTol
+                && foregroundBounds.Right >= monitorBounds.Right - edgeTol
+        };
+    }
+
+    /// <summary>
+    /// Decides whether a Dock actively reserving work area should drop behind the foreground
+    /// window. Unlike smart-hide mode (where a maximized window legitimately fills an unreserved
+    /// monitor), an ordinary maximized window obeying our AppBar reservation stops at the work-area
+    /// boundary and never covers the monitor or spans across the reserved dock strip.
+    /// </summary>
+    public static bool ShouldReservedDockYield(
+        bool isTrueFullScreen,
+        bool coversMonitor,
+        bool foregroundOwnProcess,
+        bool isToolOrOverlayWindow,
+        PixelRect foregroundBounds,
+        PixelRect dockBounds,
+        PixelRect monitorBounds,
+        DockEdge edge)
+    {
+        if (isTrueFullScreen)
+        {
+            return true;
+        }
+
+        if (foregroundOwnProcess || isToolOrOverlayWindow)
+        {
+            return false;
+        }
+
+        if (coversMonitor)
+        {
+            return true;
+        }
+
+        return IsSpanningWindowCoveringReservedDock(foregroundBounds, dockBounds, monitorBounds, edge);
+    }
+
+    /// <summary>
     /// A window that fills the monitor because it is maximized (for example while the
     /// taskbar auto-hides), a normal resizable desktop window with standard chrome
     /// (caption + sizing frame), or a tool/click-through overlay is working space the

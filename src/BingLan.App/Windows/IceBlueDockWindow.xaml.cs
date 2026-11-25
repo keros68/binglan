@@ -337,7 +337,7 @@ public partial class IceBlueDockWindow : Window
 
     internal IEnumerable<nint> ActiveDesktopHandles()
     {
-        if (_closing || _trueFullScreenForeground || _suppressedBySystemMenu)
+        if (_closing || _trueFullScreenForeground || _appBar is { IsFullScreenDetected: true } || _suppressedBySystemMenu)
         {
             yield break;
         }
@@ -353,7 +353,7 @@ public partial class IceBlueDockWindow : Window
 
     internal void EnsureAboveDesktop()
     {
-        if (_closing || _trueFullScreenForeground || _suppressedBySystemMenu)
+        if (_closing || _trueFullScreenForeground || _appBar is { IsFullScreenDetected: true } || _suppressedBySystemMenu)
         {
             return;
         }
@@ -543,6 +543,13 @@ public partial class IceBlueDockWindow : Window
         _appBar = new DockAppBarController(this);
         _appBar.EnvironmentChanged += ApplyState;
         _appBar.ExplorerNotified += () => ExplorerNotified?.Invoke();
+        _appBar.FullScreenAppNotified += () =>
+        {
+            if (!_closing)
+            {
+                UpdateForForeground();
+            }
+        };
         _appBar.ExplorerRestarted += () =>
         {
             ApplyState();
@@ -2889,11 +2896,7 @@ public partial class IceBlueDockWindow : Window
             systemMenuBounds.HasArea && systemMenuBounds.Intersects(bounds));
         if (YieldToSystemMenu(shouldYield)) return;
         var foreground = ForegroundWindowRect(out var foregroundBounds, out var foregroundWindow);
-        var fullScreen = foreground
-            && foregroundBounds.Left <= monitor.Bounds.Left
-            && foregroundBounds.Top <= monitor.Bounds.Top
-            && foregroundBounds.Right >= monitor.Bounds.Right
-            && foregroundBounds.Bottom >= monitor.Bounds.Bottom;
+        var fullScreen = foreground && DockVacateRules.CoversMonitor(foregroundBounds, monitor.Bounds);
         var foregroundZoomed = foreground && foregroundWindow != 0 && DockNativeMethods.IsZoomed(foregroundWindow);
         // A maximized window on the dock's monitor both vacates the reservation and,
         // below, hides the dock at once — the row collapses while Windows re-fills
@@ -2913,21 +2916,24 @@ public partial class IceBlueDockWindow : Window
         {
             DockNativeMethods.GetWindowThreadProcessId(foregroundWindow, out var foregroundPid);
             foregroundOwnProcess = foregroundPid == (uint)Environment.ProcessId;
-            if (fullScreen && !foregroundZoomed && !foregroundOwnProcess)
+            if (!foregroundOwnProcess)
             {
-                var style = (long)NativeMethods.GetWindowLongPtr(foregroundWindow, NativeMethods.GwlStyle);
                 var exStyle = NativeMethods.GetExStyleOf(foregroundWindow);
-                var className = new StringBuilder(64);
-                DockNativeMethods.GetClassNameW(foregroundWindow, className, className.Capacity);
-                var isApplicationFrame = string.Equals(
-                    className.ToString(),
-                    "ApplicationFrameWindow",
-                    StringComparison.Ordinal);
-                hasStandardChrome = !isApplicationFrame
-                    && (style & WsCaption) == WsCaption
-                    && (style & NativeMethods.WsThickFrame) != 0;
                 isToolOrOverlay = (exStyle & (NativeMethods.WsExToolWindow | NativeMethods.WsExTransparent)) != 0;
                 isTopmost = (exStyle & NativeMethods.WsExTopmost) != 0;
+                if (fullScreen && !foregroundZoomed)
+                {
+                    var style = (long)NativeMethods.GetWindowLongPtr(foregroundWindow, NativeMethods.GwlStyle);
+                    var className = new StringBuilder(64);
+                    DockNativeMethods.GetClassNameW(foregroundWindow, className, className.Capacity);
+                    var isApplicationFrame = string.Equals(
+                        className.ToString(),
+                        "ApplicationFrameWindow",
+                        StringComparison.Ordinal);
+                    hasStandardChrome = !isApplicationFrame
+                        && (style & WsCaption) == WsCaption
+                        && (style & NativeMethods.WsThickFrame) != 0;
+                }
             }
         }
         var directTrueFullScreen = DockVacateRules.IsTrueFullScreen(
@@ -2954,7 +2960,20 @@ public partial class IceBlueDockWindow : Window
 
         if (!UsesSmartHide)
         {
-            _appBar.SetFullScreenDetected(trueFullScreen);
+            var reservedYield = DockVacateRules.ShouldReservedDockYield(
+                trueFullScreen,
+                fullScreen,
+                foregroundOwnProcess,
+                isToolOrOverlay,
+                foreground ? foregroundBounds : default,
+                bounds,
+                monitor.Bounds,
+                edge);
+            if (reservedYield)
+            {
+                StopMagnification(animateReturn: false);
+            }
+            _appBar.SetFullScreenDetected(reservedYield);
             return;
         }
 

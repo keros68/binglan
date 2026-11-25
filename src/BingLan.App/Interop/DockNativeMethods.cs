@@ -38,6 +38,7 @@ internal static class DockNativeMethods
     internal const uint AbmActivate = 0x00000006;
     internal const uint AbmWindowPosChanged = 0x00000009;
     internal const int AbnPosChanged = 1;
+    internal const int AbnFullScreenApp = 2;
 
     internal const uint WmNull = 0x0000;
     internal const int WmActivate = 0x0006;

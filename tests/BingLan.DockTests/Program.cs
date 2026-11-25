@@ -316,6 +316,117 @@ static void TestDockVacateRules()
         !DockVacateRules.IsTransientFullScreenChildWindow(
             isZoomed: false, isPopup: false, isDialogClass: false, isToolWindow: false, hasStandardResizableFrame: true, isAppWindow: false),
         "同浏览器进程的普通可调尺寸窗口不得误继承另一全屏窗口的全屏态");
+
+    // 150%/125% 分数缩放下 DWM 扩展边框可能向内舍入 1-2 像素，仍应识别为铺满显示器。
+    var monitor2560 = new PixelRect(0, 0, 2560, 1600);
+    Assert(
+        DockVacateRules.CoversMonitor(new PixelRect(0, 0, 2560, 1600), monitor2560),
+        "精确贴合四边应判为铺满显示器");
+    Assert(
+        DockVacateRules.CoversMonitor(new PixelRect(1, 0, 2559, 1599), monitor2560),
+        "150% 分数缩放向内舍入 1-2 像素的全屏视频仍应判为铺满显示器");
+    Assert(
+        !DockVacateRules.CoversMonitor(new PixelRect(0, 47, 2560, 1468), monitor2560),
+        "遵守顶栏与底栏预留工作区的最大化窗口不应判为铺满显示器");
+    Assert(
+        !DockVacateRules.CoversMonitor(new PixelRect(0, 0, 2560, 1596), monitor2560),
+        "距底边超过容差的窗口不应判为铺满显示器");
+    Assert(
+        DockVacateRules.CoversMonitor(new PixelRect(-1919, -1080, -1, -1), new PixelRect(-1920, -1080, 0, 0)),
+        "负坐标副屏同样支持 1-2 像素舍入容差");
+
+    // 预留模式下的 Dock 让位：全屏视频（即便仍带最大化或标准边框标记）、跨屏覆盖底边的网页应让出，
+    // 遵守工作区的最大化窗口、拖到 Dock 附近的普通浮窗和透明覆盖层不应触发让位。
+    var bottomDock = new PixelRect(520, 1474, 2040, 1558);
+    Assert(
+        DockVacateRules.ShouldReservedDockYield(
+            isTrueFullScreen: false,
+            coversMonitor: true,
+            foregroundOwnProcess: false,
+            isToolOrOverlayWindow: false,
+            foregroundBounds: monitor2560,
+            dockBounds: bottomDock,
+            monitorBounds: monitor2560,
+            edge: DockEdge.Bottom),
+        "预留模式下铺满显示器的全屏视频即便未满足真全屏样式条件也应让出 Dock");
+    Assert(
+        DockVacateRules.ShouldReservedDockYield(
+            isTrueFullScreen: false,
+            coversMonitor: false,
+            foregroundOwnProcess: false,
+            isToolOrOverlayWindow: false,
+            foregroundBounds: new PixelRect(0, 47, 2560, 1600),
+            dockBounds: bottomDock,
+            monitorBounds: monitor2560,
+            edge: DockEdge.Bottom),
+        "跨整条底边并盖过预留 Dock 的浏览器/全屏视频应让出 Dock");
+    Assert(
+        !DockVacateRules.ShouldReservedDockYield(
+            isTrueFullScreen: false,
+            coversMonitor: false,
+            foregroundOwnProcess: false,
+            isToolOrOverlayWindow: false,
+            foregroundBounds: new PixelRect(0, 47, 2560, 1468),
+            dockBounds: bottomDock,
+            monitorBounds: monitor2560,
+            edge: DockEdge.Bottom),
+        "正常停在预留工作区上方的最大化窗口不得让出 Dock");
+    Assert(
+        !DockVacateRules.ShouldReservedDockYield(
+            isTrueFullScreen: false,
+            coversMonitor: false,
+            foregroundOwnProcess: false,
+            isToolOrOverlayWindow: false,
+            foregroundBounds: new PixelRect(600, 700, 1700, 1590),
+            dockBounds: bottomDock,
+            monitorBounds: monitor2560,
+            edge: DockEdge.Bottom),
+        "用户拖到底部的小浮窗不应把预留 Dock 压到后面");
+    Assert(
+        !DockVacateRules.ShouldReservedDockYield(
+            isTrueFullScreen: false,
+            coversMonitor: true,
+            foregroundOwnProcess: true,
+            isToolOrOverlayWindow: false,
+            foregroundBounds: monitor2560,
+            dockBounds: bottomDock,
+            monitorBounds: monitor2560,
+            edge: DockEdge.Bottom),
+        "冰蓝自身窗口（如总览卡）不应触发预留 Dock 让位");
+    Assert(
+        !DockVacateRules.ShouldReservedDockYield(
+            isTrueFullScreen: false,
+            coversMonitor: true,
+            foregroundOwnProcess: false,
+            isToolOrOverlayWindow: true,
+            foregroundBounds: monitor2560,
+            dockBounds: bottomDock,
+            monitorBounds: monitor2560,
+            edge: DockEdge.Bottom),
+        "透明穿透工具覆盖层不应触发预留 Dock 让位");
+    var leftDock = new PixelRect(42, 300, 126, 1300);
+    Assert(
+        DockVacateRules.ShouldReservedDockYield(
+            isTrueFullScreen: false,
+            coversMonitor: false,
+            foregroundOwnProcess: false,
+            isToolOrOverlayWindow: false,
+            foregroundBounds: new PixelRect(0, 47, 2560, 1600),
+            dockBounds: leftDock,
+            monitorBounds: monitor2560,
+            edge: DockEdge.Left),
+        "左侧停靠且有顶栏时，跨屏覆盖左侧预留条的窗口应让出 Dock");
+    Assert(
+        !DockVacateRules.ShouldReservedDockYield(
+            isTrueFullScreen: false,
+            coversMonitor: false,
+            foregroundOwnProcess: false,
+            isToolOrOverlayWindow: false,
+            foregroundBounds: new PixelRect(132, 47, 2560, 1600),
+            dockBounds: leftDock,
+            monitorBounds: monitor2560,
+            edge: DockEdge.Left),
+        "正常停在左侧预留区右侧的窗口不应让出左侧 Dock");
     Assert(
         !DockVacateRules.IsTransientFullScreenChildWindow(
             isZoomed: true, isPopup: true, isDialogClass: false, isToolWindow: false, hasStandardResizableFrame: false, isAppWindow: false),

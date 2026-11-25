@@ -103,11 +103,15 @@ internal sealed class DockAppBarController : IDisposable
 
     internal event Action? ExplorerNotified;
 
+    internal event Action? FullScreenAppNotified;
+
     internal PixelRect Bounds { get; private set; }
 
     internal DockEdge Edge => _edge;
 
     internal bool IsReserved => _reservation.IsRegistered;
+
+    internal bool IsFullScreenDetected => _fullScreenDetected;
 
     internal bool IsRecovering => _explorerRecovering || _transientRecovering;
 
@@ -137,8 +141,17 @@ internal sealed class DockAppBarController : IDisposable
     /// </summary>
     internal void SetFullScreenDetected(bool detected)
     {
-        if (_disposed || _fullScreenDetected == detected)
+        if (_disposed)
         {
+            return;
+        }
+
+        if (_fullScreenDetected == detected)
+        {
+            if (detected && _reservation.IsRegistered && NativeMethods.IsTopmostWindow(_handle))
+            {
+                UpdateWindowLayer();
+            }
             return;
         }
 
@@ -487,6 +500,17 @@ internal sealed class DockAppBarController : IDisposable
                     {
                         _deferredPosition.Start();
                     }
+                    break;
+                case DockNativeMethods.AbnFullScreenApp:
+                    _window.Dispatcher.BeginInvoke(
+                        DispatcherPriority.Input,
+                        () =>
+                        {
+                            if (!_disposed)
+                            {
+                                FullScreenAppNotified?.Invoke();
+                            }
+                        });
                     break;
             }
             return 0;

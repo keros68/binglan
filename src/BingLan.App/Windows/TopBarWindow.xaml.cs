@@ -3170,11 +3170,7 @@ public sealed partial class TopBarWindow : Window
             PollInputMethod();
         }
 
-        var fullScreen = foreground
-            && foregroundBounds.Left <= monitor.Bounds.Left
-            && foregroundBounds.Top <= monitor.Bounds.Top
-            && foregroundBounds.Right >= monitor.Bounds.Right
-            && foregroundBounds.Bottom >= monitor.Bounds.Bottom;
+        var fullScreen = foreground && DockVacateRules.CoversMonitor(foregroundBounds, monitor.Bounds);
         var zoomed = foreground && foregroundWindow != 0 && DockNativeMethods.IsZoomed(foregroundWindow);
         var directTrueFullScreen = DockVacateRules.IsTrueFullScreen(fullScreen, zoomed);
         var backingFullScreen = !directTrueFullScreen

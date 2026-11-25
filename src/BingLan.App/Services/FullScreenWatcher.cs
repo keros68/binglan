@@ -307,9 +307,8 @@ internal sealed class FullScreenWatcher : IDisposable
         return monitor != 0
             && (targetMonitor == 0 || targetMonitor == monitor)
             && DockNativeMethods.GetMonitorInfoW(monitor, ref info)
-            && bounds.Left <= info.Monitor.Left
-            && bounds.Top <= info.Monitor.Top
-            && bounds.Right >= info.Monitor.Right
-            && bounds.Bottom >= info.Monitor.Bottom;
+            && DockVacateRules.CoversMonitor(
+                new PixelRect(bounds.Left, bounds.Top, bounds.Right, bounds.Bottom),
+                new PixelRect(info.Monitor.Left, info.Monitor.Top, info.Monitor.Right, info.Monitor.Bottom));
     }
 }
