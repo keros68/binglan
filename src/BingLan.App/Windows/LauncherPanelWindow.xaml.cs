@@ -870,14 +870,6 @@ public partial class LauncherPanelWindow : Window
         }
     }
 
-    internal static void PrewarmIcon(LauncherPanelEntry entry)
-    {
-        var iconKey = IconIdentity(entry);
-        if (LauncherIconCache.TryGet(iconKey, out _)) return;
-        var name = entry.Candidate.DisplayName;
-        _ = LauncherIconCache.GetOrLoadAsync(iconKey, () => ExtractIconGuardedAsync(entry, iconKey, name, CancellationToken.None));
-    }
-
     private void ApplyIcon(string iconKey, ImageSource? icon)
     {
         if (_closed || icon is null) return;

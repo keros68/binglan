@@ -60,6 +60,11 @@ public class WidgetWindowBase : Window
     private const double ResizeBandDip = 8d;
     private const double DefaultHeaderCornerRadius = 8d;
     private const double DefaultItemCornerRadius = 8d;
+    private static readonly TimeSpan DragBitmapCacheReleaseDelay = TimeSpan.FromMilliseconds(500);
+    private static readonly System.Windows.Media.Effects.DropShadowEffect SoftCardShadow =
+        CreateFrozenCardShadow(blurRadius: 6d, shadowDepth: 1d, opacity: 0.28d);
+    private static readonly System.Windows.Media.Effects.DropShadowEffect StrongCardShadow =
+        CreateFrozenCardShadow(blurRadius: 10d, shadowDepth: 2d, opacity: 0.5d);
 
     private static readonly DependencyPropertyKey SurfaceCornerRadiusPropertyKey =
         DependencyProperty.RegisterReadOnly(
@@ -260,6 +265,7 @@ public class WidgetWindowBase : Window
     }
 
     private HwndSource? _source;
+    private DispatcherTimer? _dragCacheReleaseTimer;
     private WindowPlacement? _placement;
     private bool _isUpdatingNativeWindowShape;
     private bool _isApplyingTaskbarSafeBounds;
@@ -342,13 +348,6 @@ public class WidgetWindowBase : Window
         Loaded += (_, _) =>
         {
             RefreshBackdrop();
-            // Moving a transparent window redraws it. With software rendering the card's
-            // drawn image is kept, so a drag only copies it (drag steps ~18 -> ~14 ms in the
-            // UI test, about what hardware rendering takes); text looks the same.
-            if (Content is UIElement content)
-            {
-                content.CacheMode = new System.Windows.Media.BitmapCache { SnapsToDevicePixels = true };
-            }
         };
         ContentRendered += (_, _) =>
         {
@@ -723,6 +722,7 @@ public class WidgetWindowBase : Window
     protected override void OnClosed(EventArgs e)
     {
         AccessibilityThemeManager.HighContrastChanged -= AccessibilityThemeManager_HighContrastChanged;
+        ReleaseDragBitmapCacheImmediately();
         if (_source is not null && !_source.IsDisposed)
         {
             _source.RemoveHook(WindowProc);
@@ -1366,22 +1366,26 @@ public class WidgetWindowBase : Window
     internal static System.Windows.Media.Effects.DropShadowEffect? CreateCardShadowEffect(CardShadow shadow) =>
         shadow switch
         {
-            CardShadow.Soft => new System.Windows.Media.Effects.DropShadowEffect
-            {
-                BlurRadius = 6,
-                ShadowDepth = 1,
-                Opacity = 0.28,
-                Color = Colors.Black
-            },
-            CardShadow.Strong => new System.Windows.Media.Effects.DropShadowEffect
-            {
-                BlurRadius = 10,
-                ShadowDepth = 2,
-                Opacity = 0.5,
-                Color = Colors.Black
-            },
+            CardShadow.Soft => SoftCardShadow,
+            CardShadow.Strong => StrongCardShadow,
             _ => null
         };
+
+    private static System.Windows.Media.Effects.DropShadowEffect CreateFrozenCardShadow(
+        double blurRadius,
+        double shadowDepth,
+        double opacity)
+    {
+        var effect = new System.Windows.Media.Effects.DropShadowEffect
+        {
+            BlurRadius = blurRadius,
+            ShadowDepth = shadowDepth,
+            Opacity = opacity,
+            Color = Colors.Black
+        };
+        effect.Freeze();
+        return effect;
+    }
 
     protected virtual void ApplyEffectiveCardShadow(CardShadow shadow)
     {
@@ -1918,6 +1922,7 @@ public class WidgetWindowBase : Window
             drag.Moving = true;
             if (drag.Edges == ResizeEdges.None)
             {
+                EnableDragBitmapCache();
                 BeginMoveSession();
             }
         }
@@ -2033,7 +2038,57 @@ public class WidgetWindowBase : Window
             EnsureTaskbarSafeBounds();
         }
         OnDragMoveEnded(wasMoving && committed, altHeld);
+        ScheduleDragBitmapCacheRelease();
         OnDragEnded();
+    }
+
+    // Moving a transparent window under software rendering redraws it on every step; enabling
+    // BitmapCache only during active drags preserves drag smoothness while freeing the duplicate
+    // offscreen pixel surface once the card comes to rest.
+    private void EnableDragBitmapCache()
+    {
+        _dragCacheReleaseTimer?.Stop();
+        if (Content is UIElement content && content.CacheMode is null)
+        {
+            content.CacheMode = new System.Windows.Media.BitmapCache { SnapsToDevicePixels = true };
+        }
+    }
+
+    private void ScheduleDragBitmapCacheRelease()
+    {
+        if (Content is not UIElement { CacheMode: not null })
+        {
+            return;
+        }
+
+        if (_dragCacheReleaseTimer is null)
+        {
+            _dragCacheReleaseTimer = new DispatcherTimer(
+                DragBitmapCacheReleaseDelay,
+                DispatcherPriority.Background,
+                (_, _) =>
+                {
+                    _dragCacheReleaseTimer?.Stop();
+                    if (_drag is null && Content is UIElement content)
+                    {
+                        content.CacheMode = null;
+                    }
+                },
+                Dispatcher);
+        }
+
+        _dragCacheReleaseTimer.Stop();
+        _dragCacheReleaseTimer.Start();
+    }
+
+    private void ReleaseDragBitmapCacheImmediately()
+    {
+        _dragCacheReleaseTimer?.Stop();
+        _dragCacheReleaseTimer = null;
+        if (Content is UIElement content)
+        {
+            content.CacheMode = null;
+        }
     }
 
     // Snaps a proposed position to nearby cards and the work area and shows the matching

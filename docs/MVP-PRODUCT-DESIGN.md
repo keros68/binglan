@@ -473,7 +473,7 @@ BingLan.Core
 
 当前四软件组合曾观察到约 357.6 MB 工作集；该数字只作为替代前的单次参考，后续必须用统一场景重新测量。
 
-2026-09-28 本机测量（Windows 11 build 26200，NVIDIA 独显，冰蓝桌面单进程，1 个信息层、1 个待办、1 个分组盒，Dock 关闭，启动 40 秒后取 3 次平均）：工作集 57–66 MB，其中私有工作集约 28–33 MB，私有提交约 90 MB，90 秒内无增长。同一会话较早的几次测量曾为 153–160 MB，私有提交同样约 90 MB，差值来自共享页（显卡驱动 DLL 映射约 110 MB），推测与显卡着色器编译和窗口可见状态有关，尚未定位。关闭并发 GC、`ConserveMemory` 和关闭 TieredPGO 均无可测收益（差异在 ±5 MB 噪声内），因此未改运行时配置。
+2026-09-28 本机测量（Windows 11 build 26200，NVIDIA 独显，冰蓝桌面单进程，1 个信息层、1 个待办、1 个分组盒，Dock 关闭，启动 40 秒后取 3 次平均）：工作集 57–66 MB，其中私有工作集约 28–33 MB，私有提交约 90 MB，90 秒内无增长。同一会话较早的几次测量曾为 153–160 MB，私有提交同样约 90 MB，差值来自共享页（显卡驱动 DLL 映射约 110 MB），推测与显卡着色器编译和窗口可见状态有关，尚未定位。该早期 3 卡片基线中单独切换 GC/PGO 选项差异在 ±5 MB 噪声内；后续多卡片与高缓存版本在 `BingLan.App.csproj` 统一保留 `<ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>`（避免非并发 Gen2 STW 在交互期间飙升至 ~23 ms，实测仅多 ~1.9 MB 私有字节且峰值工作集更低），搭配 `<TieredPGO>false</TieredPGO>` 及 `<RuntimeHostConfigurationOption Include="System.GC.ConserveMemory" Value="5" />` 与空闲期温和回收控制常驻提交并及时归还空闲页。
 
 ## 14. MVP 验收清单
 

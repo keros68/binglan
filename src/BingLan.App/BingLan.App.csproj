@@ -9,11 +9,12 @@
     <RootNamespace>BingLan.App</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets\Brand\BingLan.ico</ApplicationIcon>
-    <!-- 常驻桌面小组件：非并发 GC 少一组后台 GC 线程与分配缓冲，关闭 PGO 省去插桩代码；实测私有内存约少 9 MB。 -->
-    <ConcurrentGarbageCollection>false</ConcurrentGarbageCollection>
+    <!-- 常驻桌面小组件：保留并发 GC 以将单次 Gen2 最大 STW 控制在 10 ms 内，关闭 PGO 省去插桩代码；保守内存模式通过 RuntimeHostConfigurationOption 写入 runtimeconfig.json 生效。 -->
+    <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
     <TieredPGO>false</TieredPGO>
   </PropertyGroup>
   <ItemGroup>
+    <RuntimeHostConfigurationOption Include="System.GC.ConserveMemory" Value="5" />
     <ProjectReference Include="../BingLan.Core/BingLan.Core.csproj" />
   </ItemGroup>
   <ItemGroup>

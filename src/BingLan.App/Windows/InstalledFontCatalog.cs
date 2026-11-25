@@ -48,6 +48,13 @@ internal static class InstalledFontCatalog
     public static string Resolve(string? requested)
     {
         requested = MapLegacyName(requested);
+        var bundledExact = BundledNames.FirstOrDefault(
+            name => string.Equals(name, requested, StringComparison.CurrentCultureIgnoreCase));
+        if (bundledExact is not null)
+        {
+            return bundledExact;
+        }
+
         var exact = Names.FirstOrDefault(
             name => string.Equals(name, requested, StringComparison.CurrentCultureIgnoreCase));
         if (exact is not null)

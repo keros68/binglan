@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -87,6 +88,98 @@ internal static class ShellIconProvider
     private const uint ShgfiIcon = 0x000000100;
     private const uint ShgfiLargeIcon = 0x000000000;
     private const int MaximumRenderedIconPixels = 128;
+    private const int MaxSystemIconCacheEntries = 512;
+
+    private static readonly object SystemIconCacheGate = new();
+    private static readonly Dictionary<int, WeakReference<BitmapSource>> SystemIconCache = new();
+
+    internal static int CachedSystemIconCount
+    {
+        get
+        {
+            lock (SystemIconCacheGate)
+            {
+                var live = 0;
+                foreach (var entry in SystemIconCache.Values)
+                {
+                    if (entry.TryGetTarget(out _))
+                    {
+                        live++;
+                    }
+                }
+                return live;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Clears the process-wide system image-list icon cache (e.g. after Explorer restarts).
+    /// </summary>
+    internal static void ClearIconCache()
+    {
+        lock (SystemIconCacheGate)
+        {
+            SystemIconCache.Clear();
+        }
+    }
+
+    /// <summary>
+    /// Evicts only the system image-list cache entry corresponding to <paramref name="path"/>
+    /// so refreshing a single tile icon does not flush unrelated cached icons.
+    /// </summary>
+    internal static void InvalidateIconForPath(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return;
+        }
+
+        int? iconIndex = null;
+        if (FileMappingService.IsShellEntry(path))
+        {
+            if (SHParseDisplayName(path, 0, out var itemIdList, 0, out _) == 0 && itemIdList != 0)
+            {
+                try
+                {
+                    var result = SHGetFileInfo(
+                        itemIdList,
+                        0,
+                        out var info,
+                        (uint)Marshal.SizeOf<ShellFileInfo>(),
+                        DockNativeMethods.ShgfiSysIconIndex | DockNativeMethods.ShgfiPidl);
+                    if (result != 0)
+                    {
+                        iconIndex = info.IconIndex;
+                    }
+                }
+                finally
+                {
+                    ILFree(itemIdList);
+                }
+            }
+        }
+        else if (File.Exists(path) || Directory.Exists(path))
+        {
+            var result = SHGetFileInfo(
+                path,
+                0,
+                out var info,
+                (uint)Marshal.SizeOf<ShellFileInfo>(),
+                DockNativeMethods.ShgfiSysIconIndex);
+            if (result != 0)
+            {
+                iconIndex = info.IconIndex;
+            }
+        }
+
+        if (iconIndex is { } index)
+        {
+            lock (SystemIconCacheGate)
+            {
+                SystemIconCache.Remove(index);
+            }
+        }
+    }
 
     public static ImageSource? GetIcon(string path)
     {
@@ -313,9 +406,20 @@ internal static class ShellIconProvider
 
     // 卡片网格在高 DPI 下把图标画到 60+ 物理像素，SHGFI_LARGEICON 只有 32px 帧会被拉糊；
     // 优先取真正的高清帧；旧图标在 Jumbo 中可能只填左上角，其余是透明占位。
-    private static ImageSource? FromSystemImageList(int iconIndex)
+    // 按 sysIconIndex 缓存冻结后的位图，同类文件与文件夹共享同一份内存实例。
+    internal static ImageSource? FromSystemImageList(int iconIndex)
     {
-        BitmapSource? fallback = null;
+        lock (SystemIconCacheGate)
+        {
+            if (SystemIconCache.TryGetValue(iconIndex, out var cachedRef)
+                && cachedRef.TryGetTarget(out var cached))
+            {
+                return cached;
+            }
+        }
+
+        BitmapSource? jumboFallback = null;
+        BitmapSource? resolved = null;
         foreach (var listSize in new[] { DockNativeMethods.ShilJumbo, DockNativeMethods.ShilExtraLarge })
         {
             if (DockNativeMethods.SHGetImageList(
@@ -335,13 +439,20 @@ internal static class ShellIconProvider
                     DockNativeMethods.IldTransparent);
                 if (iconHandle != 0)
                 {
-                    var source = ToImageSource(iconHandle);
-                    if (listSize == DockNativeMethods.ShilJumbo && IsJumboPlaceholder(source))
+                    if (listSize == DockNativeMethods.ShilJumbo)
                     {
-                        fallback = source;
-                        continue;
+                        var (source, isPlaceholder) = ExtractJumboOrDetectPlaceholder(iconHandle);
+                        if (isPlaceholder)
+                        {
+                            jumboFallback = source;
+                            continue;
+                        }
+                        resolved = source;
+                        break;
                     }
-                    return source;
+
+                    resolved = ToImageSource(iconHandle);
+                    break;
                 }
             }
             finally
@@ -350,7 +461,110 @@ internal static class ShellIconProvider
             }
         }
 
-        return fallback;
+        if (resolved is null && jumboFallback is not null)
+        {
+            resolved = jumboFallback.PixelWidth == JumboSize && jumboFallback.PixelHeight == JumboSize
+                ? HalveJumbo(jumboFallback)
+                : jumboFallback;
+            if (!resolved.IsFrozen && resolved.CanFreeze)
+            {
+                resolved.Freeze();
+            }
+        }
+
+        return resolved is not null ? GetOrStoreSystemIcon(iconIndex, resolved) : null;
+    }
+
+    private static BitmapSource GetOrStoreSystemIcon(int iconIndex, BitmapSource icon)
+    {
+        lock (SystemIconCacheGate)
+        {
+            if (SystemIconCache.TryGetValue(iconIndex, out var existingRef)
+                && existingRef.TryGetTarget(out var existing))
+            {
+                return existing;
+            }
+
+            if (SystemIconCache.Count >= MaxSystemIconCacheEntries)
+            {
+                PruneDeadSystemIconEntriesLocked();
+                if (SystemIconCache.Count >= MaxSystemIconCacheEntries)
+                {
+                    var evictKey = SystemIconCache.Keys.First();
+                    SystemIconCache.Remove(evictKey);
+                }
+            }
+
+            SystemIconCache[iconIndex] = new WeakReference<BitmapSource>(icon);
+            return icon;
+        }
+    }
+
+    private static void PruneDeadSystemIconEntriesLocked()
+    {
+        List<int>? deadKeys = null;
+        foreach (var pair in SystemIconCache)
+        {
+            if (!pair.Value.TryGetTarget(out _))
+            {
+                deadKeys ??= [];
+                deadKeys.Add(pair.Key);
+            }
+        }
+        if (deadKeys is not null)
+        {
+            foreach (var key in deadKeys)
+            {
+                SystemIconCache.Remove(key);
+            }
+        }
+    }
+
+    // Decodes a Jumbo HICON once into a pooled buffer, checks the top-left-quarter placeholder
+    // pattern BEFORE downsampling, and skips the 2×2 halving pass when falling back to ExtraLarge.
+    private static (BitmapSource Source, bool IsPlaceholder) ExtractJumboOrDetectPlaceholder(nint iconHandle)
+    {
+        BitmapSource raw;
+        try
+        {
+            raw = Imaging.CreateBitmapSourceFromHIcon(
+                iconHandle,
+                Int32Rect.Empty,
+                BitmapSizeOptions.FromEmptyOptions());
+        }
+        finally
+        {
+            DestroyIcon(iconHandle);
+        }
+
+        if (raw.PixelWidth != JumboSize || raw.PixelHeight != JumboSize)
+        {
+            var isPlaceholder = IsJumboPlaceholder(raw);
+            raw.Freeze();
+            return (raw, isPlaceholder);
+        }
+
+        var converted = new FormatConvertedBitmap(raw, PixelFormats.Pbgra32, null, 0);
+        const int stride = JumboSize * 4;
+        const int byteCount = stride * JumboSize;
+        var pixels = ArrayPool<byte>.Shared.Rent(byteCount);
+        try
+        {
+            converted.CopyPixels(pixels, stride, 0);
+            if (IsTopLeftQuarterOnly(pixels, stride, JumboSize, JumboSize))
+            {
+                raw.Freeze();
+                return (raw, true);
+            }
+
+            var halved = HalveJumboPixels(pixels, stride);
+            halved.Freeze();
+            return (halved, false);
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(pixels);
+        }
     }
 
     internal static bool IsJumboPlaceholder(BitmapSource source)
@@ -358,14 +572,36 @@ internal static class ShellIconProvider
         // 仅识别图案全部局限于左上四分之一区域的 Shell 占位帧；保留居中图案的原有留白。
         // 扫描限于系统 Jumbo 帧（256×256），不裁剪资源，也不扩大到任意用户图片。
         var rgba = new FormatConvertedBitmap(source, PixelFormats.Bgra32, null, 0);
-        var stride = rgba.PixelWidth * 4;
-        var pixels = new byte[stride * rgba.PixelHeight];
-        rgba.CopyPixels(pixels, stride, 0);
-        for (var y = 0; y < rgba.PixelHeight; y++)
+        var width = rgba.PixelWidth;
+        var height = rgba.PixelHeight;
+        var stride = width * 4;
+        var byteCount = stride * height;
+        var pixels = ArrayPool<byte>.Shared.Rent(byteCount);
+        try
         {
-            for (var x = y < rgba.PixelHeight / 2 ? rgba.PixelWidth / 2 : 0; x < rgba.PixelWidth; x++)
+            rgba.CopyPixels(pixels, stride, 0);
+            return IsTopLeftQuarterOnly(pixels, stride, width, height);
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(pixels);
+        }
+    }
+
+    private static bool IsTopLeftQuarterOnly(byte[] pixels, int stride, int width, int height)
+    {
+        var halfWidth = width / 2;
+        var halfHeight = height / 2;
+        for (var y = 0; y < height; y++)
+        {
+            var rowOffset = y * stride;
+            var startX = y < halfHeight ? halfWidth : 0;
+            for (var x = startX; x < width; x++)
             {
-                if (pixels[y * stride + x * 4 + 3] != 0) return false;
+                if (pixels[rowOffset + x * 4 + 3] != 0)
+                {
+                    return false;
+                }
             }
         }
         return true;
@@ -399,28 +635,50 @@ internal static class ShellIconProvider
     internal static BitmapSource HalveJumbo(BitmapSource source)
     {
         var converted = new FormatConvertedBitmap(source, PixelFormats.Pbgra32, null, 0);
-        var stride = JumboSize * 4;
-        var pixels = new byte[stride * JumboSize];
-        converted.CopyPixels(pixels, stride, 0);
-        const int half = JumboSize / 2;
-        var halfStride = half * 4;
-        var output = new byte[halfStride * half];
-        for (var y = 0; y < half; y++)
+        const int stride = JumboSize * 4;
+        const int byteCount = stride * JumboSize;
+        var pixels = ArrayPool<byte>.Shared.Rent(byteCount);
+        try
         {
-            var top = y * 2 * stride;
-            var bottom = top + stride;
-            for (var x = 0; x < half; x++)
+            converted.CopyPixels(pixels, stride, 0);
+            return HalveJumboPixels(pixels, stride);
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(pixels);
+        }
+    }
+
+    private static BitmapSource HalveJumboPixels(byte[] pixels, int stride)
+    {
+        const int half = JumboSize / 2;
+        const int halfStride = half * 4;
+        const int outputByteCount = halfStride * half;
+        var output = ArrayPool<byte>.Shared.Rent(outputByteCount);
+        try
+        {
+            for (var y = 0; y < half; y++)
             {
-                var left = x * 8;
-                var target = y * halfStride + x * 4;
-                for (var channel = 0; channel < 4; channel++)
+                var top = y * 2 * stride;
+                var bottom = top + stride;
+                var targetRow = y * halfStride;
+                for (var x = 0; x < half; x++)
                 {
-                    var sum = pixels[top + left + channel] + pixels[top + left + 4 + channel]
-                        + pixels[bottom + left + channel] + pixels[bottom + left + 4 + channel];
-                    output[target + channel] = (byte)((sum + 2) / 4);
+                    var left = x * 8;
+                    var target = targetRow + x * 4;
+                    for (var channel = 0; channel < 4; channel++)
+                    {
+                        var sum = pixels[top + left + channel] + pixels[top + left + 4 + channel]
+                            + pixels[bottom + left + channel] + pixels[bottom + left + 4 + channel];
+                        output[target + channel] = (byte)((sum + 2) / 4);
+                    }
                 }
             }
+            return BitmapSource.Create(half, half, 96, 96, PixelFormats.Pbgra32, null, output, halfStride);
         }
-        return BitmapSource.Create(half, half, 96, 96, PixelFormats.Pbgra32, null, output, halfStride);
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(output);
+        }
     }
 }

@@ -256,6 +256,7 @@ internal static class Program
         Run("周历小格至少完整显示一条待办，\"+N\" 只计放不下的条目", TestTodoCellOverflow, failures);
         Run("整体风格与清爽桌面恢复提示", TestStyleSettingsAndRestoreNotice, failures);
         Run("外观草稿取消、对比、限定应用与竖屏预览", () => AppearancePreviewTests.Run(ShowAndPump, Pump), failures);
+        Run("内存优化回归：动态缓存、图标去重、待办共享菜单与懒加载", () => MemoryOptimizationTests.Run(ShowAndPump, Pump, PumpUntil), failures);
         Run("便签尺寸输入后自动生效", TestAppearancePanelSizeAppliesOnItsOwn, failures);
         Run("首次使用引导逐步应用设置", TestOnboardingWizard, failures);
         Run("卡片拖动吸附到相邻卡片且不会被系统吸附成半屏", () => SnapMoveTests.Run(ShowAndPump, Pump), failures);
@@ -6899,11 +6900,11 @@ internal static class Program
             var trayEntry = tray.Items.Single(item => item.Text == "打开冰蓝总览卡");
             Assert(!trayEntry.Visible, "禁用状态启动时托盘入口应隐藏");
             coordinator.ToggleLauncherPanel();
-            ownerType.GetMethod("QueueLauncherCatalogWarmup", Private)!.Invoke(coordinator, null);
             Pump();
             Assert(ownerType.GetField("_launcherPanel", Private)!.GetValue(coordinator) is null
-                && ownerType.GetField("_launcherApps", Private)!.GetValue(coordinator) is null,
-                "禁用状态应阻止打开面板及预读目录");
+                && ownerType.GetField("_launcherApps", Private)!.GetValue(coordinator) is null
+                && ownerType.GetMethod("QueueLauncherCatalogWarmup", Private) is null,
+                "禁用状态应阻止打开面板，且启动阶段不再存在目录预热任务");
 
             var cached = Task.FromResult(Array.Empty<(DockPinnedApp Pin, string? Folder, string? Shortcut)>());
             ownerType.GetField("_launcherApps", Private)!.SetValue(coordinator, cached);

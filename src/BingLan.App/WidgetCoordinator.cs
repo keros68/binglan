@@ -253,6 +253,7 @@ public sealed partial class WidgetCoordinator : IDisposable
         _cornerReveal.Raised += () => _dock.EnsureAboveDesktop();
         _taskbar.ExplorerRestarted += () =>
         {
+            ClearProcessIconCachesOnExplorerRestart();
             _cornerReveal.Update();
             _edgeDock.ApplyAll();
         };
@@ -359,7 +360,7 @@ public sealed partial class WidgetCoordinator : IDisposable
         }
         ScheduleSave();
         _updater.Start();
-        QueueLauncherCatalogWarmup();
+        ScheduleIdleMemoryTrim(StartupMemoryTrimDelay);
     }
 
     private void OnReleaseFound(UpdateRelease release)
@@ -1635,6 +1636,7 @@ public sealed partial class WidgetCoordinator : IDisposable
             {
                 _settingsWindow = null;
             }
+            ScheduleIdleMemoryTrim(WindowClosedMemoryTrimDelay);
         };
         _settingsWindow = settings;
         if (target is not null)
