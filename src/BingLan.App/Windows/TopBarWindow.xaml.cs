@@ -85,6 +85,9 @@ internal interface ITopBarEnvironment
 
     bool IsLauncherEnabled { get; }
 
+    /// <summary>Whether file results may come from the running Everything instance.</summary>
+    bool IsEverythingSearchEnabled { get; }
+
     void ToggleLauncherPanel();
 
     void ExitApp();
@@ -195,6 +198,7 @@ public sealed partial class TopBarWindow : Window
     private const int SearchHotkeyId = 0x5E41;
 
     private Button? _searchButton;
+    private TopBarSearchWindow? _searchPopup;
     private int _moduleMask = -1;
     private string _orderSignature = string.Empty;
     private bool? _appliedAcrylic;
@@ -202,7 +206,8 @@ public sealed partial class TopBarWindow : Window
     private bool _searchHotkeyRegistered;
 
     private bool IsSearchEntryEnabled =>
-        TopBarRules.IsModuleOn(_state.Modules, TopBarModuleKind.Search) && _environment.IsLauncherEnabled;
+        TopBarRules.IsModuleOn(_state.Modules, TopBarModuleKind.Search)
+        && (_state.SearchInline == true || _environment.IsLauncherEnabled);
 
     private const int HshellWindowDestroyed = 2;
     private const int HshellWindowActivated = 4;
@@ -590,6 +595,11 @@ public sealed partial class TopBarWindow : Window
         CloseTodoFlyout(animate: false);
         CloseClockFlyout();
         CloseInputMethodFlyout();
+        if (_searchPopup is { } searchPopup)
+        {
+            _searchPopup = null;
+            searchPopup.Close();
+        }
         _inputMethodSubscription?.Dispose();
         _inputMethodSubscription = null;
         _foregroundTimer.Stop();
@@ -2440,7 +2450,59 @@ public sealed partial class TopBarWindow : Window
         CloseTodoFlyout(animate: false);
         CloseClockFlyout();
         CloseInputMethodFlyout();
+        if (_state.SearchInline == true)
+        {
+            OpenSearchPopup();
+            return;
+        }
         _environment.ToggleLauncherPanel();
+    }
+
+    /// <summary>
+    /// Drops the search popup under the centered entry. A second invocation closes it, so
+    /// the button and the global hotkey behave the same way.
+    /// </summary>
+    private void OpenSearchPopup()
+    {
+        if (_searchPopup is { } open)
+        {
+            open.Close();
+            return;
+        }
+
+        System.Windows.Point anchorPixels;
+        if (_searchButton is { ActualWidth: > 0d } button)
+        {
+            anchorPixels = button.PointToScreen(
+                new System.Windows.Point(button.ActualWidth / 2d, button.ActualHeight));
+        }
+        else if (ActualWidth > 0d && ActualHeight > 0d)
+        {
+            anchorPixels = PointToScreen(new System.Windows.Point(ActualWidth / 2d, ActualHeight));
+        }
+        else
+        {
+            return;
+        }
+
+        var flat = (Color)ColorConverter.ConvertFromString(DesktopStyleRules.TopBar(_style, _state).Surface);
+        var look = TopBarSearchLook.FromBar(flat, _palette);
+        var monitor = _appBar?.Monitor ?? _monitor;
+        var popup = new TopBarSearchWindow(
+            look,
+            (int)Math.Round(anchorPixels.X),
+            (int)Math.Round(anchorPixels.Y),
+            monitor,
+            _environment.IsEverythingSearchEnabled);
+        popup.Closed += (_, _) =>
+        {
+            if (ReferenceEquals(_searchPopup, popup))
+            {
+                _searchPopup = null;
+            }
+        };
+        _searchPopup = popup;
+        popup.Show();
     }
 
 
@@ -2504,6 +2566,9 @@ public sealed partial class TopBarWindow : Window
 
     /// <summary>The centered search entry button, for tests.</summary>
     internal Button? SearchEntryButton => _searchButton;
+
+    /// <summary>The inline search popup while it is open, for tests.</summary>
+    internal TopBarSearchWindow? SearchPopup => _searchPopup;
 
     private static System.Windows.Media.SolidColorBrush FrozenBrush(string color) =>
         CreateFrozenColorBrush((Color)ColorConverter.ConvertFromString(color));
@@ -3262,7 +3327,7 @@ public sealed partial class TopBarWindow : Window
             PointerOverDock: pointerOverBar,
             InteractionActive: _menuOpen || _capsuleExpanded
                 || _todoFlyout?.IsOpen == true || _clockFlyout?.IsOpen == true
-                || _inputMethodFlyout?.IsOpen == true,
+                || _inputMethodFlyout?.IsOpen == true || _searchPopup is not null,
             OverlapIsMaximizedWindow: zoomed);
         _autoHide.Update(input, DateTimeOffset.UtcNow);
         if (_autoHide.IsShown != IsVisible)

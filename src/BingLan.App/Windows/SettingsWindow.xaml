@@ -2917,6 +2917,16 @@
                                                   Checked="TopBarSetting_Changed"
                                                   Unchecked="TopBarSetting_Changed"/>
                                     </local:SettingsRow>
+                                    <local:SettingsRow x:Name="TopBarSearchInlineRow"
+                                                       Header="搜索入口直接弹出搜索框"
+                                                       Description="开启后点击顶栏搜索会直接在顶栏下方弹出搜索框（优先查本机文件，无匹配时按 Enter 用浏览器搜索）；关闭时打开冰蓝总览卡"
+                                                       local:SettingsSearch.Keywords="搜索 内联 浮窗 总览卡 Everything 百度 浏览器 顶部信息条 搜索框">
+                                        <CheckBox x:Name="TopBarSearchInlineCheckBox"
+                                                  AutomationProperties.Name="搜索入口直接弹出搜索框"
+                                                  Style="{StaticResource ToggleSwitchStyle}"
+                                                  Checked="TopBarSetting_Changed"
+                                                  Unchecked="TopBarSetting_Changed"/>
+                                    </local:SettingsRow>
                                 </StackPanel>
                             </local:SettingsGroup>
 

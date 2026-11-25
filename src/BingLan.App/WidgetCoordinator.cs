@@ -3571,6 +3571,8 @@ public sealed partial class WidgetCoordinator : IDisposable
 
         public bool IsLauncherEnabled => owner._state.LauncherEnabled;
 
+        public bool IsEverythingSearchEnabled => owner._state.LauncherPreferences.UseEverything;
+
         public void ToggleLauncherPanel() => owner.ToggleLauncherPanel();
 
         public void OpenTopBarSettings() => owner.OpenSettings("TopBar");
