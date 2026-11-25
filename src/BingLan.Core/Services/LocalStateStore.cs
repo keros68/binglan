@@ -906,6 +906,7 @@ public sealed class LocalStateStore
                 todo.WeeklyWidth = 0;
                 todo.WeeklyHeight = 0;
             }
+            todo.ScreenKey = MultiScreenRules.NormalizeScreenKey(todo.ScreenKey);
         }
         foreach (var box in state.FileBoxes)
         {
@@ -936,6 +937,7 @@ public sealed class LocalStateStore
             {
                 box.IdleHideDelaySeconds = FileBoxHoverRevealRules.CoerceDelaySeconds(hideDelay);
             }
+            box.ScreenKey = MultiScreenRules.NormalizeScreenKey(box.ScreenKey);
         }
         FileBoxGroupRules.NormalizeGroups(state.FileBoxes);
         foreach (var note in state.NoteWidgets)
@@ -959,6 +961,7 @@ public sealed class LocalStateStore
             {
                 note.BodyTypography.Alignment = NoteBodyTextAlignment.Left;
             }
+            note.ScreenKey = MultiScreenRules.NormalizeScreenKey(note.ScreenKey);
         }
         foreach (var information in state.InformationWidgets)
         {
@@ -1033,6 +1036,22 @@ public sealed class LocalStateStore
         if (state.SchemaVersion < 62)
         {
             state.SchemaVersion = 62;
+        }
+        if (state.SchemaVersion < 63)
+        {
+            state.SchemaVersion = 63;
+        }
+        if (state.SchemaVersion < 64)
+        {
+            state.SchemaVersion = 64;
+        }
+        if (state.SchemaVersion < 65)
+        {
+            state.SchemaVersion = 65;
+        }
+        if (state.MultiScreen is not null)
+        {
+            MultiScreenRules.Normalize(state.MultiScreen, state.TodoWidgets);
         }
         if (!Enum.IsDefined(state.Taskbar.Mode))
         {

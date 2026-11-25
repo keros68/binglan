@@ -35,6 +35,30 @@ public sealed class WindowPlacement
     /// </summary>
     public List<DisplayLayoutPlacement> DisplayLayouts { get; set; } = [];
 
+    /// <summary>
+    /// Optional monitor-relative DIP bounds for secondary-display cards so switching monitor
+    /// arrangement (left/right, negative Y) or DPI restores exact screen-local layout.
+    /// Null on primary-screen cards so single-screen JSON adds zero bytes.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public MonitorLocalPlacement? MonitorLocal { get; set; }
+
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? ExtensionData { get; set; }
+}
+
+/// <summary>Monitor-relative DIP bounds and normalized work-area anchors.</summary>
+public sealed class MonitorLocalPlacement
+{
+    public double LocalLeftDip { get; set; }
+    public double LocalTopDip { get; set; }
+    public double WidthDip { get; set; }
+    public double HeightDip { get; set; }
+    public double AnchorX { get; set; }
+    public double AnchorY { get; set; }
+    public double SourceWorkWidthDip { get; set; }
+    public double SourceWorkHeightDip { get; set; }
+
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? ExtensionData { get; set; }
 }
@@ -169,6 +193,12 @@ public sealed class TodoWidgetState
     }
     public WindowPlacement Placement { get; set; } = new();
     public List<TodoItemState> Items { get; set; } = [];
+
+    /// <summary>
+    /// Stable hardware monitor key owning this card; null belongs to the primary screen.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? ScreenKey { get; set; }
 
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? ExtensionData { get; set; }
@@ -468,6 +498,12 @@ public sealed class FileBoxState
         Height = 306
     };
     public List<FileMappingState> Items { get; set; } = [];
+
+    /// <summary>
+    /// Stable hardware monitor key owning this box; null belongs to the primary screen.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? ScreenKey { get; set; }
 
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? ExtensionData { get; set; }

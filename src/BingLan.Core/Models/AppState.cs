@@ -5,7 +5,7 @@ namespace BingLan.Core.Models;
 
 public sealed class AppState
 {
-    public const int CurrentSchemaVersion = 64;
+    public const int CurrentSchemaVersion = 65;
 
     public int SchemaVersion { get; set; } = CurrentSchemaVersion;
 
@@ -80,4 +80,12 @@ public sealed class AppState
     /// into themes; null defaults to the home page ("Scheme"), legacy "Bars" normalizes to "Dock".
     /// </summary>
     public string? LastSettingsPage { get; set; }
+
+    /// <summary>
+    /// Optional per-monitor card profiles for secondary screens. Null while unused so single-screen
+    /// profiles stay compact and allocate nothing extra at runtime. Machine-local: never exported
+    /// into themes.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public MultiScreenState? MultiScreen { get; set; }
 }

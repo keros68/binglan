@@ -97,10 +97,18 @@ public sealed class WeatherService
         return delay > MaxRetryDelay ? MaxRetryDelay : delay;
     }
 
+    public Task<WeatherSnapshot> RefreshAsync(
+        string city,
+        double latitude,
+        double longitude,
+        CancellationToken cancellationToken = default) =>
+        RefreshAsync(city, latitude, longitude, forceRefresh: true, cancellationToken);
+
     public async Task<WeatherSnapshot> RefreshAsync(
         string city,
         double latitude,
         double longitude,
+        bool forceRefresh,
         CancellationToken cancellationToken = default)
     {
         var trimmedCity = city?.Trim() ?? "";
@@ -119,6 +127,21 @@ public sealed class WeatherService
             {
                 state = new LocationState(locationKey, null, null, 0, null);
                 _state = state;
+            }
+            else if (!forceRefresh)
+            {
+                // Deduplicate concurrent/automatic refreshes across multiple monitors sharing one WeatherService,
+                // honoring both the fresh interval and any active failure backoff set inside the gate.
+                var now = _time.GetLocalNow();
+                if (!ShouldAttemptRefresh(state, now) && state.LastSnapshot is not null)
+                {
+                    return state.LastSnapshot;
+                }
+                if (state.LastSnapshot is { Status: WeatherStatus.Fresh, UpdatedAt: { } last }
+                    && now - last < SuccessRefreshInterval)
+                {
+                    return state.LastSnapshot;
+                }
             }
 
             try
