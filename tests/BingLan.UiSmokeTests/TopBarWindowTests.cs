@@ -1250,8 +1250,16 @@ internal static class TopBarWindowTests
                 && surface.Width <= 180 && surface.Height == 40, "再次点击应收起并恢复紧凑尺寸");
             Invoke(summary);
             bar.TriggerSearch();
+            Assert(!bar.CapsuleDetailsExpanded && environment.LauncherToggles == 1 && bar.SearchPopup is null,
+                "默认模式下胶囊搜索入口应收起待办并打开冰蓝总览卡");
+
+            state.SearchInline = true;
+            bar.ApplyState();
+            pump();
+            Invoke(summary);
+            bar.TriggerSearch();
             Assert(!bar.CapsuleDetailsExpanded && bar.SearchPopup is not null,
-                "保留的搜索入口应收起待办并弹出内联搜索窗口");
+                "开启内联搜索后胶囊搜索入口应收起待办并弹出内联搜索窗口");
         }
         finally
         {

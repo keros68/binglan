@@ -604,6 +604,37 @@ internal sealed class MultiScreenHost : IDisposable
     internal void UntrackSecondaryWindow(WidgetWindowBase window) =>
         _secondaryWindows.Remove(window);
 
+    internal ResolvedMonitor? TryFindSecondaryMonitorForDipPlacement(WindowPlacement placement)
+    {
+        if (_disposed || _connectedMonitors.Count < 2)
+        {
+            return null;
+        }
+
+        var primaryMonitor = _connectedMonitors.FirstOrDefault(m => m.IsPrimary);
+        var primaryScale = ScreenProfileAccessor.ResolveScale(primaryMonitor?.Dpi ?? 96u);
+        var pxLeft = (int)Math.Round(placement.Left * primaryScale);
+        var pxTop = (int)Math.Round(placement.Top * primaryScale);
+        var pxWidth = Math.Max(1, (int)Math.Round((placement.Width > 0 ? placement.Width : 320d) * primaryScale));
+        var pxHeight = Math.Max(1, (int)Math.Round((placement.Height > 0 ? placement.Height : 260d) * primaryScale));
+        var targetRect = new PixelRect(pxLeft, pxTop, pxLeft + pxWidth, pxTop + pxHeight);
+        var monitor = MonitorIdentityResolver.FindByBounds(_connectedMonitors, targetRect);
+        if (monitor is not { IsPrimary: false })
+        {
+            return null;
+        }
+
+        ScreenProfileAccessor.EnsureScreenProfile(
+            _state,
+            monitor.MonitorKey,
+            monitor.DeviceName,
+            monitor.DisplayLabel,
+            monitor.HardwareId,
+            monitor.FriendlyName);
+        ScreenProfileAccessor.RecordMonitorLocalPlacement(placement, targetRect, monitor.WorkingArea, monitor.Dpi);
+        return monitor;
+    }
+
     internal FileBoxWindow? ShowDetachedFileBoxOnScreen(string screenKey, FileBoxState box)
     {
         var normalized = MultiScreenRules.NormalizeScreenKey(screenKey);

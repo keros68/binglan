@@ -1379,6 +1379,15 @@ public sealed partial class WidgetCoordinator : IDisposable
         state.Title = WidgetTitleRules.NextTitle(state.Title, _state.FileBoxes.Select(box => box.Title));
         UseSharedLook(state.Appearance);
         _state.FileBoxes.Add(state);
+        if (placement is not null
+            && _multiScreen is not null
+            && _multiScreen.TryFindSecondaryMonitorForDipPlacement(state.Placement) is { } secondaryMonitor)
+        {
+            _multiScreen.ShowDetachedFileBoxOnScreen(secondaryMonitor.MonitorKey, state);
+            NotifyMultiScreenUiChanged(refreshComponentList: true);
+            ScheduleSave();
+            return;
+        }
         var created = ShowFileBox(state);
         if (placement is not null && _multiScreen is not null)
         {
