@@ -35,6 +35,10 @@ internal static class BugFixRegressionTests
         TestUiDiagnosticsUntrackedDescription();
         TestUiDiagnosticsKeepsSystemEventsHealthy(pump, pumpUntil);
         TestInteractiveQaCleanDesktopIsolation(pump);
+        TestTaskbarAdapterDisposeSerializesInFlightAutoHideWrite(pump, pumpUntil);
+        TestTaskbarAdapterReconcileSerializesWithSystemDefaultSwitch(pump, pumpUntil);
+        TestTaskbarAdapterCompetitorTakeoverKeepsCheckpointUntilRollbackSucceeds(pump, pumpUntil);
+        TestBackgroundWinEventPumpRetiringThreadDoesNotConsumeNewThreadQueue();
     }
 
     private static void TestBackgroundWinEventPumpLifecycle()
@@ -553,6 +557,354 @@ internal static class BugFixRegressionTests
             }
             pump();
             try { Directory.Delete(coordinatorDir, true); } catch (IOException) { }
+        }
+    }
+
+    private static void TestTaskbarAdapterDisposeSerializesInFlightAutoHideWrite(
+        Action pump,
+        Action<Func<bool>, string> pumpUntil)
+    {
+        var temp = Path.Combine(Path.GetTempPath(), $"BingLan-tb-dispose-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(temp);
+        try
+        {
+            // Case 1: Dispose runs while SetAutoHide(true) is in flight on a worker thread.
+            var cp1 = Path.Combine(temp, "case1.json");
+            var autoHideState = false;
+            var setCalls = new List<bool>();
+            var enterSetTrue = new ManualResetEventSlim(false);
+            var releaseSetTrue = new ManualResetEventSlim(false);
+            var ops1 = new TaskbarPlatformOps
+            {
+                GetAutoHide = () => Volatile.Read(ref autoHideState),
+                SetAutoHide = value =>
+                {
+                    if (value)
+                    {
+                        enterSetTrue.Set();
+                        releaseSetTrue.Wait(TimeSpan.FromSeconds(5));
+                    }
+                    lock (setCalls) { setCalls.Add(value); }
+                    Volatile.Write(ref autoHideState, value);
+                    return true;
+                },
+                HasTaskbarWindow = () => true,
+                ReadTaskbarIdentity = () => (100, 200),
+                IsSystemTransparencyEnabled = () => true,
+                TryWriteSystemTransparency = _ => true,
+                ReadEnvironment = _ => new BingLan.Core.Taskbar.TaskbarEnvironment(26200, false, false, true, null),
+                FindTaskbars = () => [100],
+                TrySetAccent = (IReadOnlyList<nint> _, int _, out string error) => { error = string.Empty; return true; }
+            };
+
+            var adapter1 = new TaskbarAdapter(cp1, ops: ops1);
+            var applyTask1 = adapter1.ApplyAsync(TaskbarMode.SmartHide);
+            pumpUntil(() => enterSetTrue.IsSet, "Case1: SetAutoHide(true) 已进入后台写入");
+
+            _ = Task.Run(() =>
+            {
+                Thread.Sleep(50);
+                releaseSetTrue.Set();
+            });
+            adapter1.Dispose();
+            pumpUntil(() => applyTask1.IsCompleted, "Case1: ApplyAsync 随 Dispose 收尾完成");
+            lock (setCalls)
+            {
+                Check(setCalls.SequenceEqual([true, false]),
+                    $"Case1: Dispose 必须等待在途写入结束再恢复（实际调用={string.Join(",", setCalls)}）");
+            }
+            Check(!Volatile.Read(ref autoHideState) && !File.Exists(cp1),
+                "Case1: Dispose 返回后任务栏不得滞留自动隐藏且检查点必须已删除");
+
+            // Case 2: Dispose wins the lock before queued SetAutoHide(true) runs.
+            var cp2 = Path.Combine(temp, "case2.json");
+            var autoHideState2 = false;
+            var setCalls2 = new List<bool>();
+            var enterGet = new ManualResetEventSlim(false);
+            var releaseGet = new ManualResetEventSlim(false);
+            var ops2 = new TaskbarPlatformOps
+            {
+                GetAutoHide = () =>
+                {
+                    enterGet.Set();
+                    releaseGet.Wait(TimeSpan.FromSeconds(5));
+                    return Volatile.Read(ref autoHideState2);
+                },
+                SetAutoHide = value =>
+                {
+                    lock (setCalls2) { setCalls2.Add(value); }
+                    Volatile.Write(ref autoHideState2, value);
+                    return true;
+                },
+                HasTaskbarWindow = () => true,
+                ReadTaskbarIdentity = () => (100, 200),
+                IsSystemTransparencyEnabled = () => true,
+                TryWriteSystemTransparency = _ => true,
+                ReadEnvironment = _ => new BingLan.Core.Taskbar.TaskbarEnvironment(26200, false, false, true, null),
+                FindTaskbars = () => [100],
+                TrySetAccent = (IReadOnlyList<nint> _, int _, out string error) => { error = string.Empty; return true; }
+            };
+
+            var adapter2 = new TaskbarAdapter(cp2, ops: ops2);
+            var applyTask2 = adapter2.ApplyAsync(TaskbarMode.SmartHide);
+            pumpUntil(() => enterGet.IsSet, "Case2: ApplyAutoHide 初始 GetAutoHide 已开始");
+            adapter2.Dispose();
+            releaseGet.Set();
+            pumpUntil(() => applyTask2.IsCompleted, "Case2: ApplyAsync 取消并结束");
+            pump();
+            lock (setCalls2)
+            {
+                Check(setCalls2.Count == 0,
+                    $"Case2: Dispose 之后排队的后台任务严禁再写入 SetAutoHide(true)（实际调用={setCalls2.Count}）");
+            }
+            Check(!Volatile.Read(ref autoHideState2) && !File.Exists(cp2),
+                "Case2: 未写入系统状态且无残留检查点");
+        }
+        finally
+        {
+            try { Directory.Delete(temp, true); } catch (IOException) { }
+        }
+    }
+
+    private static void TestTaskbarAdapterReconcileSerializesWithSystemDefaultSwitch(
+        Action pump,
+        Action<Func<bool>, string> pumpUntil)
+    {
+        var temp = Path.Combine(Path.GetTempPath(), $"BingLan-tb-reconcile-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(temp);
+        var cp = Path.Combine(temp, "reconcile.json");
+        var autoHideState = false;
+        var setTrueDuringReconcile = 0;
+        var blockNextGet = false;
+        var enterReconcileGet = new ManualResetEventSlim(false);
+        var releaseReconcileGet = new ManualResetEventSlim(false);
+
+        var ops = new TaskbarPlatformOps
+        {
+            GetAutoHide = () =>
+            {
+                if (blockNextGet)
+                {
+                    blockNextGet = false;
+                    enterReconcileGet.Set();
+                    releaseReconcileGet.Wait(TimeSpan.FromSeconds(5));
+                    return false;
+                }
+                return Volatile.Read(ref autoHideState);
+            },
+            SetAutoHide = value =>
+            {
+                if (value)
+                {
+                    Interlocked.Increment(ref setTrueDuringReconcile);
+                }
+                Volatile.Write(ref autoHideState, value);
+                return true;
+            },
+            HasTaskbarWindow = () => true,
+            ReadTaskbarIdentity = () => (300, 400),
+            IsSystemTransparencyEnabled = () => true,
+            TryWriteSystemTransparency = _ => true,
+            ReadEnvironment = _ => new BingLan.Core.Taskbar.TaskbarEnvironment(26200, false, false, true, null),
+            FindTaskbars = () => [300],
+            TrySetAccent = (IReadOnlyList<nint> _, int _, out string error) => { error = string.Empty; return true; }
+        };
+
+        using var adapter = new TaskbarAdapter(cp, ops: ops);
+        try
+        {
+            var enableTask = adapter.ApplyAsync(TaskbarMode.SmartHide);
+            pumpUntil(() => enableTask.IsCompleted, "初始开启 SmartHide 完成");
+            Check(Volatile.Read(ref autoHideState) && File.Exists(cp), "SmartHide 已启用且写入检查点");
+
+            // Reset counter and simulate Explorer restart reconcile racing with ApplyAsync(SystemDefault).
+            Interlocked.Exchange(ref setTrueDuringReconcile, 0);
+            Volatile.Write(ref autoHideState, false);
+            blockNextGet = true;
+
+            var reconcileTask = adapter.ReconcileAutoHideForTestsAsync();
+            pumpUntil(() => enterReconcileGet.IsSet, "ReconcileAutoHideAsync 已进入后台检查");
+
+            var disableTask = adapter.ApplyAsync(TaskbarMode.SystemDefault);
+            releaseReconcileGet.Set();
+            pumpUntil(() => reconcileTask.IsCompleted && disableTask.IsCompleted, "恢复与切回默认均已完成");
+            pump();
+
+            Check(Volatile.Read(ref setTrueDuringReconcile) == 0,
+                $"切回系统默认后 Reconcile 写入前版本校验必须拦截 SetAutoHide(true)（实际={setTrueDuringReconcile}）");
+            Check(!Volatile.Read(ref autoHideState) && !File.Exists(cp) && adapter.ActiveMode == TaskbarMode.SystemDefault,
+                "切回系统默认后任务栏保持非自动隐藏且检查点清理干净");
+        }
+        finally
+        {
+            adapter.Dispose();
+            try { Directory.Delete(temp, true); } catch (IOException) { }
+        }
+    }
+
+    private static void TestTaskbarAdapterCompetitorTakeoverKeepsCheckpointUntilRollbackSucceeds(
+        Action pump,
+        Action<Func<bool>, string> pumpUntil)
+    {
+        var temp = Path.Combine(Path.GetTempPath(), $"BingLan-tb-competitor-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(temp);
+        var cp = Path.Combine(temp, "competitor.json");
+        var systemTransparency = false;
+        string? customizer = null;
+        var rollbackSuccess = false;
+        var blockFalseWrite = false;
+        var enterRollback = new ManualResetEventSlim(false);
+        var releaseRollback = new ManualResetEventSlim(false);
+        var accentDisabledCalls = 0;
+
+        var ops = new TaskbarPlatformOps
+        {
+            GetAutoHide = () => false,
+            SetAutoHide = _ => true,
+            HasTaskbarWindow = () => true,
+            ReadTaskbarIdentity = () => (100, 200),
+            IsSystemTransparencyEnabled = () => Volatile.Read(ref systemTransparency),
+            TryWriteSystemTransparency = enabled =>
+            {
+                if (!enabled && blockFalseWrite)
+                {
+                    enterRollback.Set();
+                    releaseRollback.Wait(TimeSpan.FromSeconds(5));
+                    if (!rollbackSuccess)
+                    {
+                        return false;
+                    }
+                }
+                Volatile.Write(ref systemTransparency, enabled);
+                return true;
+            },
+            ReadEnvironment = look => new BingLan.Core.Taskbar.TaskbarEnvironment(
+                22000,
+                false,
+                false,
+                Volatile.Read(ref systemTransparency),
+                look ? customizer : null),
+            FindTaskbars = () => [500],
+            TrySetAccent = (IReadOnlyList<nint> _, int state, out string error) =>
+            {
+                if (state == TaskbarNativeMethods.AccentDisabled)
+                {
+                    Interlocked.Increment(ref accentDisabledCalls);
+                }
+                error = string.Empty;
+                return true;
+            }
+        };
+
+        try
+        {
+            // ApplyAsync(Blur) via WindowsBuild 19045 uses Win32 accent & sets OriginalSystemTransparency=false.
+            var opsWin10 = new TaskbarPlatformOps
+            {
+                GetAutoHide = ops.GetAutoHide,
+                SetAutoHide = ops.SetAutoHide,
+                HasTaskbarWindow = ops.HasTaskbarWindow,
+                ReadTaskbarIdentity = ops.ReadTaskbarIdentity,
+                IsSystemTransparencyEnabled = ops.IsSystemTransparencyEnabled,
+                TryWriteSystemTransparency = ops.TryWriteSystemTransparency,
+                ReadEnvironment = look => new BingLan.Core.Taskbar.TaskbarEnvironment(
+                    19045,
+                    false,
+                    false,
+                    Volatile.Read(ref systemTransparency),
+                    look ? customizer : null),
+                FindTaskbars = ops.FindTaskbars,
+                TrySetAccent = ops.TrySetAccent
+            };
+            using var adapterWin10 = new TaskbarAdapter(cp, ops: opsWin10);
+            var blurTask = adapterWin10.ApplyAsync(TaskbarMode.Blur);
+            pumpUntil(() => blurTask.IsCompleted, "Blur 模式应用完成");
+            Check(Volatile.Read(ref systemTransparency) && File.Exists(cp),
+                "初始 Blur 模式开启系统透明并落盘检查点");
+
+            Interlocked.Exchange(ref accentDisabledCalls, 0);
+            customizer = "TranslucentTB";
+            blockFalseWrite = true;
+            rollbackSuccess = false;
+
+            adapterWin10.RunKeepAliveForTests(forceTickCount: 9);
+            pumpUntil(() => enterRollback.IsSet, "竞品接管已发起后台系统透明回滚");
+
+            // While rollback is still in flight: checkpoint stays on disk with TransparencyApplied=false.
+            Check(File.Exists(cp), "回滚在途时检查点不得被提前删除");
+            var midCp = BingLan.Core.Taskbar.TaskbarCheckpoint.Parse(File.ReadAllText(cp));
+            Check(midCp is { TransparencyApplied: false, OriginalSystemTransparency: false },
+                "回滚在途检查点必须清除 TransparencyApplied 并保留 OriginalSystemTransparency=false");
+
+            // Release rollback with failure: checkpoint must still stay so next run retries.
+            releaseRollback.Set();
+            pumpUntil(() => adapterWin10.WaitForPendingRollbackForTests().IsCompleted, "失败回滚任务结束");
+            Check(File.Exists(cp) && Volatile.Read(ref systemTransparency),
+                "系统透明回滚失败时必须保留检查点以便下次启动重试");
+            Check(Volatile.Read(ref accentDisabledCalls) == 0,
+                "竞品接管让步期间不得重置竞品的任务栏 Accent");
+
+            // Now confirm recovery succeeds when system transparency rollback works.
+            blockFalseWrite = false;
+            var recovered = TaskbarAdapter.RecoverFromCheckpoint(cp, opsWin10);
+            Check(recovered && !Volatile.Read(ref systemTransparency) && !File.Exists(cp),
+                "回滚确认成功后清除系统透明并删除检查点");
+            Check(Volatile.Read(ref accentDisabledCalls) == 0,
+                "仅恢复系统透明的检查点不得调用 TrySetAccent(AccentDisabled)");
+        }
+        finally
+        {
+            try { Directory.Delete(temp, true); } catch (IOException) { }
+        }
+    }
+
+    private static void TestBackgroundWinEventPumpRetiringThreadDoesNotConsumeNewThreadQueue()
+    {
+        using var pump = new BackgroundWinEventPump(TimeSpan.FromMilliseconds(50));
+        var sub1 = pump.Subscribe(
+            DockNativeMethods.EventSystemForeground,
+            DockNativeMethods.EventSystemForeground,
+            static m => m.ChildId == 0,
+            static _ => { });
+        Check(sub1.IsActive, "首个订阅应成功激活");
+        var firstTid = pump.CurrentThreadManagedIdForTests;
+        Check(firstTid is > 0, "首个泵线程应已运行");
+
+        var releaseOldThread = new ManualResetEventSlim(false);
+        pump.BlockCurrentPumpForTests(releaseOldThread);
+
+        // Trigger Unsubscribe + StopThreadLocked(50ms timeout) while old thread stays blocked past CommandTimeout.
+        _ = Task.Run(() =>
+        {
+            Thread.Sleep(2400);
+            releaseOldThread.Set();
+        });
+        sub1.Dispose();
+
+        // Immediately subscribe on a fresh successor pump thread while the old thread is still retiring.
+        var sub2 = pump.Subscribe(
+            DockNativeMethods.EventSystemForeground,
+            DockNativeMethods.EventSystemForeground,
+            static m => m.ChildId == 0,
+            static _ => { });
+        try
+        {
+            var secondTid = pump.CurrentThreadManagedIdForTests;
+            Check(sub2.IsActive && pump.IsRunning && pump.ActiveHookCount == 1,
+                "旧线程超时退役期间的新订阅必须成功落到新线程并激活");
+            Check(secondTid is > 0 && secondTid != firstTid,
+                $"新订阅应运行在独立新线程（old={firstTid}, new={secondTid}）");
+
+            // Wait for old retiring thread to finish its finally block, then verify sub2 survives intact.
+            Check(releaseOldThread.Wait(TimeSpan.FromSeconds(5)), "旧线程释放门应在超时内触发");
+            Thread.Sleep(150);
+            Check(sub2.IsActive && pump.IsRunning && pump.ActiveHookCount == 1,
+                "退役旧线程退出收尾后不得影响新线程队列或卸载新订阅");
+        }
+        finally
+        {
+            releaseOldThread.Set();
+            sub2.Dispose();
         }
     }
 

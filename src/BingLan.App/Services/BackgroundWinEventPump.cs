@@ -33,21 +33,37 @@ internal sealed class BackgroundWinEventPump : IDisposable
     private static readonly TimeSpan CommandTimeout = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan ShutdownTimeout = TimeSpan.FromSeconds(2);
 
+    internal sealed class PumpThreadInstance
+    {
+        internal ConcurrentQueue<Action> Commands { get; } = new();
+        internal ManualResetEventSlim Ready { get; } = new(false);
+        internal Thread? Thread { get; set; }
+        internal uint ThreadId;
+        internal int Stopping;
+    }
+
     internal static BackgroundWinEventPump Shared { get; } = new();
 
     private readonly object _lifecycleLock = new();
-    private readonly ConcurrentQueue<Action> _commands = new();
+    private readonly TimeSpan _shutdownTimeout;
     private readonly ConcurrentDictionary<nint, HookRegistration> _hooks = new();
     // Keep the native callback delegate rooted for the pump's entire lifetime.
     private readonly NativeMethods.WinEventProc _winEventProc;
 
-    private Thread? _thread;
-    private uint _threadId;
+    private PumpThreadInstance? _currentInstance;
     private int _activeSubscriptions;
     private bool _disposed;
 
     internal BackgroundWinEventPump()
+        : this(ShutdownTimeout)
     {
+    }
+
+    internal BackgroundWinEventPump(TimeSpan? shutdownTimeout)
+    {
+        _shutdownTimeout = shutdownTimeout is { } timeout && timeout > TimeSpan.Zero
+            ? timeout
+            : ShutdownTimeout;
         _winEventProc = OnNativeWinEvent;
     }
 
@@ -57,7 +73,7 @@ internal sealed class BackgroundWinEventPump : IDisposable
         {
             lock (_lifecycleLock)
             {
-                return _thread is { IsAlive: true };
+                return _currentInstance?.Thread is { IsAlive: true };
             }
         }
     }
@@ -110,12 +126,16 @@ internal sealed class BackgroundWinEventPump : IDisposable
                 return WinEventSubscription.Inactive;
             }
 
-            var registration = new HookRegistration(backgroundFilter, onEvent, coalesceWindowMs);
+            var instance = _currentInstance!;
+            var registration = new HookRegistration(backgroundFilter, onEvent, coalesceWindowMs, instance);
             nint hookHandle = 0;
 
-            if (Thread.CurrentThread == _thread)
+            if (Thread.CurrentThread == instance.Thread)
             {
-                hookHandle = InstallHookOnPumpThread(eventMin, eventMax, processId, flags, registration);
+                if (Volatile.Read(ref instance.Stopping) == 0)
+                {
+                    hookHandle = InstallHookOnPumpThread(eventMin, eventMax, processId, flags, registration);
+                }
             }
             else
             {
@@ -123,11 +143,11 @@ internal sealed class BackgroundWinEventPump : IDisposable
                 // 0 = pending, 1 = installed by pump thread, 2 = timed out on caller thread.
                 var state = 0;
                 nint installedHandle = 0;
-                _commands.Enqueue(() =>
+                instance.Commands.Enqueue(() =>
                 {
                     try
                     {
-                        if (Volatile.Read(ref state) != 0)
+                        if (Volatile.Read(ref instance.Stopping) != 0 || Volatile.Read(ref state) != 0)
                         {
                             return;
                         }
@@ -145,7 +165,7 @@ internal sealed class BackgroundWinEventPump : IDisposable
                         try { done.Set(); } catch (ObjectDisposedException) { }
                     }
                 });
-                var posted = PostThreadMessageW(Volatile.Read(ref _threadId), WmAppProcessQueue, 0, 0);
+                var posted = PostThreadMessageW(Volatile.Read(ref instance.ThreadId), WmAppProcessQueue, 0, 0);
                 if (posted && done.Wait(CommandTimeout))
                 {
                     hookHandle = Volatile.Read(ref installedHandle);
@@ -235,16 +255,17 @@ internal sealed class BackgroundWinEventPump : IDisposable
 
         lock (_lifecycleLock)
         {
-            if (_thread is { IsAlive: true })
+            var instance = registration.OwnerInstance;
+            if (instance is not null && instance.Thread is { IsAlive: true } ownerThread)
             {
-                if (Thread.CurrentThread == _thread)
+                if (Thread.CurrentThread == ownerThread)
                 {
                     RemoveHookOnPumpThread(hookHandle);
                 }
                 else
                 {
                     using var done = new ManualResetEventSlim(false);
-                    _commands.Enqueue(() =>
+                    instance.Commands.Enqueue(() =>
                     {
                         try
                         {
@@ -255,7 +276,8 @@ internal sealed class BackgroundWinEventPump : IDisposable
                             try { done.Set(); } catch (ObjectDisposedException) { }
                         }
                     });
-                    if (PostThreadMessageW(Volatile.Read(ref _threadId), WmAppProcessQueue, 0, 0))
+                    var ownerTid = Volatile.Read(ref instance.ThreadId);
+                    if (ownerTid != 0 && PostThreadMessageW(ownerTid, WmAppProcessQueue, 0, 0))
                     {
                         done.Wait(CommandTimeout);
                     }
@@ -288,81 +310,101 @@ internal sealed class BackgroundWinEventPump : IDisposable
         }
     }
 
+    internal int? CurrentThreadManagedIdForTests
+    {
+        get
+        {
+            lock (_lifecycleLock)
+            {
+                return _currentInstance?.Thread?.ManagedThreadId;
+            }
+        }
+    }
+
+    internal void BlockCurrentPumpForTests(ManualResetEventSlim releaseGate)
+    {
+        lock (_lifecycleLock)
+        {
+            var instance = _currentInstance;
+            if (instance is null || Volatile.Read(ref instance.ThreadId) == 0)
+            {
+                return;
+            }
+            instance.Commands.Enqueue(() => releaseGate.Wait(TimeSpan.FromSeconds(5)));
+            _ = PostThreadMessageW(Volatile.Read(ref instance.ThreadId), WmAppProcessQueue, 0, 0);
+        }
+    }
+
     private bool EnsureThreadRunningLocked()
     {
-        if (_thread is { IsAlive: true } && Volatile.Read(ref _threadId) != 0)
+        if (_currentInstance is { Thread.IsAlive: true } existing
+            && Volatile.Read(ref existing.Stopping) == 0
+            && Volatile.Read(ref existing.ThreadId) != 0)
         {
             return true;
         }
 
-        // Clear stale queued commands from any prior lifecycle.
-        while (_commands.TryDequeue(out _))
-        {
-        }
-
-        using var ready = new ManualResetEventSlim(false);
-        var thread = new Thread(() => RunMessageLoop(ready))
+        // Each pump lifecycle gets its own isolated instance & command queue so a slow-retiring
+        // thread can never drain commands queued for a successor thread.
+        var instance = new PumpThreadInstance();
+        var thread = new Thread(() => RunMessageLoop(instance))
         {
             IsBackground = true,
             Name = "BingLan.WinEventPump"
         };
         thread.SetApartmentState(ApartmentState.STA);
-        _thread = thread;
-        Volatile.Write(ref _threadId, 0);
+        instance.Thread = thread;
+        _currentInstance = instance;
         thread.Start();
 
-        ready.Wait(StartupTimeout);
-        return Volatile.Read(ref _threadId) != 0 && thread.IsAlive;
+        instance.Ready.Wait(StartupTimeout);
+        return Volatile.Read(ref instance.ThreadId) != 0 && thread.IsAlive;
     }
 
     private void StopThreadLocked()
     {
-        var thread = _thread;
-        var threadId = Volatile.Read(ref _threadId);
-        if (thread is null)
+        var instance = _currentInstance;
+        if (instance is null)
         {
             return;
         }
 
+        _currentInstance = null;
+        Volatile.Write(ref instance.Stopping, 1);
+        var threadId = Volatile.Read(ref instance.ThreadId);
         if (threadId != 0)
         {
             _ = PostThreadMessageW(threadId, WmQuit, 0, 0);
         }
 
-        if (thread != Thread.CurrentThread && thread.IsAlive)
+        if (instance.Thread is { IsAlive: true } thread && thread != Thread.CurrentThread)
         {
-            thread.Join(ShutdownTimeout);
-        }
-
-        _thread = null;
-        Volatile.Write(ref _threadId, 0);
-        while (_commands.TryDequeue(out _))
-        {
+            thread.Join(_shutdownTimeout);
         }
     }
 
-    private void RunMessageLoop(ManualResetEventSlim ready)
+    private void RunMessageLoop(PumpThreadInstance instance)
     {
         try
         {
             // Force creation of the thread's Win32 message queue before accepting PostThreadMessageW.
             _ = PeekMessageW(out _, 0, 0, 0, PmNoRemove);
-            Volatile.Write(ref _threadId, GetCurrentThreadId());
+            Volatile.Write(ref instance.ThreadId, GetCurrentThreadId());
             try
             {
-                ready.Set();
+                instance.Ready.Set();
             }
             catch (ObjectDisposedException)
             {
             }
 
-            DrainCommands();
+            DrainCommands(instance);
 
             while (DesktopDoubleClickNativeMethods.GetMessageW(out var message, 0, 0, 0) > 0)
             {
                 if (message.Message == WmAppProcessQueue)
                 {
-                    DrainCommands();
+                    DrainCommands(instance);
                     continue;
                 }
                 DesktopDoubleClickNativeMethods.DispatchMessageW(ref message);
@@ -374,7 +416,7 @@ internal sealed class BackgroundWinEventPump : IDisposable
         }
         finally
         {
-            DrainCommands();
+            DrainCommands(instance);
             var currentTid = GetCurrentThreadId();
             foreach (var pair in _hooks)
             {
@@ -383,10 +425,10 @@ internal sealed class BackgroundWinEventPump : IDisposable
                     _ = NativeMethods.UnhookWinEvent(pair.Key);
                 }
             }
-            Interlocked.CompareExchange(ref _threadId, 0, currentTid);
+            Interlocked.CompareExchange(ref instance.ThreadId, 0, currentTid);
             try
             {
-                ready.Set();
+                instance.Ready.Set();
             }
             catch (ObjectDisposedException)
             {
@@ -394,9 +436,9 @@ internal sealed class BackgroundWinEventPump : IDisposable
         }
     }
 
-    private void DrainCommands()
+    private static void DrainCommands(PumpThreadInstance instance)
     {
-        while (_commands.TryDequeue(out var action))
+        while (instance.Commands.TryDequeue(out var action))
         {
             try
             {
@@ -481,13 +523,15 @@ internal sealed class BackgroundWinEventPump : IDisposable
     internal sealed class HookRegistration(
         Func<WinEventMessage, bool>? backgroundFilter,
         Action<WinEventMessage> onEvent,
-        int coalesceWindowMs)
+        int coalesceWindowMs,
+        PumpThreadInstance ownerInstance)
     {
         private int _disposed;
 
         internal Func<WinEventMessage, bool>? BackgroundFilter { get; } = backgroundFilter;
         internal Action<WinEventMessage> OnEvent { get; } = onEvent;
         internal int CoalesceWindowMs { get; } = coalesceWindowMs;
+        internal PumpThreadInstance? OwnerInstance { get; } = ownerInstance;
         internal uint OwnerThreadId { get; set; }
         internal long LastAcceptedTick { get; set; } = long.MinValue / 2;
         internal bool IsDisposed => Volatile.Read(ref _disposed) != 0;
