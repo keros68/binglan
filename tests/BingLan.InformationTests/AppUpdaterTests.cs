@@ -43,7 +43,7 @@ internal static class AppUpdaterTests
             state,
             new Version(0, 4, 8),
             () => saves++,
-            () => { },
+            static () => Task.CompletedTask,
             canAutoCheck: true,
             handler: stub,
             timeProvider: clock);
@@ -117,7 +117,7 @@ internal static class AppUpdaterTests
             new UpdateState(),
             new Version(0, 4, 8),
             () => { },
-            () => { },
+            static () => Task.CompletedTask,
             canAutoCheck: false,
             handler: stub);
         updater.Changed += () => changedStates.Add((updater.IsBusy, updater.Status));
@@ -190,7 +190,11 @@ internal static class AppUpdaterTests
             new UpdateState(),
             new Version(0, 4, 8),
             () => { },
-            () => throw new InvalidOperationException("exit failed"),
+            async () =>
+            {
+                await Task.Yield();
+                throw new InvalidOperationException("async exit failed");
+            },
             canAutoCheck: false,
             handler: stub,
             launchInstaller: (path, _) => launchedPath = path);
@@ -242,7 +246,7 @@ internal static class AppUpdaterTests
             }
             Assert(downloadThrew && !updater.IsBusy, "DownloadAndInstallAsync 首次 OnChanged 抛出后必须复位 IsBusy");
 
-            // 3. 安装程序启动后 _exitApp 抛出时，IsBusy 必须复位并更新提示且触发 Changed
+            // 3. 安装程序启动后异步 _exitApp 抛出时，IsBusy 必须复位并更新提示且触发 Changed
             throwOnChanged = false;
             changedStates.Clear();
             var exitFailTask = updater.DownloadAndInstallAsync();
@@ -260,6 +264,99 @@ internal static class AppUpdaterTests
                 System.IO.File.Delete(launchedPath);
             }
         }
+    }
+
+    public static void PartialReleaseWithRateLimitedFallbackRetriesInstallerAfterCooldown()
+    {
+        var clock = new MutableTimeProvider(new DateTimeOffset(2026, 11, 25, 10, 0, 0, TimeSpan.Zero));
+        var resetUtc = clock.GetUtcNow().AddMinutes(20);
+        var installerBytes = Encoding.UTF8.GetBytes("installer payload");
+        var digest = Convert.ToHexString(SHA256.HashData(installerBytes)).ToLowerInvariant();
+        var releaseJson = $$"""
+            {
+              "tag_name": "v9.9.9",
+              "html_url": "https://github.com/keros68/binglan/releases/tag/v9.9.9",
+              "body": "完整说明",
+              "assets": [
+                {
+                  "name": "BingLan-Setup-9.9.9.exe",
+                  "size": {{installerBytes.Length}},
+                  "digest": "sha256:{{digest}}",
+                  "browser_download_url": "https://github.com/keros68/binglan/releases/download/v9.9.9/BingLan-Setup-9.9.9.exe"
+                }
+              ]
+            }
+            """;
+
+        var apiLimited = true;
+        var stub = new StubHttpMessageHandler
+        {
+            Behavior = (request, _) =>
+            {
+                var uri = request.RequestUri!.AbsoluteUri;
+                if (uri == UpdateService.LatestReleasePageEndpoint)
+                {
+                    var redirect = new HttpResponseMessage(HttpStatusCode.Found);
+                    redirect.Headers.Location = new Uri("https://github.com/keros68/binglan/releases/tag/v9.9.9");
+                    return Task.FromResult(redirect);
+                }
+                if (uri == $"{UpdateService.ReleaseByTagEndpointPrefix}v9.9.9")
+                {
+                    if (apiLimited)
+                    {
+                        var limited = new HttpResponseMessage(HttpStatusCode.Forbidden)
+                        {
+                            ReasonPhrase = "rate limit exceeded"
+                        };
+                        limited.Headers.Add("X-RateLimit-Remaining", "0");
+                        limited.Headers.Add("X-RateLimit-Reset", resetUtc.ToUnixTimeSeconds().ToString());
+                        return Task.FromResult(limited);
+                    }
+                    return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        Content = new StringContent(releaseJson, Encoding.UTF8, "application/json")
+                    });
+                }
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.Forbidden));
+            }
+        };
+
+        var state = new UpdateState { AutoCheck = true };
+        var releaseFoundCount = 0;
+        using var updater = new AppUpdater(
+            state,
+            new Version(0, 4, 9),
+            () => { },
+            static () => Task.CompletedTask,
+            canAutoCheck: true,
+            handler: stub,
+            timeProvider: clock);
+        updater.ReleaseFound += _ => releaseFoundCount++;
+
+        updater.Start();
+        PumpUntil(() => !updater.IsBusy && updater.Available is not null, TimeSpan.FromSeconds(5),
+            "tag API 限流且降级失败时仍应展示可见新版本");
+        Assert(updater.Available!.Installer is null, "降级资产失败时 Installer 为 null");
+        Assert(updater.RetryAfterUtc == resetUtc, "保留 RetryAfterUtc 等待冷却后重新探测安装包");
+        Assert(state.LastCheckedAt is null, "仅返回发布页且命中限流时不提前写入 LastCheckedAt 阻塞重试");
+        AssertEqual(1, releaseFoundCount, "首次发现新版本触发一次 ReleaseFound");
+
+        var callsAfterFirst = stub.CallCount;
+        updater.AutoCheck = false;
+        updater.AutoCheck = true;
+        Pump();
+        AssertEqual(callsAfterFirst, stub.CallCount, "冷却期内自动检查不重复请求");
+
+        // 冷却结束后重新触发自动检查，补全 Installer 且不重复弹 ReleaseFound
+        apiLimited = false;
+        clock.Advance(TimeSpan.FromMinutes(21));
+        updater.AutoCheck = false;
+        updater.AutoCheck = true;
+        PumpUntil(() => !updater.IsBusy && updater.Available?.Installer is not null, TimeSpan.FromSeconds(5),
+            "冷却结束后自动重试应补全直接安装包信息");
+        Assert(updater.RetryAfterUtc is null, "补全安装包后清空 RetryAfterUtc");
+        Assert(state.LastCheckedAt is not null, "补全安装包后写入 LastCheckedAt");
+        AssertEqual(1, releaseFoundCount, "同版本补全安装包不应重复触发 ReleaseFound");
     }
 
     private sealed class MutableTimeProvider(DateTimeOffset utcNow) : TimeProvider

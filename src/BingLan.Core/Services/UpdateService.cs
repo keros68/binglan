@@ -46,8 +46,10 @@ public sealed class UpdateService
 
     private static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(15);
     private static readonly TimeSpan MaxTagApiTimeout = TimeSpan.FromSeconds(5);
+    public static readonly TimeSpan DefaultRateLimitCooldown = TimeSpan.FromMinutes(15);
     private static readonly TimeSpan DefaultPooledConnectionLifetime = TimeSpan.FromMinutes(15);
     private const long MaxValidUnixTimeSeconds = 253402300799L;
+    private const int MaxTrustedRedirects = 5;
     private const string InstallerPrefix = "BingLan-Setup-";
     private const string ChecksumsFileName = "SHA256SUMS.txt";
     private const int MaxChecksumsBytes = 64 * 1024;
@@ -341,9 +343,19 @@ public sealed class UpdateService
             Directory.CreateDirectory(directory);
             path = Path.Combine(directory, Path.GetFileName(asset.Name));
 
-            using var response = await _httpClient
-                .GetAsync(asset.DownloadUrl, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
-                .ConfigureAwait(false);
+            var (trustedResponse, untrustedRedirect) = await SendWithTrustedRedirectsAsync(
+                HttpMethod.Get,
+                asset.DownloadUrl,
+                cancellationToken).ConfigureAwait(false);
+            if (untrustedRedirect)
+            {
+                throw new UpdateDownloadException("下载地址不受信任");
+            }
+            if (trustedResponse is null)
+            {
+                throw new UpdateDownloadException("网络请求失败");
+            }
+            using var response = trustedResponse;
             if (!response.IsSuccessStatusCode)
             {
                 UpdateCheckResult failure;
@@ -356,11 +368,6 @@ public sealed class UpdateService
                     throw new UpdateDownloadException("网络连接中断，请稍后重试");
                 }
                 throw new UpdateDownloadException(failure.ErrorMessage ?? "网络请求失败");
-            }
-            if (response.RequestMessage?.RequestUri is { } finalUri
-                && !IsTrustedDownloadUri(finalUri))
-            {
-                throw new UpdateDownloadException("下载地址不受信任");
             }
 
             Stream source;
@@ -438,6 +445,8 @@ public sealed class UpdateService
 
     private sealed record DiscoveryOutcome(DiscoveredRelease? Discovered, UpdateCheckResult? HardFailure);
 
+    private sealed record TagApiOutcome(UpdateRelease? Release, bool IsRateLimited, DateTimeOffset? RetryAfterUtc);
+
     private async Task<DiscoveryOutcome> TryDiscoverLatestReleaseAsync(
         CancellationToken callerToken,
         CancellationToken timeoutToken)
@@ -466,15 +475,9 @@ public sealed class UpdateService
                     return new DiscoveryOutcome(null, BuildRateLimitFailure(headResponse));
                 }
 
-                if (headResponse.StatusCode == HttpStatusCode.ProxyAuthenticationRequired)
-                {
-                    return new DiscoveryOutcome(
-                        null,
-                        BuildFailureFromStatusCode(headResponse.StatusCode, retryAfterUtc: null, isRateLimited: false));
-                }
-
-                // 5xx 直接回退 API，无需再向 github.com 重复发 GET。
-                if ((int)headResponse.StatusCode is >= 500 and <= 599)
+                // 代理阻断 github.com（407）或 5xx 时直接回退 api.github.com，避免仅放行 API 端点时退化。
+                if (headResponse.StatusCode == HttpStatusCode.ProxyAuthenticationRequired
+                    || (int)headResponse.StatusCode is >= 500 and <= 599)
                 {
                     return new DiscoveryOutcome(null, null);
                 }
@@ -497,9 +500,7 @@ public sealed class UpdateService
 
             if (getResponse.StatusCode == HttpStatusCode.ProxyAuthenticationRequired)
             {
-                return new DiscoveryOutcome(
-                    null,
-                    BuildFailureFromStatusCode(getResponse.StatusCode, retryAfterUtc: null, isRateLimited: false));
+                return new DiscoveryOutcome(null, null);
             }
 
             if (getResponse.StatusCode == HttpStatusCode.Forbidden)
@@ -520,17 +521,11 @@ public sealed class UpdateService
         {
             throw;
         }
-        catch (HttpRequestException httpException)
-            when (httpException.HttpRequestError == HttpRequestError.ProxyTunnelError
-                || httpException.StatusCode == HttpStatusCode.ProxyAuthenticationRequired)
-        {
-            return new DiscoveryOutcome(null, ClassifyHttpRequestException(httpException));
-        }
         catch (Exception exception) when (exception is OperationCanceledException
             or HttpRequestException
             or IOException)
         {
-            // github.com 不可达或超时时回退尝试 api.github.com，避免相对旧版产生网络兼容性退化。
+            // github.com 不可达、代理隧道受阻或超时时先回退尝试 api.github.com，避免相对旧版产生网络兼容性退化。
             return new DiscoveryOutcome(null, null);
         }
     }
@@ -564,9 +559,9 @@ public sealed class UpdateService
         CancellationToken callerToken,
         CancellationToken timeoutToken)
     {
-        var apiRelease = await TryFetchReleaseByTagAsync(discovered.Tag, discovered.Version, callerToken, timeoutToken)
+        var tagOutcome = await TryFetchReleaseByTagAsync(discovered.Tag, discovered.Version, callerToken, timeoutToken)
             .ConfigureAwait(false);
-        if (apiRelease is not null)
+        if (tagOutcome.Release is { } apiRelease)
         {
             return new UpdateCheckResult(UpdateCheckStatus.Available, apiRelease, null);
         }
@@ -581,10 +576,13 @@ public sealed class UpdateService
             FallbackReleaseNotes,
             discovered.PageUrl,
             fallbackInstaller);
-        return new UpdateCheckResult(UpdateCheckStatus.Available, fallbackRelease, null);
+        var partialRetryAfterUtc = tagOutcome.IsRateLimited && fallbackInstaller is null
+            ? tagOutcome.RetryAfterUtc ?? _time.GetUtcNow() + DefaultRateLimitCooldown
+            : (DateTimeOffset?)null;
+        return new UpdateCheckResult(UpdateCheckStatus.Available, fallbackRelease, null, partialRetryAfterUtc);
     }
 
-    private async Task<UpdateRelease?> TryFetchReleaseByTagAsync(
+    private async Task<TagApiOutcome> TryFetchReleaseByTagAsync(
         string tag,
         Version expectedVersion,
         CancellationToken callerToken,
@@ -605,11 +603,24 @@ public sealed class UpdateService
                 .ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
             {
-                return null;
+                var isRateLimited = IsRateLimitedHeaderOrReason(response);
+                if (!isRateLimited && response.StatusCode == HttpStatusCode.Forbidden)
+                {
+                    var bodySnippet = await ReadBoundedStringAsync(response.Content, MaxErrorBodyBytes, apiToken)
+                        .ConfigureAwait(false);
+                    isRateLimited = bodySnippet.Contains("rate limit", StringComparison.OrdinalIgnoreCase);
+                }
+                var retryAfterUtc = isRateLimited
+                    ? TryParseRetryAfterUtc(response, _time.GetUtcNow())
+                    : null;
+                return new TagApiOutcome(null, isRateLimited, retryAfterUtc);
             }
             var json = await response.Content.ReadAsStringAsync(apiToken).ConfigureAwait(false);
             var release = ParseRelease(json);
-            return release is not null && release.Version == expectedVersion ? release : null;
+            return new TagApiOutcome(
+                release is not null && release.Version == expectedVersion ? release : null,
+                IsRateLimited: false,
+                RetryAfterUtc: null);
         }
         catch (OperationCanceledException) when (callerToken.IsCancellationRequested)
         {
@@ -620,7 +631,7 @@ public sealed class UpdateService
             or IOException
             or JsonException)
         {
-            return null;
+            return new TagApiOutcome(null, IsRateLimited: false, RetryAfterUtc: null);
         }
     }
 
@@ -638,17 +649,18 @@ public sealed class UpdateService
             var downloadUri = new Uri($"{ReleaseDownloadPrefix}{escapedTag}/{installerName}");
 
             string sha256;
-            using (var checksumsRequest = new HttpRequestMessage(HttpMethod.Get, checksumsUri))
-            using (var checksumsResponse = await _httpClient
-                .SendAsync(checksumsRequest, HttpCompletionOption.ResponseHeadersRead, timeoutToken)
-                .ConfigureAwait(false))
+            var (trustedChecksumsResponse, checksumsUntrusted) = await SendWithTrustedRedirectsAsync(
+                HttpMethod.Get,
+                checksumsUri,
+                timeoutToken).ConfigureAwait(false);
+            if (checksumsUntrusted || trustedChecksumsResponse is null)
+            {
+                trustedChecksumsResponse?.Dispose();
+                return null;
+            }
+            using (var checksumsResponse = trustedChecksumsResponse)
             {
                 if (!checksumsResponse.IsSuccessStatusCode)
-                {
-                    return null;
-                }
-                var checksumsFinalUri = checksumsResponse.RequestMessage?.RequestUri ?? checksumsUri;
-                if (!IsTrustedDownloadUri(checksumsFinalUri))
                 {
                     return null;
                 }
@@ -666,16 +678,17 @@ public sealed class UpdateService
                 }
             }
 
-            using var headRequest = new HttpRequestMessage(HttpMethod.Head, downloadUri);
-            using var headResponse = await _httpClient
-                .SendAsync(headRequest, HttpCompletionOption.ResponseHeadersRead, timeoutToken)
-                .ConfigureAwait(false);
-            if (!headResponse.IsSuccessStatusCode)
+            var (trustedHeadResponse, headUntrusted) = await SendWithTrustedRedirectsAsync(
+                HttpMethod.Head,
+                downloadUri,
+                timeoutToken).ConfigureAwait(false);
+            if (headUntrusted || trustedHeadResponse is null)
             {
+                trustedHeadResponse?.Dispose();
                 return null;
             }
-            var installerFinalUri = headResponse.RequestMessage?.RequestUri ?? downloadUri;
-            if (!IsTrustedDownloadUri(installerFinalUri))
+            using var headResponse = trustedHeadResponse;
+            if (!headResponse.IsSuccessStatusCode)
             {
                 return null;
             }
@@ -698,6 +711,54 @@ public sealed class UpdateService
         {
             return null;
         }
+    }
+
+    private async Task<(HttpResponseMessage? Response, bool UntrustedRedirect)> SendWithTrustedRedirectsAsync(
+        HttpMethod method,
+        Uri initialUri,
+        CancellationToken cancellationToken)
+    {
+        var currentUri = initialUri;
+        for (var hop = 0; hop <= MaxTrustedRedirects; hop++)
+        {
+            if (!IsTrustedDownloadUri(currentUri))
+            {
+                return (null, true);
+            }
+
+            using var request = new HttpRequestMessage(method, currentUri);
+            var response = await _noRedirectClient
+                .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
+                .ConfigureAwait(false);
+            if (IsRedirectStatus(response.StatusCode))
+            {
+                var location = response.Headers.Location;
+                response.Dispose();
+                if (location is null)
+                {
+                    return (null, false);
+                }
+
+                var nextUri = location.IsAbsoluteUri ? location : new Uri(currentUri, location);
+                if (!IsTrustedDownloadUri(nextUri))
+                {
+                    return (null, true);
+                }
+                currentUri = nextUri;
+                continue;
+            }
+
+            var finalUri = response.RequestMessage?.RequestUri ?? currentUri;
+            if (!IsTrustedDownloadUri(finalUri))
+            {
+                response.Dispose();
+                return (null, true);
+            }
+
+            return (response, false);
+        }
+
+        return (null, false);
     }
 
     private async Task<UpdateCheckResult> CheckViaLatestApiAsync(CancellationToken cancellationToken)

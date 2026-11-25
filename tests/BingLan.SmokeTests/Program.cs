@@ -86,6 +86,7 @@ Run("更新检查限流提示与冷却窗口规则", UpdateServiceTests.TestRate
 Run("更新检查 407/代理/DNS/TLS/5xx/HttpIOException 精准分类", UpdateServiceTests.TestErrorClassificationForProxyTlsDnsAndHttpIOException);
 Run("更新检查发现阶段回退、200 终址识别与 API 子超时降级", UpdateServiceTests.TestDiscoveryFallbackAndSubTimeoutResilience);
 Run("更新检查 API 路径限流时钟校正与超大 Reset 钳制", UpdateServiceTests.TestApiPathRateLimitAndExtremeResetValues);
+Run("更新检查逐跳重定向校验、代理 407 回退 API 与部分限流保留冷却", UpdateServiceTests.TestHopByHopRedirectsProxyFallbackAndPartialCooldown);
 Run("清爽桌面识别用户接管", CleanDesktopTests.TestTakeoverDetection);
 Run("清爽桌面无记录时关闭仍恢复显示", CleanDesktopTests.TestTurnOffWithoutRecordPlan);
 Run("清爽桌面接手无记录的隐藏图标", CleanDesktopTests.TestAdoptionOfOrphanedHiddenIcons);

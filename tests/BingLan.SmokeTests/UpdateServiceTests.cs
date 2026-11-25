@@ -624,6 +624,208 @@ internal static class UpdateServiceTests
             "超大 Retry-After 不崩溃且钳制到 MaxRateLimitCooldown");
     }
 
+    internal static void TestHopByHopRedirectsProxyFallbackAndPartialCooldown()
+    {
+        var fixedNowUtc = new DateTimeOffset(2026, 11, 25, 12, 0, 0, TimeSpan.Zero);
+        var chinaZone = TimeZoneInfo.CreateCustomTimeZone("TestUTC+8", TimeSpan.FromHours(8), "UTC+8", "UTC+8");
+        var clock = new FixedTimeProvider(fixedNowUtc, chinaZone);
+        var expectedSha = Sha256Hex(InstallerBytes);
+        var checksumsBody = $"{expectedSha}  BingLan-Setup-0.4.8.exe\n";
+
+        // 1. 降级资产重定向至非白名单主机时，在发起下一跳请求前中止，evil.example.com 请求次数必须为 0；
+        //    合法 2 跳可信重定向（github.com -> objects.githubusercontent.com -> release-assets.githubusercontent.com）正常成功。
+        var evilHits = 0;
+        var untrustedHopHandler = new StubHandler(request =>
+        {
+            var uri = request.RequestUri!;
+            if (uri.Host.Equals("evil.example.com", StringComparison.OrdinalIgnoreCase))
+            {
+                evilHits++;
+                return Bytes(InstallerBytes);
+            }
+            if (request.Method == HttpMethod.Head && uri.AbsoluteUri == UpdateService.LatestReleasePageEndpoint)
+            {
+                var redirect = new HttpResponseMessage(HttpStatusCode.Found);
+                redirect.Headers.Location = new Uri("https://github.com/keros68/binglan/releases/tag/v0.4.8");
+                return redirect;
+            }
+            if (uri.AbsoluteUri.StartsWith(UpdateService.ReleaseByTagEndpointPrefix, StringComparison.Ordinal))
+            {
+                return new HttpResponseMessage(HttpStatusCode.Forbidden);
+            }
+            if (uri.AbsoluteUri.EndsWith("SHA256SUMS.txt", StringComparison.Ordinal))
+            {
+                var hop1 = new HttpResponseMessage(HttpStatusCode.Found);
+                hop1.Headers.Location = new Uri("https://evil.example.com/steal-checksums.txt");
+                return hop1;
+            }
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        });
+        var rejectedHopResult = new UpdateService(new Version(0, 4, 6), untrustedHopHandler)
+            .CheckAsync().GetAwaiter().GetResult();
+        Check(rejectedHopResult is { Status: UpdateCheckStatus.Available, Release: { Installer: null } }
+            && evilHits == 0,
+            $"降级 SHA256SUMS 302 指向非白名单主机必须在请求前拦截（evilHits={evilHits}）");
+
+        var headEvilHits = 0;
+        var untrustedHeadHopHandler = new StubHandler(request =>
+        {
+            var uri = request.RequestUri!;
+            if (uri.Host.Equals("evil.example.com", StringComparison.OrdinalIgnoreCase))
+            {
+                headEvilHits++;
+                return new HttpResponseMessage(HttpStatusCode.OK);
+            }
+            if (request.Method == HttpMethod.Head && uri.AbsoluteUri == UpdateService.LatestReleasePageEndpoint)
+            {
+                var redirect = new HttpResponseMessage(HttpStatusCode.Found);
+                redirect.Headers.Location = new Uri("https://github.com/keros68/binglan/releases/tag/v0.4.8");
+                return redirect;
+            }
+            if (uri.AbsoluteUri.StartsWith(UpdateService.ReleaseByTagEndpointPrefix, StringComparison.Ordinal))
+            {
+                return new HttpResponseMessage(HttpStatusCode.Forbidden);
+            }
+            if (uri.AbsoluteUri.EndsWith("SHA256SUMS.txt", StringComparison.Ordinal))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(checksumsBody, Encoding.UTF8, "text/plain")
+                };
+            }
+            if (request.Method == HttpMethod.Head && uri.AbsoluteUri.EndsWith("BingLan-Setup-0.4.8.exe", StringComparison.Ordinal))
+            {
+                var hop = new HttpResponseMessage(HttpStatusCode.Found);
+                hop.Headers.Location = new Uri("https://evil.example.com/BingLan-Setup-0.4.8.exe");
+                return hop;
+            }
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        });
+        var rejectedHeadHop = new UpdateService(new Version(0, 4, 6), untrustedHeadHopHandler)
+            .CheckAsync().GetAwaiter().GetResult();
+        Check(rejectedHeadHop is { Status: UpdateCheckStatus.Available, Release: { Installer: null } }
+            && headEvilHits == 0,
+            $"降级安装包 HEAD 302 指向非白名单主机必须在请求前拦截（headEvilHits={headEvilHits}）");
+
+        var trustedMultiHopHandler = new StubHandler(request =>
+        {
+            var uri = request.RequestUri!;
+            if (request.Method == HttpMethod.Head && uri.AbsoluteUri == UpdateService.LatestReleasePageEndpoint)
+            {
+                var redirect = new HttpResponseMessage(HttpStatusCode.Found);
+                redirect.Headers.Location = new Uri("https://github.com/keros68/binglan/releases/tag/v0.4.8");
+                return redirect;
+            }
+            if (uri.AbsoluteUri.StartsWith(UpdateService.ReleaseByTagEndpointPrefix, StringComparison.Ordinal))
+            {
+                return new HttpResponseMessage(HttpStatusCode.Forbidden);
+            }
+            if (uri.AbsoluteUri == "https://github.com/keros68/binglan/releases/download/v0.4.8/SHA256SUMS.txt")
+            {
+                var hop1 = new HttpResponseMessage(HttpStatusCode.Found);
+                hop1.Headers.Location = new Uri("https://release-assets.githubusercontent.com/hop1/SHA256SUMS.txt");
+                return hop1;
+            }
+            if (uri.AbsoluteUri == "https://release-assets.githubusercontent.com/hop1/SHA256SUMS.txt")
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(checksumsBody, Encoding.UTF8, "text/plain")
+                };
+            }
+            if (request.Method == HttpMethod.Head
+                && uri.AbsoluteUri == "https://github.com/keros68/binglan/releases/download/v0.4.8/BingLan-Setup-0.4.8.exe")
+            {
+                var hop1 = new HttpResponseMessage(HttpStatusCode.Found);
+                hop1.Headers.Location = new Uri("https://objects.githubusercontent.com/hop1/BingLan-Setup-0.4.8.exe");
+                return hop1;
+            }
+            if (request.Method == HttpMethod.Head
+                && uri.AbsoluteUri == "https://objects.githubusercontent.com/hop1/BingLan-Setup-0.4.8.exe")
+            {
+                var head = new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent([]) };
+                head.Content.Headers.ContentLength = 12_345_678;
+                return head;
+            }
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        });
+        var trustedMultiHopResult = new UpdateService(new Version(0, 4, 6), trustedMultiHopHandler)
+            .CheckAsync().GetAwaiter().GetResult();
+        Check(trustedMultiHopResult is { Status: UpdateCheckStatus.Available, Release.Installer: { Size: 12_345_678 } },
+            "合法可信域 302 跳转链应逐跳放行并成功解析安装包");
+
+        // 2. 代理拦截 github.com（ProxyTunnelError 或 407）但放行 api.github.com 时，回退 API 发现新版本
+        var tunnelFallbackHandler = new StubHandler(request =>
+        {
+            if (request.RequestUri!.Host == "github.com")
+            {
+                throw new HttpRequestException(HttpRequestError.ProxyTunnelError, "proxy blocked github.com");
+            }
+            if (request.RequestUri.AbsoluteUri == UpdateService.LatestReleaseEndpoint)
+            {
+                return Json(ReleaseJson("v0.4.8", assetName: "BingLan-Setup-0.4.8.exe",
+                    downloadUrl: "https://github.com/keros68/binglan/releases/download/v0.4.8/BingLan-Setup-0.4.8.exe"));
+            }
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        });
+        var tunnelFallback = new UpdateService(new Version(0, 4, 6), tunnelFallbackHandler)
+            .CheckAsync().GetAwaiter().GetResult();
+        Check(tunnelFallback is { Status: UpdateCheckStatus.Available, Release.Version.Build: 8 },
+            "ProxyTunnelError 阻断 github.com 时应先回退 api.github.com 成功发现新版本");
+
+        var proxy407WebOnlyCalls = 0;
+        var proxy407FallbackHandler = new StubHandler(request =>
+        {
+            if (request.RequestUri!.Host == "github.com")
+            {
+                proxy407WebOnlyCalls++;
+                return new HttpResponseMessage(HttpStatusCode.ProxyAuthenticationRequired);
+            }
+            if (request.RequestUri.AbsoluteUri == UpdateService.LatestReleaseEndpoint)
+            {
+                return Json(ReleaseJson("v0.4.8", assetName: "BingLan-Setup-0.4.8.exe",
+                    downloadUrl: "https://github.com/keros68/binglan/releases/download/v0.4.8/BingLan-Setup-0.4.8.exe"));
+            }
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        });
+        var proxy407Fallback = new UpdateService(new Version(0, 4, 6), proxy407FallbackHandler)
+            .CheckAsync().GetAwaiter().GetResult();
+        Check(proxy407Fallback is { Status: UpdateCheckStatus.Available, Release.Version.Build: 8 } && proxy407WebOnlyCalls == 1,
+            "HEAD 命中 407 应直接回退 api.github.com（不重复发 github.com GET）");
+
+        // 3. tag API 限流且降级资产也失败时，返回 Available + PageUrl 的同时保留 RetryAfterUtc
+        var resetUtc = fixedNowUtc.AddMinutes(30);
+        var partialLimitHandler = new StubHandler(request =>
+        {
+            var uri = request.RequestUri!;
+            if (request.Method == HttpMethod.Head && uri.AbsoluteUri == UpdateService.LatestReleasePageEndpoint)
+            {
+                var redirect = new HttpResponseMessage(HttpStatusCode.Found);
+                redirect.Headers.Location = new Uri("https://github.com/keros68/binglan/releases/tag/v0.4.8");
+                return redirect;
+            }
+            if (uri.AbsoluteUri == "https://api.github.com/repos/keros68/binglan/releases/tags/v0.4.8")
+            {
+                var limited = new HttpResponseMessage(HttpStatusCode.Forbidden)
+                {
+                    ReasonPhrase = "rate limit exceeded"
+                };
+                limited.Headers.Add("X-RateLimit-Remaining", "0");
+                limited.Headers.Add("X-RateLimit-Reset", resetUtc.ToUnixTimeSeconds().ToString());
+                return limited;
+            }
+            return new HttpResponseMessage(HttpStatusCode.Forbidden);
+        });
+        var partialResult = UpdateService.Create(
+            new Version(0, 4, 6),
+            handler: partialLimitHandler,
+            noRedirectHandler: partialLimitHandler,
+            timeProvider: clock).CheckAsync().GetAwaiter().GetResult();
+        Check(partialResult is { Status: UpdateCheckStatus.Available, Release: { Installer: null } }
+            && partialResult.RetryAfterUtc == resetUtc,
+            $"tag API 限流且降级失败时必须保留 RetryAfterUtc={resetUtc}，实际={partialResult.RetryAfterUtc}");
+    }
+
     internal static void TestVerifiedDownload()
     {
         var directory = Path.Combine(Path.GetTempPath(), $"BingLan-update-{Guid.NewGuid():N}");

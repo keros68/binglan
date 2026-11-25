@@ -522,7 +522,7 @@ internal static class SettingsWindowTests
         var updateState = new UpdateState();
         var saves = 0;
         var updater = new BingLan.App.Services.AppUpdater(
-            updateState, new Version(0, 2, 2), () => saves++, () => { }, canAutoCheck: false, stub);
+            updateState, new Version(0, 2, 2), () => saves++, static () => Task.CompletedTask, canAutoCheck: false, stub);
         var window = new SettingsWindow(
             new CityLookupService(new CitySearchService(new StubHttpMessageHandler()), CityLibrary.Empty),
             new InformationWidgetState(),

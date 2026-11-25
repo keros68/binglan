@@ -21,19 +21,20 @@ public sealed class AppUpdater : IDisposable
     private readonly UpdateState _state;
     private readonly UpdateService _service;
     private readonly Action _saveState;
-    private readonly Action _exitApp;
+    private readonly Func<Task> _exitApp;
     private readonly Action<string, string>? _launchInstaller;
     private readonly bool _canAutoCheck;
     private readonly TimeProvider _time;
     private readonly DispatcherTimer _timer = new() { Interval = TickInterval };
     private Version? _notifiedVersion;
     private DateTimeOffset? _retryAfterUtc;
+    private bool _needsInstallerRetry;
 
     public AppUpdater(
         UpdateState state,
         Version currentVersion,
         Action saveState,
-        Action exitApp,
+        Func<Task> exitApp,
         bool canAutoCheck,
         System.Net.Http.HttpMessageHandler? handler = null,
         TimeProvider? timeProvider = null,
@@ -99,7 +100,8 @@ public sealed class AppUpdater : IDisposable
     private Task CheckIfDueAsync() =>
         _canAutoCheck
         && _state.AutoCheck
-        && UpdateService.IsAutoCheckDue(_state.LastCheckedAt, _time.GetLocalNow(), _retryAfterUtc)
+        && (UpdateService.IsAutoCheckDue(_state.LastCheckedAt, _time.GetLocalNow(), _retryAfterUtc)
+            || (_needsInstallerRetry && UpdateService.IsRetryAllowed(_retryAfterUtc, _time.GetUtcNow())))
             ? CheckAsync(manual: false)
             : Task.CompletedTask;
 
@@ -160,14 +162,39 @@ public sealed class AppUpdater : IDisposable
                 return;
             }
 
-            _retryAfterUtc = null;
-            _state.LastCheckedAt = _time.GetLocalNow();
-            _saveState();
-            Available = result.Release;
-            var checkedAt = _state.LastCheckedAt.Value.LocalDateTime.ToString("M月d日 HH:mm", CultureInfo.InvariantCulture);
-            Status = Available is { } release
-                ? $"发现新版本 {release.Version.ToString(3)}"
-                : $"已是最新版本（检查于 {checkedAt}）";
+            var foundRelease = result.Release;
+            if (foundRelease is not null
+                && foundRelease.Installer is null
+                && Available is { Installer: not null } existing
+                && UpdateService.Normalize(existing.Version) == UpdateService.Normalize(foundRelease.Version))
+            {
+                foundRelease = existing;
+            }
+
+            if (result.RetryAfterUtc is { } partialRetryAfter && foundRelease?.Installer is null)
+            {
+                _retryAfterUtc = partialRetryAfter;
+                _needsInstallerRetry = true;
+            }
+            else
+            {
+                _retryAfterUtc = null;
+                _needsInstallerRetry = false;
+                _state.LastCheckedAt = _time.GetLocalNow();
+                _saveState();
+            }
+
+            Available = foundRelease;
+            if (Available is { } release)
+            {
+                Status = $"发现新版本 {release.Version.ToString(3)}";
+            }
+            else
+            {
+                var checkedAt = (_state.LastCheckedAt ?? _time.GetLocalNow()).LocalDateTime
+                    .ToString("M月d日 HH:mm", CultureInfo.InvariantCulture);
+                Status = $"已是最新版本（检查于 {checkedAt}）";
+            }
             OnChanged();
             if (Available is { } found && found.Version != _notifiedVersion)
             {
@@ -267,7 +294,7 @@ public sealed class AppUpdater : IDisposable
             StartupLog.Write($"开始安装新版本 {Available.Version.ToString(3)}");
             try
             {
-                _exitApp();
+                await _exitApp();
                 exited = true;
             }
             catch (Exception exception)

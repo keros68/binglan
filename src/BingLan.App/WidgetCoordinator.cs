@@ -116,7 +116,7 @@ public sealed partial class WidgetCoordinator : IDisposable
         _peek = new DesktopPeekController(ReturnPeekedFileBoxes, ReturnSingleFileBoxToDesktop);
         _edgeDock = new FileBoxEdgeDockController(_peek, _windows, ScheduleSave);
         // Only the installed app checks on its own; test and interactive runs keep quiet.
-        _updater = new AppUpdater(_state.Updates, AppVersion, ScheduleSave, Exit, canAutoCheck: dataDirectory is null);
+        _updater = new AppUpdater(_state.Updates, AppVersion, ScheduleSave, ExitAsync, canAutoCheck: dataDirectory is null);
         _updater.ReleaseFound += OnReleaseFound;
         _iconStore = new DockIconStore(Path.Combine(_store.DataDirectory, "icons"));
         DockAppResolver.IconStore = _iconStore;
@@ -3203,7 +3203,9 @@ public sealed partial class WidgetCoordinator : IDisposable
     /// <summary>A newer start asked this instance to make way; same path as the tray's Exit.</summary>
     internal void RequestExit() => Exit();
 
-    private async void Exit()
+    private async void Exit() => await ExitAsync();
+
+    private async Task ExitAsync()
     {
         if (_isExiting || _exitRequested)
         {
