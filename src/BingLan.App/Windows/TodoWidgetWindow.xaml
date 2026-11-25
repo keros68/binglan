@@ -178,6 +178,36 @@
                 </MultiDataTrigger>
             </Style.Triggers>
         </Style>
+        <!-- Single shared context menu for list rows, weekly cells, peek rows, and item editors.
+             Fixed item list avoids per-row ContextMenu allocations and prevents dynamic item drift. -->
+        <ContextMenu x:Key="TodoItemContextMenu"
+                     DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}"
+                     Opened="TodoItemContextMenu_Opened"
+                     Closed="TodoItemContextMenu_Closed">
+            <MenuItem Header="移到 ▸" Tag="MoveToDate" Visibility="Collapsed"/>
+            <Separator Tag="MoveToDateSeparator" Visibility="Collapsed"/>
+            <MenuItem Header="上移" Click="MoveUp_Click"/>
+            <MenuItem Header="下移" Click="MoveDown_Click"/>
+            <Separator/>
+            <MenuItem Style="{StaticResource ToEventMenuItem}" Click="SetKindToEvent_Click"/>
+            <MenuItem Style="{StaticResource ToCountdownMenuItem}" Click="SetKindToCountdown_Click"/>
+            <MenuItem Style="{StaticResource ToTodoMenuItem}" Click="SetKindToTodo_Click"/>
+            <MenuItem Style="{StaticResource TimeMenuItem}" Click="SetTime_Click"/>
+            <MenuItem Style="{StaticResource TargetDateMenuItem}" Click="SetTargetDate_Click"/>
+            <MenuItem Style="{StaticResource PersistentTodoMenuItem}" Click="TogglePersistent_Click"/>
+            <Separator Tag="ListOnly"/>
+            <MenuItem Header="关联文件…" Tag="ListOnly" Click="LinkFiles_Click"/>
+            <MenuItem Header="关联文件夹…" Tag="ListOnly" Click="LinkFolders_Click"/>
+            <Separator/>
+            <MenuItem Header="删除" Click="DeleteTodo_Click"/>
+            <Separator Tag="TodoTextEditingSeparator" Visibility="Collapsed"/>
+            <MenuItem Header="编辑文本" Tag="TodoTextEditing" Visibility="Collapsed">
+                <MenuItem Header="剪切" Command="{x:Static ApplicationCommands.Cut}"/>
+                <MenuItem Header="复制" Command="{x:Static ApplicationCommands.Copy}"/>
+                <MenuItem Header="粘贴" Command="{x:Static ApplicationCommands.Paste}"/>
+                <MenuItem Header="全选" Command="{x:Static ApplicationCommands.SelectAll}"/>
+            </MenuItem>
+        </ContextMenu>
         <!-- Full entry row for the day peek popup: dwell 300 ms to lift and drag to
              reorder, double-click the text to edit in place, right-click for move-to-day. -->
         <DataTemplate x:Key="DayPeekItemTemplate">
@@ -187,22 +217,8 @@
                     Padding="4,3"
                     CornerRadius="{StaticResource CardRadius.Control}"
                     Background="Transparent"
+                    ContextMenu="{StaticResource TodoItemContextMenu}"
                     ContextMenuOpening="PeekRow_ContextMenuOpening">
-                <Border.ContextMenu>
-                    <ContextMenu DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}">
-                        <MenuItem Header="上移" Click="MoveUp_Click"/>
-                        <MenuItem Header="下移" Click="MoveDown_Click"/>
-                        <Separator/>
-                        <MenuItem Style="{StaticResource ToEventMenuItem}" Click="SetKindToEvent_Click"/>
-                        <MenuItem Style="{StaticResource ToCountdownMenuItem}" Click="SetKindToCountdown_Click"/>
-                        <MenuItem Style="{StaticResource ToTodoMenuItem}" Click="SetKindToTodo_Click"/>
-                        <MenuItem Style="{StaticResource TimeMenuItem}" Click="SetTime_Click"/>
-                        <MenuItem Style="{StaticResource TargetDateMenuItem}" Click="SetTargetDate_Click"/>
-                        <MenuItem Style="{StaticResource PersistentTodoMenuItem}" Click="TogglePersistent_Click"/>
-                        <Separator/>
-                        <MenuItem Header="删除" Click="DeleteTodo_Click"/>
-                    </ContextMenu>
-                </Border.ContextMenu>
                 <Border.Style>
                     <Style TargetType="Border">
                         <Setter Property="Visibility" Value="Visible"/>
@@ -250,7 +266,7 @@
                         <Ellipse Width="6" Height="6" VerticalAlignment="Center" Fill="{DynamicResource CardMarkerAccentBrush}"/>
                     </StackPanel>
                     <TextBox x:Name="PeekText"
-                             ContextMenu="{Binding ContextMenu, RelativeSource={RelativeSource AncestorType=Border}}"
+                             ContextMenu="{StaticResource TodoItemContextMenu}"
                              ContextMenuOpening="TodoText_ContextMenuOpening"
                              Grid.Column="1"
                              AutomationProperties.Name="待办内容"
@@ -323,22 +339,8 @@
                     Background="{DynamicResource WidgetItemSurfaceBrush}"
                     BorderBrush="{DynamicResource CardRimSubtleBorderBrush}"
                     BorderThickness="1"
+                    ContextMenu="{StaticResource TodoItemContextMenu}"
                     ContextMenuOpening="PeekRow_ContextMenuOpening">
-                <Border.ContextMenu>
-                    <ContextMenu DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}">
-                        <MenuItem Header="上移" Click="MoveUp_Click"/>
-                        <MenuItem Header="下移" Click="MoveDown_Click"/>
-                        <Separator/>
-                        <MenuItem Style="{StaticResource ToEventMenuItem}" Click="SetKindToEvent_Click"/>
-                        <MenuItem Style="{StaticResource ToCountdownMenuItem}" Click="SetKindToCountdown_Click"/>
-                        <MenuItem Style="{StaticResource ToTodoMenuItem}" Click="SetKindToTodo_Click"/>
-                        <MenuItem Style="{StaticResource TimeMenuItem}" Click="SetTime_Click"/>
-                        <MenuItem Style="{StaticResource TargetDateMenuItem}" Click="SetTargetDate_Click"/>
-                        <MenuItem Style="{StaticResource PersistentTodoMenuItem}" Click="TogglePersistent_Click"/>
-                        <Separator/>
-                        <MenuItem Header="删除" Click="DeleteTodo_Click"/>
-                    </ContextMenu>
-                </Border.ContextMenu>
                 <Border.Style>
                     <Style TargetType="Border">
                         <Setter Property="Visibility" Value="Visible"/>
@@ -559,6 +561,7 @@
                                     AllowDrop="True"
                                     PreviewDragOver="TodoRow_PreviewDragOver"
                                     PreviewDrop="TodoRow_PreviewDrop"
+                                    ContextMenu="{StaticResource TodoItemContextMenu}"
                                     CornerRadius="{Binding ItemCornerRadius, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}">
                                 <Border.Style>
                                     <Style TargetType="Border">
@@ -571,24 +574,6 @@
                                         </Style.Triggers>
                                     </Style>
                                 </Border.Style>
-                                <Border.ContextMenu>
-                                    <ContextMenu DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}">
-                                        <MenuItem Header="上移" Click="MoveUp_Click"/>
-                                        <MenuItem Header="下移" Click="MoveDown_Click"/>
-                                        <Separator/>
-                                        <MenuItem Style="{StaticResource ToEventMenuItem}" Click="SetKindToEvent_Click"/>
-                                        <MenuItem Style="{StaticResource ToCountdownMenuItem}" Click="SetKindToCountdown_Click"/>
-                                        <MenuItem Style="{StaticResource ToTodoMenuItem}" Click="SetKindToTodo_Click"/>
-                                        <MenuItem Style="{StaticResource TimeMenuItem}" Click="SetTime_Click"/>
-                                        <MenuItem Style="{StaticResource TargetDateMenuItem}" Click="SetTargetDate_Click"/>
-                                        <MenuItem Style="{StaticResource PersistentTodoMenuItem}" Click="TogglePersistent_Click"/>
-                                        <Separator/>
-                                        <MenuItem Header="关联文件…" Click="LinkFiles_Click"/>
-                                        <MenuItem Header="关联文件夹…" Click="LinkFolders_Click"/>
-                                        <Separator/>
-                                        <MenuItem Header="删除" Click="DeleteTodo_Click"/>
-                                    </ContextMenu>
-                                </Border.ContextMenu>
                                 <Grid>
                                     <Border IsHitTestVisible="False"
                                             CornerRadius="{Binding ItemCornerRadius, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}">
@@ -648,7 +633,7 @@
                         <Ellipse Width="6" Height="6" VerticalAlignment="Center" Fill="{DynamicResource CardMarkerAccentBrush}"/>
                     </StackPanel>
                                     <TextBox Grid.Column="1"
-                                             ContextMenu="{Binding ContextMenu, RelativeSource={RelativeSource AncestorType=Border}}"
+                                             ContextMenu="{StaticResource TodoItemContextMenu}"
                                              ContextMenuOpening="TodoText_ContextMenuOpening"
                                              AutomationProperties.Name="待办内容"
                                              MinHeight="24"

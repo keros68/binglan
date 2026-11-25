@@ -16,16 +16,100 @@ namespace BingLan.App.Services;
 /// </summary>
 internal static class LauncherDesktopBackdropService
 {
+    private static readonly TimeSpan DefaultWallpaperReleaseDelay = TimeSpan.FromSeconds(5);
     private static readonly object WallpaperLock = new();
     private static string? _cachedPath;
     private static DateTime _cachedWriteTimeUtc;
-    private static BitmapSource? _cachedWallpaper;
+    private static int _cachedMonitorWidth;
+    private static int _cachedMonitorHeight;
+    private static WeakReference<BitmapSource>? _cachedWallpaper;
+    private static BitmapSource? _pinnedWallpaper;
+    private static System.Threading.Timer? _releaseTimer;
+    private static long _releaseGeneration;
+
+    internal static bool HasPinnedWallpaper
+    {
+        get
+        {
+            lock (WallpaperLock)
+            {
+                return _pinnedWallpaper is not null;
+            }
+        }
+    }
+
+    internal static void ScheduleReleaseWallpaperCache(TimeSpan? delay = null)
+    {
+        var effectiveDelay = delay ?? DefaultWallpaperReleaseDelay;
+        lock (WallpaperLock)
+        {
+            _releaseGeneration++;
+            if (effectiveDelay <= TimeSpan.Zero)
+            {
+                CancelReleaseTimerLocked();
+                _pinnedWallpaper = null;
+                return;
+            }
+
+            // Always arm the release timer even if _pinnedWallpaper is currently null so an
+            // off-lock background decode finishing after panel close cannot stay pinned forever.
+            ArmReleaseTimerLocked(effectiveDelay);
+        }
+    }
+
+    internal static void ReleaseWallpaperCache()
+    {
+        lock (WallpaperLock)
+        {
+            _releaseGeneration++;
+            CancelReleaseTimerLocked();
+            _pinnedWallpaper = null;
+        }
+    }
+
+    private static void ArmReleaseTimerLocked(TimeSpan delay)
+    {
+        _releaseTimer ??= new System.Threading.Timer(
+            static _ => ReleaseWallpaperCache(),
+            null,
+            Timeout.Infinite,
+            Timeout.Infinite);
+        _releaseTimer.Change(delay, Timeout.InfiniteTimeSpan);
+    }
+
+    private static void CancelReleaseTimerLocked() =>
+        _releaseTimer?.Change(Timeout.Infinite, Timeout.Infinite);
+
+    internal static int ComputeTargetDecodeWidth(int imageWidth, int imageHeight, int monitorWidth, int monitorHeight)
+    {
+        if (imageWidth <= 0 || imageHeight <= 0 || monitorWidth <= 0 || monitorHeight <= 0)
+        {
+            return 0;
+        }
+
+        // UniformToFill scales the wallpaper so both axes cover the monitor; never decode larger than needed.
+        var scale = Math.Max((double)monitorWidth / imageWidth, (double)monitorHeight / imageHeight);
+        if (scale >= 1d)
+        {
+            return 0;
+        }
+
+        var targetWidth = (int)Math.Ceiling(imageWidth * scale);
+        return targetWidth > 0 && targetWidth < imageWidth ? targetWidth : 0;
+    }
 
     internal static Task<BitmapSource?> TryLoadWallpaperCropAsync(
         PixelRect monitorBounds,
         PixelRect panelBounds,
         CancellationToken token) =>
         Task.Run(() => TryLoadWallpaperCrop(monitorBounds, panelBounds, token), token);
+
+    internal static BitmapSource? TryLoadWallpaperCropFromFileForTesting(
+        string path,
+        PixelRect monitorBounds,
+        PixelRect panelBounds,
+        CancellationToken token) =>
+        TryLoadWallpaperCropFromPath(path, monitorBounds, panelBounds, token);
 
     private static BitmapSource? TryLoadWallpaperCrop(
         PixelRect monitorBounds,
@@ -34,35 +118,74 @@ internal static class LauncherDesktopBackdropService
     {
         token.ThrowIfCancellationRequested();
         var path = ReadDesktopWallpaperPath();
-        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+        return string.IsNullOrWhiteSpace(path)
+            ? null
+            : TryLoadWallpaperCropFromPath(path, monitorBounds, panelBounds, token);
+    }
+
+    private static BitmapSource? TryLoadWallpaperCropFromPath(
+        string path,
+        PixelRect monitorBounds,
+        PixelRect panelBounds,
+        CancellationToken token)
+    {
+        token.ThrowIfCancellationRequested();
+        if (!File.Exists(path))
         {
             return null;
         }
 
-        BitmapSource? full;
+        BitmapSource? full = null;
         try
         {
+            // Keep file IO and image decoding completely outside WallpaperLock so UI calls to
+            // ScheduleReleaseWallpaperCache / ReleaseWallpaperCache never stall on disk or WIC.
             var writeUtc = File.GetLastWriteTimeUtc(path);
+            long generationBeforeDecode;
             lock (WallpaperLock)
             {
+                token.ThrowIfCancellationRequested();
                 if (_cachedWallpaper is not null
+                    && _cachedWallpaper.TryGetTarget(out var cached)
                     && string.Equals(_cachedPath, path, StringComparison.OrdinalIgnoreCase)
-                    && _cachedWriteTimeUtc == writeUtc)
+                    && _cachedWriteTimeUtc == writeUtc
+                    && _cachedMonitorWidth == monitorBounds.Width
+                    && _cachedMonitorHeight == monitorBounds.Height)
                 {
-                    full = _cachedWallpaper;
+                    CancelReleaseTimerLocked();
+                    _pinnedWallpaper = cached;
+                    full = cached;
                 }
-                else
+                generationBeforeDecode = _releaseGeneration;
+            }
+
+            if (full is null)
+            {
+                token.ThrowIfCancellationRequested();
+                full = DecodeWallpaperForMonitor(path, monitorBounds);
+                if (full is null)
+                {
+                    return null;
+                }
+
+                lock (WallpaperLock)
                 {
                     token.ThrowIfCancellationRequested();
-                    using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-                    var decoder = BitmapDecoder.Create(stream, BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad);
-                    if (decoder.Frames.Count == 0) return null;
-                    var frame = decoder.Frames[0];
-                    frame.Freeze();
                     _cachedPath = path;
                     _cachedWriteTimeUtc = writeUtc;
-                    _cachedWallpaper = frame;
-                    full = frame;
+                    _cachedMonitorWidth = monitorBounds.Width;
+                    _cachedMonitorHeight = monitorBounds.Height;
+                    _cachedWallpaper = new WeakReference<BitmapSource>(full);
+                    if (_releaseGeneration == generationBeforeDecode)
+                    {
+                        CancelReleaseTimerLocked();
+                        _pinnedWallpaper = full;
+                    }
+                    else
+                    {
+                        // A release request arrived while decoding off-lock; do not leave pinned.
+                        _pinnedWallpaper = null;
+                    }
                 }
             }
         }
@@ -95,6 +218,35 @@ internal static class LauncherDesktopBackdropService
         {
             return null;
         }
+    }
+
+    private static BitmapSource? DecodeWallpaperForMonitor(string path, PixelRect monitorBounds)
+    {
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        var probe = BitmapDecoder.Create(stream, BitmapCreateOptions.DelayCreation, BitmapCacheOption.None);
+        if (probe.Frames.Count == 0)
+        {
+            return null;
+        }
+
+        var targetDecodeWidth = ComputeTargetDecodeWidth(
+            probe.Frames[0].PixelWidth,
+            probe.Frames[0].PixelHeight,
+            monitorBounds.Width,
+            monitorBounds.Height);
+        stream.Position = 0;
+
+        var image = new BitmapImage();
+        image.BeginInit();
+        image.CacheOption = BitmapCacheOption.OnLoad;
+        if (targetDecodeWidth > 0)
+        {
+            image.DecodePixelWidth = targetDecodeWidth;
+        }
+        image.StreamSource = stream;
+        image.EndInit();
+        image.Freeze();
+        return image;
     }
 
     private static string? ReadDesktopWallpaperPath()

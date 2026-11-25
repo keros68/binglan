@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Interop;
+using System.Windows.Threading;
 using BingLan.App.Dock;
 using BingLan.App.Interop;
 
@@ -8,12 +9,17 @@ namespace BingLan.App.Windows;
 /// <summary>
 /// Click-through, non-activating grid shown over a monitor's work area while a card is
 /// dragged with grid alignment on. One static window per drag, tiled by a brush, so the
-/// grid never redraws while the pointer moves. Hidden when the drag ends or Alt is held.
+/// grid never redraws while the pointer moves. Hidden when the drag ends or Alt is held,
+/// and closed after a short idle period to reclaim its full-monitor layered surface.
 /// </summary>
 internal sealed class SnapGridOverlay : Window
 {
+    private static readonly TimeSpan IdleCloseDelay = TimeSpan.FromSeconds(30);
     private static SnapGridOverlay? _instance;
+    private static DispatcherTimer? _idleCloseTimer;
     private double _drawnCell;
+
+    internal static bool HasCachedWindow => _instance is not null;
 
     private SnapGridOverlay()
     {
@@ -26,6 +32,13 @@ internal sealed class SnapGridOverlay : Window
         Topmost = true;
         Focusable = false;
         IsHitTestVisible = false;
+        Closed += (_, _) =>
+        {
+            if (ReferenceEquals(_instance, this))
+            {
+                _instance = null;
+            }
+        };
         SourceInitialized += (_, _) =>
         {
             var handle = new WindowInteropHelper(this).Handle;
@@ -44,6 +57,7 @@ internal sealed class SnapGridOverlay : Window
     /// <summary>Covers the work area with grid lines one cell apart, in physical pixels.</summary>
     internal static void ShowGrid(MonitorSnapshot monitor, int cellPixels)
     {
+        _idleCloseTimer?.Stop();
         _instance ??= new SnapGridOverlay();
         _instance.Draw(monitor, cellPixels);
     }
@@ -51,6 +65,37 @@ internal sealed class SnapGridOverlay : Window
     internal static void HideGrid()
     {
         _instance?.HideSelf();
+        ScheduleIdleClose();
+    }
+
+    internal static void DisposeHiddenOverlay()
+    {
+        _idleCloseTimer?.Stop();
+        if (_instance is { IsVisible: false } hidden)
+        {
+            _instance = null;
+            hidden.Close();
+        }
+    }
+
+    private static void ScheduleIdleClose()
+    {
+        if (_instance is null)
+        {
+            return;
+        }
+
+        if (_idleCloseTimer is null)
+        {
+            _idleCloseTimer = new DispatcherTimer(
+                IdleCloseDelay,
+                DispatcherPriority.Background,
+                (_, _) => DisposeHiddenOverlay(),
+                _instance.Dispatcher);
+        }
+
+        _idleCloseTimer.Stop();
+        _idleCloseTimer.Start();
     }
 
     private void HideSelf()

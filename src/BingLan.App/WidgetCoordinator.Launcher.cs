@@ -22,7 +22,6 @@ public sealed partial class WidgetCoordinator
     private Task<(DockPinnedApp Pin, string? Folder, string? Shortcut)[]>? _launcherApps;
     private Task<(DockPinnedApp Pin, string? Folder, string? Shortcut)[]>? _launcherAppsRefresh;
     private DateTimeOffset _launcherAppsAt;
-    private bool _launcherWarmupQueued;
 
     internal void ToggleLauncherPanel() => ToggleLauncherPanelForTab(targetTab: null);
 
@@ -88,6 +87,8 @@ public sealed partial class WidgetCoordinator
             {
                 LauncherDesktopBackdropService.RestoreWindows(minimizedWindows, foreground);
             }
+            LauncherDesktopBackdropService.ScheduleReleaseWallpaperCache();
+            ScheduleIdleMemoryTrim(WindowClosedMemoryTrimDelay);
         };
         panel.Show();
     }
@@ -98,6 +99,7 @@ public sealed partial class WidgetCoordinator
         if (!enabled)
         {
             _launcherPanel?.Dismiss(restoreForeground: false);
+            LauncherDesktopBackdropService.ReleaseWallpaperCache();
         }
         _launcherLostFocusAt = null;
         if (_launcherMenuItem is not null)
@@ -108,62 +110,7 @@ public sealed partial class WidgetCoordinator
         _topBar.Apply();
         SyncGlobalHotkeys();
         ScheduleSave();
-        if (enabled) QueueLauncherCatalogWarmup();
     }
-
-    private void QueueLauncherCatalogWarmup()
-    {
-        if (_launcherWarmupQueued || !_state.LauncherEnabled || _isExiting || _exitRequested
-            || System.Windows.Application.Current?.Dispatcher is not { } dispatcher)
-        {
-            return;
-        }
-        _launcherWarmupQueued = true;
-        dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, new Action(async () =>
-        {
-            _launcherWarmupQueued = false;
-            if (!_state.LauncherEnabled || _isExiting || _exitRequested) return;
-            try
-            {
-                await ReadLauncherAppsAsync();
-                var snapshot = await ReadLauncherSnapshotAsync();
-                if (!_state.LauncherEnabled || _isExiting || _exitRequested) return;
-                _ = PrewarmLauncherIconsAsync(snapshot);
-            }
-            catch (Exception exception) when (exception is not OutOfMemoryException)
-            {
-                Debug.WriteLine($"冰蓝总览卡应用目录预读失败：{exception}");
-            }
-        }));
-    }
-
-    private Task PrewarmLauncherIconsAsync(LauncherPanelSnapshot snapshot) =>
-        Task.Run(async () =>
-        {
-            // Warm favorites, recent files, desktop/file-box items, and the top A–Z apps
-            // quietly in the background so the very first Ctrl+Alt+F open renders icons
-            // immediately without a visible pop-in pass.
-            var azApps = snapshot.Entries
-                .Where(e => e.Candidate.Kind == TopBarSearchItemKind.App)
-                .OrderBy(e => e.Candidate.DisplayName, StringComparer.CurrentCultureIgnoreCase)
-                .Take(48);
-            var filesAndBoxes = snapshot.Entries
-                .Where(e => e.Candidate.Kind != TopBarSearchItemKind.App)
-                .Take(48);
-            var candidates = snapshot.Favorites
-                .Concat(snapshot.RecentEntries ?? [])
-                .Concat(filesAndBoxes)
-                .Concat(azApps)
-                .DistinctBy(e => e.Key, StringComparer.Ordinal)
-                .Take(128)
-                .ToArray();
-            foreach (var entry in candidates)
-            {
-                if (_isExiting || _exitRequested || !_state.LauncherEnabled) return;
-                LauncherPanelWindow.PrewarmIcon(entry);
-                await Task.Delay(3).ConfigureAwait(false);
-            }
-        });
 
     private Task<(DockPinnedApp Pin, string? Folder, string? Shortcut)[]> ReadLauncherAppsAsync()
     {

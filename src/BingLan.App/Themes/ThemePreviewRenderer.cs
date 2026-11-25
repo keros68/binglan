@@ -30,7 +30,7 @@ internal static class ThemePreviewRenderer
 
     internal static byte[] Render(ThemePackage package) => Render(package, Width, Height);
 
-    private static byte[] Render(ThemePackage package, int width, int height)
+    private static RenderTargetBitmap RenderToBitmap(ThemePackage package, int width, int height)
     {
         ArgumentNullException.ThrowIfNull(package);
 
@@ -56,7 +56,13 @@ internal static class ThemePreviewRenderer
 
         var bitmap = new RenderTargetBitmap(width, height, Dpi, Dpi, PixelFormats.Pbgra32);
         bitmap.Render(visual);
+        bitmap.Freeze();
+        return bitmap;
+    }
 
+    private static byte[] Render(ThemePackage package, int width, int height)
+    {
+        var bitmap = RenderToBitmap(package, width, height);
         var encoder = new PngBitmapEncoder();
         encoder.Frames.Add(BitmapFrame.Create(bitmap));
         using var stream = new MemoryStream();
@@ -96,16 +102,11 @@ internal static class ThemePreviewRenderer
             DesktopExperienceRules.GetPresetName(preset),
             new ThemeArea(area.Left, area.Top, area.Width, area.Height),
             new Version(0, 1, 0));
-        var image = new BitmapImage();
-        image.BeginInit();
-        image.CacheOption = BitmapCacheOption.OnLoad;
         var scale = Math.Min(Width / area.Width, Height / area.Height);
-        image.StreamSource = new MemoryStream(Render(package,
+        return RenderToBitmap(
+            package,
             Math.Max(1, (int)Math.Round(area.Width * scale)),
-            Math.Max(1, (int)Math.Round(area.Height * scale))));
-        image.EndInit();
-        image.Freeze();
-        return image;
+            Math.Max(1, (int)Math.Round(area.Height * scale)));
     }
 
     private static void DrawComponents(DrawingContext context, ThemePackage package, int width, int height)

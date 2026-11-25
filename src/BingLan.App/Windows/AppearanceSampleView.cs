@@ -212,11 +212,8 @@ public sealed class AppearanceSampleView : UserControl
         Child = Text(text, look.TextColor, 12)
     };
 
-    private static DropShadowEffect? Shadow(CardShadow shadow) => shadow == CardShadow.None ? null : new()
-    {
-        Color = Colors.Black, BlurRadius = shadow == CardShadow.Strong ? 10 : 6,
-        ShadowDepth = shadow == CardShadow.Strong ? 2 : 1, Opacity = shadow == CardShadow.Strong ? 0.5 : 0.28
-    };
+    private static DropShadowEffect? Shadow(CardShadow shadow) =>
+        WidgetWindowBase.CreateCardShadowEffect(shadow);
 
     private static TextBlock Text(string text, string color, double size, bool bold = false, double opacity = 1) => new()
     {

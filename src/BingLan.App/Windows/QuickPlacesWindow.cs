@@ -56,10 +56,17 @@ public sealed class QuickPlacesWindow : WidgetWindowBase
 
     internal System.Windows.Media.Effects.Effect? IconShadowEffect => _icons.Effect;
 
+    private static readonly System.Windows.Media.Effects.DropShadowEffect FallbackNakedTextContrastShadow =
+        CreateFallbackNakedTextContrastShadow();
+
     internal static System.Windows.Media.Effects.DropShadowEffect CreateNakedTextContrastShadow() =>
         System.Windows.Application.Current?.TryFindResource("NakedTextContrastShadow")
             as System.Windows.Media.Effects.DropShadowEffect
-        ?? new System.Windows.Media.Effects.DropShadowEffect
+        ?? FallbackNakedTextContrastShadow;
+
+    private static System.Windows.Media.Effects.DropShadowEffect CreateFallbackNakedTextContrastShadow()
+    {
+        var effect = new System.Windows.Media.Effects.DropShadowEffect
         {
             Color = System.Windows.Media.Colors.Black,
             Opacity = 0.45d,
@@ -67,6 +74,9 @@ public sealed class QuickPlacesWindow : WidgetWindowBase
             ShadowDepth = 1d,
             Direction = 270d
         };
+        effect.Freeze();
+        return effect;
+    }
 
     protected override void ApplyEffectiveCardShadow(CardShadow shadow)
     {

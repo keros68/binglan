@@ -39,6 +39,7 @@ public partial class TodoWidgetWindow : WidgetWindowBase
     private int _weekOffset;
     private DayEditWindow? _dayEditor;
     private WeekCellView? _selectedCellView;
+    private DateTime? _lastSelectedWeekDate;
     private WeekCellView? _peekCell;
     private TodoItemState? _editingItem;
     private TodoItemState? _pendingFocusItem;
@@ -96,7 +97,6 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         SetContentFontScale(state.FontScale);
         SetContentFontFamily(state.FontFamily);
         SyncTodayItems();
-        TodoList.ItemsSource = _todayItems;
         _todayItems.CollectionChanged += (_, _) =>
         {
             System.Windows.Automation.Peers.UIElementAutomationPeer.FromElement(TodoList)?.ResetChildrenCache();
@@ -2633,23 +2633,9 @@ public partial class TodoWidgetWindow : WidgetWindowBase
 
     private void TodoText_ContextMenuOpening(object sender, ContextMenuEventArgs e)
     {
-        if (sender is not System.Windows.Controls.TextBox { ContextMenu: { } menu } editor) return;
-
-        // The text and row share entry actions; text editing remains available in a submenu.
-        var editing = menu.Items.OfType<System.Windows.Controls.MenuItem>().FirstOrDefault(item => Equals(item.Tag, "TodoTextEditing"));
-        if (editing is null)
+        if (sender is System.Windows.Controls.TextBox { ContextMenu: { } menu } editor)
         {
-            editing = new System.Windows.Controls.MenuItem { Header = "编辑文本", Tag = "TodoTextEditing" };
-            foreach (var (header, command) in new[]
-                     {
-                         ("剪切", ApplicationCommands.Cut), ("复制", ApplicationCommands.Copy),
-                         ("粘贴", ApplicationCommands.Paste), ("全选", ApplicationCommands.SelectAll)
-                     })
-            {
-                editing.Items.Add(new System.Windows.Controls.MenuItem { Header = header, Command = command, CommandTarget = editor });
-            }
-            menu.Items.Add(new Separator());
-            menu.Items.Add(editing);
+            ConfigureTodoItemContextMenu(menu, editor);
         }
     }
 
@@ -2663,41 +2649,121 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         {
             CancelPeekDrag();
         }
-        if ((sender as FrameworkElement)?.DataContext is not TodoItemState item)
+        if (sender is FrameworkElement row
+            && row.ContextMenu is { } menu
+            && e.Source is not System.Windows.Controls.TextBox)
+        {
+            ConfigureTodoItemContextMenu(menu, row);
+        }
+    }
+
+    private void TodoItemContextMenu_Opened(object sender, RoutedEventArgs e)
+    {
+        if (sender is System.Windows.Controls.ContextMenu menu)
+        {
+            ConfigureTodoItemContextMenu(menu, menu.PlacementTarget as FrameworkElement);
+        }
+    }
+
+    private void TodoItemContextMenu_Closed(object sender, RoutedEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.ContextMenu menu)
         {
             return;
         }
-        var row = (FrameworkElement)sender;
-        row.ContextMenu ??= new System.Windows.Controls.ContextMenu();
-        var menu = row.ContextMenu;
 
-        // Rebuild the move-to block each time: the target dates depend on the entry.
-        while (menu.Items.Count > 0 && menu.Items[0] is System.Windows.Controls.MenuItem { Header: string h } && h.StartsWith("移到"))
+        // Defer cleanup past any click event raised immediately after IsOpen = false so
+        // menu handlers still observe the active target, while clearing references once idle.
+        Dispatcher.BeginInvoke(DispatcherPriority.Background, () =>
         {
-            menu.Items.RemoveAt(0);
-        }
-        if (menu.Items.Count > 0 && menu.Items[0] is System.Windows.Controls.Separator)
-        {
-            menu.Items.RemoveAt(0);
-        }
-
-        if (item.Date is { } ownDate)
-        {
-            var moveTo = new System.Windows.Controls.MenuItem { Header = "移到 ▸" };
-            foreach (var (offset, label) in new[] { (1, "明天"), (2, "后天"), (3, "大后天") })
+            if (menu.IsOpen)
             {
-                var target = ownDate.AddDays(offset);
-                var entry = new System.Windows.Controls.MenuItem
-                {
-                    Header = $"{label}（{target:M月d日} {WeekdayName(target)}）"
-                };
-                var captured = item;
-                entry.Click += (_, _) => MoveItemToDate(captured, target);
-                moveTo.Items.Add(entry);
+                return;
             }
-            menu.Items.Insert(0, new System.Windows.Controls.Separator());
-            menu.Items.Insert(0, moveTo);
+            foreach (var element in menu.Items)
+            {
+                if (element is System.Windows.Controls.MenuItem { Tag: "MoveToDate" } moveTo)
+                {
+                    moveTo.Items.Clear();
+                }
+                else if (element is System.Windows.Controls.MenuItem { Tag: "TodoTextEditing" } editing)
+                {
+                    foreach (var subItem in editing.Items.OfType<System.Windows.Controls.MenuItem>())
+                    {
+                        subItem.CommandTarget = null;
+                    }
+                }
+            }
+        });
+    }
+
+    private void ConfigureTodoItemContextMenu(System.Windows.Controls.ContextMenu menu, FrameworkElement? target)
+    {
+        var item = target?.DataContext as TodoItemState ?? menu.DataContext as TodoItemState;
+        var editor = target as System.Windows.Controls.TextBox;
+        var isListTarget = target is not null && IsDescendantOf(target, TodoList);
+        var showMoveTo = !isListTarget && item?.Date is not null;
+
+        foreach (var entry in menu.Items)
+        {
+            switch (entry)
+            {
+                case System.Windows.Controls.MenuItem { Tag: "MoveToDate" } moveTo:
+                    moveTo.Items.Clear();
+                    if (showMoveTo && item?.Date is { } ownDate)
+                    {
+                        foreach (var (offset, label) in new[] { (1, "明天"), (2, "后天"), (3, "大后天") })
+                        {
+                            var destination = ownDate.AddDays(offset);
+                            var subItem = new System.Windows.Controls.MenuItem
+                            {
+                                Header = $"{label}（{destination:M月d日} {WeekdayName(destination)}）"
+                            };
+                            var captured = item;
+                            subItem.Click += (_, _) => MoveItemToDate(captured, destination);
+                            moveTo.Items.Add(subItem);
+                        }
+                        moveTo.Visibility = Visibility.Visible;
+                    }
+                    else
+                    {
+                        moveTo.Visibility = Visibility.Collapsed;
+                    }
+                    break;
+                case Separator { Tag: "MoveToDateSeparator" } moveSeparator:
+                    moveSeparator.Visibility = showMoveTo ? Visibility.Visible : Visibility.Collapsed;
+                    break;
+                case FrameworkElement { Tag: "ListOnly" } listOnly:
+                    listOnly.Visibility = isListTarget ? Visibility.Visible : Visibility.Collapsed;
+                    break;
+                case Separator { Tag: "TodoTextEditingSeparator" } editSeparator:
+                    editSeparator.Visibility = editor is not null ? Visibility.Visible : Visibility.Collapsed;
+                    break;
+                case System.Windows.Controls.MenuItem { Tag: "TodoTextEditing" } editing:
+                    editing.Visibility = editor is not null ? Visibility.Visible : Visibility.Collapsed;
+                    foreach (var subItem in editing.Items.OfType<System.Windows.Controls.MenuItem>())
+                    {
+                        subItem.CommandTarget = editor;
+                    }
+                    break;
+            }
         }
+    }
+
+    private static bool IsDescendantOf(DependencyObject? element, DependencyObject ancestor)
+    {
+        var current = element;
+        while (current is not null)
+        {
+            if (ReferenceEquals(current, ancestor))
+            {
+                return true;
+            }
+            current = current is System.Windows.Media.Visual or System.Windows.Media.Media3D.Visual3D
+                ? System.Windows.Media.VisualTreeHelper.GetParent(current)
+                : LogicalTreeHelper.GetParent(current);
+        }
+        return false;
     }
 
     private void SelectCell(WeekCellView cell)
@@ -2711,6 +2777,7 @@ public partial class TodoWidgetWindow : WidgetWindowBase
             _selectedCellView.IsSelected = false;
         }
         _selectedCellView = cell;
+        _lastSelectedWeekDate = cell.Date;
         cell.IsSelected = true;
     }
 
@@ -2804,13 +2871,30 @@ public partial class TodoWidgetWindow : WidgetWindowBase
                 Height = Math.Max(Height, WeeklyMinimumHeight);
             }
         }
+        if (Resources["TodoItemContextMenu"] is System.Windows.Controls.ContextMenu sharedMenu && !sharedMenu.IsOpen)
+        {
+            sharedMenu.PlacementTarget = null;
+        }
         if (State.WeeklyView)
         {
+            TodoList.ItemsSource = null;
             RenderWeekView();
         }
         else
         {
+            if (_selectedCellView is not null)
+            {
+                _lastSelectedWeekDate = _selectedCellView.Date;
+            }
             CloseDayPeek();
+            WeekRows.ItemsSource = null;
+            WeekRows.DataContext = null;
+            _cellsByDate.Clear();
+            _selectedCellView = null;
+            if (!ReferenceEquals(TodoList.ItemsSource, _todayItems))
+            {
+                TodoList.ItemsSource = _todayItems;
+            }
             if (NormalizeTodayList())
             {
                 NotifyStateChanged();
@@ -2848,7 +2932,7 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         WeekRange.Text = $"{firstDayOfWindow:M月d日} – {lastDay:M月d日}";
         WeekTodayButton.Visibility = _weekOffset == 0 ? Visibility.Collapsed : Visibility.Visible;
 
-        var previousSelectedDate = _selectedCellView?.Date;
+        var previousSelectedDate = _selectedCellView?.Date ?? _lastSelectedWeekDate;
         var previousPeekDate = _peekCell?.Date;
 
         _cellsByDate.Clear();

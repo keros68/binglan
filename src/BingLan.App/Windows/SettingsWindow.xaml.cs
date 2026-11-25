@@ -237,8 +237,6 @@ public partial class SettingsWindow : Window
         }
         Closing += (_, _) => CommitPendingChanges();
         Closed += (_, _) => { _isClosed = true; InvalidatePendingReveal(); StopQuickActionTimers(); CancelSearch(); UnsubscribeObservedWidgetTitles(); };
-        // The index reads the finished pages once, after the window has shown.
-        Loaded += (_, _) => Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, () => _ = SearchIndex);
         Deactivated += (_, _) => SettingsSearchPopup.IsOpen = false;
         // Back from Windows' own taskbar or visual-effects settings: show what is there now.
         Activated += (_, _) =>
@@ -2054,6 +2052,10 @@ public partial class SettingsWindow : Window
         {
             RefreshAppearanceOverrides();
             UpdatePresetPreview(GetSelectedPreset());
+        }
+        else if (IsPresetPreviewPageVisible())
+        {
+            EnsurePresetPreviewRendered();
         }
         if (page == SettingsNavigationRules.GeneralPageKey)
         {
@@ -4634,7 +4636,14 @@ public partial class SettingsWindow : Window
         Dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(() =>
         {
             _presetPreviewQueued = false;
-            if (!_isClosed) RenderPresetPreviews(_previewPreset);
+            if (_isClosed) return;
+            if (!IsPresetPreviewPageVisible())
+            {
+                _presetPreviewDirty = true;
+                return;
+            }
+            _presetPreviewDirty = false;
+            RenderPresetPreviews(_previewPreset);
         }));
     }
 

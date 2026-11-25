@@ -1237,6 +1237,8 @@ public partial class FileBoxWindow : WidgetWindowBase
             return;
         }
 
+        LauncherIconCache.Remove(LauncherIconCache.KeyForFileBoxPath(tile.Path));
+        ShellIconProvider.InvalidateIconForPath(tile.Path);
         await ProbeTilesAsync([tile], loadMissingIcons: true, forceReloadIcon: true);
     }
 
@@ -2131,7 +2133,7 @@ public partial class FileBoxWindow : WidgetWindowBase
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
             var invalidCount = countInvalid ? normalized.Count(path => path is null || !existing.Contains(path)) : 0;
             var newPaths = candidates.Where(path => existing.Contains(path) && !knownPaths.Contains(path)).ToArray();
-            var icons = loadIcons ? LoadIcons(newPaths, iconLoader ?? ShellIconProvider.GetIcon) : new Dictionary<string, ImageSource?>(StringComparer.OrdinalIgnoreCase);
+            var icons = loadIcons ? LoadIcons(newPaths, iconLoader ?? LoadSharedIcon) : new Dictionary<string, ImageSource?>(StringComparer.OrdinalIgnoreCase);
             return (newPaths, icons, invalidCount);
         });
         if (existingCandidates.Length == 0 || _closeCts.IsCancellationRequested || !ContainsBox(targetTab.Id))
@@ -2264,7 +2266,9 @@ public partial class FileBoxWindow : WidgetWindowBase
                     {
                         try
                         {
-                            icon = ShellIconProvider.GetIcon(mapping.Path);
+                            icon = forceReloadIcon
+                                ? ReloadSharedIcon(mapping.Path)
+                                : LoadSharedIcon(mapping.Path);
                         }
                         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                         {
@@ -2298,6 +2302,17 @@ public partial class FileBoxWindow : WidgetWindowBase
                 tile.Icon = icon;
             }
         }
+    }
+
+    private static ImageSource? LoadSharedIcon(string path) =>
+        LauncherIconCache.GetOrLoadSync(LauncherIconCache.KeyForFileBoxPath(path), () => ShellIconProvider.GetIcon(path));
+
+    private static ImageSource? ReloadSharedIcon(string path)
+    {
+        var key = LauncherIconCache.KeyForFileBoxPath(path);
+        LauncherIconCache.Remove(key);
+        ShellIconProvider.InvalidateIconForPath(path);
+        return LauncherIconCache.GetOrLoadSync(key, () => ShellIconProvider.GetIcon(path));
     }
 
     private static IReadOnlyDictionary<string, ImageSource?> LoadIcons(
@@ -2557,7 +2572,7 @@ public partial class FileBoxWindow : WidgetWindowBase
     public sealed class FileTile : INotifyPropertyChanged
     {
         public FileTile(FileMappingState mapping)
-            : this(mapping, ShellIconProvider.GetIcon(mapping.Path))
+            : this(mapping, LoadSharedIcon(mapping.Path))
         {
             _isMissing = FileMappingService.IsMissing(mapping);
         }
