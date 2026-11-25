@@ -157,31 +157,46 @@ public static class TaskbarCornerRules
     public const int StripPixels = 2;
     public const int ExpandedTaskbarThresholdPixels = 8;
 
-    public static PixelRect MiddleStrip(PixelRect monitor, uint dpi)
+    /// <summary>
+    /// Computes the blocker strip thickness needed to cover a collapsed auto-hidden taskbar.
+    /// Defaults to <see cref="StripPixels"/> (2 px) and expands up to
+    /// <see cref="ExpandedTaskbarThresholdPixels"/> when high-DPI or shell builds leave a
+    /// slightly taller collapsed taskbar edge exposed above 2 px.
+    /// </summary>
+    public static int ResolveStripThickness(int collapsedTaskbarVisiblePixels) =>
+        Math.Clamp(collapsedTaskbarVisiblePixels, StripPixels, ExpandedTaskbarThresholdPixels);
+
+    public static PixelRect MiddleStrip(PixelRect monitor, uint dpi, int stripPixels = StripPixels)
     {
+        var thickness = ResolveStripThickness(stripPixels);
         var corner = (int)Math.Round(Math.Max(monitor.Width * CornerFraction, MinimumCornerDip * dpi / 96d));
         var left = Math.Min(monitor.Left + corner, monitor.Left + monitor.Width / 2);
         var right = Math.Max(monitor.Right - corner, left);
-        return new PixelRect(left, monitor.Bottom - StripPixels, right, monitor.Bottom);
+        return new PixelRect(left, monitor.Bottom - thickness, right, monitor.Bottom);
     }
 
     /// <summary>
-    /// Full-width two-pixel strip along the bottom edge, blocking pointer edge reveal
+    /// Full-width strip along the bottom edge, blocking pointer edge reveal
     /// across the entire monitor width while Win key and Dock Start button remain usable.
     /// </summary>
-    public static PixelRect FullEdgeStrip(PixelRect monitor)
+    public static PixelRect FullEdgeStrip(PixelRect monitor, int stripPixels = StripPixels)
     {
-        if (monitor.Width <= 0 || monitor.Height < StripPixels)
+        var thickness = ResolveStripThickness(stripPixels);
+        if (monitor.Width <= 0 || monitor.Height < thickness)
         {
             return new PixelRect(monitor.Left, monitor.Bottom, monitor.Left, monitor.Bottom);
         }
-        return new PixelRect(monitor.Left, monitor.Bottom - StripPixels, monitor.Right, monitor.Bottom);
+        return new PixelRect(monitor.Left, monitor.Bottom - thickness, monitor.Right, monitor.Bottom);
     }
 
-    public static PixelRect? StripForMode(PixelRect monitor, uint dpi, TaskbarEdgeRevealMode mode) => mode switch
+    public static PixelRect? StripForMode(
+        PixelRect monitor,
+        uint dpi,
+        TaskbarEdgeRevealMode mode,
+        int stripPixels = StripPixels) => mode switch
     {
-        TaskbarEdgeRevealMode.CornersOnly => MiddleStrip(monitor, dpi) is { Width: > 0 } middle ? middle : null,
-        TaskbarEdgeRevealMode.Disabled => FullEdgeStrip(monitor) is { Width: > 0 } full ? full : null,
+        TaskbarEdgeRevealMode.CornersOnly => MiddleStrip(monitor, dpi, stripPixels) is { Width: > 0 } middle ? middle : null,
+        TaskbarEdgeRevealMode.Disabled => FullEdgeStrip(monitor, stripPixels) is { Width: > 0 } full ? full : null,
         _ => null,
     };
 
@@ -226,6 +241,28 @@ public static class TaskbarCornerRules
         taskbarRect.Right > stripBounds.Left
         && taskbarRect.Left < stripBounds.Right
         && taskbarRect.Bottom >= stripBounds.Bottom;
+
+    /// <summary>
+    /// Whether a taskbar window belongs to the bottom edge of <paramref name="monitorBounds"/>
+    /// (including secondary-monitor <c>Shell_SecondaryTrayWnd</c> bars that Windows 11 does not
+    /// always report via <c>ABM_GETAUTOHIDEBAREX</c>). Requires horizontal bottom-edge geometry
+    /// (<c>Width &gt; Height</c> and <c>Top &gt; monitorBounds.Top</c>) so left/right side-docked
+    /// auto-hide taskbars and an upper stacked monitor's bottom taskbar are never matched.
+    /// </summary>
+    public static bool IsBottomTaskbarOnMonitor(PixelRect taskbarRect, PixelRect monitorBounds) =>
+        taskbarRect.Width > taskbarRect.Height
+        && taskbarRect.Right > monitorBounds.Left
+        && taskbarRect.Left < monitorBounds.Right
+        && taskbarRect.Top > monitorBounds.Top
+        && taskbarRect.Top < monitorBounds.Bottom
+        && taskbarRect.Bottom >= monitorBounds.Bottom;
+
+    /// <summary>
+    /// Whether the physical window rect of an edge strip drifted away from its expected bounds
+    /// (for example after <c>WM_DPICHANGED</c> or display wake) and must be re-placed.
+    /// </summary>
+    public static bool NeedsGeometryRestore(PixelRect actualBounds, PixelRect expectedBounds) =>
+        actualBounds != expectedBounds;
 
     /// <summary>
     /// Whether an auto-hidden bottom taskbar overlapping <paramref name="stripBounds"/> is

@@ -17,6 +17,7 @@ internal sealed class DockHost : IDisposable
     private readonly Action _openSettings;
     private readonly Action<string> _notify;
     private IceBlueDockWindow? _window;
+    private bool _suppressed;
 
     internal DockHost(
         DockState state,
@@ -57,9 +58,21 @@ internal sealed class DockHost : IDisposable
     internal void RefreshAdaptiveAppearance() =>
         _window?.RefreshAdaptiveAppearance();
 
+    internal bool IsSuppressed => _suppressed;
+
+    internal void SetSuppressed(bool suppressed)
+    {
+        if (_suppressed == suppressed)
+        {
+            return;
+        }
+        _suppressed = suppressed;
+        Apply();
+    }
+
     internal void Apply()
     {
-        if (!_state.IsEnabled)
+        if (!_state.IsEnabled || _suppressed)
         {
             Close();
             return;

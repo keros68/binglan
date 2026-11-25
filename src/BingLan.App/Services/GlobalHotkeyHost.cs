@@ -19,6 +19,7 @@ internal sealed class GlobalHotkeyHost : IDisposable
     private GlobalHotkeysState? _lastState;
     private bool _lastLauncherEnabled;
     private bool _lastCleanDesktopEnabled;
+    private bool _lastSuspendAll;
     private bool _disposed;
 
     internal GlobalHotkeyHost()
@@ -43,7 +44,11 @@ internal sealed class GlobalHotkeyHost : IDisposable
     internal string? RegisteredText(GlobalHotkeyKind kind) =>
         _registered.TryGetValue(kind, out var text) ? text : null;
 
-    internal void Sync(GlobalHotkeysState state, bool launcherEnabled, bool cleanDesktopEnabled)
+    internal void Sync(
+        GlobalHotkeysState state,
+        bool launcherEnabled,
+        bool cleanDesktopEnabled,
+        bool suspendAll = false)
     {
         if (_disposed || _source.Handle == 0)
         {
@@ -52,10 +57,11 @@ internal sealed class GlobalHotkeyHost : IDisposable
         _lastState = state;
         _lastLauncherEnabled = launcherEnabled;
         _lastCleanDesktopEnabled = cleanDesktopEnabled;
+        _lastSuspendAll = suspendAll;
 
         foreach (var kind in GlobalHotkeyRules.AllKinds)
         {
-            var enabled = kind switch
+            var enabled = !suspendAll && kind switch
             {
                 GlobalHotkeyKind.Launcher or GlobalHotkeyKind.LauncherFiles => launcherEnabled,
                 GlobalHotkeyKind.ToggleDesktopIcons => cleanDesktopEnabled,
@@ -107,9 +113,9 @@ internal sealed class GlobalHotkeyHost : IDisposable
 
         if (_lastState is not null)
         {
-            Sync(_lastState, _lastLauncherEnabled, _lastCleanDesktopEnabled);
+            Sync(_lastState, _lastLauncherEnabled, _lastCleanDesktopEnabled, _lastSuspendAll);
         }
-        else if (wasRegistered && !string.IsNullOrEmpty(previousText))
+        else if (!_lastSuspendAll && wasRegistered && !string.IsNullOrEmpty(previousText))
         {
             SyncSingle(kind, previousText);
         }

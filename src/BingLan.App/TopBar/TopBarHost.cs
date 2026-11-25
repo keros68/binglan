@@ -20,6 +20,7 @@ internal sealed class TopBarHost : IDisposable
     private TopBarWindow? _window;
     private bool _desktopShown;
     private bool _desktopTopmost;
+    private bool _suppressed;
 
     internal TopBarHost(
         TopBarState state,
@@ -55,9 +56,21 @@ internal sealed class TopBarHost : IDisposable
         _window?.SetDesktopShown(shown, cardSlot, topmost);
     }
 
+    internal bool IsSuppressed => _suppressed;
+
+    internal void SetSuppressed(bool suppressed)
+    {
+        if (_suppressed == suppressed)
+        {
+            return;
+        }
+        _suppressed = suppressed;
+        Apply();
+    }
+
     internal void Apply()
     {
-        if (!_state.IsEnabled)
+        if (!_state.IsEnabled || _suppressed)
         {
             Close();
             return;

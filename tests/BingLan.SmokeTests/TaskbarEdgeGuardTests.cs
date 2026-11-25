@@ -23,12 +23,25 @@ internal static class TaskbarEdgeGuardTests
                 == new PixelRect(0, 2158, 3840, 2160),
             "Disabled 应覆盖整条底边最下 2 像素");
         Assert(
+            TaskbarCornerRules.StripForMode(monitor4k, 144, TaskbarEdgeRevealMode.Disabled, stripPixels: 4)
+                == new PixelRect(0, 2156, 3840, 2160),
+            "收起任务栏露出 4 像素时 Disabled 挡板应动态覆盖至 4 像素");
+        Assert(
+            TaskbarCornerRules.ResolveStripThickness(1) == TaskbarCornerRules.StripPixels
+            && TaskbarCornerRules.ResolveStripThickness(4) == 4
+            && TaskbarCornerRules.ResolveStripThickness(32) == TaskbarCornerRules.ExpandedTaskbarThresholdPixels,
+            "挡板厚度应钳制在 2..8 像素范围内");
+        Assert(
             TaskbarCornerRules.StripForMode(monitor4k, 144, TaskbarEdgeRevealMode.CornersOnly)
                 == new PixelRect(576, 2158, 3264, 2160),
             "CornersOnly 应只覆盖中间段");
         Assert(
             TaskbarCornerRules.StripForMode(monitor4k, 144, TaskbarEdgeRevealMode.AnyEdge) is null,
             "AnyEdge 不应产生挡板");
+        Assert(
+            TaskbarCornerRules.NeedsGeometryRestore(new PixelRect(0, 2158, 1, 2159), new PixelRect(0, 2158, 3840, 2160))
+            && !TaskbarCornerRules.NeedsGeometryRestore(new PixelRect(0, 2158, 3840, 2160), new PixelRect(0, 2158, 3840, 2160)),
+            "DPI 变化导致挡板缩回 1x1 时应判定为需要恢复几何尺寸");
     }
 
     private static void TestMiddleStripAcrossDpis()
@@ -137,6 +150,26 @@ internal static class TaskbarEdgeGuardTests
             "副屏收起的任务栏不得匹配主屏挡板，避免双屏 Z 序绕过主屏展开保护");
         Assert(TaskbarCornerRules.IsSameMonitorBottomTaskbar(new PixelRect(0, 2158, 3840, 2242), strip),
             "同屏底部任务栏应匹配该屏挡板");
+
+        // 副屏底边自动隐藏任务栏识别与上下双屏边界隔离
+        var upperMonitor = new PixelRect(0, 0, 1920, 1080);
+        var lowerMonitor = new PixelRect(0, 1080, 1920, 2160);
+        var upperBottomTaskbar = new PixelRect(0, 1078, 1920, 1126);
+        var lowerBottomTaskbar = new PixelRect(0, 2158, 1920, 2206);
+        Assert(TaskbarCornerRules.IsBottomTaskbarOnMonitor(upperBottomTaskbar, upperMonitor),
+            "上屏底边收起的任务栏应匹配上屏");
+        Assert(!TaskbarCornerRules.IsBottomTaskbarOnMonitor(upperBottomTaskbar, lowerMonitor),
+            "上屏底边收起任务栏向下探出部分不得误判为下屏任务栏");
+        Assert(TaskbarCornerRules.IsBottomTaskbarOnMonitor(lowerBottomTaskbar, lowerMonitor),
+            "下屏副屏底边任务栏应匹配下屏");
+
+        // 左侧或右侧停靠的自动隐藏任务栏不得误判为底边任务栏
+        var leftCollapsedTaskbar = new PixelRect(-46, 0, 2, 1080);
+        var rightCollapsedTaskbar = new PixelRect(1918, 0, 1966, 1080);
+        Assert(!TaskbarCornerRules.IsBottomTaskbarOnMonitor(leftCollapsedTaskbar, upperMonitor),
+            "左侧停靠任务栏不得误判为底边任务栏");
+        Assert(!TaskbarCornerRules.IsBottomTaskbarOnMonitor(rightCollapsedTaskbar, upperMonitor),
+            "右侧停靠任务栏不得误判为底边任务栏");
     }
 
     private static void Assert(bool condition, string message)

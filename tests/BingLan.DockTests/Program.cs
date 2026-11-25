@@ -287,6 +287,39 @@ static void TestDockVacateRules()
     Assert(
         !DockVacateRules.IsTrueFullScreen(true, false, hasStandardWindowChrome: false, isToolOrOverlayWindow: true, isTopmost: true),
         "工具窗口或穿透遮罩即使铺满置顶也不应视为真全屏");
+    Assert(
+        DockVacateRules.IsEffectiveFullScreen(foregroundIsTrueFullScreen: false, backingWindowIsTrueFullScreen: true),
+        "全屏应用弹出的下载气泡或另存为对话框抢占焦点时，背后全屏主窗仍应维持有效全屏态");
+    Assert(
+        !DockVacateRules.IsEffectiveFullScreen(foregroundIsTrueFullScreen: false, backingWindowIsTrueFullScreen: false),
+        "前台与所属背后窗口均非全屏时不应误判为全屏");
+    Assert(
+        !DockVacateRules.ShouldRevealOnAttention(usesSmartHide: true, revealOnAttention: true, isFullScreen: true),
+        "真全屏期间收到 HSHELL_FLASH 提醒不得弹出智能隐藏的 Dock");
+    Assert(
+        DockVacateRules.ShouldRevealOnAttention(usesSmartHide: true, revealOnAttention: true, isFullScreen: false),
+        "非全屏且开启提醒唤出时允许智能隐藏 Dock 短暂显现");
+    Assert(
+        !DockVacateRules.ShouldRevealOnAttention(usesSmartHide: true, revealOnAttention: true, isFullScreen: false, isSuppressed: true),
+        "关闭或抑制状态下不得因提醒弹出 Dock");
+
+    // 只有瞬态弹窗/下载气泡/对话框才允许按同进程继承背后窗口的全屏态，切到同浏览器的普通窗口不得误继承。
+    Assert(
+        DockVacateRules.IsTransientFullScreenChildWindow(
+            isZoomed: false, isPopup: true, isDialogClass: false, isToolWindow: false, hasStandardResizableFrame: false, isAppWindow: false),
+        "无框下载气泡（WS_POPUP）应允许继承同进程背后全屏态");
+    Assert(
+        DockVacateRules.IsTransientFullScreenChildWindow(
+            isZoomed: false, isPopup: false, isDialogClass: true, isToolWindow: false, hasStandardResizableFrame: true, isAppWindow: false),
+        "另存为对话框（#32770）应允许继承全屏态");
+    Assert(
+        !DockVacateRules.IsTransientFullScreenChildWindow(
+            isZoomed: false, isPopup: false, isDialogClass: false, isToolWindow: false, hasStandardResizableFrame: true, isAppWindow: false),
+        "同浏览器进程的普通可调尺寸窗口不得误继承另一全屏窗口的全屏态");
+    Assert(
+        !DockVacateRules.IsTransientFullScreenChildWindow(
+            isZoomed: true, isPopup: true, isDialogClass: false, isToolWindow: false, hasStandardResizableFrame: false, isAppWindow: false),
+        "最大化窗口不得作为瞬态弹窗继承全屏态");
 }
 
 static void TestDockHandleGeometry()

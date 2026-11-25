@@ -3176,7 +3176,11 @@ public sealed partial class TopBarWindow : Window
             && foregroundBounds.Right >= monitor.Bounds.Right
             && foregroundBounds.Bottom >= monitor.Bounds.Bottom;
         var zoomed = foreground && foregroundWindow != 0 && DockNativeMethods.IsZoomed(foregroundWindow);
-        var trueFullScreen = DockVacateRules.IsTrueFullScreen(fullScreen, zoomed);
+        var directTrueFullScreen = DockVacateRules.IsTrueFullScreen(fullScreen, zoomed);
+        var backingFullScreen = !directTrueFullScreen
+            && foregroundWindow != 0
+            && FullScreenWatcher.IsTrueFullScreenContext(foregroundWindow, monitor.MonitorHandle);
+        var trueFullScreen = DockVacateRules.IsEffectiveFullScreen(directTrueFullScreen, backingFullScreen);
         _trueFullScreenForeground = trueFullScreen;
 
         if (_appBar.IsReserved)
@@ -3202,6 +3206,7 @@ public sealed partial class TopBarWindow : Window
             // app or any foreground window that still intrudes into the top strip
             // (such as a borderless, elevated, or user-dragged window).
             var coveredByForeground = fullScreen
+                || trueFullScreen
                 || (!nudgedAsynchronously
                     && foreground
                     && TopBarReserveRules.IsWindowCoveringReservedBar(foregroundBounds, bounds));

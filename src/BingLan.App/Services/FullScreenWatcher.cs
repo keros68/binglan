@@ -51,9 +51,11 @@ internal sealed class FullScreenWatcher : IDisposable
     private void Check()
     {
         var foreground = DockNativeMethods.GetForegroundWindow();
-        var fullScreen = IsFullScreen(foreground);
-        var trueFullScreen = fullScreen && !DockNativeMethods.IsZoomed(foreground);
-        var gameLikeFullScreen = trueFullScreen && IsGameLikeFullScreenChrome(foreground);
+        var directFullScreen = IsFullScreen(foreground);
+        var directTrueFullScreen = directFullScreen && !DockNativeMethods.IsZoomed(foreground);
+        var gameLikeFullScreen = IsTrueFullScreenContext(foreground);
+        var trueFullScreen = directTrueFullScreen || gameLikeFullScreen;
+        var fullScreen = directFullScreen || gameLikeFullScreen;
         if (fullScreen == IsFullScreenInFront
             && trueFullScreen == IsTrueFullScreenInFront
             && gameLikeFullScreen == IsGameLikeFullScreenInFront)
@@ -70,6 +72,177 @@ internal sealed class FullScreenWatcher : IDisposable
     internal static bool IsGameLikeFullScreen(nint window, nint targetMonitor = 0) =>
         IsFullScreen(window, targetMonitor, excludeMaximized: true)
         && IsGameLikeFullScreenChrome(window);
+
+    /// <summary>
+    /// Returns true when <paramref name="foregroundWindow"/> itself is a true full-screen
+    /// surface on <paramref name="targetMonitor"/>, OR when it is an owned dialog/popup or
+    /// same-process transient window (such as a browser F11 download bubble or Save As dialog)
+    /// sitting directly in front of a visible true full-screen window on that monitor.
+    /// Switching to an unrelated normal app still returns false.
+    /// </summary>
+    internal static bool IsTrueFullScreenContext(nint foregroundWindow, nint targetMonitor = 0)
+    {
+        if (foregroundWindow == 0 || DockNativeMethods.IsIconic(foregroundWindow))
+        {
+            return false;
+        }
+
+        if (IsGameLikeFullScreen(foregroundWindow, targetMonitor))
+        {
+            return true;
+        }
+
+        DockNativeMethods.GetWindowThreadProcessId(foregroundWindow, out var foregroundPid);
+        if (foregroundPid == 0 || foregroundPid == (uint)Environment.ProcessId)
+        {
+            return false;
+        }
+
+        var effectiveMonitor = targetMonitor != 0
+            ? targetMonitor
+            : DockNativeMethods.MonitorFromWindow(foregroundWindow, DockNativeMethods.MonitorDefaultToNearest);
+
+        // 1. Check owner chain (e.g. Save As #32770 or modal popup owned by a full-screen window).
+        var visited = new HashSet<nint> { foregroundWindow };
+        var owner = NativeMethods.GetWindow(foregroundWindow, NativeMethods.GwOwner);
+        for (var hop = 0; hop < 8 && owner != 0 && visited.Add(owner); hop++)
+        {
+            if (DockNativeMethods.IsWindowVisible(owner)
+                && IsGameLikeFullScreen(owner, effectiveMonitor))
+            {
+                return true;
+            }
+            owner = NativeMethods.GetWindow(owner, NativeMethods.GwOwner);
+        }
+
+        var rootOwner = DockNativeMethods.GetAncestor(foregroundWindow, DockNativeMethods.GaRootOwner);
+        if (rootOwner != 0
+            && rootOwner != foregroundWindow
+            && DockNativeMethods.IsWindowVisible(rootOwner)
+            && IsGameLikeFullScreen(rootOwner, effectiveMonitor))
+        {
+            return true;
+        }
+
+        // 2. Check for a visible same-process full-screen window immediately behind a transient
+        // popup/bubble (such as Chromium's unowned download bubble in F11 mode). Only transient
+        // foreground windows may inherit full-screen status by PID so switching from an F11 browser
+        // window to a normal window of the same browser still restores normal Dock/TopBar behavior.
+        var fgClass = new StringBuilder(64);
+        DockNativeMethods.GetClassNameW(foregroundWindow, fgClass, fgClass.Capacity);
+        var fgClassName = fgClass.ToString();
+        if (ShellSurfaceWindows.IsShellSurface(fgClassName))
+        {
+            return false;
+        }
+
+        if (!IsTransientWindow(foregroundWindow, fgClassName))
+        {
+            return false;
+        }
+
+        var explorerPid = ReadShellExplorerProcessId();
+        if (explorerPid != 0 && foregroundPid == explorerPid)
+        {
+            return false;
+        }
+
+        var cursor = NativeMethods.GetWindow(foregroundWindow, NativeMethods.GwHwndNext);
+        var steps = 0;
+        var visibleChecked = 0;
+        var candidateClass = new StringBuilder(64);
+        while (cursor != 0 && steps++ < 256 && visibleChecked < 48)
+        {
+            if (!DockNativeMethods.IsWindowVisible(cursor)
+                || DockNativeMethods.IsIconic(cursor)
+                || NativeMethods.IsWindowCloaked(cursor))
+            {
+                cursor = NativeMethods.GetWindow(cursor, NativeMethods.GwHwndNext);
+                continue;
+            }
+
+            DockNativeMethods.GetWindowThreadProcessId(cursor, out var candidatePid);
+            if (candidatePid == 0 || candidatePid == (uint)Environment.ProcessId)
+            {
+                cursor = NativeMethods.GetWindow(cursor, NativeMethods.GwHwndNext);
+                continue;
+            }
+
+            var exStyle = NativeMethods.GetExStyleOf(cursor);
+            if ((exStyle & (NativeMethods.WsExToolWindow | NativeMethods.WsExTransparent)) != 0)
+            {
+                cursor = NativeMethods.GetWindow(cursor, NativeMethods.GwHwndNext);
+                continue;
+            }
+
+            candidateClass.Clear();
+            DockNativeMethods.GetClassNameW(cursor, candidateClass, candidateClass.Capacity);
+            var candidateClassName = candidateClass.ToString();
+            if (ShellSurfaceWindows.IsShellSurface(candidateClassName))
+            {
+                cursor = NativeMethods.GetWindow(cursor, NativeMethods.GwHwndNext);
+                continue;
+            }
+
+            if (effectiveMonitor != 0
+                && DockNativeMethods.MonitorFromWindow(cursor, DockNativeMethods.MonitorDefaultToNearest) != effectiveMonitor)
+            {
+                cursor = NativeMethods.GetWindow(cursor, NativeMethods.GwHwndNext);
+                continue;
+            }
+
+            visibleChecked++;
+            if (candidatePid == foregroundPid)
+            {
+                if (IsGameLikeFullScreen(cursor, effectiveMonitor))
+                {
+                    return true;
+                }
+                if (!IsTransientWindow(cursor, candidateClassName))
+                {
+                    // Another normal window of the same process sits between this popup and any
+                    // older full-screen window beneath it; treat it as the boundary so a bubble
+                    // over a normal browser window does not inherit an older F11 window's state.
+                    break;
+                }
+            }
+            else if (explorerPid == 0 || candidatePid != explorerPid)
+            {
+                // An unrelated normal application window sits between foregroundWindow and any
+                // lower window, so foregroundWindow is not a transient overlay on a full-screen app.
+                break;
+            }
+
+            cursor = NativeMethods.GetWindow(cursor, NativeMethods.GwHwndNext);
+        }
+
+        return false;
+    }
+
+    private static bool IsTransientWindow(nint window, string className)
+    {
+        var style = (long)NativeMethods.GetWindowLongPtr(window, NativeMethods.GwlStyle);
+        var exStyle = NativeMethods.GetExStyleOf(window);
+        return DockVacateRules.IsTransientFullScreenChildWindow(
+            isZoomed: DockNativeMethods.IsZoomed(window),
+            isPopup: (style & NativeMethods.WsPopup) != 0,
+            isDialogClass: string.Equals(className, "#32770", StringComparison.Ordinal),
+            isToolWindow: (exStyle & NativeMethods.WsExToolWindow) != 0,
+            hasStandardResizableFrame: (style & NativeMethods.WsCaption) == NativeMethods.WsCaption
+                && (style & NativeMethods.WsThickFrame) != 0,
+            isAppWindow: (exStyle & NativeMethods.WsExAppWindow) != 0);
+    }
+
+    private static uint ReadShellExplorerProcessId()
+    {
+        var tray = TaskbarNativeMethods.FindWindowW("Shell_TrayWnd", null);
+        if (tray == 0)
+        {
+            return 0;
+        }
+        DockNativeMethods.GetWindowThreadProcessId(tray, out var pid);
+        return pid;
+    }
 
     private static bool IsGameLikeFullScreenChrome(nint window)
     {

@@ -40,6 +40,59 @@ public static class DockVacateRules
         && (!hasStandardWindowChrome || isTopmost);
 
     /// <summary>
+    /// Whether an unowned foreground window may inherit full-screen status from a same-process
+    /// full-screen window immediately behind it in Z-order (for example Chromium's unowned F11
+    /// download bubble or a Save As dialog). Normal standalone top-level application windows
+    /// (maximized, or with standard resizable caption/frame chrome without popup/dialog/tool
+    /// characteristics) return false so switching between two windows of the same browser
+    /// restores normal Dock/TopBar behavior.
+    /// </summary>
+    public static bool IsTransientFullScreenChildWindow(
+        bool isZoomed,
+        bool isPopup,
+        bool isDialogClass,
+        bool isToolWindow,
+        bool hasStandardResizableFrame,
+        bool isAppWindow)
+    {
+        if (isZoomed)
+        {
+            return false;
+        }
+        if (isDialogClass || isToolWindow)
+        {
+            return true;
+        }
+        if (isPopup && !hasStandardResizableFrame && !isAppWindow)
+        {
+            return true;
+        }
+        return !hasStandardResizableFrame && !isAppWindow;
+    }
+
+    /// <summary>
+    /// Effective full-screen state on the bar's monitor: true when either the foreground window
+    /// itself is a true full-screen surface, or the foreground window is an owned dialog/popup
+    /// (e.g. a browser download bubble or Save As dialog) sitting directly in front of a true
+    /// full-screen window belonging to the same owner/process on that monitor.
+    /// </summary>
+    public static bool IsEffectiveFullScreen(
+        bool foregroundIsTrueFullScreen,
+        bool backingWindowIsTrueFullScreen) =>
+        foregroundIsTrueFullScreen || backingWindowIsTrueFullScreen;
+
+    /// <summary>
+    /// Whether a taskbar flash notification (<c>HSHELL_FLASH</c>) may temporarily reveal a
+    /// smart-hidden dock. Never reveals over a true full-screen app or while suppressed.
+    /// </summary>
+    public static bool ShouldRevealOnAttention(
+        bool usesSmartHide,
+        bool revealOnAttention,
+        bool isFullScreen,
+        bool isSuppressed = false) =>
+        usesSmartHide && revealOnAttention && !isFullScreen && !isSuppressed;
+
+    /// <summary>
     /// Decides whether the dock should step aside for a foreground Windows shell surface
     /// (taskbar, Start menu, Quick Settings, tray overflow). When the foreground is the
     /// taskbar itself on a different screen edge and does not overlap the dock (for example

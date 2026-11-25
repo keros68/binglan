@@ -46,6 +46,7 @@ public sealed partial class WidgetCoordinator : IDisposable
     private readonly AppUpdater _updater;
     private TrayMenuItem? _updateMenuItem;
     private TrayMenuItem? _launcherMenuItem;
+    private TrayMenuItem? _peekMenuItem;
     private Action? _balloonClicked;
     private IReadOnlyDictionary<string, byte[]> _pendingThemeIcons = new Dictionary<string, byte[]>();
     private readonly SemaphoreSlim _cleanDesktopGate = new(1, 1);
@@ -63,6 +64,9 @@ public sealed partial class WidgetCoordinator : IDisposable
     private readonly FileMappingWatchService _mappingWatcher;
     private readonly List<WidgetWindowBase> _windowsHiddenFromTray = [];
     private TrayMenuItem? _toggleDesktopMenuItem;
+    private TrayMenuItem? _gameModeMenuItem;
+    private string _trayBaseText = "冰蓝桌面";
+    private bool _gameModeActive;
     private bool _desktopHidden;
     private bool _temporaryNativeDesktopActive;
     private bool _widgetsHiddenByNativeToggle;
@@ -680,6 +684,7 @@ public sealed partial class WidgetCoordinator : IDisposable
                 window.IsVisible
                 && window.ComponentKind is null or DesktopComponentKind.Performance);
         var hasTopBarPerformance = _state.TopBar.IsEnabled
+            && !_gameModeActive
             && TopBarRules.IsModuleOn(_state.TopBar.Modules, TopBarModuleKind.Performance);
         if (hasVisiblePerformanceCard || hasTopBarPerformance)
         {
@@ -688,7 +693,7 @@ public sealed partial class WidgetCoordinator : IDisposable
                 _performanceSampler.Start();
             }
             _performanceSampler.SetMode(PerformanceSamplingRules.ResolveMode(
-                _fullScreenWatcher.IsFullScreenInFront,
+                _fullScreenWatcher.IsFullScreenInFront || _gameModeActive,
                 false));
             return;
         }
@@ -774,6 +779,54 @@ public sealed partial class WidgetCoordinator : IDisposable
             _toggleDesktopMenuItem.Text = _desktopHidden ? "显示桌面组件" : "隐藏桌面组件";
         }
         UpdateSamplingMode();
+    }
+
+    internal void ToggleGameMode() => SetGameMode(!_gameModeActive);
+
+    internal void SetGameMode(bool active)
+    {
+        if (_isExiting || _exitRequested || _gameModeActive == active)
+        {
+            return;
+        }
+
+        _gameModeActive = active;
+        if (active)
+        {
+            _launcherPanel?.Dismiss(restoreForeground: false);
+            if (_peek.IsActive)
+            {
+                _peek.End(restoreForeground: false);
+            }
+        }
+
+        _dock.SetSuppressed(active);
+        _topBar.SetSuppressed(active);
+        SyncGlobalHotkeys();
+        if (_gameModeMenuItem is not null)
+        {
+            _gameModeMenuItem.Text = active ? "退出免打扰（游戏模式）" : "免打扰（游戏模式）";
+        }
+        if (_launcherMenuItem is not null)
+        {
+            _launcherMenuItem.Visible = !active && _state.LauncherEnabled;
+        }
+        if (_peekMenuItem is not null)
+        {
+            _peekMenuItem.Visible = !active;
+        }
+        _trayIcon.SetText(active
+            ? $"{_trayBaseText}（免打扰模式）"
+            : _trayBaseText);
+        UpdateSamplingMode();
+        if (active)
+        {
+            _trayIcon.ShowBalloonTip(
+                3000,
+                "免打扰（游戏模式）已开启",
+                "已暂时隐藏 Dock 与顶端信息条，避免全屏游戏或演示误触；右键托盘图标可随时退出。",
+                TrayTipKind.Info);
+        }
     }
 
     internal void OnQueryEndSession()
@@ -1782,7 +1835,7 @@ public sealed partial class WidgetCoordinator : IDisposable
     private void SyncGlobalHotkeys()
     {
         GlobalHotkeyRules.Normalize(_state.Hotkeys);
-        _hotkeys.Sync(_state.Hotkeys, _state.LauncherEnabled, _state.CleanDesktopEnabled);
+        _hotkeys.Sync(_state.Hotkeys, _state.LauncherEnabled, _state.CleanDesktopEnabled, suspendAll: _gameModeActive);
     }
 
     private bool IsTrueFullScreenInFront()
@@ -1865,7 +1918,7 @@ public sealed partial class WidgetCoordinator : IDisposable
 
     internal void TogglePeekFileBoxes()
     {
-        if (_isExiting || _exitRequested)
+        if (_isExiting || _exitRequested || _gameModeActive)
         {
             return;
         }
@@ -3256,13 +3309,16 @@ public sealed partial class WidgetCoordinator : IDisposable
 
     private TrayIconHost BuildTrayIcon(bool interactiveQa)
     {
-        var trayIcon = new TrayIconHost(interactiveQa ? "冰蓝桌面（测试预览）" : "冰蓝桌面");
+        _trayBaseText = interactiveQa ? "冰蓝桌面（测试预览）" : "冰蓝桌面";
+        var trayIcon = new TrayIconHost(_trayBaseText);
         _launcherMenuItem = trayIcon.AddItem("打开冰蓝总览卡", ToggleLauncherPanel);
-        _launcherMenuItem.Visible = _state.LauncherEnabled;
-        trayIcon.AddItem("临时浮起文件收纳盒", TogglePeekFileBoxes);
+        _launcherMenuItem.Visible = _state.LauncherEnabled && !_gameModeActive;
+        _peekMenuItem = trayIcon.AddItem("临时浮起文件收纳盒", TogglePeekFileBoxes);
+        _peekMenuItem.Visible = !_gameModeActive;
         trayIcon.AddItem("一键整理桌面", async () => await OrganizeDesktopAsync());
         trayIcon.AddSeparator();
         _toggleDesktopMenuItem = trayIcon.AddItem("隐藏桌面组件", ToggleDesktop);
+        _gameModeMenuItem = trayIcon.AddItem("免打扰（游戏模式）", ToggleGameMode);
         trayIcon.AddSeparator();
         trayIcon.AddItem("显示桌面信息", AddInformation);
         trayIcon.AddItem("新建待办便签", AddTodo);

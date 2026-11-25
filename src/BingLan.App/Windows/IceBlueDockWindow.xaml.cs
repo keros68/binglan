@@ -619,12 +619,20 @@ public partial class IceBlueDockWindow : Window
         };
         if ((int)wParam == HshellFlash && !changed)
         {
-            // Already marked: the buttons are current, so bounce now.
-            BounceFlashedItems();
+            // Already marked: the buttons are current, so bounce now (unless hidden under full-screen).
+            if (!_trueFullScreenForeground)
+            {
+                BounceFlashedItems();
+            }
         }
         if (changed)
         {
-            if ((int)wParam == HshellFlash && UsesSmartHide && _state.RevealOnAttention)
+            if ((int)wParam == HshellFlash
+                && DockVacateRules.ShouldRevealOnAttention(
+                    UsesSmartHide,
+                    _state.RevealOnAttention,
+                    _trueFullScreenForeground,
+                    _closing))
             {
                 // A hidden dock shows itself briefly so the mark is seen.
                 _attentionRevealUntil = DateTimeOffset.UtcNow + AttentionReveal;
@@ -2922,12 +2930,17 @@ public partial class IceBlueDockWindow : Window
                 isTopmost = (exStyle & NativeMethods.WsExTopmost) != 0;
             }
         }
-        var trueFullScreen = DockVacateRules.IsTrueFullScreen(
+        var directTrueFullScreen = DockVacateRules.IsTrueFullScreen(
             fullScreen && !foregroundOwnProcess,
             foregroundZoomed,
             hasStandardChrome,
             isToolOrOverlay,
             isTopmost);
+        var backingFullScreen = !directTrueFullScreen
+            && !foregroundOwnProcess
+            && foregroundWindow != 0
+            && FullScreenWatcher.IsTrueFullScreenContext(foregroundWindow, monitor.MonitorHandle);
+        var trueFullScreen = DockVacateRules.IsEffectiveFullScreen(directTrueFullScreen, backingFullScreen);
         _trueFullScreenForeground = trueFullScreen;
         var shouldVacate = DockVacateRules.ShouldReleaseForMaximized(
             _state.VisibilityMode,

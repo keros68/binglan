@@ -120,10 +120,37 @@ internal sealed class TaskbarCornerReveal : IDisposable
         var wanted = new Dictionary<string, PixelRect>(StringComparer.OrdinalIgnoreCase);
         if (_mode != TaskbarEdgeRevealMode.AnyEdge && !_suspended)
         {
+            var autoHideOn = TaskbarAdapter.IsWindowsAutoHideOn();
+            var visibleTaskbarRects = ReadVisibleTaskbarRects();
             foreach (var monitor in MonitorCatalog.GetAll())
             {
-                if (TaskbarEdgeGuard.HasBottomAutoHideBar(monitor.Bounds)
-                    && TaskbarCornerRules.StripForMode(monitor.Bounds, monitor.Dpi, _mode) is { } stripBounds)
+                var matchingTaskbar = FindMatchingBottomTaskbar(visibleTaskbarRects, monitor.Bounds);
+                var hasBottomAutoHide = TaskbarEdgeGuard.HasBottomAutoHideBar(monitor.Bounds)
+                    || (autoHideOn && matchingTaskbar.HasValue);
+                if (!hasBottomAutoHide)
+                {
+                    continue;
+                }
+
+                var stripPixels = TaskbarCornerRules.StripPixels;
+                if (matchingTaskbar is { } taskbarRect)
+                {
+                    var peekPixels = monitor.Bounds.Bottom - taskbarRect.Top;
+                    if (peekPixels > TaskbarCornerRules.StripPixels
+                        && peekPixels <= TaskbarCornerRules.ExpandedTaskbarThresholdPixels)
+                    {
+                        stripPixels = TaskbarCornerRules.ResolveStripThickness(peekPixels);
+                    }
+                    else if (peekPixels > TaskbarCornerRules.ExpandedTaskbarThresholdPixels
+                        && _strips.TryGetValue(monitor.DeviceName, out var existingStrip))
+                    {
+                        // Retain the collapsed thickness while the taskbar is expanded so Update()
+                        // does not see a spurious bounds change and re-place the strip above it.
+                        stripPixels = TaskbarCornerRules.ResolveStripThickness(existingStrip.Bounds.Height);
+                    }
+                }
+
+                if (TaskbarCornerRules.StripForMode(monitor.Bounds, monitor.Dpi, _mode, stripPixels) is { } stripBounds)
                 {
                     wanted[monitor.DeviceName] = stripBounds;
                 }
@@ -145,10 +172,15 @@ internal sealed class TaskbarCornerReveal : IDisposable
                 _strips[device] = strip;
                 strip.Show();
             }
-            if (isNew || strip!.Bounds != bounds || !IsTaskbarExpandedOver(bounds))
+            if (!IsTaskbarExpandedOver(bounds))
             {
                 strip!.Place(bounds);
                 raisedAny = true;
+            }
+            else
+            {
+                // Keep expected geometry recorded; RaiseIfBehindTaskbar will place it once the taskbar closes.
+                strip!.RecordTargetBounds(bounds);
             }
         }
         if (_strips.Count > 0)
@@ -188,10 +220,39 @@ internal sealed class TaskbarCornerReveal : IDisposable
         return true;
     }
 
+    private static List<PixelRect> ReadVisibleTaskbarRects()
+    {
+        var rects = new List<PixelRect>(2);
+        foreach (var taskbar in TaskbarAdapter.FindTaskbars())
+        {
+            if (DockNativeMethods.IsWindowVisible(taskbar)
+                && DockNativeMethods.GetWindowRect(taskbar, out var rect))
+            {
+                rects.Add(new PixelRect(rect.Left, rect.Top, rect.Right, rect.Bottom));
+            }
+        }
+        return rects;
+    }
+
+    private static PixelRect? FindMatchingBottomTaskbar(List<PixelRect> taskbarRects, PixelRect monitorBounds)
+    {
+        foreach (var rect in taskbarRects)
+        {
+            if (TaskbarCornerRules.IsBottomTaskbarOnMonitor(rect, monitorBounds))
+            {
+                return rect;
+            }
+        }
+        return null;
+    }
+
     /// <summary>Whether an auto-hidden bottom taskbar is currently expanded on <paramref name="monitorBounds"/>.</summary>
     internal static bool IsTaskbarExpandedOnMonitor(PixelRect monitorBounds)
     {
-        if (!TaskbarEdgeGuard.HasBottomAutoHideBar(monitorBounds))
+        var hasAutoHide = TaskbarEdgeGuard.HasBottomAutoHideBar(monitorBounds)
+            || (TaskbarAdapter.IsWindowsAutoHideOn()
+                && FindMatchingBottomTaskbar(ReadVisibleTaskbarRects(), monitorBounds).HasValue);
+        if (!hasAutoHide)
         {
             return false;
         }
@@ -259,9 +320,11 @@ internal sealed class TaskbarCornerReveal : IDisposable
         _classNameBuffer.Clear();
         DockNativeMethods.GetClassNameW(hwnd, _classNameBuffer, _classNameBuffer.Capacity);
         if (!IsTaskbarClass(_classNameBuffer)) return;
-        // Do not fight the taskbar's Z-order while it is open/expanded; wait until it collapses.
+        // Do not fight the taskbar's Z-order while it is open/expanded; wait until it collapses,
+        // but schedule a non-forcing settle check so the final collapse frame is caught promptly.
         if (IsTaskbarWindowExpanded(hwnd))
         {
+            ScheduleZOrderCheck();
             return;
         }
         if (Environment.TickCount64 - _lastRaise >= RaiseThrottleMs) Raise();
@@ -281,7 +344,7 @@ internal sealed class TaskbarCornerReveal : IDisposable
         _settle.Start();
     }
 
-    /// <summary>Raises strips only if a collapsed taskbar window sits above any strip or a strip was hidden.</summary>
+    /// <summary>Raises strips only if a collapsed taskbar window sits above any strip, a strip was hidden, or its geometry drifted.</summary>
     internal void RaiseIfBehindTaskbar()
     {
         if (_strips.Count == 0 || _raising)
@@ -291,9 +354,16 @@ internal sealed class TaskbarCornerReveal : IDisposable
         var raisedAny = false;
         foreach (var strip in _strips.Values)
         {
-            if (NeedsRaiseForStrip(strip))
+            if (NeedsRaiseForStrip(strip, out var needsGeometryRestore))
             {
-                strip.Raise();
+                if (needsGeometryRestore)
+                {
+                    strip.Place(strip.Bounds);
+                }
+                else
+                {
+                    strip.Raise();
+                }
                 raisedAny = true;
             }
         }
@@ -304,12 +374,38 @@ internal sealed class TaskbarCornerReveal : IDisposable
         }
     }
 
-    private bool NeedsRaiseForStrip(EdgeStrip strip)
+    private bool NeedsRaiseForStrip(EdgeStrip strip, out bool needsGeometryRestore)
     {
+        needsGeometryRestore = false;
         var handle = new WindowInteropHelper(strip).Handle;
         if (handle == 0 || IsTaskbarExpandedOver(strip.Bounds))
         {
             return false;
+        }
+        // If the strip was first created while the taskbar was expanded, remeasure the collapsed
+        // taskbar peek height as soon as it closes instead of waiting for the 5-second Update poll.
+        foreach (var taskbarRect in ReadVisibleTaskbarRects())
+        {
+            if (TaskbarCornerRules.IsSameMonitorBottomTaskbar(taskbarRect, strip.Bounds))
+            {
+                var peekPixels = strip.Bounds.Bottom - taskbarRect.Top;
+                if (peekPixels > strip.Bounds.Height
+                    && peekPixels <= TaskbarCornerRules.ExpandedTaskbarThresholdPixels)
+                {
+                    var thickness = TaskbarCornerRules.ResolveStripThickness(peekPixels);
+                    strip.RecordTargetBounds(strip.Bounds with { Top = strip.Bounds.Bottom - thickness });
+                    needsGeometryRestore = true;
+                    return true;
+                }
+            }
+        }
+        if (DockNativeMethods.GetWindowRect(handle, out var currentRect)
+            && TaskbarCornerRules.NeedsGeometryRestore(
+                new PixelRect(currentRect.Left, currentRect.Top, currentRect.Right, currentRect.Bottom),
+                strip.Bounds))
+        {
+            needsGeometryRestore = true;
+            return true;
         }
         if (!NativeMethods.IsWindowVisible(handle) || !NativeMethods.IsTopmostWindow(handle))
         {
@@ -317,7 +413,7 @@ internal sealed class TaskbarCornerReveal : IDisposable
         }
         var cursor = NativeMethods.GetWindow(handle, NativeMethods.GwHwndPrev);
         var steps = 0;
-        while (cursor != 0 && steps++ < 64)
+        while (cursor != 0 && steps++ < 512)
         {
             _classNameBuffer.Clear();
             if (DockNativeMethods.GetClassNameW(cursor, _classNameBuffer, _classNameBuffer.Capacity) > 0
@@ -451,10 +547,26 @@ internal sealed class TaskbarCornerReveal : IDisposable
                     handle,
                     NativeMethods.GwlExStyle,
                     (nint)(style | NativeMethods.WsExToolWindow | DockNativeMethods.WsExNoActivate));
+                HwndSource.FromHwnd(handle)?.AddHook(StripWindowProc);
             };
         }
 
+        private nint StripWindowProc(nint hwnd, int message, nint wParam, nint lParam, ref bool handled)
+        {
+            // Keep physical pixel geometry intact across DPI transitions (for example when a strip
+            // first moves from the off-screen primary-DPI origin onto a secondary monitor with a
+            // different DPI); otherwise WPF's default WM_DPICHANGED handler shrinks it to 1x1 DIP.
+            if (message == DockNativeMethods.WmDpiChanged && Bounds.HasArea)
+            {
+                Place(Bounds);
+                handled = true;
+            }
+            return 0;
+        }
+
         internal PixelRect Bounds { get; private set; }
+
+        internal void RecordTargetBounds(PixelRect bounds) => Bounds = bounds;
 
         internal void Place(PixelRect bounds)
         {

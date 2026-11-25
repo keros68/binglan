@@ -153,6 +153,8 @@ internal static class NativeMethods
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool EndDeferWindowPos(nint batch);
 
+    internal const uint GwHwndNext = 2;
+
     internal const uint GwHwndPrev = 3;
 
     internal const uint GwOwner = 4;

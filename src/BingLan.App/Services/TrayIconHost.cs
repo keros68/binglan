@@ -128,6 +128,19 @@ internal sealed class TrayIconHost : IDisposable
 
     internal void InvokeDoubleClick() => DoubleClick?.Invoke(this, EventArgs.Empty);
 
+    internal void SetText(string text)
+    {
+        if (_disposed || string.Equals(_text, text, StringComparison.Ordinal))
+        {
+            return;
+        }
+        _text = text;
+        if (_added)
+        {
+            AddOrUpdateShellIcon(forceAdd: false);
+        }
+    }
+
     internal bool Visible
     {
         get => _visible;

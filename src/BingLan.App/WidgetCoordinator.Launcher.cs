@@ -28,12 +28,13 @@ public sealed partial class WidgetCoordinator
 
     internal void ToggleLauncherPanelForTab(LauncherMainTab? targetTab)
     {
-        if (_isExiting || _exitRequested || !_state.LauncherEnabled)
+        if (_isExiting || _exitRequested || !_state.LauncherEnabled || _gameModeActive)
         {
             return;
         }
         var foreground = DockNativeMethods.GetForegroundWindow();
-        if (FullScreenWatcher.IsFullScreen(foreground, excludeMaximized: true))
+        if (FullScreenWatcher.IsFullScreen(foreground, excludeMaximized: true)
+            || FullScreenWatcher.IsTrueFullScreenContext(foreground))
         {
             return;
         }
@@ -101,7 +102,7 @@ public sealed partial class WidgetCoordinator
         _launcherLostFocusAt = null;
         if (_launcherMenuItem is not null)
         {
-            _launcherMenuItem.Visible = enabled;
+            _launcherMenuItem.Visible = enabled && !_gameModeActive;
         }
         _dock.Apply();
         _topBar.Apply();
