@@ -265,19 +265,19 @@ public partial class LauncherPanelWindow
         {
             if (!LauncherGroupRules.TryRename(_readGroups(), groupId, GroupNameEditor.Text, out var renamed) || renamed is null)
             {
-                StatusText.Text = "请输入 1–32 个字符。分组名称不能重复或使用「全部」「常用」「未分组」";
+                SetStatusText("请输入 1–32 个字符。分组名称不能重复或使用「全部」「常用」「未分组」");
                 GroupNameEditor.Focus();
                 return;
             }
             EndGroupEditing();
             _saveOrganizer();
             Render(_unfilteredRows, preserveSelection: true);
-            StatusText.Text = $"已重命名为「{renamed.Name}」";
+            SetStatusText($"已重命名为「{renamed.Name}」");
             return;
         }
         if (!LauncherGroupRules.TryCreate(_readGroups(), GroupNameEditor.Text, out var group) || group is null)
         {
-            StatusText.Text = "请输入 1–32 个字符。分组名称不能重复或使用「全部」「常用」「未分组」";
+            SetStatusText("请输入 1–32 个字符。分组名称不能重复或使用「全部」「常用」「未分组」");
             GroupNameEditor.Focus();
             return;
         }
@@ -292,7 +292,7 @@ public partial class LauncherPanelWindow
             SelectBrowse(PanelFilter.All, group: group.Id.ToString("N"));
         }
         else Render(_unfilteredRows, preserveSelection: true);
-        StatusText.Text = $"已创建「{group.Name}」";
+        SetStatusText($"已创建「{group.Name}」");
     }
 
     private void BeginGroupDelete(LauncherGroupState group)
@@ -343,7 +343,7 @@ public partial class LauncherPanelWindow
         }
         _saveOrganizer();
         Render(_unfilteredRows, preserveSelection: false);
-        StatusText.Text = $"已删除分组「{removed.Name}」";
+        SetStatusText($"已删除分组「{removed.Name}」");
         SearchBox.Focus();
     }
 
@@ -363,7 +363,7 @@ public partial class LauncherPanelWindow
                 RememberGroupEntry(row.Entry);
                 _saveOrganizer();
                 Render(_unfilteredRows, preserveSelection: true);
-                StatusText.Text = $"已加入「{group.Name}」";
+                SetStatusText($"已加入「{group.Name}」");
             };
             join.Items.Add(choice);
         }
@@ -383,7 +383,7 @@ public partial class LauncherPanelWindow
                 _groupEntries.Remove(matchedMember.Key);
             _saveOrganizer();
             Render(_unfilteredRows, preserveSelection: true);
-            StatusText.Text = $"已移出「{current.Name}」";
+            SetStatusText($"已移出「{current.Name}」");
         };
         menu.Items.Add(remove);
     }

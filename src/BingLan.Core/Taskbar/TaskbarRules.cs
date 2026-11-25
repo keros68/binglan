@@ -240,6 +240,7 @@ public static class TaskbarCornerRules
     public static bool IsSameMonitorBottomTaskbar(PixelRect taskbarRect, PixelRect stripBounds) =>
         taskbarRect.Right > stripBounds.Left
         && taskbarRect.Left < stripBounds.Right
+        && taskbarRect.Top < stripBounds.Bottom
         && taskbarRect.Bottom >= stripBounds.Bottom;
 
     /// <summary>

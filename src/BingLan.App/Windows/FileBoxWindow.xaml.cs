@@ -388,14 +388,24 @@ public partial class FileBoxWindow : WidgetWindowBase
     {
         if (WindowHandle is var handle && handle != 0 && bounds.HasArea)
         {
-            BingLan.App.Interop.NativeMethods.SetWindowPos(
-                handle,
-                0,
-                bounds.Left,
-                bounds.Top,
-                bounds.Width,
-                bounds.Height,
-                BingLan.App.Interop.NativeMethods.SwpNoZOrder | BingLan.App.Interop.NativeMethods.SwpNoActivate);
+            // Crossing monitors with different DPI triggers WM_DPICHANGED resizing on the
+            // first SetWindowPos; a second pass locks exact physical bounds when needed.
+            for (var attempt = 0; attempt < 2; attempt++)
+            {
+                if (BingLan.App.Interop.DockNativeMethods.GetWindowRect(handle, out var native)
+                    && new BingLan.Core.Dock.PixelRect(native.Left, native.Top, native.Right, native.Bottom) == bounds)
+                {
+                    break;
+                }
+                BingLan.App.Interop.NativeMethods.SetWindowPos(
+                    handle,
+                    0,
+                    bounds.Left,
+                    bounds.Top,
+                    bounds.Width,
+                    bounds.Height,
+                    BingLan.App.Interop.NativeMethods.SwpNoZOrder | BingLan.App.Interop.NativeMethods.SwpNoActivate);
+            }
         }
     }
 

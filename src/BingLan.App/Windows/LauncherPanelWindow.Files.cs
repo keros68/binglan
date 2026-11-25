@@ -126,7 +126,7 @@ public partial class LauncherPanelWindow
         {
             if (pinOnly)
             {
-                StatusText.Text = "该文件夹已在常用位置中";
+                SetStatusText("该文件夹已在常用位置中");
                 return;
             }
             _preferences.UnpinFolder(normalized);
@@ -157,7 +157,7 @@ public partial class LauncherPanelWindow
             await SearchAsync(preserveView: true);
             if (!_closed && !_dismissing)
             {
-                StatusText.Text = added ? $"已收藏常用文件夹：{folderName}" : $"已从常用位置移除：{folderName}";
+                SetStatusText(added ? $"已收藏常用文件夹：{folderName}" : $"已从常用位置移除：{folderName}");
             }
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException) { }
@@ -178,7 +178,7 @@ public partial class LauncherPanelWindow
         _preferences.ShowRecentFiles = !_preferences.ShowRecentFiles;
         _saveOrganizer?.Invoke();
         RefreshRecentPreference();
-        StatusText.Text = _preferences.ShowRecentFiles ? "已开启最近使用文件" : "已隐藏最近使用文件";
+        SetStatusText(_preferences.ShowRecentFiles ? "已开启最近使用文件" : "已隐藏最近使用文件");
     }
 
     private void OnOpenCurrentDirectoryClick(object sender, RoutedEventArgs args)

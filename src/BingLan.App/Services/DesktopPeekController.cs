@@ -4,8 +4,10 @@ using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Threading;
+using BingLan.App.Dock;
 using BingLan.App.Interop;
 using BingLan.App.Windows;
+using BingLan.Core.Dock;
 using Color = System.Windows.Media.Color;
 using KeyEventArgs = System.Windows.Input.KeyEventArgs;
 using SolidColorBrush = System.Windows.Media.SolidColorBrush;
@@ -26,7 +28,7 @@ internal sealed class DesktopPeekController : IDisposable
     private readonly Action<FileBoxWindow> _returnSingleBox;
     private readonly DispatcherTimer _foregroundWatchTimer;
     private readonly List<FileBoxWindow> _peekedBoxes = [];
-    private PeekBackdropWindow? _backdrop;
+    private readonly List<PeekBackdropWindow> _backdrops = [];
     private nint _previousForeground;
     private bool _draggingOut;
     private bool _disposed;
@@ -46,7 +48,7 @@ internal sealed class DesktopPeekController : IDisposable
         _foregroundWatchTimer.Stop();
     }
 
-    internal bool IsActive => _backdrop is not null;
+    internal bool IsActive => _backdrops.Count > 0;
 
     /// <summary>
     /// Temporarily raises a single file box above ordinary windows (used by edge-dock reveal)
@@ -100,11 +102,28 @@ internal sealed class DesktopPeekController : IDisposable
         _previousForeground = foreground;
         _draggingOut = false;
 
-        var backdrop = new PeekBackdropWindow(animate);
-        backdrop.DismissRequested += () => End(restoreForeground: true);
-        backdrop.BackdropReady += EnsureBoxesAboveBackdrop;
-        _backdrop = backdrop;
-        backdrop.Show();
+        // One backdrop window per physical monitor avoids mixed-DPI and negative-offset
+        // coverage gaps caused by a single VirtualScreen-sized WPF window.
+        var monitors = MonitorCatalog.GetAll();
+        if (monitors.Count > 0)
+        {
+            foreach (var monitor in monitors)
+            {
+                var backdrop = new PeekBackdropWindow(animate, monitor.Bounds);
+                backdrop.DismissRequested += () => End(restoreForeground: true);
+                backdrop.BackdropReady += EnsureBoxesAboveBackdrop;
+                _backdrops.Add(backdrop);
+                backdrop.Show();
+            }
+        }
+        else
+        {
+            var backdrop = new PeekBackdropWindow(animate, physicalBounds: null);
+            backdrop.DismissRequested += () => End(restoreForeground: true);
+            backdrop.BackdropReady += EnsureBoxesAboveBackdrop;
+            _backdrops.Add(backdrop);
+            backdrop.Show();
+        }
 
         _peekedBoxes.Clear();
         foreach (var box in visibleBoxes)
@@ -146,7 +165,15 @@ internal sealed class DesktopPeekController : IDisposable
         }
         if (lastBoxHandle != 0)
         {
-            _backdrop?.PlaceDirectlyBelow(lastBoxHandle);
+            var anchor = lastBoxHandle;
+            foreach (var backdrop in _backdrops)
+            {
+                backdrop.PlaceDirectlyBelow(anchor);
+                if (backdrop.WindowHandle is var handle && handle != 0)
+                {
+                    anchor = handle;
+                }
+            }
         }
     }
 
@@ -160,9 +187,9 @@ internal sealed class DesktopPeekController : IDisposable
         _foregroundWatchTimer.Stop();
         _draggingOut = false;
 
-        var backdrop = _backdrop;
-        _backdrop = null;
-        if (backdrop is not null)
+        var backdrops = _backdrops.ToArray();
+        _backdrops.Clear();
+        foreach (var backdrop in backdrops)
         {
             backdrop.DismissNow();
         }
@@ -225,7 +252,10 @@ internal sealed class DesktopPeekController : IDisposable
         }
         _draggingOut = true;
         // Drop the backdrop immediately so WeChat / browser drop targets underneath stay unobstructed.
-        _backdrop?.HideForDrag();
+        foreach (var backdrop in _backdrops)
+        {
+            backdrop.HideForDrag();
+        }
     }
 
     private void OnBoxDragOutEnded()
@@ -305,15 +335,19 @@ internal sealed class DesktopPeekController : IDisposable
     private sealed class PeekBackdropWindow : Window
     {
         private readonly bool _animate;
+        private readonly PixelRect? _physicalBounds;
         private nint _handle;
         private bool _closing;
 
         internal event Action? DismissRequested;
         internal event Action? BackdropReady;
 
-        internal PeekBackdropWindow(bool animate)
+        internal nint WindowHandle => _handle;
+
+        internal PeekBackdropWindow(bool animate, PixelRect? physicalBounds)
         {
             _animate = animate;
+            _physicalBounds = physicalBounds;
             Title = "冰蓝文件收纳盒浮起遮罩";
             WindowStyle = WindowStyle.None;
             ResizeMode = ResizeMode.NoResize;
@@ -322,10 +356,20 @@ internal sealed class DesktopPeekController : IDisposable
             ShowActivated = false;
             Topmost = true;
             WindowStartupLocation = WindowStartupLocation.Manual;
-            Left = SystemParameters.VirtualScreenLeft;
-            Top = SystemParameters.VirtualScreenTop;
-            Width = SystemParameters.VirtualScreenWidth;
-            Height = SystemParameters.VirtualScreenHeight;
+            if (physicalBounds is { HasArea: true })
+            {
+                Left = 0d;
+                Top = 0d;
+                Width = 100d;
+                Height = 100d;
+            }
+            else
+            {
+                Left = SystemParameters.VirtualScreenLeft;
+                Top = SystemParameters.VirtualScreenTop;
+                Width = SystemParameters.VirtualScreenWidth;
+                Height = SystemParameters.VirtualScreenHeight;
+            }
             var fill = new SolidColorBrush(Color.FromArgb(0x52, 0x09, 0x10, 0x1A));
             fill.Freeze();
             Background = fill;
@@ -341,6 +385,7 @@ internal sealed class DesktopPeekController : IDisposable
                         _handle,
                         NativeMethods.GwlExStyle,
                         (nint)(style | NativeMethods.WsExToolWindow | NativeMethods.WsExNoActivate));
+                    ApplyPhysicalBounds();
                 }
             };
             Loaded += (_, _) =>
@@ -367,6 +412,30 @@ internal sealed class DesktopPeekController : IDisposable
                     DismissRequested?.Invoke();
                 }
             };
+        }
+
+        private void ApplyPhysicalBounds()
+        {
+            if (_closing || _handle == 0 || _physicalBounds is not { HasArea: true } bounds)
+            {
+                return;
+            }
+            for (var attempt = 0; attempt < 2; attempt++)
+            {
+                if (DockNativeMethods.GetWindowRect(_handle, out var native)
+                    && new PixelRect(native.Left, native.Top, native.Right, native.Bottom) == bounds)
+                {
+                    break;
+                }
+                NativeMethods.SetWindowPos(
+                    _handle,
+                    DockNativeMethods.HwndTopmost,
+                    bounds.Left,
+                    bounds.Top,
+                    bounds.Width,
+                    bounds.Height,
+                    NativeMethods.SwpNoActivate);
+            }
         }
 
         internal void PlaceDirectlyBelow(nint anchorWindow)

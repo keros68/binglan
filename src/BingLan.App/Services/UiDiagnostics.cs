@@ -1,10 +1,12 @@
 using System.Diagnostics;
 using System.IO;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Windows.Threading;
 using BingLan.App.Interop;
 using BingLan.Core.Services;
+using Microsoft.Win32;
 
 namespace BingLan.App.Services;
 
@@ -35,6 +37,7 @@ internal static class UiDiagnostics
 {
     private const long StallThresholdMs = 2000;
     private const int ProbeIntervalMs = 500;
+    private const long SleepJumpThresholdMs = 3000;
     private const long SpanThresholdMs = 150;
     private const long WindowMs = 10_000;
     private const long FloodPerWindow = 3000;
@@ -56,6 +59,8 @@ internal static class UiDiagnostics
     private static string? _path;
     private static Thread? _thread;
     private static bool _hooksAttached;
+    private static int _powerEventsAttached;
+    private static int _powerResetPending;
     private static volatile bool _stopping;
 
     internal static string? LogPath => _path;
@@ -82,11 +87,11 @@ internal static class UiDiagnostics
 
     internal readonly struct Span(string name) : IDisposable
     {
-        private readonly long _startedAt = Environment.TickCount64;
+        private readonly long _startedAt = NowMilliseconds();
         private readonly string _name = name;
 
         public void Dispose() =>
-            RecordSpan(_name, Environment.TickCount64 - _startedAt);
+            RecordSpan(_name, Math.Max(0, NowMilliseconds() - _startedAt));
     }
 
     internal static Span Measure(string name) => new(name);
@@ -107,6 +112,11 @@ internal static class UiDiagnostics
             return;
         }
 
+        // Subscribe to SystemEvents on the WPF UI thread BEFORE starting the MTA watchdog
+        // thread so SystemEvents never initializes its hidden broadcast window on a
+        // message-loop-less background thread.
+        AttachPowerModeEvents(dispatcher);
+
         _thread = new Thread(() => Watch(dispatcher))
         {
             IsBackground = true,
@@ -115,13 +125,54 @@ internal static class UiDiagnostics
         _thread.Start();
     }
 
-    internal static void Stop() => _stopping = true;
+    internal static void Stop()
+    {
+        _stopping = true;
+        DetachPowerModeEvents();
+    }
+
+    private static void AttachPowerModeEvents(Dispatcher dispatcher)
+    {
+        if (Interlocked.CompareExchange(ref _powerEventsAttached, 1, 0) != 0)
+        {
+            return;
+        }
+
+        void Subscribe()
+        {
+            if (Volatile.Read(ref _powerEventsAttached) == 0 || dispatcher.HasShutdownStarted)
+            {
+                return;
+            }
+            SystemEvents.PowerModeChanged += OnPowerModeChanged;
+            dispatcher.ShutdownStarted += OnDispatcherShutdownStarted;
+        }
+
+        if (dispatcher.CheckAccess())
+        {
+            Subscribe();
+        }
+        else
+        {
+            dispatcher.BeginInvoke(Subscribe);
+        }
+    }
+
+    private static void OnDispatcherShutdownStarted(object? sender, EventArgs e) => DetachPowerModeEvents();
+
+    private static void DetachPowerModeEvents()
+    {
+        if (Interlocked.Exchange(ref _powerEventsAttached, 0) != 0)
+        {
+            SystemEvents.PowerModeChanged -= OnPowerModeChanged;
+        }
+    }
 
     // Hooks run on the UI thread; nested pumps (dialogs, menus) start operations inside
     // others, so the innermost running one is published for the watchdog.
     private static void Push(DispatcherOperation operation)
     {
-        Running.Push((operation, Environment.TickCount64));
+        Running.Push((operation, NowMilliseconds()));
         Publish();
     }
 
@@ -146,20 +197,45 @@ internal static class UiDiagnostics
         }
     }
 
+    private static void OnPowerModeChanged(object? sender, PowerModeChangedEventArgs e)
+    {
+        if (e.Mode is PowerModes.Suspend or PowerModes.Resume)
+        {
+            Volatile.Write(ref _powerResetPending, 1);
+        }
+    }
+
     private static void Watch(Dispatcher dispatcher)
     {
         var detector = new UiStallDetector(StallThresholdMs);
         long sentAt = 0;
-        var windowBegan = Environment.TickCount64;
+        var windowBegan = NowMilliseconds();
+        var lastLoopTick = windowBegan;
         long lastFloodLog = -FloodLogIntervalMs;
-        var cpuAt = Environment.TickCount64;
+        var cpuAt = windowBegan;
         var cpuTime = CpuTime();
         Write($"监测启动：冰蓝 {StartupLog.BuildVersion}，Windows {Environment.OSVersion.Version}");
 
         while (!_stopping && !dispatcher.HasShutdownStarted)
         {
             Thread.Sleep(ProbeIntervalMs);
-            var now = Environment.TickCount64;
+            var now = NowMilliseconds();
+            var powerReset = Interlocked.Exchange(ref _powerResetPending, 0) != 0;
+            if (powerReset || detector.HandleClockJump(lastLoopTick, now, SleepJumpThresholdMs))
+            {
+                detector.Reset();
+                for (var i = 0; i < Names.Length; i++)
+                {
+                    WindowStart[i] = Interlocked.Read(ref Counts[i]);
+                }
+                windowBegan = now;
+                cpuAt = now;
+                cpuTime = CpuTime();
+                lastLoopTick = now;
+                continue;
+            }
+            lastLoopTick = now;
+
             if (Volatile.Read(ref _answeredAt) >= sentAt && !detector.CanSend
                 && detector.Answered(now) is { } ended)
             {
@@ -172,7 +248,7 @@ internal static class UiDiagnostics
                 detector.Sent(now);
                 dispatcher.BeginInvoke(
                     DispatcherPriority.Send,
-                    () => Volatile.Write(ref _answeredAt, Environment.TickCount64));
+                    () => Volatile.Write(ref _answeredAt, NowMilliseconds()));
             }
             else if (detector.Check(now) is { } started)
             {
@@ -202,18 +278,42 @@ internal static class UiDiagnostics
         }
     }
 
-    private static string Describe()
+    private static string Describe() =>
+        FormatDescription(
+            Volatile.Read(ref _current),
+            _hooksAttached,
+            Volatile.Read(ref _lastActivity),
+            Volatile.Read(ref _currentStarted),
+            NowMilliseconds());
+
+    internal static string FormatDescription(
+        DispatcherOperation? operation,
+        bool hooksAttached,
+        int lastActivity,
+        long currentStarted,
+        long now)
     {
-        var operation = Volatile.Read(ref _current);
-        var last = Volatile.Read(ref _lastActivity);
-        var lastText = last >= 0 ? $"，最近计数路径：{Names[last]}" : string.Empty;
+        var lastText = lastActivity >= 0 && lastActivity < Names.Length
+            ? $"，最近计数路径：{Names[lastActivity]}"
+            : string.Empty;
         if (operation is null)
         {
-            return $"不在调度任务中（处理 Windows 消息或回调）{lastText}";
+            return hooksAttached
+                ? $"不在调度任务中（处理 Windows 消息或回调）{lastText}"
+                : $"未启用调度追踪{lastText}";
         }
-        var elapsed = Environment.TickCount64 - Volatile.Read(ref _currentStarted);
+        var elapsed = Math.Max(0, now - currentStarted);
         return $"正在执行 {OperationName(operation)}（{operation.Priority}，已运行 {elapsed / 1000.0:0.0} 秒）{lastText}";
     }
+
+    internal static long NowMilliseconds() =>
+        QueryUnbiasedInterruptTime(out var unbiasedTime)
+            ? (long)(unbiasedTime / 10_000UL)
+            : Environment.TickCount64;
+
+    [DllImport("kernel32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool QueryUnbiasedInterruptTime(out ulong unbiasedTime);
 
     // WPF names an operation after its delegate only internally; fall back to the priority.
     private static readonly PropertyInfo? NameProperty =

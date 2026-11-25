@@ -1156,4 +1156,66 @@ internal static class WidgetWindowTests
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     private static extern bool GetMonitorInfoW(nint monitor, ref MonitorInfo info);
 
+    public static void TimeDateAndGreetingDoNotSubscribe1HzSampler()
+    {
+        var experience = DesktopExperienceRules.CreateDefault();
+        var sampler = new CountingSamplingService();
+        var weatherService = new WeatherService(new StubHttpMessageHandler());
+        var timeCard = new InformationWidgetWindow(
+            new InformationWidgetState(), sampler, weatherService, experience, DesktopComponentKind.TimeDate);
+        var greetingCard = new InformationWidgetWindow(
+            new InformationWidgetState(), sampler, weatherService, experience, DesktopComponentKind.Greeting);
+        var weatherCard = new InformationWidgetWindow(
+            new InformationWidgetState(), sampler, weatherService, experience, DesktopComponentKind.Weather);
+        ShowAndPump(timeCard);
+        ShowAndPump(greetingCard);
+        ShowAndPump(weatherCard);
+        try
+        {
+            AssertEqual(0, sampler.SubscriberCount, "独立时间/问候/天气卡片不应订阅 1Hz 性能采样事件");
+
+            var perfCard = new InformationWidgetWindow(
+                new InformationWidgetState(), sampler, weatherService, experience, DesktopComponentKind.Performance);
+            ShowAndPump(perfCard);
+            try
+            {
+                AssertEqual(1, sampler.SubscriberCount, "独立性能卡片应订阅 1Hz 性能采样事件");
+            }
+            finally
+            {
+                perfCard.CanClose = true;
+                perfCard.Close();
+                Pump();
+            }
+            AssertEqual(0, sampler.SubscriberCount, "性能卡片关闭后应取消订阅 1Hz 性能采样事件");
+        }
+        finally
+        {
+            foreach (var window in new[] { timeCard, greetingCard, weatherCard })
+            {
+                window.CanClose = true;
+                window.Close();
+            }
+            Pump();
+        }
+    }
+
+    private sealed class CountingSamplingService : IPerformanceSamplingService
+    {
+        public int SubscriberCount { get; private set; }
+
+        public event Action<PerformanceSnapshot>? Sampled
+        {
+            add => SubscriberCount++;
+            remove => SubscriberCount = Math.Max(0, SubscriberCount - 1);
+        }
+
+        public bool IsRunning { get; private set; } = true;
+        public PerformanceSamplingMode Mode => PerformanceSamplingMode.Normal;
+        public TimeSpan CurrentInterval => TimeSpan.FromSeconds(1);
+        public void Start() => IsRunning = true;
+        public void SetMode(PerformanceSamplingMode mode) { }
+        public void Stop() => IsRunning = false;
+        public void Dispose() => Stop();
+    }
 }

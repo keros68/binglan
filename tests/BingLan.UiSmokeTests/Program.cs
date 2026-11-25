@@ -240,6 +240,7 @@ internal static class Program
         Run("Shell 隐藏或最小化组件后自动恢复显示", TestShellHideAndMinimizeRecovery, failures);
         Run("显示桌面时组件提升到任务栏下方、恢复后回落", TestDesktopSurfaceRaiseAndLower, failures);
         Run("显示桌面判定每次事件突发只执行一次，不遗留计时器", TestDesktopSurfaceWatcherChecksOncePerBurst, failures);
+        Run("PR-2 回归：后台 WinEvent 泵、总览卡回收、坏目录容错与混合 DPI 坐标", () => BugFixRegressionTests.Run(ShowAndPump, Pump, PumpUntil), failures);
         Run("组件恢复默认位置", TestResetComponentPlacement, failures);
         Run("被占用屏幕边缘推开的卡片不改写保存位置，边缘空出后回到原位", TestReservedEdgeDisplacementReturns, failures);
         Run("清爽桌面开关", TestCleanDesktopToggle, failures);
@@ -4725,16 +4726,20 @@ internal static class Program
                 "框选遮罩应随托盘入口打开");
             var overlayLeft = overlay!.Left;
             var overlayTop = overlay!.Top;
+            // 副屏向上错位（负 Y）时，虚拟屏包围盒左上角落在主屏上方空白区，并非任何显示器的可达区域；
+            // 将框选起点锚定在主屏工作区内偏移 (60, 48)（单屏或顶部齐平多屏下等价于本地 (60, 48)）。
+            var startX = Math.Max(60d, SystemParameters.WorkArea.Left - overlayLeft + 60d);
+            var startY = Math.Max(48d, SystemParameters.WorkArea.Top - overlayTop + 48d);
 
-            overlay.BeginMarquee(new Point(60, 48));
-            overlay.UpdateMarquee(new Point(460, 388));
+            overlay.BeginMarquee(new Point(startX, startY));
+            overlay.UpdateMarquee(new Point(startX + 400d, startY + 340d));
             overlay.CompleteMarquee();
             Pump();
 
             Assert(appState.FileBoxes.Count == boxesBefore + 1, "框选完成后应新建一个分组盒");
             var box = appState.FileBoxes[^1];
-            Assert(Math.Abs(box!.Placement.Left - (overlayLeft + 60)) < 0.01, "新分组盒左边缘应取框选位置");
-            Assert(Math.Abs(box.Placement.Top - (overlayTop + 48)) < 0.01, "新分组盒上边缘应取框选位置");
+            Assert(Math.Abs(box!.Placement.Left - (overlayLeft + startX)) < 0.01, "新分组盒左边缘应取框选位置");
+            Assert(Math.Abs(box.Placement.Top - (overlayTop + startY)) < 0.01, "新分组盒上边缘应取框选位置");
             Assert(Math.Abs(box.Placement.Width - 400) < 0.01, "新分组盒宽度应取框选宽度");
             Assert(Math.Abs(box.Placement.Height - 340) < 0.01, "新分组盒高度应取框选高度");
             Assert(!Application.Current.Windows.OfType<BoxMarqueeOverlay>().Any(), "完成后框选遮罩应关闭");

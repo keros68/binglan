@@ -2722,26 +2722,33 @@ public partial class SettingsWindow : Window
 
     private async void RefreshBackupList()
     {
-        var version = ++_backupRefreshVersion;
-        var paths = _maintenance.ListBackups();
-        var entries = paths.Select(path => new BackupEntry(path)).ToList();
-        BackupList.ItemsSource = entries;
-        BackupEmptyText.Visibility = entries.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-        if (entries.Count == 0)
+        try
         {
-            return;
-        }
+            var version = ++_backupRefreshVersion;
+            var paths = _maintenance.ListBackups();
+            var entries = paths.Select(path => new BackupEntry(path)).ToList();
+            BackupList.ItemsSource = entries;
+            BackupEmptyText.Visibility = entries.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+            if (entries.Count == 0)
+            {
+                return;
+            }
 
-        var labels = await Task.Run(() =>
-            paths.Select(BackupEntry.FormatLabel).ToArray());
-        if (_isClosed || version != _backupRefreshVersion)
-        {
-            return;
-        }
+            var labels = await Task.Run(() =>
+                paths.Select(BackupEntry.FormatLabel).ToArray());
+            if (_isClosed || version != _backupRefreshVersion)
+            {
+                return;
+            }
 
-        for (var i = 0; i < entries.Count && i < labels.Length; i++)
+            for (var i = 0; i < entries.Count && i < labels.Length; i++)
+            {
+                entries[i].Label = labels[i];
+            }
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
         {
-            entries[i].Label = labels[i];
+            System.Diagnostics.Debug.WriteLine($"刷新备份列表失败：{exception.Message}");
         }
     }
 

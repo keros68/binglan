@@ -64,6 +64,7 @@ internal static class Program
         Run("天气失败后按退避自动重试", WidgetWindowTests.WeatherRetriesAfterBackoffWithoutManualRefresh, failures);
         Run("信息组件城市设置入口", WidgetWindowTests.CitySettingsEntryRaisesRequest, failures);
         Run("单组件卡片只刷新自己显示的内容", WidgetWindowTests.IsolatedCardsOnlyRefreshWhatTheyShow, failures);
+        Run("独立时间/问候/天气卡片不订阅 1Hz 性能采样", WidgetWindowTests.TimeDateAndGreetingDoNotSubscribe1HzSampler, failures);
         Run("切换城市忽略旧天气返回", WidgetWindowTests.CityChangeIgnoresStaleWeather, failures);
         Run("统一设置搜索选择与保存", SettingsWindowTests.SearchSelectAndSave, failures);
         Run("三套布局预设与组件开关可应用", SettingsWindowTests.ApplyPresetAndComponents, failures);

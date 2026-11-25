@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.IO;
 using System.Windows.Threading;
 
@@ -61,9 +62,9 @@ public sealed class FileMappingWatchService : IDisposable
         }
         foreach (var directory in wanted)
         {
-            if (!_watchers.ContainsKey(directory))
+            if (!_watchers.ContainsKey(directory) && CreateWatcher(directory) is { } created)
             {
-                _watchers[directory] = CreateWatcher(directory);
+                _watchers[directory] = created;
             }
         }
     }
@@ -89,27 +90,39 @@ public sealed class FileMappingWatchService : IDisposable
             timer.Start();
         });
 
-    private FileSystemWatcher CreateWatcher(string directory)
+    private FileSystemWatcher? CreateWatcher(string directory)
     {
-        var watcher = new FileSystemWatcher(directory)
+        FileSystemWatcher? watcher = null;
+        try
         {
-            NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName,
-            IncludeSubdirectories = false,
-            EnableRaisingEvents = true
-        };
-        watcher.Deleted += (_, _) => RequestSweep();
-        watcher.Renamed += (_, _) =>
+            watcher = new FileSystemWatcher(directory)
+            {
+                NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName,
+                IncludeSubdirectories = false,
+                EnableRaisingEvents = true
+            };
+            watcher.Deleted += (_, _) => RequestSweep();
+            watcher.Renamed += (_, _) =>
+            {
+                RequestSweep();
+                // An in-place rename lands the new name in this folder; a finished download
+                // (.crdownload → final name) arrives exactly this way.
+                RequestImportIfDesktop(directory);
+            };
+            watcher.Created += (_, _) => RequestImportIfDesktop(directory);
+            // Deleting a watched folder itself, or overflowing the event buffer, surfaces here;
+            // the sweep catches every gone mapping no matter which event was missed.
+            watcher.Error += (_, _) => RequestSweep();
+            return watcher;
+        }
+        catch (Exception exception) when (exception is ArgumentException
+            or IOException
+            or UnauthorizedAccessException
+            or Win32Exception)
         {
-            RequestSweep();
-            // An in-place rename lands the new name in this folder; a finished download
-            // (.crdownload → final name) arrives exactly this way.
-            RequestImportIfDesktop(directory);
-        };
-        watcher.Created += (_, _) => RequestImportIfDesktop(directory);
-        // Deleting a watched folder itself, or overflowing the event buffer, surfaces here;
-        // the sweep catches every gone mapping no matter which event was missed.
-        watcher.Error += (_, _) => RequestSweep();
-        return watcher;
+            watcher?.Dispose();
+            return null;
+        }
     }
 
     private void RequestImportIfDesktop(string directory)

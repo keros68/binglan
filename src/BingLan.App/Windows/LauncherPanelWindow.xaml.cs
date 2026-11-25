@@ -83,6 +83,7 @@ public partial class LauncherPanelWindow : Window
     private nint _handle;
     private int _searchVersion;
     private int _renderedSearchVersion = -1;
+    private DispatcherOperation? _deactivateOperation;
     private bool _closed;
     private bool _dismissing;
     private bool _composing;
@@ -143,7 +144,7 @@ public partial class LauncherPanelWindow : Window
         NewGroupButton.Visibility = saveOrganizer is null ? Visibility.Collapsed : Visibility.Visible;
         ApplyAppearance();
         UpdateMainTabButtons();
-        WatchStatusText();
+        InitializeStatusFadeTimer();
         AccessibilityThemeManager.HighContrastChanged += OnHighContrastChanged;
         _debounce = new DispatcherTimer(DispatcherPriority.Background, Dispatcher)
         {
@@ -176,16 +177,44 @@ public partial class LauncherPanelWindow : Window
         {
             AccessibilityThemeManager.HighContrastChanged -= OnHighContrastChanged;
             _closed = true;
+            _deactivateOperation?.Abort();
+            _deactivateOperation = null;
             _debounce.Stop();
+            _statusFade?.Stop();
+            PanelContentGrid.BeginAnimation(OpacityProperty, null);
+            if (PanelContentGrid.RenderTransform is TranslateTransform rise)
+            {
+                rise.BeginAnimation(TranslateTransform.YProperty, null);
+            }
+            PanelContentGrid.RenderTransform = Transform.Identity;
+            if (IsKeyboardFocusWithin)
+            {
+                Keyboard.ClearFocus();
+            }
             _lifetime.Cancel();
             _searchCancellation?.Cancel();
             _searchCancellation?.Dispose();
             _searchCancellation = null;
             CancelDirectoryLoad();
             _menu?.SetCurrentValue(ContextMenu.IsOpenProperty, false);
+            _menu = null;
             _everything?.Dispose();
+            _everything = null;
             _glass.Dispose();
             _lifetime.Dispose();
+            WallpaperBackdropImage.Source = null;
+            ResultsList.ItemsSource = null;
+            PurposeList.ItemsSource = null;
+            FileTypeList.ItemsSource = null;
+            FilePlacesNavList.ItemsSource = null;
+            CategoriesList.ItemsSource = null;
+            _snapshot = null;
+            _rows = [];
+            _unfilteredRows = [];
+            _supplemental = [];
+            _dragRow = null;
+            _groupEntries.Clear();
+            _folderStack.Clear();
         };
     }
 
@@ -337,9 +366,9 @@ public partial class LauncherPanelWindow : Window
         _isPinned = !_isPinned;
         Topmost = _isPinned;
         UpdatePinPanelButton();
-        StatusText.Text = _isPinned
+        SetStatusText(_isPinned
             ? "已固定并置顶：切到其他软件不会关闭，可拖动顶部空白处移到屏幕一侧（双击归位）"
-            : "已取消固定：切到其他软件时自动收起";
+            : "已取消固定：切到其他软件时自动收起");
     }
 
     private void UpdatePinPanelButton()
@@ -391,7 +420,7 @@ public partial class LauncherPanelWindow : Window
     // Transient notices (copied, pinned, ...) clear themselves; load errors and progress stay.
     private DispatcherTimer? _statusFade;
 
-    private void WatchStatusText()
+    private void InitializeStatusFadeTimer()
     {
         _statusFade = new DispatcherTimer(DispatcherPriority.Background, Dispatcher) { Interval = TimeSpan.FromSeconds(4) };
         _statusFade.Tick += (_, _) =>
@@ -399,13 +428,17 @@ public partial class LauncherPanelWindow : Window
             _statusFade.Stop();
             if (!_closed && !IsPersistentStatus(StatusText.Text)) StatusText.Text = string.Empty;
         };
-        System.ComponentModel.DependencyPropertyDescriptor
-            .FromProperty(System.Windows.Controls.TextBlock.TextProperty, typeof(System.Windows.Controls.TextBlock))
-            .AddValueChanged(StatusText, (_, _) =>
-            {
-                _statusFade.Stop();
-                if (!string.IsNullOrEmpty(StatusText.Text) && !IsPersistentStatus(StatusText.Text)) _statusFade.Start();
-            });
+    }
+
+    internal void SetStatusText(string text)
+    {
+        StatusText.Text = text;
+        if (_statusFade is null) return;
+        _statusFade.Stop();
+        if (!_closed && !string.IsNullOrEmpty(text) && !IsPersistentStatus(text))
+        {
+            _statusFade.Start();
+        }
     }
 
     private static bool IsPersistentStatus(string text) =>
@@ -447,19 +480,19 @@ public partial class LauncherPanelWindow : Window
             }, DispatcherPriority.Input);
         }
         if (_closed) return;
-        StatusText.Text = "正在载入项目…";
+        SetStatusText("正在载入项目…");
         try
         {
             var snapshot = await _loadSnapshot();
             if (_closed) return;
             _snapshot = snapshot;
-            if (_composing) StatusText.Text = "";
+            if (_composing) SetStatusText("");
             else await SearchAsync();
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException
             or System.Runtime.InteropServices.COMException or ArgumentException)
         {
-            if (!_closed) StatusText.Text = "暂时无法载入项目，请关闭后重试";
+            if (!_closed) SetStatusText("暂时无法载入项目，请关闭后重试");
         }
     }
 
@@ -572,7 +605,7 @@ public partial class LauncherPanelWindow : Window
             UpdateFilters();
             rowsReady.TrySetResult();
             if (query.Length == 0 || filter is PanelFilter.Apps or PanelFilter.Groups) return;
-            StatusText.Text = "正在补充本机搜索结果…";
+            SetStatusText("正在补充本机搜索结果…");
             var indexed = await WindowsIndexSearchClient.SearchAsync(query, token);
             if (!IsCurrent(version, token)) return;
             var raw = indexed.Candidates.Select(candidate => new LauncherPanelEntry(candidate, "Windows 索引")).ToList();
@@ -591,15 +624,15 @@ public partial class LauncherPanelWindow : Window
                 snapshot, extra, query, filter, includeRecent, favoriteMode, independentFavorites, canManageGroups, openCounts), token);
             if (!IsCurrent(version, token)) return;
             Render(results, preserveSelection: true);
-            if (!available) StatusText.Text = _rows.Count == 0
+            if (!available) SetStatusText(_rows.Count == 0
                 ? "没有匹配项目，本机索引暂不可用"
-                : $"{_rows.Count} 个项目 · 本机索引暂不可用";
+                : $"{_rows.Count} 个项目 · 本机索引暂不可用");
         }
         catch (OperationCanceledException) { }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException
             or System.Runtime.InteropServices.COMException)
         {
-            if (IsCurrent(version, token)) StatusText.Text = "本机搜索暂不可用，可继续使用已有项目";
+            if (IsCurrent(version, token)) SetStatusText("本机搜索暂不可用，可继续使用已有项目");
         }
         finally { rowsReady.TrySetResult(); }
     }
@@ -752,7 +785,7 @@ public partial class LauncherPanelWindow : Window
         UpdateContextHeader(scope);
         EmptyHint.Visibility = _rows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         EmptyHint.Text = ResolveEmptyHint();
-        StatusText.Text = ResolveStatusText();
+        SetStatusText(ResolveStatusText());
         // Kick off first-viewport icon loads immediately instead of waiting for two
         // Dispatcher hops (Loaded -> Background), eliminating the visible pop-in delay.
         if (missingInitial.Count > 0)
@@ -1320,11 +1353,11 @@ public partial class LauncherPanelWindow : Window
             try
             {
                 System.Windows.Clipboard.SetText(path);
-                StatusText.Text = $"已复制路径：{row.Name}";
+                SetStatusText($"已复制路径：{row.Name}");
             }
             catch (System.Runtime.InteropServices.ExternalException)
             {
-                StatusText.Text = "剪贴板暂忙，请稍后重试";
+                SetStatusText("剪贴板暂忙，请稍后重试");
             }
         }
     }
@@ -1353,7 +1386,7 @@ public partial class LauncherPanelWindow : Window
         var added = _preferences.ToggleFavoriteKey(row.Entry.Key, row.Keys);
         _saveOrganizer();
         Render(_unfilteredRows, preserveSelection: true);
-        StatusText.Text = added ? $"已将「{row.Name}」加入常用" : $"已将「{row.Name}」移出常用";
+        SetStatusText(added ? $"已将「{row.Name}」加入常用" : $"已将「{row.Name}」移出常用");
     }
 
     private void OnResultRightClick(object sender, MouseButtonEventArgs args)
@@ -1457,11 +1490,11 @@ public partial class LauncherPanelWindow : Window
                     try
                     {
                         var message = await _sendToFileBox(box.Id, path);
-                        if (!_closed) StatusText.Text = message;
+                        if (!_closed) SetStatusText(message);
                     }
                     catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException)
                     {
-                        if (!_closed) StatusText.Text = "暂时无法发送到文件收纳盒";
+                        if (!_closed) SetStatusText("暂时无法发送到文件收纳盒");
                     }
                 };
                 send.Items.Add(target);
@@ -1598,7 +1631,7 @@ public partial class LauncherPanelWindow : Window
             if (_closed || _dismissing) return;
             _snapshot = snapshot;
             await SearchAsync(preserveView: true);
-            if (!_closed && !_dismissing) StatusText.Text = message;
+            if (!_closed && !_dismissing) SetStatusText(message);
         }
         catch (OperationCanceledException) { }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException
@@ -1606,9 +1639,9 @@ public partial class LauncherPanelWindow : Window
         {
             if (!_closed && !_dismissing)
             {
-                StatusText.Text = updated
+                SetStatusText(updated
                     ? "已更新 Dock，但暂时无法刷新列表"
-                    : "暂时无法更新 Dock，请稍后重试";
+                    : "暂时无法更新 Dock，请稍后重试");
             }
         }
         finally { _pinningTarget = false; }
@@ -1616,13 +1649,13 @@ public partial class LauncherPanelWindow : Window
 
     private async Task<bool> CheckLocalTargetAsync(string path)
     {
-        StatusText.Text = "正在检查项目…";
+        SetStatusText("正在检查项目…");
         var token = _lifetime.Token;
         try
         {
             if (!await PathCheckGate.WaitAsync(TimeSpan.FromMilliseconds(200), token))
             {
-                if (!_closed && !_dismissing) StatusText.Text = "项目响应较慢，请稍后重试";
+                if (!_closed && !_dismissing) SetStatusText("项目响应较慢，请稍后重试");
                 return false;
             }
             var check = Task.Run(() =>
@@ -1631,19 +1664,21 @@ public partial class LauncherPanelWindow : Window
                 finally { PathCheckGate.Release(); }
             });
             var exists = await check.WaitAsync(TimeSpan.FromMilliseconds(1200), token);
-            if (!exists && !_closed && !_dismissing) StatusText.Text = "文件或应用已不存在，可继续选择其他项目";
+            if (!exists && !_closed && !_dismissing) SetStatusText("文件或应用已不存在，可继续选择其他项目");
             return exists;
         }
         catch (TimeoutException)
         {
-            if (!_closed && !_dismissing) StatusText.Text = "项目响应较慢，请检查连接后重试";
+            if (!_closed && !_dismissing) SetStatusText("项目响应较慢，请检查连接后重试");
             return false;
         }
     }
 
     private void OnPanelDeactivated(object? sender, EventArgs args)
     {
-        Dispatcher.BeginInvoke(CloseOnDeactivation, DispatcherPriority.ContextIdle);
+        if (_closed || _dismissing) return;
+        _deactivateOperation?.Abort();
+        _deactivateOperation = Dispatcher.BeginInvoke(CloseOnDeactivation, DispatcherPriority.ContextIdle);
     }
 
     private void CloseOnDeactivation()
@@ -1671,12 +1706,12 @@ public partial class LauncherPanelWindow : Window
         try
         {
             System.Windows.Clipboard.SetDataObject(BuildFileCopyDataObject(path), true);
-            StatusText.Text = $"已复制文件：{row.Name}（可直接粘贴）";
+            SetStatusText($"已复制文件：{row.Name}（可直接粘贴）");
             return true;
         }
         catch (System.Runtime.InteropServices.ExternalException)
         {
-            StatusText.Text = "剪贴板暂忙，请稍后重试";
+            SetStatusText("剪贴板暂忙，请稍后重试");
             return false;
         }
     }
@@ -1686,11 +1721,11 @@ public partial class LauncherPanelWindow : Window
         try
         {
             System.Windows.Clipboard.SetText(text);
-            StatusText.Text = successMessage;
+            SetStatusText(successMessage);
         }
         catch (System.Runtime.InteropServices.ExternalException)
         {
-            StatusText.Text = "剪贴板暂忙，请稍后重试";
+            SetStatusText("剪贴板暂忙，请稍后重试");
         }
     }
 

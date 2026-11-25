@@ -546,7 +546,7 @@ public partial class LauncherPanelWindow
                 _readCategoryOverrides()[key] = purpose;
                 _saveOrganizer();
                 Render(_unfilteredRows, preserveSelection: true);
-                StatusText.Text = $"已归入「{name}」";
+                SetStatusText($"已归入「{name}」");
             };
             categoryMenu.Items.Add(choice);
         }
@@ -563,7 +563,7 @@ public partial class LauncherPanelWindow
             if (!removed) return;
             _saveOrganizer();
             Render(_unfilteredRows, preserveSelection: true);
-            StatusText.Text = "已恢复自动分类";
+            SetStatusText("已恢复自动分类");
         };
         categoryMenu.Items.Add(reset);
         menu.Items.Add(categoryMenu);

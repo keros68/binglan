@@ -256,17 +256,28 @@ public sealed partial class WidgetCoordinator
 
     private async void OpenLauncherTarget(LauncherPanelEntry entry, bool locate)
     {
-        var candidate = entry.Candidate;
-        var failure = locate
-            ? await Task.Run(() => WindowCommandService.OpenFileLocation(candidate.Path))
-            : entry.Pinned is { } pin
-                ? await WindowCommandService.LaunchAsync(pin)
-                : new WindowCommandResult(
-                    await ShellLauncher.StartAsync(new ProcessStartInfo(candidate.Path) { UseShellExecute = true }) is null,
-                    $"无法打开 {candidate.DisplayName}。");
-        if (!failure.Succeeded && !_isExiting)
+        try
         {
-            _trayIcon.ShowBalloonTip(3000, "冰蓝总览卡", failure.Message, TrayTipKind.Info);
+            var candidate = entry.Candidate;
+            var failure = locate
+                ? await Task.Run(() => WindowCommandService.OpenFileLocation(candidate.Path))
+                : entry.Pinned is { } pin
+                    ? await WindowCommandService.LaunchAsync(pin)
+                    : new WindowCommandResult(
+                        await ShellLauncher.StartAsync(new ProcessStartInfo(candidate.Path) { UseShellExecute = true }) is null,
+                        $"无法打开 {candidate.DisplayName}。");
+            if (!failure.Succeeded && !_isExiting)
+            {
+                _trayIcon.ShowBalloonTip(3000, "冰蓝总览卡", failure.Message, TrayTipKind.Info);
+            }
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            StartupLog.WriteCrash("WidgetCoordinator.OpenLauncherTarget", exception);
+            if (!_isExiting)
+            {
+                _trayIcon.ShowBalloonTip(3000, "冰蓝总览卡", "打开目标时发生异常。", TrayTipKind.Warning);
+            }
         }
     }
 
