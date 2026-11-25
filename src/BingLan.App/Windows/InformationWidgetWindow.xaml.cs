@@ -783,6 +783,19 @@ public partial class InformationWidgetWindow : WidgetWindowBase
         MaybeRefreshWeather(true);
     }
 
+    /// <summary>
+    /// Ensures a secondary-monitor weather card triggers its initial automatic refresh even when
+    /// the shared performance sampler is already running on another monitor; reuses cached
+    /// <see cref="WeatherService"/> data within <see cref="WeatherService.SuccessRefreshInterval"/>.
+    /// </summary>
+    internal void RefreshWeatherIfNeeded()
+    {
+        if (_componentKind is null or DesktopComponentKind.Weather)
+        {
+            MaybeRefreshWeather(false);
+        }
+    }
+
     private void WeatherRefresh_Click(object sender, RoutedEventArgs e) => MaybeRefreshWeather(true);
 
     private void MaybeRefreshWeather(bool manual)
@@ -811,20 +824,39 @@ public partial class InformationWidgetWindow : WidgetWindowBase
             return;
         }
         // 只有成功后才等满刷新间隔；失败后的重试时机由服务的退避决定。
-        if (!manual &&
-            _lastWeatherSuccess is { } last &&
-            now - last < WeatherService.SuccessRefreshInterval)
+        if (!manual)
         {
-            return;
+            if (!_weather.IsAutomaticRefreshDue(
+                    now,
+                    State.WeatherCity,
+                    State.WeatherLatitude!.Value,
+                    State.WeatherLongitude!.Value)
+                && _weather.GetLastSnapshot(
+                    State.WeatherCity,
+                    State.WeatherLatitude!.Value,
+                    State.WeatherLongitude!.Value) is { } sharedSnapshot)
+            {
+                if (sharedSnapshot.Status == WeatherStatus.Fresh)
+                {
+                    _lastWeatherSuccess = sharedSnapshot.UpdatedAt ?? now;
+                }
+                UpdateWeatherView(sharedSnapshot);
+                return;
+            }
+            if (_lastWeatherSuccess is { } last &&
+                now - last < WeatherService.SuccessRefreshInterval)
+            {
+                return;
+            }
         }
 
         _weatherInFlight = true;
         SetWeatherStatusText("更新中…");
-        _ = RefreshWeatherAsync();
+        _ = RefreshWeatherAsync(manual);
     }
 
     // 网络请求在线程池上完成，UI 线程只负责展示结果。
-    private async Task RefreshWeatherAsync()
+    private async Task RefreshWeatherAsync(bool manual)
     {
         var requestedCity = State.WeatherCity;
         var requestedLatitude = State.WeatherLatitude!.Value;
@@ -835,7 +867,8 @@ public partial class InformationWidgetWindow : WidgetWindowBase
             snapshot = await _weather.RefreshAsync(
                     requestedCity,
                     requestedLatitude,
-                    requestedLongitude)
+                    requestedLongitude,
+                    forceRefresh: manual)
                 .ConfigureAwait(false);
         }
         catch (Exception exception)

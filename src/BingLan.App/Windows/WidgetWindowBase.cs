@@ -283,6 +283,7 @@ public class WidgetWindowBase : Window
     private bool _isApplyingMinimumFloor;
     private bool _isApplyingPlacement;
     private bool _isRecoveringPlacement;
+    private int _suppressPlacementCaptureDepth;
     private double? _savedWidthBelowMin;
     private double? _savedHeightBelowMin;
     private DesktopStyleState _currentStyle = new();
@@ -463,6 +464,7 @@ public class WidgetWindowBase : Window
     public event Action<WidgetWindowBase>? DeleteRequested;
     public event Action? ExitRequested;
     internal event Action<WidgetWindowBase>? ShellRecovered;
+    internal event Action<WidgetWindowBase>? DragCompleted;
 
     public bool IsWidgetLocked { get; private set; }
 
@@ -471,6 +473,8 @@ public class WidgetWindowBase : Window
     public bool IsWidgetSelected => (bool)GetValue(IsWidgetSelectedProperty);
 
     public bool CanClose { get; set; }
+
+    internal bool IsClosingOrClosed => _isClosing;
 
     public double WidgetCornerRadius
     {
@@ -636,9 +640,30 @@ public class WidgetWindowBase : Window
         }
     }
 
+    internal IDisposable SuppressPlacementCapture()
+    {
+        _suppressPlacementCaptureDepth++;
+        return new PlacementCaptureSuppressionScope(this);
+    }
+
+    private sealed class PlacementCaptureSuppressionScope(WidgetWindowBase owner) : IDisposable
+    {
+        private bool _disposed;
+
+        public void Dispose()
+        {
+            if (_disposed)
+            {
+                return;
+            }
+            _disposed = true;
+            owner._suppressPlacementCaptureDepth = Math.Max(0, owner._suppressPlacementCaptureDepth - 1);
+        }
+    }
+
     public void CopyPlacementTo(WindowPlacement placement)
     {
-        if (WindowState != WindowState.Normal)
+        if (_suppressPlacementCaptureDepth > 0 || WindowState != WindowState.Normal)
         {
             return;
         }
@@ -1177,6 +1202,7 @@ public class WidgetWindowBase : Window
 
     protected virtual void OnDragEnded()
     {
+        DragCompleted?.Invoke(this);
     }
 
     protected virtual void OnSelectionChanged(bool isSelected)
@@ -1705,12 +1731,6 @@ public class WidgetWindowBase : Window
             return;
         }
 
-        var monitors = MonitorCatalog.GetAll();
-        if (monitors.Count == 0)
-        {
-            return;
-        }
-
         var current = new BingLan.Core.Dock.PixelRect(native.Left, native.Top, native.Right, native.Bottom);
         if (!current.HasArea)
         {
@@ -1719,12 +1739,37 @@ public class WidgetWindowBase : Window
 
         var centerX = (current.Left + current.Right) / 2;
         var centerY = (current.Top + current.Bottom) / 2;
-        var monitor = monitors.FirstOrDefault(candidate =>
-                centerX >= candidate.Bounds.Left && centerX < candidate.Bounds.Right
-                && centerY >= candidate.Bounds.Top && centerY < candidate.Bounds.Bottom)
-            ?? monitors.FirstOrDefault(candidate => candidate.IsPrimary)
-            ?? monitors[0];
-        var work = monitor.WorkingArea;
+        BingLan.Core.Dock.PixelRect work;
+        if (MonitorIdentityResolver.ResolveOverrideForTests is { } overrideResolver)
+        {
+            var overrideMonitors = overrideResolver();
+            if (overrideMonitors.Count == 0)
+            {
+                return;
+            }
+
+            var monitor = overrideMonitors.FirstOrDefault(candidate =>
+                    centerX >= candidate.Bounds.Left && centerX < candidate.Bounds.Right
+                    && centerY >= candidate.Bounds.Top && centerY < candidate.Bounds.Bottom)
+                ?? overrideMonitors.FirstOrDefault(candidate => candidate.IsPrimary)
+                ?? overrideMonitors[0];
+            work = monitor.WorkingArea;
+        }
+        else
+        {
+            var monitors = MonitorCatalog.GetAll();
+            if (monitors.Count == 0)
+            {
+                return;
+            }
+
+            var monitor = monitors.FirstOrDefault(candidate =>
+                    centerX >= candidate.Bounds.Left && centerX < candidate.Bounds.Right
+                    && centerY >= candidate.Bounds.Top && centerY < candidate.Bounds.Bottom)
+                ?? monitors.FirstOrDefault(candidate => candidate.IsPrimary)
+                ?? monitors[0];
+            work = monitor.WorkingArea;
+        }
         var left = Math.Clamp(current.Left, work.Left, Math.Max(work.Left, work.Right - current.Width));
         var top = Math.Clamp(current.Top, work.Top, Math.Max(work.Top, work.Bottom - current.Height));
         if (left == current.Left && top == current.Top)

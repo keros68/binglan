@@ -38,6 +38,28 @@ internal sealed class FullScreenWatcher : IDisposable
     /// </summary>
     internal bool IsGameLikeFullScreenInFront { get; private set; }
 
+    /// <summary>
+    /// Monitor handle (<c>HMONITOR</c>) currently covered by a full-screen foreground window,
+    /// or 0 when no monitor is covered. Populated on the existing single timer with zero extra ticks;
+    /// global performance sampling intentionally continues throttling via <see cref="IsFullScreenInFront"/>
+    /// to protect frame pacing during full-screen gaming, while per-monitor queries support
+    /// display-scoped surfaces.
+    /// </summary>
+    internal nint FullScreenMonitorHandle { get; private set; }
+
+    internal nint TrueFullScreenMonitorHandle { get; private set; }
+
+    internal nint GameLikeFullScreenMonitorHandle { get; private set; }
+
+    internal bool IsFullScreenOnMonitor(nint monitorHandle) =>
+        monitorHandle != 0 && FullScreenMonitorHandle == monitorHandle;
+
+    internal bool IsTrueFullScreenOnMonitor(nint monitorHandle) =>
+        monitorHandle != 0 && TrueFullScreenMonitorHandle == monitorHandle;
+
+    internal bool IsGameLikeFullScreenOnMonitor(nint monitorHandle) =>
+        monitorHandle != 0 && GameLikeFullScreenMonitorHandle == monitorHandle;
+
     internal event Action? Changed;
 
     internal void Start()
@@ -51,14 +73,25 @@ internal sealed class FullScreenWatcher : IDisposable
     private void Check()
     {
         var foreground = DockNativeMethods.GetForegroundWindow();
-        var directFullScreen = IsFullScreen(foreground);
+        var directFullScreen = TryGetFullScreenMonitor(foreground, out var fullScreenMonitor);
         var directTrueFullScreen = directFullScreen && !DockNativeMethods.IsZoomed(foreground);
         var gameLikeFullScreen = IsTrueFullScreenContext(foreground);
         var trueFullScreen = directTrueFullScreen || gameLikeFullScreen;
         var fullScreen = directFullScreen || gameLikeFullScreen;
+        var resolvedMonitor = fullScreenMonitor != 0
+            ? fullScreenMonitor
+            : (fullScreen && foreground != 0
+                ? DockNativeMethods.MonitorFromWindow(foreground, DockNativeMethods.MonitorDefaultToNearest)
+                : 0);
+        var nextFullScreenMonitor = fullScreen ? resolvedMonitor : 0;
+        var nextTrueMonitor = trueFullScreen ? resolvedMonitor : 0;
+        var nextGameLikeMonitor = gameLikeFullScreen ? resolvedMonitor : 0;
         if (fullScreen == IsFullScreenInFront
             && trueFullScreen == IsTrueFullScreenInFront
-            && gameLikeFullScreen == IsGameLikeFullScreenInFront)
+            && gameLikeFullScreen == IsGameLikeFullScreenInFront
+            && nextFullScreenMonitor == FullScreenMonitorHandle
+            && nextTrueMonitor == TrueFullScreenMonitorHandle
+            && nextGameLikeMonitor == GameLikeFullScreenMonitorHandle)
         {
             return;
         }
@@ -66,6 +99,9 @@ internal sealed class FullScreenWatcher : IDisposable
         IsFullScreenInFront = fullScreen;
         IsTrueFullScreenInFront = trueFullScreen;
         IsGameLikeFullScreenInFront = gameLikeFullScreen;
+        FullScreenMonitorHandle = nextFullScreenMonitor;
+        TrueFullScreenMonitorHandle = nextTrueMonitor;
+        GameLikeFullScreenMonitorHandle = nextGameLikeMonitor;
         Changed?.Invoke();
     }
 
@@ -267,8 +303,17 @@ internal sealed class FullScreenWatcher : IDisposable
             isTopmost: isTopmost);
     }
 
-    internal static bool IsFullScreen(nint window, nint targetMonitor = 0, bool excludeMaximized = false)
+    internal static bool IsFullScreen(nint window, nint targetMonitor = 0, bool excludeMaximized = false) =>
+        TryGetFullScreenMonitor(window, out var monitor, targetMonitor, excludeMaximized)
+        && (targetMonitor == 0 || targetMonitor == monitor);
+
+    private static bool TryGetFullScreenMonitor(
+        nint window,
+        out nint monitor,
+        nint targetMonitor = 0,
+        bool excludeMaximized = false)
     {
+        monitor = 0;
         if (window == 0 || DockNativeMethods.IsIconic(window)
             || (excludeMaximized && DockNativeMethods.IsZoomed(window)))
         {
@@ -298,7 +343,7 @@ internal sealed class FullScreenWatcher : IDisposable
             return false;
         }
 
-        var monitor = DockNativeMethods.MonitorFromWindow(window, DockNativeMethods.MonitorDefaultToNearest);
+        monitor = DockNativeMethods.MonitorFromWindow(window, DockNativeMethods.MonitorDefaultToNearest);
         var info = new DockNativeMethods.MonitorInfo
         {
             Size = (uint)Marshal.SizeOf<DockNativeMethods.MonitorInfo>(),

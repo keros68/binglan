@@ -510,6 +510,7 @@ public partial class FileBoxWindow : WidgetWindowBase
     {
         RefreshAutoCollapseTimer();
         RefreshHoverRevealState();
+        base.OnDragEnded();
     }
 
     /// <summary>The other open boxes a mapping can be transferred to.</summary>
