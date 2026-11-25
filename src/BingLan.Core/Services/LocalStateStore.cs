@@ -932,7 +932,12 @@ public sealed class LocalStateStore
             {
                 box.EdgeDockMonitorDeviceName = null;
             }
+            if (box.IdleHideDelaySeconds is { } hideDelay)
+            {
+                box.IdleHideDelaySeconds = FileBoxHoverRevealRules.CoerceDelaySeconds(hideDelay);
+            }
         }
+        FileBoxGroupRules.NormalizeGroups(state.FileBoxes);
         foreach (var note in state.NoteWidgets)
         {
             NoteService.CommitTitle(note, note.Title);

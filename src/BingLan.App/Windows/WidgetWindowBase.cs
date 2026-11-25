@@ -406,12 +406,12 @@ public class WidgetWindowBase : Window
         {
             if (_drag is not null)
             {
-                EndDrag();
+                EndDrag(committed: true);
                 ReleaseMouseCapture();
                 e.Handled = true;
             }
         };
-        LostMouseCapture += (_, _) => EndDrag();
+        LostMouseCapture += (_, _) => EndDrag(committed: false);
         PreviewKeyDown += (_, e) =>
         {
             if (e.Key == Key.F2
@@ -607,10 +607,20 @@ public class WidgetWindowBase : Window
 
     private bool _selectedByFocus;
 
+    /// <summary>
+    /// Updates the placement object tracked for display recovery without moving the window,
+    /// used when a grouped file box switches or detaches its original host tab.
+    /// </summary>
+    protected void RebindPlacementReference(WindowPlacement placement)
+    {
+        _placement = placement;
+    }
+
     public void ApplySelection(bool isSelected)
     {
         _selectedByFocus = false;
         SetValue(IsWidgetSelectedPropertyKey, isSelected);
+        OnSelectionChanged(isSelected);
     }
 
     public void ApplyWidgetLock(bool isLocked)
@@ -1166,6 +1176,18 @@ public class WidgetWindowBase : Window
     }
 
     protected virtual void OnDragEnded()
+    {
+    }
+
+    protected virtual void OnSelectionChanged(bool isSelected)
+    {
+    }
+
+    protected virtual void OnDragMoved(BingLan.Core.Dock.PixelRect bounds, bool altHeld)
+    {
+    }
+
+    protected virtual void OnDragMoveEnded(bool wasMoving, bool altHeld)
     {
     }
 
@@ -1940,6 +1962,9 @@ public class WidgetWindowBase : Window
             0,
             0,
             NativeMethods.SwpNoSize | NativeMethods.SwpNoZOrder | NativeMethods.SwpNoActivate);
+        OnDragMoved(
+            new BingLan.Core.Dock.PixelRect(target.Left, target.Top, target.Right, target.Bottom),
+            (Keyboard.Modifiers & ModifierKeys.Alt) != 0);
     }
 
     // Moves the dragged edges with the pointer, never below the card's minimum size; the
@@ -1988,7 +2013,7 @@ public class WidgetWindowBase : Window
             NativeMethods.SwpNoZOrder | NativeMethods.SwpNoActivate);
     }
 
-    internal void EndDrag()
+    internal void EndDrag(bool committed = false)
     {
         if (_drag is not { } drag)
         {
@@ -1997,6 +2022,8 @@ public class WidgetWindowBase : Window
 
         _drag = null;
         Cursor = null;
+        var wasMoving = drag.Moving && drag.Edges == ResizeEdges.None;
+        var altHeld = (Keyboard.Modifiers & ModifierKeys.Alt) != 0;
         if (drag.Moving)
         {
             _moveSession = null;
@@ -2005,6 +2032,7 @@ public class WidgetWindowBase : Window
             SnapGridOverlay.HideGrid();
             EnsureTaskbarSafeBounds();
         }
+        OnDragMoveEnded(wasMoving && committed, altHeld);
         OnDragEnded();
     }
 

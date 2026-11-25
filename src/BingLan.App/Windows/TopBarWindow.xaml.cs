@@ -95,7 +95,10 @@ internal interface ITopBarEnvironment
 /// items are the card's own state objects, so toggling one in the flyout reaches the
 /// card and the persistence through the same objects.
 /// </summary>
-internal sealed record TopBarTodoList(string Title, IReadOnlyList<TodoItemState> Items);
+internal sealed record TopBarTodoList(
+    string Title,
+    IReadOnlyList<TodoItemState> Items,
+    bool CarryOverIncomplete = false);
 
 /// <summary>
 /// The full-width strip at the top edge of one monitor. It only shows the app's own data
@@ -134,7 +137,9 @@ public sealed partial class TopBarWindow : Window
     };
     private DockAutoHideState _autoHide = new();
     private readonly TopBarAttentionQueue _attention = new();
-    private readonly Dictionary<nint, string> _attentionNames = [];
+    private readonly Dictionary<nint, (string Name, string? ExecutablePath)> _attentionMeta = [];
+    private readonly Dictionary<string, ImageSource?> _attentionIcons = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _attentionIconsLoading = new(StringComparer.OrdinalIgnoreCase);
     private readonly WindowCatalog _catalog = new();
     private readonly DispatcherTimer _foregroundTimer;
     private readonly DispatcherTimer _ambientTimer;
@@ -2052,6 +2057,11 @@ public sealed partial class TopBarWindow : Window
             item.IsCompleted = !item.IsCompleted;
             TodoService.StampCompletion(item);
             _environment.TodoItemToggled();
+            var carryOver = _environment.ReadTodoList()?.CarryOverIncomplete == true;
+            if (!TodoService.BelongsToTodayList(item, DateTime.Today, carryOver))
+            {
+                row.Visibility = Visibility.Collapsed;
+            }
             RenderModules();
         };
         return row;
@@ -2107,8 +2117,10 @@ public sealed partial class TopBarWindow : Window
             return;
         }
         var now = DateTime.Now;
-        var items = (_environment.ReadTodoList()?.Items ?? [])
-            .Where(item => !string.IsNullOrWhiteSpace(item.Text) && TodoService.BelongsToTodayList(item, now))
+        var todoList = _environment.ReadTodoList();
+        var carryOver = todoList?.CarryOverIncomplete == true;
+        var items = (todoList?.Items ?? [])
+            .Where(item => !string.IsNullOrWhiteSpace(item.Text) && TodoService.BelongsToTodayList(item, now, carryOver))
             .ToList();
         var panel = new StackPanel();
         var heading = new DockPanel { Margin = new Thickness(0, 4, 0, 8) };
@@ -2516,10 +2528,12 @@ public sealed partial class TopBarWindow : Window
             if (IsCapsule)
             {
                 var now = DateTime.Now;
-                var items = _environment.ReadTodoList()?.Items ?? [];
+                var todoList = _environment.ReadTodoList();
+                var carryOver = todoList?.CarryOverIncomplete == true;
+                var items = todoList?.Items ?? [];
                 var next = TopBarModuleRules.NextTimedTodoToday(items, now);
                 var count = items.Count(item => item.Kind == TodoItemKind.Todo && !item.IsCompleted
-                    && !string.IsNullOrWhiteSpace(item.Text) && TodoService.BelongsToTodayList(item, now));
+                    && !string.IsNullOrWhiteSpace(item.Text) && TodoService.BelongsToTodayList(item, now, carryOver));
                 todo.Text = next is not null ? $"{next.DeadlineTime:HH:mm}  {next.Text}"
                     : count > 0 ? $"今日待办  {count}" : now.ToString(_environment.Use24HourClock ? "HH:mm" : "hh:mm tt");
                 if (_capsuleStatus is { } status)
@@ -2600,15 +2614,22 @@ public sealed partial class TopBarWindow : Window
         }
         if (ModuleText(TopBarModuleKind.Network) is { } network)
         {
-            network.Text = TopBarModuleRules.FormatNetworkLabel(
+            var networkLabel = TopBarModuleRules.FormatNetworkLabel(
                 facts.Network,
-                _state.ShowWifiName == true);
+                _state.ShowWifiName == true,
+                _state.NetworkIconOnly == true);
+            network.Text = networkLabel;
+            var showNetworkText = !string.IsNullOrEmpty(networkLabel);
+            network.Visibility = showNetworkText ? Visibility.Visible : Visibility.Collapsed;
             if (_modules.TryGetValue(TopBarModuleKind.Network, out var networkButton))
             {
                 networkButton.ToolTip = facts.Network.Tooltip;
             }
             if (ModuleIcon(TopBarModuleKind.Network) is { } networkIcon)
             {
+                networkIcon.Margin = showNetworkText
+                    ? new Thickness(0, 0, 6, 1)
+                    : new Thickness(0, 0, 0, 1);
                 networkIcon.Text = !facts.Network.Connected
                     ? GlyphWifiOff
                     : !facts.Network.IsWireless
@@ -2711,11 +2732,11 @@ public sealed partial class TopBarWindow : Window
                 .Where(handle => !DockNativeMethods.IsWindow(handle))
                 .ToArray());
             var activeHandles = _attention.OrderedWindows.ToHashSet();
-            foreach (var stale in _attentionNames.Keys
+            foreach (var stale in _attentionMeta.Keys
                 .Where(handle => !activeHandles.Contains(handle))
                 .ToList())
             {
-                _attentionNames.Remove(stale);
+                _attentionMeta.Remove(stale);
             }
             var groups = WindowGrouping.Group(running);
             var (shown, overflow) = TopBarAttentionQueue.ResolveDisplay(
@@ -2726,26 +2747,50 @@ public sealed partial class TopBarWindow : Window
             foreach (var window in shown)
             {
                 var processId = _attention.ProcessOf(window);
-                if (!_attentionNames.TryGetValue(window, out var name))
+                if (!_attentionMeta.TryGetValue(window, out var meta))
                 {
-                    name = ResolveAttentionName(running, groups, window, processId);
-                    if (!string.Equals(name, "消息", StringComparison.Ordinal))
+                    meta = ResolveAttentionTarget(running, groups, window, processId);
+                    if (!string.Equals(meta.Name, "消息", StringComparison.Ordinal)
+                        || !string.IsNullOrWhiteSpace(meta.ExecutablePath))
                     {
-                        _attentionNames[window] = name;
+                        _attentionMeta[window] = meta;
                     }
                 }
 
+                var name = meta.Name;
+                var appIcon = ResolveAttentionIcon(meta.ExecutablePath);
                 var attentionText = new TextBlock
                 {
                     Text = name,
                     TextTrimming = TextTrimming.CharacterEllipsis,
+                    VerticalAlignment = VerticalAlignment.Center,
                     MaxWidth = 120
                 };
                 attentionText.SetResourceReference(TextBlock.ForegroundProperty, "TopBarAttentionBrush");
+                object buttonContent = attentionText;
+                if (appIcon is not null)
+                {
+                    var iconImage = new System.Windows.Controls.Image
+                    {
+                        Source = appIcon,
+                        Width = 14,
+                        Height = 14,
+                        Margin = new Thickness(0, 0, 5, 0),
+                        VerticalAlignment = VerticalAlignment.Center,
+                        Stretch = Stretch.Uniform
+                    };
+                    RenderOptions.SetBitmapScalingMode(iconImage, BitmapScalingMode.HighQuality);
+                    buttonContent = new StackPanel
+                    {
+                        Orientation = System.Windows.Controls.Orientation.Horizontal,
+                        VerticalAlignment = VerticalAlignment.Center,
+                        Children = { iconImage, attentionText }
+                    };
+                }
                 var button = new Button
                 {
                     Style = (Style)Resources["ModuleButton"],
-                    Content = attentionText,
+                    Content = buttonContent,
                     Focusable = true,
                     Tag = window
                 };
@@ -2776,7 +2821,54 @@ public sealed partial class TopBarWindow : Window
         }
     }
 
-    private static string ResolveAttentionName(
+    private ImageSource? ResolveAttentionIcon(string? executablePath)
+    {
+        if (string.IsNullOrWhiteSpace(executablePath))
+        {
+            return null;
+        }
+
+        if (_attentionIcons.TryGetValue(executablePath, out var cached))
+        {
+            return cached;
+        }
+
+        if (_attentionIconsLoading.Add(executablePath))
+        {
+            var path = executablePath;
+            _ = Task.Run(() => ShellIconProvider.GetIcon(path)).ContinueWith(
+                task =>
+                {
+                    var loaded = task.IsCompletedSuccessfully ? task.Result : null;
+                    if (_closing)
+                    {
+                        return;
+                    }
+                    _ = Dispatcher.BeginInvoke(() =>
+                    {
+                        if (_closing)
+                        {
+                            return;
+                        }
+                        _attentionIconsLoading.Remove(path);
+                        if (_attentionIcons.Count >= 64)
+                        {
+                            _attentionIcons.Clear();
+                        }
+                        _attentionIcons[path] = loaded;
+                        if (loaded is not null)
+                        {
+                            RefreshAttention();
+                        }
+                    });
+                },
+                TaskScheduler.Default);
+        }
+
+        return null;
+    }
+
+    private static (string Name, string? ExecutablePath) ResolveAttentionTarget(
         IReadOnlyList<TrackedWindow> running,
         IReadOnlyList<WindowGroup> groups,
         nint window,
@@ -2806,11 +2898,17 @@ public sealed partial class TopBarWindow : Window
             }
         }
 
-        return AttentionFlashRules.ChooseDisplayName(
+        var name = AttentionFlashRules.ChooseDisplayName(
             fileDescription,
             group?.DisplayName,
             executablePath,
             trackedTitle);
+        var iconPath = !string.IsNullOrWhiteSpace(executablePath)
+            && !DockAppResolver.IsFrameHost(executablePath)
+            && !DockAppResolver.IsPackagedPath(executablePath)
+                ? executablePath
+                : null;
+        return (name, iconPath);
     }
 
     // ---------------------------------------------------------------- appearance

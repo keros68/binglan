@@ -397,7 +397,7 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         var today = DateTime.Today;
         if (!State.WeeklyView && !State.HideCompleted)
         {
-            foreach (var item in _todayItems.Where(x => x.IsCompleted && TodoService.BelongsToTodayList(x, today)))
+            foreach (var item in _todayItems.Where(x => x.IsCompleted && TodoService.BelongsToTodayList(x, today, State.CarryOverIncomplete)))
             {
                 if (TodoList.ItemContainerGenerator.ContainerFromItem(item) is FrameworkElement rowVisual)
                 {
@@ -406,7 +406,7 @@ public partial class TodoWidgetWindow : WidgetWindowBase
             }
         }
         if (TodoService.RemoveCompleted(
-                State, x => TodoService.BelongsToTodayList(x, today)) == 0)
+                State, x => TodoService.BelongsToTodayList(x, today, State.CarryOverIncomplete)) == 0)
         {
             return;
         }
@@ -447,7 +447,7 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         else
         {
             moved = TodoService.MoveWithinScope(
-                State, item.Id, offset, x => TodoService.BelongsToTodayList(x, DateTime.Today));
+                State, item.Id, offset, x => TodoService.BelongsToTodayList(x, DateTime.Today, State.CarryOverIncomplete));
         }
         if (!moved)
         {
@@ -487,6 +487,21 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         if (TodoService.SetKind(State, item.Id, kind))
         {
             RefreshAfterKindOrTimeChange(item);
+        }
+    }
+
+    private void TogglePersistent_Click(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not TodoItemState item)
+        {
+            return;
+        }
+        CaptureState();
+        if (TodoService.SetPersistent(State, item.Id, !item.IsPersistent))
+        {
+            SyncTodayItems();
+            RefreshSummary();
+            NotifyStateChanged();
         }
     }
 
@@ -1304,6 +1319,20 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         NotifyStateChanged();
     }
 
+    /// <summary>设置窗口用：切换是否将前几天未完成的待办自动保留到今日列表。</summary>
+    public void SetCarryOverIncomplete(bool carryOverIncomplete)
+    {
+        if (State.CarryOverIncomplete == carryOverIncomplete)
+        {
+            return;
+        }
+        State.CarryOverIncomplete = carryOverIncomplete;
+        NormalizeTodayList();
+        SyncTodayItems();
+        RefreshSummary();
+        NotifyStateChanged();
+    }
+
     private void WeekCountButton_Click(object sender, RoutedEventArgs e)
     {
         var menu = new System.Windows.Controls.ContextMenu
@@ -1533,7 +1562,7 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         var validItem = _peekDragItem is TodoItemState armedItem
             && (ReferenceEquals(dragList, WeekPeekList)
                 ? _peekCell is not null && _peekCell.Items.Contains(armedItem)
-                : _items.Contains(armedItem) && TodoService.BelongsToTodayList(armedItem, DateTime.Today));
+                : _items.Contains(armedItem) && TodoService.BelongsToTodayList(armedItem, DateTime.Today, State.CarryOverIncomplete));
         if (!validItem)
         {
             CancelPeekDrag();
@@ -1801,7 +1830,7 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         }
         else
         {
-            if (!_items.Contains(item) || !TodoService.BelongsToTodayList(item, DateTime.Today))
+            if (!_items.Contains(item) || !TodoService.BelongsToTodayList(item, DateTime.Today, State.CarryOverIncomplete))
             {
                 return;
             }
@@ -2935,7 +2964,7 @@ public partial class TodoWidgetWindow : WidgetWindowBase
     {
         var today = DateTime.Today;
         var desired = _items
-            .Where(item => TodoService.BelongsToTodayList(item, today))
+            .Where(item => TodoService.BelongsToTodayList(item, today, State.CarryOverIncomplete))
             .ToList();
         SyncObservableOrder(_todayItems, desired);
         ApplyCompletedVisibilityOnContainers();
@@ -2992,7 +3021,8 @@ public partial class TodoWidgetWindow : WidgetWindowBase
             State.WeeklyView,
             DateTime.Today,
             weekStart,
-            weekEnd);
+            weekEnd,
+            State.CarryOverIncomplete);
     }
 
     // A blank row only exists while it is being typed into (blanks are pruned once
@@ -3017,10 +3047,10 @@ public partial class TodoWidgetWindow : WidgetWindowBase
         var today = DateTime.Today;
         var listed = _items
             .Where(x => !string.IsNullOrWhiteSpace(x.Text)
-                && TodoService.BelongsToTodayList(x, today))
+                && TodoService.BelongsToTodayList(x, today, State.CarryOverIncomplete))
             .ToList();
         SummaryText.Text = listed.Count == 0 ? "写下第一条待办" : CompletionSummary(listed);
-        ClearCompletedButton.IsEnabled = _items.Any(x => x.IsCompleted && TodoService.BelongsToTodayList(x, today));
+        ClearCompletedButton.IsEnabled = _items.Any(x => x.IsCompleted && TodoService.BelongsToTodayList(x, today, State.CarryOverIncomplete));
     }
 
     // Events and countdowns cannot be completed, so the done/total count covers to-dos only.

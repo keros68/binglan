@@ -31,6 +31,8 @@ internal static class FileBoxRuleTests
         TestHeaderToolsOnHoverDefaultsOff();
         TestFileBoxEdgeDockRulesAndIsolation();
         TestInternetShortcutIconParsing();
+        TestFileBoxHoverRevealRulesAndPersistence();
+        TestFileBoxGroupRulesAndPersistence();
     }
 
     private static void TestPreparedImportPreservesMappingsAndDoesNotRecheckFiles()
@@ -714,6 +716,239 @@ internal static class FileBoxRuleTests
             """;
         Assert(InternetShortcutRules.ParseIconLocation(wrongSection, @"C:\Desktop") is null,
             "仅读取 [InternetShortcut] 节内的 IconFile");
+    }
+
+    private static void TestFileBoxHoverRevealRulesAndPersistence()
+    {
+        Assert(Math.Abs(FileBoxHoverRevealRules.CoerceDelaySeconds(null) - 0.5d) < 0.001d,
+            "空隐藏延迟应回退默认 0.5 秒");
+        Assert(Math.Abs(FileBoxHoverRevealRules.CoerceDelaySeconds(0.01d) - FileBoxHoverRevealRules.MinimumHideDelaySeconds) < 0.001d,
+            "过小隐藏延迟应夹紧到下限");
+        Assert(Math.Abs(FileBoxHoverRevealRules.CoerceDelaySeconds(99d) - FileBoxHoverRevealRules.MaximumHideDelaySeconds) < 0.001d,
+            "过大隐藏延迟应夹紧到上限");
+        Assert(FileBoxHoverRevealRules.FormatShortDelay(0.5d) == "0.5 秒"
+            && FileBoxHoverRevealRules.FormatShortDelay(1d) == "1 秒",
+            "隐藏延迟格式化应符合简短中文口径");
+
+        // Off -> always stays visible, timer never runs.
+        Assert(FileBoxHoverRevealRules.ShouldStayVisible(false, false, false, false, false, false, false, false, false, false, false),
+            "关闭平时全透明时应始终保持可见");
+        Assert(!FileBoxHoverRevealRules.ShouldRunHideTimer(false, false, false, false, false, false, false, false, false, false, false),
+            "关闭平时全透明时不应启动隐藏计时");
+
+        // On & idle -> timer runs, should hide.
+        Assert(!FileBoxHoverRevealRules.ShouldStayVisible(true, false, false, false, false, false, false, false, false, false, false),
+            "开启平时全透明且完全空闲时应允许隐藏");
+        Assert(FileBoxHoverRevealRules.ShouldRunHideTimer(true, false, false, false, false, false, false, false, false, false, false),
+            "开启平时全透明且完全空闲时应启动隐藏计时");
+
+        // Every guard must keep the box visible.
+        Assert(FileBoxHoverRevealRules.ShouldStayVisible(true, true, false, false, false, false, false, false, false, false, false),
+            "贴边隐藏开启时应让位于贴边逻辑");
+        Assert(FileBoxHoverRevealRules.ShouldStayVisible(true, false, true, false, false, false, false, false, false, false, false),
+            "高对比度模式下应强制保持可见");
+        Assert(FileBoxHoverRevealRules.ShouldStayVisible(true, false, false, true, false, false, false, false, false, false, false),
+            "鼠标在盒内时应保持可见");
+        Assert(FileBoxHoverRevealRules.ShouldStayVisible(true, false, false, false, true, false, false, false, false, false, false),
+            "编辑标题时应保持可见");
+        Assert(FileBoxHoverRevealRules.ShouldStayVisible(true, false, false, false, false, true, false, false, false, false, false),
+            "菜单/对话框/拖放交互期间应保持可见");
+        Assert(FileBoxHoverRevealRules.ShouldStayVisible(true, false, false, false, false, false, true, false, false, false, false),
+            "拖动或缩放窗口时应保持可见");
+        Assert(FileBoxHoverRevealRules.ShouldStayVisible(true, false, false, false, false, false, false, true, false, false, false),
+            "选中卡片时应保持可见");
+        Assert(FileBoxHoverRevealRules.ShouldStayVisible(true, false, false, false, false, false, false, false, true, false, false),
+            "键盘焦点在盒内时应保持可见");
+        Assert(FileBoxHoverRevealRules.ShouldStayVisible(true, false, false, false, false, false, false, false, false, true, false),
+            "临时浮起文件收纳盒时应强制显现");
+        Assert(FileBoxHoverRevealRules.ShouldStayVisible(true, false, false, false, false, false, false, false, false, false, true),
+            "在设置中心选中该盒时应强制显现");
+
+        // Persistence round-trip + v63 migration default off.
+        var temp = Path.Combine(Path.GetTempPath(), $"BingLan-hover-reveal-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(temp);
+        try
+        {
+            var store = new LocalStateStore(temp);
+            File.WriteAllText(store.StatePath, """{ "SchemaVersion": 63, "FileBoxes": [{ "Title": "旧盒" }] }""");
+            var migrated = store.Load();
+            Assert(migrated.SchemaVersion == AppState.CurrentSchemaVersion
+                && migrated.FileBoxes.Count == 1
+                && !migrated.FileBoxes[0].HideWhenIdle
+                && migrated.FileBoxes[0].IdleHideDelaySeconds is null,
+                "v63 迁移后平时全透明应默认关闭");
+
+            migrated.FileBoxes[0].HideWhenIdle = true;
+            migrated.FileBoxes[0].IdleHideDelaySeconds = 1.0d;
+            store.Save(migrated);
+            var reloaded = store.Load();
+            Assert(reloaded.FileBoxes[0].HideWhenIdle
+                && reloaded.FileBoxes[0].IdleHideDelaySeconds is { } delay
+                && Math.Abs(delay - 1.0d) < 0.001d,
+                "平时全透明设置与延迟应在保存重载后保留");
+        }
+        finally
+        {
+            Directory.Delete(temp, true);
+        }
+    }
+
+    private static void TestFileBoxGroupRulesAndPersistence()
+    {
+        // Vertical label formatting & summaries.
+        Assert(FileBoxGroupRules.FormatVerticalTabLabel("压缩") == "压\n缩",
+            "两字标题应竖向拆行");
+        Assert(FileBoxGroupRules.FormatVerticalTabLabel("常用软件工具箱") == "常\n用\n软\n件",
+            "长标题竖排应截取前 4 个字素");
+        Assert(FileBoxGroupRules.FormatCollapsedSummary(3, 1) == "3 项",
+            "单盒折叠摘要应保持原口径");
+        Assert(FileBoxGroupRules.FormatCollapsedSummary(3, 5) == "3 项 · 共 5 页",
+            "组合盒折叠摘要应标出总页数");
+
+        // Drag-merge hit geometry.
+        var targetRect = new PixelRect(100, 100, 460, 400);
+        var centerOverlap = new PixelRect(160, 140, 500, 420); // center (330, 280) inside target interior
+        var sideBySide = new PixelRect(460, 100, 820, 400);    // snapped next to right edge
+        Assert(FileBoxGroupRules.CanMergeOnDrop(centerOverlap, targetRect, altHeld: false),
+            "拖盒中心落入目标盒内部时应允许合并");
+        Assert(!FileBoxGroupRules.CanMergeOnDrop(centerOverlap, targetRect, altHeld: true),
+            "按住 Alt 拖动应禁止自动合并");
+        Assert(!FileBoxGroupRules.CanMergeOnDrop(sideBySide, targetRect, altHeld: false),
+            "并排贴齐吸附不应误触发合并");
+
+        // Merge, reorder, detach, split, and distribution preservation.
+        var boxA = new FileBoxState
+        {
+            Title = "目录",
+            CollectFolders = true,
+            ViewMode = FileBoxViewMode.List,
+            HideWhenIdle = true,
+            Placement = new WindowPlacement { Left = 120, Top = 80, Width = 366, Height = 306 }
+        };
+        var boxB = new FileBoxState
+        {
+            Title = "压缩",
+            CollectExtensions = [".zip", ".7z"],
+            ViewMode = FileBoxViewMode.Tiles,
+            Placement = new WindowPlacement { Left = 520, Top = 80, Width = 366, Height = 306 }
+        };
+        var boxC = new FileBoxState
+        {
+            Title = "文档",
+            CollectExtensions = [".pdf"],
+            ViewMode = FileBoxViewMode.Tiles
+        };
+
+        var groupId = FileBoxGroupRules.Merge([boxB], [boxA], activateFirstMergedSource: true);
+        Assert(boxA.GroupId == groupId && boxB.GroupId == groupId
+            && boxA.TabOrder == 0 && boxB.TabOrder == 1
+            && !boxA.IsActiveTab && boxB.IsActiveTab
+            && boxB.HideWhenIdle
+            && boxA.ViewMode == FileBoxViewMode.List && boxB.ViewMode == FileBoxViewMode.Tiles,
+            "合并应共享 GroupId 与组级行为（如平时全透明），并保留各页独立视图与分类规则");
+
+        FileBoxGroupRules.Merge([boxC], [boxA, boxB], activateFirstMergedSource: true);
+        Assert(boxC.GroupId == groupId && boxC.TabOrder == 2 && boxC.IsActiveTab && !boxB.IsActiveTab,
+            "向已有组合盒合入新盒应复用 GroupId 并激活新标签");
+
+        var allBoxes = new List<FileBoxState> { boxA, boxB, boxC };
+        Assert(FileBoxGroupRules.FormatGroupDisplayTitle(allBoxes) == "文档（组合 · 3 页）",
+            "组合盒标题摘要应包含当前页名称与总页数");
+
+        // Move tab up/down.
+        Assert(FileBoxGroupRules.MoveTab(allBoxes, boxC.Id, -1) && boxC.TabOrder == 1 && boxB.TabOrder == 2,
+            "上移标签应更新 TabOrder");
+
+        // Desktop distribution still routes into each tab by its own collect rules.
+        var temp = Path.Combine(Path.GetTempPath(), $"BingLan-group-box-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(temp);
+        try
+        {
+            var zipPath = Path.Combine(temp, "archive.zip");
+            var pdfPath = Path.Combine(temp, "notes.pdf");
+            var dirPath = Path.Combine(temp, "Projects");
+            File.WriteAllText(zipPath, "z");
+            File.WriteAllText(pdfPath, "p");
+            Directory.CreateDirectory(dirPath);
+
+            var distribution = FileMappingService.Distribute([zipPath, pdfPath, dirPath], allBoxes);
+            Assert(distribution.ByBox[boxA.Id].Contains(dirPath)
+                && distribution.ByBox[boxB.Id].Contains(zipPath)
+                && distribution.ByBox[boxC.Id].Contains(pdfPath),
+                "自动整理分发应继续按各标签页独立分类规则精准路由");
+
+            // Persistence round-trip & degenerate single-member normalization.
+            var store = new LocalStateStore(temp);
+            var appState = LocalStateStore.CreateDefault();
+            boxA.HoverSwitchTabs = true;
+            FileBoxGroupRules.SyncGroupSharedProperties(boxA, allBoxes);
+            appState.FileBoxes = [boxA, boxB, boxC];
+            store.Save(appState);
+
+            var loaded = store.Load();
+            var hosts = FileBoxGroupRules.PartitionIntoHosts(loaded.FileBoxes);
+            Assert(hosts.Count == 1 && hosts[0].Count == 3
+                && hosts[0].All(m => m.HoverSwitchTabs)
+                && hosts[0].Count(m => m.IsActiveTab) == 1,
+                "组合盒应在保存重载后归入同一窗口宿主并保留悬停切换与唯一活动页");
+
+            // Detach active tab from a collapsed 3-tab group: remaining tabs must keep original
+            // placement, fold state, and display-layout history intact.
+            var collapsedHost = new FileBoxState
+            {
+                Title = "活动页",
+                IsCollapsed = true,
+                ExpandedHeight = 320d,
+                EdgeDockSide = FileBoxEdgeDockSide.Left,
+                Placement = new WindowPlacement
+                {
+                    Left = 100,
+                    Top = 100,
+                    Width = 366,
+                    Height = 48,
+                    DisplayLayouts = [new DisplayLayoutPlacement { Layout = "primary", Left = 100, Top = 100, Right = 466, Bottom = 148 }]
+                }
+            };
+            var sibling1 = new FileBoxState { Title = "同组一" };
+            var sibling2 = new FileBoxState { Title = "同组二" };
+            FileBoxGroupRules.Merge([sibling1, sibling2], [collapsedHost], activateFirstMergedSource: false);
+            var afterActiveDetach = FileBoxGroupRules.Detach(collapsedHost, [collapsedHost, sibling1, sibling2]);
+            Assert(afterActiveDetach.Count == 2
+                && afterActiveDetach.All(m => m.IsCollapsed && Math.Abs(m.Placement.Left - 100d) < 0.01d && m.EdgeDockSide == FileBoxEdgeDockSide.Left && m.Placement.DisplayLayouts.Count == 1)
+                && !collapsedHost.IsCollapsed && collapsedHost.EdgeDockSide is null && collapsedHost.Placement.Left > 100d,
+                "移出活动标签页时不得污染剩余组合页的位置、折叠状态、显示器布局记忆或贴边状态");
+
+            // Detach 1 tab from 3-tab group -> 2 tabs remain grouped.
+            var remainingAfterFirstDetach = FileBoxGroupRules.Detach(boxB, allBoxes);
+            Assert(boxB.GroupId is null && remainingAfterFirstDetach.Count == 2
+                && remainingAfterFirstDetach.All(m => m.GroupId == groupId),
+                "3 页组合移出 1 页后其余 2 页应保持组合");
+
+            // Detach 1 tab from 2-tab group -> last remaining dissolves to standalone.
+            var remainingAfterSecondDetach = FileBoxGroupRules.Detach(boxC, remainingAfterFirstDetach);
+            Assert(boxC.GroupId is null && remainingAfterSecondDetach.Count == 1
+                && remainingAfterSecondDetach[0].GroupId is null
+                && !remainingAfterSecondDetach[0].IsActiveTab,
+                "2 页组合移出 1 页后剩余单盒应自动退化为普通独立盒");
+
+            // Merge back and SplitAll -> all standalone with cascaded placement.
+            FileBoxGroupRules.Merge([boxB, boxC], [boxA]);
+            var split = FileBoxGroupRules.SplitAll(allBoxes);
+            Assert(split.Count == 3 && split.All(m => m.GroupId is null)
+                && split[1].Placement.Left > split[0].Placement.Left
+                && split[2].Placement.Left > split[1].Placement.Left,
+                "拆分全部应将所有标签还原为独立收纳盒并错开位置");
+
+            // Normalize degenerate single-member GroupId on load.
+            var orphan = new FileBoxState { Title = "孤立", GroupId = Guid.NewGuid(), TabOrder = 3, IsActiveTab = true, HoverSwitchTabs = true };
+            FileBoxGroupRules.NormalizeGroups([orphan]);
+            Assert(orphan.GroupId is null && orphan.TabOrder == 0 && !orphan.IsActiveTab && !orphan.HoverSwitchTabs,
+                "仅剩单个成员的异常 GroupId 应在归一化时自动清除");
+        }
+        finally
+        {
+            Directory.Delete(temp, true);
+        }
     }
 
     private static void Assert(bool condition, string message)

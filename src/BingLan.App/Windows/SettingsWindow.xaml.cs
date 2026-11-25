@@ -557,6 +557,7 @@ public partial class SettingsWindow : Window
             ApplySelectedComponent(refreshList: false);
         }
         _selectedComponentEntry = entry;
+        UpdateSettingsRevealedFileBox(entry.Window as FileBoxWindow);
         ScrollSelectedComponentIntoView(entry);
         if (entry.Kind is { } kind)
         {
@@ -1576,6 +1577,7 @@ public partial class SettingsWindow : Window
             var weeks = Math.Clamp(todo.State.WeeklyWeekCount, 1, 5);
             TodoWeekCountPicker.SelectedIndex = weeks - 1;
             TodoWeekStartPicker.SelectedIndex = todo.State.WeekStartsOnSunday ? 1 : 0;
+            TodoCarryOverCheckBox.IsChecked = todo.State.CarryOverIncomplete;
         }
         finally
         {
@@ -1609,6 +1611,21 @@ public partial class SettingsWindow : Window
         ComponentSettingsStatusText.Text = $"已应用“{todo.State.Title}”的每周起始日";
     }
 
+    private void TodoCarryOver_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_loadingTodoWeekCount
+            || _selectedComponentEntry?.Window is not TodoWidgetWindow todo)
+        {
+            return;
+        }
+
+        var enabled = TodoCarryOverCheckBox.IsChecked == true;
+        todo.SetCarryOverIncomplete(enabled);
+        ComponentSettingsStatusText.Text = enabled
+            ? $"“{todo.State.Title}”已开启未完成待办跨天保留"
+            : $"“{todo.State.Title}”已恢复仅显示当天待办";
+    }
+
     private void LoadFileBoxViewMode(FileBoxWindow? box)
     {
         FileBoxViewModePanel.Visibility = box is null ? Visibility.Collapsed : Visibility.Visible;
@@ -1632,10 +1649,175 @@ public partial class SettingsWindow : Window
                     && double.TryParse(tag, System.Globalization.CultureInfo.InvariantCulture, out var option)
                     && Math.Abs(option - delaySeconds) < 0.001d)
                 ?? FileBoxAutoCollapseDelayComboBox.Items.OfType<ComboBoxItem>().FirstOrDefault(item => item.Tag as string == "5");
+
+            FileBoxHideWhenIdleCheckBox.IsChecked = box.State.HideWhenIdle;
+            FileBoxHideWhenIdleCheckBox.IsEnabled = !box.IsEdgeDocked;
+            FileBoxIdleHideDelayRow.Visibility = box.State.HideWhenIdle && !box.IsEdgeDocked
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+            var hideDelaySeconds = FileBoxHoverRevealRules.CoerceDelaySeconds(box.State.IdleHideDelaySeconds);
+            FileBoxIdleHideDelayComboBox.SelectedItem = FileBoxIdleHideDelayComboBox.Items
+                .OfType<ComboBoxItem>()
+                .FirstOrDefault(item => item.Tag is string tag
+                    && double.TryParse(tag, System.Globalization.CultureInfo.InvariantCulture, out var option)
+                    && Math.Abs(option - hideDelaySeconds) < 0.001d)
+                ?? FileBoxIdleHideDelayComboBox.Items.OfType<ComboBoxItem>().FirstOrDefault(item => item.Tag as string == "0.5");
+
+            FileBoxGroupTabsRow.Visibility = box.IsGrouped ? Visibility.Visible : Visibility.Collapsed;
+            FileBoxHoverSwitchTabsRow.Visibility = box.IsGrouped ? Visibility.Visible : Visibility.Collapsed;
+            FileBoxHoverSwitchTabsCheckBox.IsChecked = box.State.HoverSwitchTabs;
+            FileBoxGroupTabComboBox.Items.Clear();
+            if (box.IsGrouped)
+            {
+                ComboBoxItem? selectedTabItem = null;
+                foreach (var tab in box.Tabs.OrderBy(t => t.TabOrder))
+                {
+                    var item = new ComboBoxItem
+                    {
+                        Content = tab.Title,
+                        Tag = tab.Id
+                    };
+                    FileBoxGroupTabComboBox.Items.Add(item);
+                    if (tab.Id == box.State.Id)
+                    {
+                        selectedTabItem = item;
+                    }
+                }
+                FileBoxGroupTabComboBox.SelectedItem = selectedTabItem ?? FileBoxGroupTabComboBox.Items.OfType<ComboBoxItem>().FirstOrDefault();
+            }
+
+            FileBoxMergeTargetComboBox.Items.Clear();
+            if (!box.IsEdgeDocked)
+            {
+                foreach (var other in _widgetProvider().OfType<FileBoxWindow>())
+                {
+                    if (ReferenceEquals(other, box) || !other.IsVisible || other.IsEdgeDocked)
+                    {
+                        continue;
+                    }
+                    FileBoxMergeTargetComboBox.Items.Add(new ComboBoxItem
+                    {
+                        Content = FileBoxGroupRules.FormatGroupDisplayTitle(other.Tabs, other.State.Id),
+                        Tag = other
+                    });
+                }
+            }
+            var canMerge = FileBoxMergeTargetComboBox.Items.Count > 0 && _maintenance.MergeFileBoxes is not null;
+            FileBoxMergeIntoRow.Visibility = canMerge ? Visibility.Visible : Visibility.Collapsed;
+            if (canMerge)
+            {
+                FileBoxMergeTargetComboBox.SelectedIndex = 0;
+            }
         }
         finally
         {
             _loadingViewMode = false;
+        }
+    }
+
+    private void FileBoxHideWhenIdle_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_loadingViewMode || _selectedComponentEntry?.Window is not FileBoxWindow box)
+        {
+            return;
+        }
+
+        var enabled = FileBoxHideWhenIdleCheckBox.IsChecked == true;
+        box.SetHideWhenIdle(enabled);
+        FileBoxIdleHideDelayRow.Visibility = enabled && !box.IsEdgeDocked ? Visibility.Visible : Visibility.Collapsed;
+        ComponentSettingsStatusText.Text = enabled
+            ? $"“{box.State.Title}”已开启平时全透明，鼠标移入即显示"
+            : $"“{box.State.Title}”已恢复常显";
+    }
+
+    private void FileBoxIdleHideDelay_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (_loadingViewMode || _selectedComponentEntry?.Window is not FileBoxWindow box)
+        {
+            return;
+        }
+
+        if (FileBoxIdleHideDelayComboBox?.SelectedItem is ComboBoxItem { Tag: string tag }
+            && double.TryParse(tag, System.Globalization.CultureInfo.InvariantCulture, out var seconds))
+        {
+            box.SetIdleHideDelay(seconds);
+            ComponentSettingsStatusText.Text =
+                $"“{box.State.Title}”移出后隐藏延迟已设为 {FileBoxHoverRevealRules.FormatShortDelay(seconds)}";
+        }
+    }
+
+    private void FileBoxGroupTab_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (_loadingViewMode
+            || _selectedComponentEntry?.Window is not FileBoxWindow box
+            || FileBoxGroupTabComboBox?.SelectedItem is not ComboBoxItem { Tag: Guid tabId })
+        {
+            return;
+        }
+
+        if (box.SwitchActiveTab(tabId))
+        {
+            LoadFileBoxViewMode(box);
+            LoadFileBoxCollect(box);
+            UpdateSelectedWidgetHeaderBarState(_selectedComponentEntry);
+            UpdateComponentEntryNameInList(box, GetWidgetListDisplayName(box));
+        }
+    }
+
+    private void FileBoxHoverSwitchTabs_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_loadingViewMode || _selectedComponentEntry?.Window is not FileBoxWindow box)
+        {
+            return;
+        }
+
+        var enabled = FileBoxHoverSwitchTabsCheckBox.IsChecked == true;
+        box.SetHoverSwitchTabs(enabled);
+        ComponentSettingsStatusText.Text = enabled
+            ? "已开启悬停标签自动切换"
+            : "已改为点击标签切换";
+    }
+
+    private void FileBoxDetachTab_Click(object sender, RoutedEventArgs e)
+    {
+        if (_selectedComponentEntry?.Window is not FileBoxWindow box
+            || !box.IsGrouped
+            || _maintenance.DetachFileBoxTab is not { } detach)
+        {
+            return;
+        }
+
+        var detachedTitle = box.State.Title;
+        detach(box, box.State);
+        ComponentSettingsStatusText.Text = $"已将“{detachedTitle}”移出为独立文件收纳盒";
+    }
+
+    private void FileBoxSplitGroup_Click(object sender, RoutedEventArgs e)
+    {
+        if (_selectedComponentEntry?.Window is not FileBoxWindow box
+            || !box.IsGrouped
+            || _maintenance.SplitFileBoxGroup is not { } split)
+        {
+            return;
+        }
+
+        split(box);
+        ComponentSettingsStatusText.Text = "已拆分为独立文件收纳盒";
+    }
+
+    private void FileBoxMerge_Click(object sender, RoutedEventArgs e)
+    {
+        if (_selectedComponentEntry?.Window is not FileBoxWindow source
+            || FileBoxMergeTargetComboBox?.SelectedItem is not ComboBoxItem { Tag: FileBoxWindow target }
+            || _maintenance.MergeFileBoxes is not { } merge)
+        {
+            return;
+        }
+
+        var merged = merge(source, target);
+        if (merged is not null)
+        {
+            ComponentSettingsStatusText.Text = $"已合并到“{merged.State.Title}”组合收纳盒";
         }
     }
 
@@ -3322,8 +3504,10 @@ public partial class SettingsWindow : Window
             TopBarInputMethodCheckBox.IsChecked = state.Modules.InputMethod;
             TopBarVolumeCheckBox.IsChecked = state.Modules.Volume;
             TopBarNetworkCheckBox.IsChecked = state.Modules.Network;
+            TopBarNetworkIconOnlyCheckBox.IsChecked = state.NetworkIconOnly == true;
+            TopBarNetworkIconOnlyRow.IsEnabled = state.Modules.Network;
             TopBarShowWifiNameCheckBox.IsChecked = state.ShowWifiName == true;
-            TopBarShowWifiNameRow.IsEnabled = state.Modules.Network;
+            TopBarShowWifiNameRow.IsEnabled = state.Modules.Network && state.NetworkIconOnly != true;
             TopBarBatteryCheckBox.IsChecked = state.Modules.Battery;
             TopBarSearchCheckBox.IsChecked = state.Modules.Search;
             TopBarTrayOverflowCheckBox.IsChecked = state.Modules.TrayOverflow;
@@ -3379,8 +3563,10 @@ public partial class SettingsWindow : Window
         state.Modules.InputMethod = TopBarInputMethodCheckBox.IsChecked == true;
         state.Modules.Volume = TopBarVolumeCheckBox.IsChecked == true;
         state.Modules.Network = TopBarNetworkCheckBox.IsChecked == true;
+        state.NetworkIconOnly = TopBarNetworkIconOnlyCheckBox.IsChecked == true;
+        TopBarNetworkIconOnlyRow.IsEnabled = state.Modules.Network;
         state.ShowWifiName = TopBarShowWifiNameCheckBox.IsChecked == true;
-        TopBarShowWifiNameRow.IsEnabled = state.Modules.Network;
+        TopBarShowWifiNameRow.IsEnabled = state.Modules.Network && state.NetworkIconOnly != true;
         state.Modules.Battery = TopBarBatteryCheckBox.IsChecked == true;
         state.Modules.Search = TopBarSearchCheckBox.IsChecked == true;
         state.Modules.TrayOverflow = TopBarTrayOverflowCheckBox.IsChecked == true;
@@ -4340,11 +4526,12 @@ public partial class SettingsWindow : Window
         var typeName = window switch
         {
             NoteWidgetWindow => "普通便签",
+            FileBoxWindow { IsGrouped: true } => "组合收纳盒",
             FileBoxWindow => "文件收纳盒",
             _ => "桌面卡片"
         };
         return new DesktopComponentSettingsEntry(
-            GetWidgetName(window),
+            GetWidgetListDisplayName(window),
             typeName,
             !IsWidgetShown(window) ? "未显示" : window.IsWidgetLocked ? "已锁定" : "可拖动",
             null,
@@ -4380,6 +4567,12 @@ public partial class SettingsWindow : Window
         InformationWidgetWindow { ComponentKind: { } kind } =>
             DesktopExperienceRules.GetComponentName(kind),
         _ => window.Title
+    };
+
+    private static string GetWidgetListDisplayName(WidgetWindowBase window) => window switch
+    {
+        FileBoxWindow box => FileBoxGroupRules.FormatGroupDisplayTitle(box.Tabs, box.State.Id),
+        _ => GetWidgetName(window)
     };
 
     private void PresetRadio_Checked(object sender, RoutedEventArgs e)

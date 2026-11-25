@@ -3125,8 +3125,9 @@ internal static class Program
             Assert(File.Exists(file), "创建 UI 映射不应移动原文件");
             Assert(
                 window.ContextMenu.Items.OfType<MenuItem>()
+                    .Where(item => item.Visibility == Visibility.Visible)
                     .Select(item => item.Header?.ToString())
-                    .SequenceEqual(["在冰蓝桌面中设置…", "重命名", "锁定位置和大小", "贴边隐藏", "删除此组件", "退出冰蓝桌面"]),
+                    .SequenceEqual(["在冰蓝桌面中设置…", "重命名", "锁定位置和大小", "平时隐藏（移入显示）", "贴边隐藏", "删除此组件", "退出冰蓝桌面"]),
                 "组件右键菜单应包含重命名并保持精简入口");
             var renameItem = window.ContextMenu.Items.OfType<MenuItem>().Single(item => Equals(item.Header, "重命名"));
             renameItem.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));

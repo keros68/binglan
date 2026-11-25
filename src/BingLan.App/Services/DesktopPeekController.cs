@@ -199,6 +199,7 @@ internal sealed class DesktopPeekController : IDisposable
 
     private void HookBox(FileBoxWindow box)
     {
+        box.SetPeekRevealed(true);
         box.DragOutStarted += OnBoxDragOutStarted;
         box.DragOutEnded += OnBoxDragOutEnded;
         box.ItemOpened += OnBoxItemOpened;
@@ -208,6 +209,7 @@ internal sealed class DesktopPeekController : IDisposable
 
     private void UnhookBox(FileBoxWindow box)
     {
+        box.SetPeekRevealed(false);
         box.DragOutStarted -= OnBoxDragOutStarted;
         box.DragOutEnded -= OnBoxDragOutEnded;
         box.ItemOpened -= OnBoxItemOpened;

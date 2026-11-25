@@ -33,11 +33,64 @@ public partial class SettingsWindow
         DesktopComponentList.SizeChanged += (_, _) => ScheduleComponentListOverflowUpdate();
     }
 
+    private FileBoxWindow? _settingsRevealedFileBox;
+
+    private void UpdateSettingsRevealedFileBox(FileBoxWindow? target)
+    {
+        if (ReferenceEquals(_settingsRevealedFileBox, target))
+        {
+            return;
+        }
+        _settingsRevealedFileBox?.SetSettingsRevealed(false);
+        _settingsRevealedFileBox = target;
+        _settingsRevealedFileBox?.SetSettingsRevealed(true);
+    }
+
+    internal void RefreshWidgetsAfterGroupChange(FileBoxWindow? preferred)
+    {
+        if (_isClosed)
+        {
+            return;
+        }
+        if (!Dispatcher.CheckAccess())
+        {
+            Dispatcher.BeginInvoke(() => RefreshWidgetsAfterGroupChange(preferred));
+            return;
+        }
+        RefreshComponentList(preferredWindow: preferred);
+    }
+
+    private void OnObservedFileBoxActiveTabChanged(FileBoxWindow box)
+    {
+        if (_isClosed || _loadingViewMode)
+        {
+            return;
+        }
+        if (!Dispatcher.CheckAccess())
+        {
+            Dispatcher.BeginInvoke(() => OnObservedFileBoxActiveTabChanged(box));
+            return;
+        }
+
+        UpdateComponentEntryNameInList(box, GetWidgetListDisplayName(box));
+        if (ReferenceEquals(_selectedComponentEntry?.Window, box))
+        {
+            LoadFileBoxViewMode(box);
+            LoadFileBoxCollect(box);
+            UpdateSelectedWidgetHeaderBarState(_selectedComponentEntry);
+        }
+    }
+
     private void UnsubscribeObservedWidgetTitles()
     {
+        UpdateSettingsRevealedFileBox(null);
         foreach (var window in _observedTitleWindows)
         {
             window.TitleChanged -= OnObservedWidgetTitleChanged;
+            if (window is FileBoxWindow box)
+            {
+                box.ActiveTabChanged -= OnObservedFileBoxActiveTabChanged;
+            }
         }
         _observedTitleWindows.Clear();
     }
@@ -51,6 +104,10 @@ public partial class SettingsWindow
         foreach (var stale in _observedTitleWindows.Where(window => !current.Contains(window)).ToList())
         {
             stale.TitleChanged -= OnObservedWidgetTitleChanged;
+            if (stale is FileBoxWindow staleBox)
+            {
+                staleBox.ActiveTabChanged -= OnObservedFileBoxActiveTabChanged;
+            }
             _observedTitleWindows.Remove(stale);
         }
 
@@ -59,6 +116,10 @@ public partial class SettingsWindow
             if (_observedTitleWindows.Add(added))
             {
                 added.TitleChanged += OnObservedWidgetTitleChanged;
+                if (added is FileBoxWindow addedBox)
+                {
+                    addedBox.ActiveTabChanged += OnObservedFileBoxActiveTabChanged;
+                }
             }
         }
     }
@@ -77,7 +138,7 @@ public partial class SettingsWindow
         }
 
         var updatedName = GetWidgetName(window);
-        UpdateComponentEntryNameInList(window, updatedName);
+        UpdateComponentEntryNameInList(window, GetWidgetListDisplayName(window));
 
         if (ReferenceEquals(_selectedComponentEntry?.Window, window))
         {
@@ -175,10 +236,11 @@ public partial class SettingsWindow
             .OfType<NoteWidgetWindow>()
             .Where(other => !ReferenceEquals(other, target))
             .Select(other => other.State.Title),
-        FileBoxWindow => _widgetProvider()
+        FileBoxWindow fileBox => _widgetProvider()
             .OfType<FileBoxWindow>()
-            .Where(other => !ReferenceEquals(other, target))
-            .Select(other => other.State.Title),
+            .SelectMany(other => other.Tabs)
+            .Where(tab => tab.Id != fileBox.State.Id)
+            .Select(tab => tab.Title),
         _ => []
     };
 
@@ -308,7 +370,11 @@ public partial class SettingsWindow
                 _loadingTitleEditor = false;
             }
 
-            UpdateComponentEntryNameInList(window, committed);
+            UpdateComponentEntryNameInList(window, GetWidgetListDisplayName(window));
+            if (window is FileBoxWindow renamedBox && ReferenceEquals(_selectedComponentEntry?.Window, renamedBox))
+            {
+                LoadFileBoxViewMode(renamedBox);
+            }
             if (changed && !string.Equals(previousName, committed, StringComparison.Ordinal))
             {
                 ComponentSettingsStatusText.Text = $"已重命名为“{committed}”";

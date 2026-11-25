@@ -149,6 +149,35 @@
                 </DataTrigger>
             </Style.Triggers>
         </Style>
+        <Style x:Key="PersistentTodoMenuItem" TargetType="MenuItem" BasedOn="{StaticResource {x:Type MenuItem}}">
+            <Setter Property="Header" Value="跨天常驻（完成前一直显示）"/>
+            <Setter Property="IsCheckable" Value="True"/>
+            <Setter Property="IsChecked" Value="{Binding IsPersistent, Mode=OneWay}"/>
+            <Setter Property="Visibility" Value="Collapsed"/>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding Kind}" Value="Todo">
+                    <Setter Property="Visibility" Value="Visible"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="PersistentPinBadge" TargetType="TextBlock">
+            <Setter Property="FontFamily" Value="Segoe Fluent Icons, Segoe MDL2 Assets"/>
+            <Setter Property="Text" Value="&#xE718;"/>
+            <Setter Property="FontSize" Value="10"/>
+            <Setter Property="Opacity" Value="0.72"/>
+            <Setter Property="ToolTip" Value="跨天常驻：未完成前每天留在今日列表"/>
+            <Setter Property="Visibility" Value="Collapsed"/>
+            <Style.Triggers>
+                <MultiDataTrigger>
+                    <MultiDataTrigger.Conditions>
+                        <Condition Binding="{Binding Kind}" Value="Todo"/>
+                        <Condition Binding="{Binding IsPersistent}" Value="True"/>
+                        <Condition Binding="{Binding IsCompleted}" Value="False"/>
+                    </MultiDataTrigger.Conditions>
+                    <Setter Property="Visibility" Value="Visible"/>
+                </MultiDataTrigger>
+            </Style.Triggers>
+        </Style>
         <!-- Full entry row for the day peek popup: dwell 300 ms to lift and drag to
              reorder, double-click the text to edit in place, right-click for move-to-day. -->
         <DataTemplate x:Key="DayPeekItemTemplate">
@@ -169,6 +198,7 @@
                         <MenuItem Style="{StaticResource ToTodoMenuItem}" Click="SetKindToTodo_Click"/>
                         <MenuItem Style="{StaticResource TimeMenuItem}" Click="SetTime_Click"/>
                         <MenuItem Style="{StaticResource TargetDateMenuItem}" Click="SetTargetDate_Click"/>
+                        <MenuItem Style="{StaticResource PersistentTodoMenuItem}" Click="TogglePersistent_Click"/>
                         <Separator/>
                         <MenuItem Header="删除" Click="DeleteTodo_Click"/>
                     </ContextMenu>
@@ -251,31 +281,36 @@
                         </TextBox.Style>
                     </TextBox>
                     <TextBlock Grid.Row="1" Grid.Column="1" Style="{StaticResource CountdownLabelText}" FontSize="{DynamicResource TodoFont.PeekItem}" Foreground="{DynamicResource CardMarkerAccentBrush}"/>
-                    <Button Grid.Column="2"
-                            AutomationProperties.Name="删除待办"
-                            Width="18"
-                            Height="18"
-                            Margin="2,-2,-4,-2"
-                            Padding="0"
-                            VerticalAlignment="Top"
-                            Foreground="{DynamicResource CardPopupMutedTextBrush}"
-                            Background="Transparent"
-                            BorderThickness="0"
-                            FontSize="{StaticResource CardFont.Meta}"
-                            Content="×"
-                            ToolTip="删除待办"
-                            Click="DeleteTodo_Click">
-                        <Button.Style>
-                            <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
-                                <Setter Property="Opacity" Value="0"/>
-                                <Style.Triggers>
-                                    <DataTrigger Binding="{Binding IsMouseOver, RelativeSource={RelativeSource AncestorType={x:Type Border}}}" Value="True">
-                                        <Setter Property="Opacity" Value="1"/>
-                                    </DataTrigger>
-                                </Style.Triggers>
-                            </Style>
-                        </Button.Style>
-                    </Button>
+                    <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Top">
+                        <TextBlock Style="{StaticResource PersistentPinBadge}"
+                                   VerticalAlignment="Center"
+                                   Margin="2,1,1,0"
+                                   Foreground="{DynamicResource CardMarkerAccentBrush}"/>
+                        <Button AutomationProperties.Name="删除待办"
+                                Width="18"
+                                Height="18"
+                                Margin="2,-2,-4,-2"
+                                Padding="0"
+                                VerticalAlignment="Top"
+                                Foreground="{DynamicResource CardPopupMutedTextBrush}"
+                                Background="Transparent"
+                                BorderThickness="0"
+                                FontSize="{StaticResource CardFont.Meta}"
+                                Content="×"
+                                ToolTip="删除待办"
+                                Click="DeleteTodo_Click">
+                            <Button.Style>
+                                <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                    <Setter Property="Opacity" Value="0"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsMouseOver, RelativeSource={RelativeSource AncestorType={x:Type Border}}}" Value="True">
+                                            <Setter Property="Opacity" Value="1"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Button.Style>
+                        </Button>
+                    </StackPanel>
                 </Grid>
             </Border>
         </DataTemplate>
@@ -299,6 +334,7 @@
                         <MenuItem Style="{StaticResource ToTodoMenuItem}" Click="SetKindToTodo_Click"/>
                         <MenuItem Style="{StaticResource TimeMenuItem}" Click="SetTime_Click"/>
                         <MenuItem Style="{StaticResource TargetDateMenuItem}" Click="SetTargetDate_Click"/>
+                        <MenuItem Style="{StaticResource PersistentTodoMenuItem}" Click="TogglePersistent_Click"/>
                         <Separator/>
                         <MenuItem Header="删除" Click="DeleteTodo_Click"/>
                     </ContextMenu>
@@ -545,6 +581,7 @@
                                         <MenuItem Style="{StaticResource ToTodoMenuItem}" Click="SetKindToTodo_Click"/>
                                         <MenuItem Style="{StaticResource TimeMenuItem}" Click="SetTime_Click"/>
                                         <MenuItem Style="{StaticResource TargetDateMenuItem}" Click="SetTargetDate_Click"/>
+                                        <MenuItem Style="{StaticResource PersistentTodoMenuItem}" Click="TogglePersistent_Click"/>
                                         <Separator/>
                                         <MenuItem Header="关联文件…" Click="LinkFiles_Click"/>
                                         <MenuItem Header="关联文件夹…" Click="LinkFolders_Click"/>
@@ -708,20 +745,25 @@
                                         </TextBlock.Style>
                                     </TextBlock>
                                     <!-- The negative margin gives a 32 DIP target without making the row taller. -->
-                                    <Button Grid.Column="2"
-                                            AutomationProperties.Name="删除待办"
-                                            Width="32"
-                                            Height="32"
-                                            Margin="2,-4,-4,-4"
-                                            Padding="0"
-                                            VerticalAlignment="Center"
-                                            Foreground="{Binding WidgetSecondaryTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
-                                            Background="Transparent"
-                                            BorderThickness="0"
-                                            FontSize="{StaticResource CardFont.Subhead}"
-                                            Content="×"
-                                            ToolTip="删除待办"
-                                            Click="DeleteTodo_Click"/>
+                                    <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                                        <TextBlock Style="{StaticResource PersistentPinBadge}"
+                                                   VerticalAlignment="Center"
+                                                   Margin="4,0,0,0"
+                                                   Foreground="{Binding WidgetSecondaryTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
+                                        <Button AutomationProperties.Name="删除待办"
+                                                Width="32"
+                                                Height="32"
+                                                Margin="2,-4,-4,-4"
+                                                Padding="0"
+                                                VerticalAlignment="Center"
+                                                Foreground="{Binding WidgetSecondaryTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
+                                                Background="Transparent"
+                                                BorderThickness="0"
+                                                FontSize="{StaticResource CardFont.Subhead}"
+                                                Content="×"
+                                                ToolTip="删除待办"
+                                                Click="DeleteTodo_Click"/>
+                                    </StackPanel>
                                     </Grid>
                                 </Grid>
                             </Border>

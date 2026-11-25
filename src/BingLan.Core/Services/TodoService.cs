@@ -160,6 +160,7 @@ public static class TodoService
         if (kind != TodoItemKind.Todo)
         {
             item.IsCompleted = false;
+            item.IsPersistent = false;
             StampCompletion(item);
         }
         if (kind == TodoItemKind.Countdown)
@@ -214,6 +215,21 @@ public static class TodoService
             item.Date = date;
         }
         ReorderDay(widget, item);
+        return true;
+    }
+
+    /// <summary>
+    /// Sets whether an open to-do stays pinned in today's list across calendar days until completed.
+    /// Returns false when the entry is missing, is not a to-do, or already holds that state.
+    /// </summary>
+    public static bool SetPersistent(TodoWidgetState widget, Guid itemId, bool persistent)
+    {
+        var item = widget.Items.FirstOrDefault(x => x.Id == itemId);
+        if (item is null || item.Kind != TodoItemKind.Todo || item.IsPersistent == persistent)
+        {
+            return false;
+        }
+        item.IsPersistent = persistent;
         return true;
     }
 
@@ -408,7 +424,7 @@ public static class TodoService
     /// deadline is due soon (closest first), then countdown entries.
     /// </summary>
     public static bool NormalizeTodayCompletionOrder(TodoWidgetState widget, DateTime today)
-        => OrderCompletedWithinScope(widget, x => BelongsToTodayList(x, today), null, TodayArrangement());
+        => OrderCompletedWithinScope(widget, x => BelongsToTodayList(x, today, widget.CarryOverIncomplete), null, TodayArrangement());
 
     private static bool OrderCompletedWithinScope(
         TodoWidgetState widget,
@@ -499,10 +515,10 @@ public static class TodoService
             return false;
         }
 
-        if (BelongsToTodayList(item, today))
+        if (BelongsToTodayList(item, today, widget.CarryOverIncomplete))
         {
             return SinkCompletedWithinScope(
-                widget, toggledItemId, x => BelongsToTodayList(x, today));
+                widget, toggledItemId, x => BelongsToTodayList(x, today, widget.CarryOverIncomplete));
         }
 
         return item.Date is { } date &&
@@ -787,11 +803,18 @@ public static class TodoService
 
     /// <summary>
     /// The today list is a projection of the weekly calendar's current day. Countdown
-    /// entries and open to-dos with deadlines also stay visible across calendar days.
+    /// entries, open to-dos with deadlines, open persistent to-dos, and (when enabled on the
+    /// card) incomplete to-dos from earlier days also stay visible across calendar days.
     /// </summary>
-    public static bool BelongsToTodayList(TodoItemState item, DateTime today) =>
+    public static bool BelongsToTodayList(
+        TodoItemState item,
+        DateTime today,
+        bool carryOverIncomplete = false) =>
         item.Kind == TodoItemKind.Countdown ||
-        (item.Kind == TodoItemKind.Todo && !item.IsCompleted && item.DeadlineDate is not null) ||
+        (item.Kind == TodoItemKind.Todo && !item.IsCompleted &&
+            (item.DeadlineDate is not null
+             || item.IsPersistent
+             || (carryOverIncomplete && item.Date is { } carryDate && carryDate.Date <= today.Date))) ||
         (item.Date is { } date && date.Date == today.Date);
 
     /// <summary>

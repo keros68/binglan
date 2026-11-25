@@ -71,11 +71,30 @@ public sealed class DockAttention
     /// hidden message windows that never show up in an enumeration, so a window counts
     /// when either its handle or its process is marked.
     /// </summary>
+    /// <summary>
+    /// Returns 2 when this exact window handle flashed, 1 when a hidden/other window of the
+    /// same process flashed, or 0 when the window is not requesting attention.
+    /// </summary>
+    public int AttentionPriority(TrackedWindow window)
+    {
+        if (window.Handle != 0 && _windows.ContainsKey(window.Handle))
+        {
+            return 2;
+        }
+
+        if (window.ProcessId != 0
+            && _windows.Values.Any(marked => marked.ProcessId == window.ProcessId))
+        {
+            return 1;
+        }
+
+        return 0;
+    }
+
+    public bool WantsWindow(TrackedWindow window) => AttentionPriority(window) > 0;
+
     public bool Wants(WindowGroup? group) =>
-        group is not null && group.Windows.Any(window =>
-            _windows.ContainsKey(window.Handle)
-            || (window.ProcessId != 0
-                && _windows.Values.Any(marked => marked.ProcessId == window.ProcessId)));
+        group is not null && group.Windows.Any(WantsWindow);
 
     /// <summary>
     /// Whether the item's app is waiting for attention. An app tucked into the tray has

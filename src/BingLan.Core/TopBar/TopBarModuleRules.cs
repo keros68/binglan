@@ -52,7 +52,7 @@ public static class TopBarModuleRules
         return widgets.Sum(widget => widget.Items.Count(item =>
             item.Kind == TodoItemKind.Todo && !item.IsCompleted &&
             !string.IsNullOrWhiteSpace(item.Text) &&
-            TodoService.BelongsToTodayList(item, target)));
+            TodoService.BelongsToTodayList(item, target, widget.CarryOverIncomplete)));
     }
 
     /// <summary>The next timed open to-do due today, from the same card as the flyout.</summary>
@@ -166,8 +166,16 @@ public static class TopBarModuleRules
     }
 
     /// <summary>Formats the bar text for an already-captured network snapshot.</summary>
-    public static string FormatNetworkLabel(TopBarNetworkStatus status, bool showWifiName)
+    public static string FormatNetworkLabel(
+        TopBarNetworkStatus status,
+        bool showWifiName,
+        bool iconOnly = false)
     {
+        if (iconOnly)
+        {
+            return string.Empty;
+        }
+
         if (!status.Connected)
         {
             return "未连接";

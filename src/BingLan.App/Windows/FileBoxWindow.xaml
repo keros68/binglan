@@ -61,6 +61,94 @@
             <MenuItem Header="取消选中" Click="ClearSelection_Click"/>
         </ContextMenu>
 
+        <ContextMenu x:Key="FileBoxTabContextMenu"
+                     DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}"
+                     Opened="FileBoxTabContextMenu_Opened">
+            <MenuItem Header="重命名标签" Click="TabRename_Click"/>
+            <MenuItem Header="上移" Tag="TabMoveUp" Click="TabMoveUp_Click"/>
+            <MenuItem Header="下移" Tag="TabMoveDown" Click="TabMoveDown_Click"/>
+            <Separator/>
+            <MenuItem Header="移出此标签" Click="TabDetach_Click"/>
+            <MenuItem Header="拆分为独立收纳盒" Click="TabSplitAll_Click"/>
+            <Separator/>
+            <MenuItem Header="删除此标签…" Click="TabDelete_Click"/>
+        </ContextMenu>
+
+        <!-- 组合收纳盒左侧竖排标签模板：竖向显示 2-4 字短名，右侧带当前页指示条。 -->
+        <DataTemplate x:Key="FileBoxTabTemplate">
+            <Button Tag="Interactive"
+                    AllowDrop="True"
+                    Margin="2,2,2,2"
+                    Padding="0"
+                    MinHeight="40"
+                    Background="Transparent"
+                    BorderThickness="0"
+                    AutomationProperties.Name="{Binding Title}"
+                    ToolTip="{Binding ToolTipText}"
+                    ContextMenu="{StaticResource FileBoxTabContextMenu}"
+                    Click="TabButton_Click"
+                    MouseEnter="TabButton_MouseEnter"
+                    MouseLeave="TabButton_MouseLeave"
+                    DragEnter="TabButton_DragEnter"
+                    DragOver="TabButton_DragOver"
+                    DragLeave="TabButton_DragLeave"
+                    Drop="TabButton_Drop">
+                <Button.Template>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="TabSurface"
+                                Tag="Interactive"
+                                Padding="2,6,3,6"
+                                Background="Transparent"
+                                BorderBrush="Transparent"
+                                BorderThickness="1"
+                                CornerRadius="{Binding ControlCornerRadius, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}">
+                            <Grid>
+                                <TextBlock x:Name="TabLabel"
+                                           HorizontalAlignment="Center"
+                                           VerticalAlignment="Center"
+                                           TextAlignment="Center"
+                                           LineHeight="15"
+                                           LineStackingStrategy="BlockLineHeight"
+                                           FontSize="12"
+                                           Opacity="0.72"
+                                           Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
+                                           Text="{Binding VerticalLabel}"/>
+                                <Border x:Name="ActiveIndicator"
+                                        Width="2.5"
+                                        Height="22"
+                                        Margin="0,0,-1,0"
+                                        HorizontalAlignment="Right"
+                                        VerticalAlignment="Center"
+                                        CornerRadius="1.25"
+                                        IsHitTestVisible="False"
+                                        Visibility="Collapsed"
+                                        Background="{Binding WidgetHeaderBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
+                            </Grid>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <DataTrigger Binding="{Binding IsActive}" Value="True">
+                                <Setter TargetName="TabSurface" Property="Background" Value="{DynamicResource CardInteractiveSelectedBrush}"/>
+                                <Setter TargetName="TabLabel" Property="Opacity" Value="1"/>
+                                <Setter TargetName="TabLabel" Property="FontWeight" Value="SemiBold"/>
+                                <Setter TargetName="ActiveIndicator" Property="Visibility" Value="Visible"/>
+                            </DataTrigger>
+                            <DataTrigger Binding="{Binding IsDragTarget}" Value="True">
+                                <Setter TargetName="TabSurface" Property="BorderBrush" Value="{DynamicResource CardSelectionBorderBrush}"/>
+                                <Setter TargetName="TabSurface" Property="Background" Value="{DynamicResource CardInteractiveHoverBrush}"/>
+                            </DataTrigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="TabSurface" Property="Background" Value="{DynamicResource CardInteractiveHoverBrush}"/>
+                                <Setter TargetName="TabLabel" Property="Opacity" Value="1"/>
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="TabSurface" Property="BorderBrush" Value="{DynamicResource CardFocusBorderBrush}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Button.Template>
+            </Button>
+        </DataTemplate>
+
         <!-- 图标视图：大图标在上、名称在下，按宽度折行。 -->
         <DataTemplate x:Key="FileTileTemplate">
             <Button Height="82"
@@ -264,13 +352,38 @@
                 Visibility="Collapsed"
                 CornerRadius="0,3,3,0"
                 Background="{Binding WidgetHeaderBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
+        <!-- 平时全透明模式下的不可见命中层（Alpha=1/255），保证鼠标移入和拖入文件时窗口不被系统点击穿透。 -->
+        <Border x:Name="IdleHitSurface"
+                Background="#01FFFFFF"
+                CornerRadius="{Binding SurfaceCornerRadius, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
+                Visibility="Collapsed"/>
         <Grid x:Name="BodySurface"
               Background="{Binding WidgetBackgroundBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
               ClipToBounds="True">
             <Grid.RenderTransform>
                 <TranslateTransform x:Name="EdgeDockSlideTransform"/>
             </Grid.RenderTransform>
-            <Grid x:Name="BoxLayout">
+            <Grid x:Name="BodyContentHost">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <Border x:Name="TabStripHost"
+                        Grid.Column="0"
+                        Width="40"
+                        Visibility="Collapsed"
+                        BorderThickness="0,0,1,0"
+                        BorderBrush="{Binding WidgetDividerBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}">
+                    <ScrollViewer VerticalScrollBarVisibility="Hidden"
+                                  HorizontalScrollBarVisibility="Disabled"
+                                  Margin="0,8,0,8">
+                        <ItemsControl x:Name="TabStripList"
+                                      Focusable="False"
+                                      IsTabStop="False"
+                                      ItemTemplate="{StaticResource FileBoxTabTemplate}"/>
+                    </ScrollViewer>
+                </Border>
+                <Grid x:Name="BoxLayout" Grid.Column="1">
             <Grid.RowDefinitions>
                 <RowDefinition Height="48"/>
                 <RowDefinition Height="*"/>
@@ -499,13 +612,32 @@
                         ToolTip="把桌面项目放进分类盒，并清除已失效项"
                         Click="AutoOrganize_Click"/>
             </Grid>
-        </Grid>
-        <Border x:Name="Surface"
-                Background="Transparent"
-                BorderBrush="{Binding WidgetBorderBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
-                BorderThickness="{Binding WidgetBorderThickness, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
-                CornerRadius="{Binding SurfaceCornerRadius, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
-                IsHitTestVisible="False"/>
+            </Grid>
+            </Grid>
+            <Border x:Name="MergeDropOverlay"
+                    Visibility="Collapsed"
+                    IsHitTestVisible="False"
+                    Background="#285B9BD5"
+                    BorderBrush="{Binding WidgetHeaderBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
+                    BorderThickness="2"
+                    CornerRadius="{Binding SurfaceCornerRadius, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}">
+                <Border HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        Padding="12,6"
+                        CornerRadius="8"
+                        Background="#D916202C">
+                    <TextBlock Text="松手合并为组合收纳盒"
+                               Foreground="#FFFFFFFF"
+                               FontSize="{StaticResource CardFont.Meta}"
+                               FontWeight="SemiBold"/>
+                </Border>
+            </Border>
+            <Border x:Name="Surface"
+                    Background="Transparent"
+                    BorderBrush="{Binding WidgetBorderBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
+                    BorderThickness="{Binding WidgetBorderThickness, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
+                    CornerRadius="{Binding SurfaceCornerRadius, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
+                    IsHitTestVisible="False"/>
         </Grid>
     </Grid>
 </local:WidgetWindowBase>

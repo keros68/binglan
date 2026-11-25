@@ -226,9 +226,9 @@ public sealed partial class WidgetCoordinator : IDisposable
             {
                 ShowNote(note);
             }
-            foreach (var box in _state.FileBoxes.ToList())
+            foreach (var group in FileBoxGroupRules.PartitionIntoHosts(_state.FileBoxes))
             {
-                ShowFileBox(box);
+                ShowFileBoxGroup(group);
             }
         }
         ApplyDisplayRecovery();
@@ -955,35 +955,7 @@ public sealed partial class WidgetCoordinator : IDisposable
         component.FontFamily = source.FontFamily;
     }
 
-    private FileBoxWindow ShowFileBox(FileBoxState state)
-    {
-        SanitizePlacement(state.Placement);
-        var window = new FileBoxWindow(state)
-        {
-            ShowInTaskbar = false
-        };
-        window.OtherBoxes = () => _windows
-            .OfType<FileBoxWindow>()
-            .Where(other => !ReferenceEquals(other, window))
-            .ToList();
-        window.SameKindOtherTitles = () => _state.FileBoxes
-            .Where(other => other.Id != state.Id)
-            .Select(other => other.Title);
-        window.IsDeleteOriginalsEnabled = () => _state.FileBoxDeleteOriginalsEnabled;
-        window.EdgeDockToggled += (box, enabled) => _edgeDock.ToggleEdgeDock(box, enabled);
-        window.EdgeDockFileDragNear += box => _edgeDock.RevealImmediatelyForDrag(box);
-        Wire(window);
-        _windows.Add(window);
-        if (!state.IsHidden)
-        {
-            window.Show();
-            if (window.IsEdgeDocked)
-            {
-                _edgeDock.ApplyAll();
-            }
-        }
-        return window;
-    }
+    private FileBoxWindow ShowFileBox(FileBoxState state) => ShowFileBoxGroup([state]);
 
     private void ShowNote(NoteWidgetState state)
     {
@@ -1464,6 +1436,9 @@ public sealed partial class WidgetCoordinator : IDisposable
                     ScheduleSave();
                 },
                 SetWidgetVisibility = SetWidgetVisibility,
+                MergeFileBoxes = MergeFileBoxes,
+                DetachFileBoxTab = DetachFileBoxTab,
+                SplitFileBoxGroup = SplitFileBoxGroup,
                 DeleteWidget = window =>
                 {
                     var wasVisible = window.IsVisible;
@@ -2285,6 +2260,13 @@ public sealed partial class WidgetCoordinator : IDisposable
         foreach (var window in _windows.Where(window => window is TodoWidgetWindow or FileBoxWindow or NoteWidgetWindow))
         {
             openWindowAppearances.Add(window.WidgetAppearance);
+            if (window is FileBoxWindow openFileBox)
+            {
+                foreach (var tab in openFileBox.Tabs)
+                {
+                    openWindowAppearances.Add(tab.Appearance);
+                }
+            }
             var nextTextColor = DesktopStyleRules.ResolveTransitionTextColor(
                 window.WidgetAppearance.TextColor,
                 _lastAppliedStyle,
@@ -2511,6 +2493,7 @@ public sealed partial class WidgetCoordinator : IDisposable
         {
             case FileBoxWindow box:
                 box.State.IsHidden = !visible;
+                box.SyncGroupSharedProperties();
                 if (visible)
                 {
                     _windowsHiddenFromTray.Remove(box);
@@ -2560,6 +2543,8 @@ public sealed partial class WidgetCoordinator : IDisposable
             QuickPlacesWindow => "将从桌面隐藏“快捷入口”。继续吗？",
             InformationWidgetWindow => "将删除此桌面信息组件及其本机设置。继续吗？",
             TodoWidgetWindow => "将删除此待办及其中的项目。继续吗？",
+            FileBoxWindow box when box.IsGrouped =>
+                $"将删除此组合收纳盒中的全部 {box.Tabs.Count} 个标签页及其映射（不删除原文件）。继续吗？",
             FileBoxWindow => "将删除此文件收纳盒及其中的映射。继续吗？",
             _ => "将删除此组件。继续吗？"
         };
@@ -2618,12 +2603,16 @@ public sealed partial class WidgetCoordinator : IDisposable
                 }
                 break;
             case FileBoxWindow box:
-                _state.FileBoxes.RemoveAll(x => x.Id == box.State.Id);
-                // A category box the user deleted is not created again by organising.
-                if (box.State.DesktopCategory != DesktopGroupCategory.None
-                    && !_state.DismissedDesktopCategories.Contains(box.State.DesktopCategory))
+                var tabIds = box.Tabs.Select(tab => tab.Id).ToHashSet();
+                _state.FileBoxes.RemoveAll(x => tabIds.Contains(x.Id));
+                // Category boxes the user deleted are not created again by organising.
+                foreach (var tab in box.Tabs)
                 {
-                    _state.DismissedDesktopCategories.Add(box.State.DesktopCategory);
+                    if (tab.DesktopCategory != DesktopGroupCategory.None
+                        && !_state.DismissedDesktopCategories.Contains(tab.DesktopCategory))
+                    {
+                        _state.DismissedDesktopCategories.Add(tab.DesktopCategory);
+                    }
                 }
                 break;
         }
@@ -2934,10 +2923,9 @@ public sealed partial class WidgetCoordinator : IDisposable
 
                 foreach (var (boxId, paths) in distribution.ByBox)
                 {
-                    if (_windows.OfType<FileBoxWindow>().FirstOrDefault(
-                            candidate => candidate.State.Id == boxId) is { } boxWindow)
+                    if (FindFileBoxWindow(boxId) is { } boxWindow)
                     {
-                        var added = await boxWindow.AddMappingsAsync(paths);
+                        var added = await boxWindow.AddMappingsToBoxAsync(boxId, paths);
                         if (added > 0)
                         {
                             boxWindow.SetOperationStatus($"已自动收纳 {added} 项新桌面项目");
@@ -2984,9 +2972,9 @@ public sealed partial class WidgetCoordinator : IDisposable
             var left = 0;
             foreach (var (boxId, paths) in distribution.ByBox)
             {
-                if (_windows.OfType<FileBoxWindow>().FirstOrDefault(candidate => candidate.State.Id == boxId) is { } boxWindow)
+                if (FindFileBoxWindow(boxId) is { } boxWindow)
                 {
-                    added += await boxWindow.AddMappingsAsync(paths);
+                    added += await boxWindow.AddMappingsToBoxAsync(boxId, paths);
                 }
             }
 
@@ -3024,12 +3012,20 @@ public sealed partial class WidgetCoordinator : IDisposable
                 }
                 else
                 {
-                    window = _windows.OfType<FileBoxWindow>().Single(
-                        candidate => candidate.State.Id == state.Id);
-                    window.AssignDesktopCategory(category, GetCategoryTitle(category));
+                    window = FindFileBoxWindow(state.Id)!;
+                    if (window.State.Id == state.Id)
+                    {
+                        window.AssignDesktopCategory(category, GetCategoryTitle(category));
+                    }
+                    else
+                    {
+                        state.DesktopCategory = category;
+                        state.Title = GetCategoryTitle(category);
+                        window.RefreshTabStripItems();
+                    }
                 }
 
-                added += await window.AddMappingsAsync(paths);
+                added += await window.AddMappingsToBoxAsync(state.Id, paths);
             }
 
             MoveSystemPlacesToFolderBox();
@@ -3081,19 +3077,34 @@ public sealed partial class WidgetCoordinator : IDisposable
 
     // This PC, the Recycle Bin, Downloads and the desktop folder are places, so they live in
     // the folder box: the desktop-folder category box, or a box that collects folders.
-    private FileBoxWindow? FolderBox() =>
-        _windows.OfType<FileBoxWindow>().FirstOrDefault(box => box.State.DesktopCategory == DesktopGroupCategory.Folders)
-        ?? _windows.OfType<FileBoxWindow>().FirstOrDefault(box => box.State.CollectFolders);
+    private (FileBoxWindow Window, FileBoxState Tab)? FolderBoxTarget()
+    {
+        foreach (var box in _windows.OfType<FileBoxWindow>())
+        {
+            if (box.Tabs.FirstOrDefault(tab => tab.DesktopCategory == DesktopGroupCategory.Folders) is { } catTab)
+            {
+                return (box, catTab);
+            }
+        }
+        foreach (var box in _windows.OfType<FileBoxWindow>())
+        {
+            if (box.Tabs.FirstOrDefault(tab => tab.CollectFolders) is { } collectTab)
+            {
+                return (box, collectTab);
+            }
+        }
+        return null;
+    }
 
     private void MoveSystemPlacesToFolderBox()
     {
-        if (FolderBox() is not { } folders)
+        if (FolderBoxTarget() is not { } target)
         {
             return;
         }
-        foreach (var box in _windows.OfType<FileBoxWindow>().Where(box => box != folders).ToList())
+        foreach (var box in _windows.OfType<FileBoxWindow>().ToList())
         {
-            box.MoveSystemPlacesTo(folders);
+            box.MoveSystemPlacesToTab(target.Window, target.Tab);
         }
     }
 
@@ -3359,8 +3370,9 @@ public sealed partial class WidgetCoordinator : IDisposable
                     todo.Title,
                     todo.Items
                         .Where(item => !string.IsNullOrWhiteSpace(item.Text))
-                        .Where(item => TodoService.BelongsToTodayList(item, DateTime.Today))
-                        .ToList())
+                        .Where(item => TodoService.BelongsToTodayList(item, DateTime.Today, todo.CarryOverIncomplete))
+                        .ToList(),
+                    todo.CarryOverIncomplete)
                 : null;
 
         public void TodoItemToggled()
@@ -3585,7 +3597,11 @@ public sealed partial class WidgetCoordinator : IDisposable
                         ?? Path.GetFileNameWithoutExtension(executablePath),
                     ExecutablePath = executablePath
                 };
-            _ = await WindowCommandService.RevealOrLaunchAsync(pinned);
+            var result = await WindowCommandService.RevealOrLaunchAsync(pinned, preferredProcessId: processId);
+            if (!result.Succeeded && !owner._isExiting && !string.IsNullOrWhiteSpace(result.Message))
+            {
+                owner._trayIcon.ShowBalloonTip(3000, pinned.DisplayName, result.Message, TrayTipKind.Info);
+            }
         }
 
         public void ExitApp() => owner.Exit();

@@ -401,6 +401,36 @@ internal static class DockNativeMethods
     [DllImport("kernel32.dll")]
     internal static extern uint GetCurrentThreadId();
 
+    internal const uint Th32csSnapProcess = 0x00000002;
+    internal static readonly nint InvalidHandleValue = new(-1);
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    internal struct ProcessEntry32W
+    {
+        internal uint Size;
+        internal uint Usage;
+        internal uint ProcessId;
+        internal nuint DefaultHeapId;
+        internal uint ModuleId;
+        internal uint Threads;
+        internal uint ParentProcessId;
+        internal int PriClassBase;
+        internal uint Flags;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)]
+        internal string ExeFile;
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    internal static extern nint CreateToolhelp32Snapshot(uint flags, uint processId);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool Process32FirstW(nint snapshot, ref ProcessEntry32W entry);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool Process32NextW(nint snapshot, ref ProcessEntry32W entry);
+
     [DllImport("kernel32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool CloseHandle(nint handle);

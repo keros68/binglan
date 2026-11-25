@@ -90,6 +90,7 @@ public partial class IceBlueDockWindow : Window
     private DateTimeOffset _lastReservationAttempt;
     private readonly DockAttention _attention = new();
     private readonly DockToggleCooldown _toggleCooldown = new(() => Environment.TickCount64);
+    private readonly DockLaunchCooldown _launchCooldown = new(() => Environment.TickCount64);
     // The icon size the row is built with: the chosen size, shrunk while auto-fitting.
     private double _effectiveIconSize = DockState.DefaultIconSize;
     private bool _dockOverflowing;
@@ -1600,7 +1601,8 @@ public partial class IceBlueDockWindow : Window
             var result = await WindowCommandService.ToggleAsync(
                 item.Group,
                 _toggleCooldown,
-                DisplayNameOf(item));
+                DisplayNameOf(item),
+                _attention.AttentionPriority);
             if (!result.NoLiveWindows)
             {
                 Report(result);
@@ -1629,7 +1631,9 @@ public partial class IceBlueDockWindow : Window
         _revealPending = true;
         try
         {
-            Report(await WindowCommandService.RevealOrLaunchAsync(item.Pinned));
+            Report(await WindowCommandService.RevealOrLaunchAsync(
+                item.Pinned,
+                launchCooldown: _launchCooldown));
         }
         finally
         {

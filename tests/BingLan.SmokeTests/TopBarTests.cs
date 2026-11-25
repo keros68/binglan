@@ -348,9 +348,12 @@ public static class TopBarTests
             && wifiDefault.Tooltip == "WLAN：Office-5G（信号 82%）",
             "默认状态顶栏应只显示 WLAN，悬停保留名称与信号强度");
         Assert(TopBarModuleRules.FormatNetworkLabel(wifiDefault, showWifiName: false) == "WLAN"
-            && TopBarModuleRules.FormatNetworkLabel(wifiDefault, showWifiName: true) == "Office-5G",
-            "按开关切换顶栏是否显示 Wi-Fi 名称");
-        Assert(new TopBarState().ShowWifiName is null or false, "新状态默认不显示 Wi-Fi 名称");
+            && TopBarModuleRules.FormatNetworkLabel(wifiDefault, showWifiName: true) == "Office-5G"
+            && TopBarModuleRules.FormatNetworkLabel(wifiDefault, showWifiName: true, iconOnly: true) == string.Empty
+            && TopBarModuleRules.FormatNetworkLabel(wifiDefault, showWifiName: false, iconOnly: true) == string.Empty,
+            "按开关切换顶栏是否显示 Wi-Fi 名称及仅图标模式");
+        Assert(new TopBarState().ShowWifiName is null or false && new TopBarState().NetworkIconOnly is null or false,
+            "新状态默认不显示 Wi-Fi 名称且不隐藏网络文字");
 
         var wifiShown = TopBarModuleRules.DescribeNetwork(true, true, "Office-5G", 82, showWifiName: true);
         Assert(wifiShown is { Connected: true, IsWireless: true, Label: "Office-5G", SignalQuality: 82 }
@@ -637,6 +640,7 @@ public static class TopBarTests
         state.TopBar.SurfaceColor = "#112233";
         state.TopBar.SurfaceOpacity = 0.5d;
         state.TopBar.ShowWifiName = true;
+        state.TopBar.NetworkIconOnly = true;
         state.Dock.PinnedApps.Clear();
 
         var area = new ThemeArea(0, 0, 1920, 1040);
@@ -653,10 +657,12 @@ public static class TopBarTests
         Assert(!json.Contains("DISPLAY"), "主题不携带显示器标识");
         Assert(!json.Contains(state.TopBar.MonitorDeviceName ?? "null-marker"), "无显示器名");
         Assert(!json.Contains("ShowWifiName", StringComparison.OrdinalIgnoreCase), "主题不携带 ShowWifiName 本机设置");
+        Assert(!json.Contains("NetworkIconOnly", StringComparison.OrdinalIgnoreCase), "主题不携带 NetworkIconOnly 本机设置");
 
         var target = new TopBarState();
         target.MonitorDeviceName = "\\\\.\\DISPLAY7";
         target.ShowWifiName = false;
+        target.NetworkIconOnly = false;
         ThemeRules.ApplyTopBar(package, target);
         Assert(target.IsEnabled, "导入顶栏开关");
         Assert(target.VisibilityMode == TopBarVisibilityMode.SmartHide, "导入显示方式");
@@ -664,6 +670,7 @@ public static class TopBarTests
         Assert(!target.Modules.TrayOverflow, "导入保留托盘入口开关");
         Assert(target.MonitorDeviceName == "\\\\.\\DISPLAY7", "导入不动显示器");
         Assert(target.ShowWifiName == false, "导入不动本机 ShowWifiName 设置");
+        Assert(target.NetworkIconOnly == false, "导入不动本机 NetworkIconOnly 设置");
 
         // 旧主题（无顶栏字段）导入：关闭顶栏、保留本机模块开关。
         var legacy = JsonSerializer.SerializeToNode(package)!;

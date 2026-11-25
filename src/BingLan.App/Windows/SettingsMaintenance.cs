@@ -45,6 +45,15 @@ public sealed class SettingsMaintenance
     /// <summary>Shows or hides a standalone widget (note or file box) without deleting it.</summary>
     public Action<WidgetWindowBase, bool>? SetWidgetVisibility { get; init; }
 
+    /// <summary>Merges source file box (or group) into target as tabs; returns the combined host.</summary>
+    public Func<FileBoxWindow, FileBoxWindow, FileBoxWindow?>? MergeFileBoxes { get; init; }
+
+    /// <summary>Detaches a single tab out of a grouped file box into a standalone window.</summary>
+    public Func<FileBoxWindow, BingLan.Core.Models.FileBoxState, FileBoxWindow?>? DetachFileBoxTab { get; init; }
+
+    /// <summary>Splits all tabs of a grouped file box back into standalone windows.</summary>
+    public Action<FileBoxWindow>? SplitFileBoxGroup { get; init; }
+
     /// <summary>Deletes (or, for built-in cards, hides) a card after asking; true when it went.</summary>
     public Func<WidgetWindowBase, bool> DeleteWidget { get; init; } = _ => false;
     public Func<string, string, string> ExportTheme { get; init; } = (_, _) => string.Empty;

@@ -700,9 +700,57 @@ static void TestTrayAppRevealRules()
     AssertEqual(0x0003u, weixin!.Modifiers, "微信唤回快捷键应为 Ctrl+Alt");
     AssertEqual((int)'W', weixin.VirtualKey, "微信唤回快捷键主键应为 W");
     AssertEqual(weixin, TrayAppRevealRules.HotkeyFor(@"C:\Program Files\Tencent\WeChat\WECHAT.EXE"), "微信 3.x 不区分大小写也应匹配");
-    AssertEqual<TrayRevealHotkey?>(null, TrayAppRevealRules.HotkeyFor(@"C:\Program Files\Tencent\QQNT\QQ.exe"), "其他托盘应用不发送快捷键");
+
+    AssertEqual<TrayRevealHotkey?>(null, TrayAppRevealRules.HotkeyFor(@"D:\App\QQ\QQ.exe"), "QQ 不在无法确认归属时盲发 Ctrl+Alt+Z");
+    Assert(TrayAppRevealRules.PreventsRelaunchWhenRunning(@"D:\App\QQ\QQ.exe"), "QQ 驻留托盘时左键不应重复拉起新登录窗");
+    Assert(TrayAppRevealRules.PreventsRelaunchWhenRunning(@"D:\App\Weixin\Weixin.exe"), "微信驻留托盘时左键不应重复拉起新登录窗");
+    Assert(!TrayAppRevealRules.PreventsRelaunchWhenRunning(@"C:\Users\me\AppData\Local\Feishu\Feishu.exe"), "单实例自唤回的通讯软件允许默认启动唤回");
     AssertEqual<TrayRevealHotkey?>(null, TrayAppRevealRules.HotkeyFor(@"D:\Tools\Weixin.exe.lnk"), "只按可执行文件名匹配");
     AssertEqual<TrayRevealHotkey?>(null, TrayAppRevealRules.HotkeyFor(null), "无路径的固定项（打包应用）不发送快捷键");
+
+    // 单开多进程（例如微信 4.x / NTQQ 含渲染、OCR、GPU 子进程）必须只计为 1 个根实例。
+    var singleWeixinWithChildren = new ProcessHierarchyEntry[]
+    {
+        new(14600, 18340),
+        new(10632, 14600),
+        new(12092, 14600),
+        new(18348, 14600),
+        new(15740, 14600)
+    };
+    AssertEqual(1, TrayAppRevealRules.CountRootInstances(singleWeixinWithChildren), "带子进程的单开微信应计为 1 个实例");
+
+    var dualWeixin = new ProcessHierarchyEntry[]
+    {
+        new(14600, 18340),
+        new(10632, 14600),
+        new(24600, 18340),
+        new(20632, 24600)
+    };
+    AssertEqual(2, TrayAppRevealRules.CountRootInstances(dualWeixin), "双开微信应计为 2 个根实例");
+    AssertEqual(0, TrayAppRevealRules.CountRootInstances([]), "空进程列表应计为 0");
+
+    // 给定某个隐藏辅助进程 PID，应解析到它所属根实例下的全部同实例进程，而不串到另一个双开实例。
+    var firstInstancePids = TrayAppRevealRules.InstanceProcessIdsFor(dualWeixin, 10632);
+    Assert(firstInstancePids.SetEquals([14600u, 10632u]), "辅助进程应归并到同实例的根与兄弟进程");
+    var secondInstancePids = TrayAppRevealRules.InstanceProcessIdsFor(dualWeixin, 20632);
+    Assert(secondInstancePids.SetEquals([24600u, 20632u]), "第二实例辅助进程不得混入第一实例进程");
+    var unknownPid = TrayAppRevealRules.InstanceProcessIdsFor(dualWeixin, 99999);
+    Assert(unknownPid.SetEquals([99999u]), "不在层次表中的 PID 应回退为自身");
+
+    // 托盘隐藏态决策：0 实例启动新进程，1 实例发热键或提示（不误开登录窗），多实例提示从托盘选号。
+    AssertEqual(TrayRevealAction.LaunchNewProcess, TrayAppRevealRules.DecideWhenHidden(0, hotkeyRegistered: false), "未运行时应启动新进程");
+    AssertEqual(TrayRevealAction.SendGlobalHotkey, TrayAppRevealRules.DecideWhenHidden(1, hotkeyRegistered: true), "单实例且热键已注册应发送热键");
+    AssertEqual(TrayRevealAction.NotifyHotkeyUnavailable, TrayAppRevealRules.DecideWhenHidden(1, hotkeyRegistered: false), "单实例但热键失效不应回退弹新登录窗");
+    AssertEqual(TrayRevealAction.NotifyMultiInstanceInTray, TrayAppRevealRules.DecideWhenHidden(2, hotkeyRegistered: true), "多实例驻留托盘不得盲发全局热键");
+
+    // 同应用启动冷却：防止慢机器连点开出多个进程。
+    long now = 10_000;
+    var cooldown = new DockLaunchCooldown(() => now);
+    Assert(cooldown.TryAcquire(@"D:\App\Weixin\Weixin.exe"), "首次启动应放行");
+    Assert(!cooldown.TryAcquire(@"d:\app\weixin\weixin.exe"), "冷却期内重复点击同一应用应拦截（忽略大小写）");
+    Assert(cooldown.TryAcquire(@"D:\App\QQ\QQ.exe"), "不同应用互不阻塞");
+    now += DockLaunchCooldown.CooldownMs;
+    Assert(cooldown.TryAcquire(@"D:\App\Weixin\Weixin.exe"), "冷却期结束后应重新放行");
 }
 
 static void TestUntitledWindowDisplayName()
@@ -2393,6 +2441,25 @@ static void TestSelectActivationTarget()
         (nint)100,
         WindowActivationRules.SelectActivationTarget([helperUnminimizedDisabled])?.Handle ?? 0,
         "全不可直接激活时应兜底返回首项");
+
+    // 多开/多窗口组内存在正在闪烁提醒的窗口时，点 Dock 优先激活精确闪烁的那个句柄，优于同进程未闪烁窗口。
+    var firstAccount = new WindowCandidateInfo(601, IsMinimized: false, IsEnabled: true, HasEnabledPopup: false, HasTitle: true);
+    var secondFlashing = new WindowCandidateInfo(602, IsMinimized: true, IsEnabled: true, HasEnabledPopup: false, HasTitle: true);
+    AssertEqual(
+        (nint)602,
+        WindowActivationRules.SelectActivationTarget([firstAccount, secondFlashing], handle => handle == 602 ? 2 : 1)?.Handle ?? 0,
+        "同进程两窗口仅第二个句柄精确闪烁时应优先激活精确闪烁句柄，而非按顺序选第一个");
+    AssertEqual(
+        (nint)602,
+        WindowActivationRules.SelectActivationTarget([firstAccount, secondFlashing], handle => handle == 602 ? 1 : 0)?.Handle ?? 0,
+        "隐藏消息窗仅按进程匹配时也应优先激活匹配进程下的窗口");
+
+    // 仅禁用无弹窗的辅助窗闪烁时，不应压过同组内可正常激活的主窗。
+    var disabledFlashing = new WindowCandidateInfo(603, IsMinimized: false, IsEnabled: false, HasEnabledPopup: false, HasTitle: false);
+    AssertEqual(
+        (nint)601,
+        WindowActivationRules.SelectActivationTarget([disabledFlashing, firstAccount], handle => handle == 603 ? 2 : 0)?.Handle ?? 0,
+        "不可直接激活的闪烁窗口不应压过同组内可激活窗口");
 }
 
 static void TestActivationBlockedMessages()

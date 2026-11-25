@@ -17,7 +17,8 @@ internal static class WindowCommandService
     internal static async Task<WindowCommandResult> ToggleAsync(
         WindowGroup group,
         DockToggleCooldown cooldown,
-        string? displayName = null)
+        string? displayName = null,
+        Func<TrackedWindow, int>? attentionPriority = null)
     {
         var name = string.IsNullOrWhiteSpace(displayName) ? group.DisplayName : displayName;
         if (group.Windows.Count == 0)
@@ -37,9 +38,26 @@ internal static class WindowCommandService
             .Select(entry => entry.Window)
             .FirstOrDefault(window => window.Handle == foreground
                 || (foregroundRoot != 0 && GetRootOwnerOrSelf(window.Handle) == foregroundRoot));
+        Func<nint, int>? handlePriority = attentionPriority is null
+            ? null
+            : handle => live.FirstOrDefault(entry => entry.Window.Handle == handle).Window is { } matched
+                ? attentionPriority(matched)
+                : 0;
         var selected = WindowActivationRules.SelectActivationTarget(
-            live.Select(entry => entry.Candidate).ToArray())!;
+            live.Select(entry => entry.Candidate).ToArray(),
+            handlePriority)!;
         var target = live.First(entry => entry.Window.Handle == selected.Handle).Window;
+
+        // If another window in this group (e.g., a second WeChat/QQ instance or a flashing
+        // sibling window) is requesting attention, switch straight to it instead of minimizing
+        // the currently active sibling.
+        if (attentionPriority is not null
+            && attentionPriority(target) > 0
+            && (foregroundInGroup is null || foregroundInGroup.Handle != target.Handle))
+        {
+            cooldown.Clear(target.Handle);
+            return await FocusAsync(target, DockNativeMethods.IsIconic(target.Handle), name);
+        }
 
         // A minimized foreground is either stale (the pointer has not moved on yet) or
         // an already-minimized window the system still names; both mean "restore".
@@ -272,50 +290,87 @@ internal static class WindowCommandService
             : new WindowCommandResult(false, $"无法打开 {item.DisplayName}：{failure.Message}");
     }
 
-    // WeChat closed to the tray can be raised through its own global "show window"
-    // hotkey (verified with WeChat 4.1.15: the logged-in main window returns, no blank
-    // window, no login panel). The hotkey toggles, so it is sent only while the app runs
-    // without a shown window, and only while some app holds that combination. A changed
-    // or disabled hotkey, or no window within the timeout, falls back to Launch.
-    internal static async Task<WindowCommandResult> RevealOrLaunchAsync(DockPinnedApp app)
+    // Apps like WeChat and QQ close to the tray with hidden windows that must not be force-shown
+    // from outside, and re-launching their exe spawns a new login panel. Single-instance tray
+    // residency uses the app's own reveal hotkey; multi-instance tray residency or hotkey failure
+    // shows a clear hint instead of popping the wrong account or opening an unwanted login window.
+    internal static async Task<WindowCommandResult> RevealOrLaunchAsync(
+        DockPinnedApp app,
+        uint? preferredProcessId = null,
+        DockLaunchCooldown? launchCooldown = null)
     {
         if (DockPinRules.IsPathPin(app))
         {
             return await OpenPathAsync(app);
         }
 
-        if (TrayAppRevealRules.HotkeyFor(app.ExecutablePath) is not { } hotkey)
+        var cooldownKey = app.ExecutablePath ?? app.AppUserModelId;
+        var preventsRelaunch = TrayAppRevealRules.PreventsRelaunchWhenRunning(app.ExecutablePath);
+        var hotkey = TrayAppRevealRules.HotkeyFor(app.ExecutablePath);
+        if (!preventsRelaunch && hotkey is null)
         {
+            if (launchCooldown is not null && !launchCooldown.TryAcquire(cooldownKey))
+            {
+                return new WindowCommandResult(true, $"正在启动 {app.DisplayName}");
+            }
             return await LaunchAsync(app);
         }
 
-        var processIds = await Task.Run(() => RunningProcessIds(app.ExecutablePath!));
-        if (processIds.Count == 0)
+        var hierarchy = await Task.Run(() => RunningProcessHierarchy(app.ExecutablePath!));
+        if (hierarchy.Count == 0)
         {
+            if (launchCooldown is not null && !launchCooldown.TryAcquire(cooldownKey))
+            {
+                return new WindowCommandResult(true, $"正在启动 {app.DisplayName}");
+            }
             return await LaunchAsync(app);
         }
 
-        // The window is already back but the dock has not refreshed yet (a second click
-        // right after a reveal): switch to it, since launching again would open the
-        // app's login panel and the hotkey would hide the window.
-        var shown = FindShownWindow(processIds);
-        if (shown != 0)
+        var processIds = hierarchy.Select(entry => entry.ProcessId).ToHashSet();
+
+        // If a specific flashing instance was targeted (e.g. from the top bar), check all
+        // processes belonging to that root instance before falling back to any global hotkey
+        // (an alert may come from a hidden helper process while the main process has a window).
+        if (preferredProcessId is { } targetPid && targetPid != 0)
         {
-            var tracked = new TrackedWindow(
-                shown,
-                0,
-                app.DisplayName,
-                app.AppUserModelId,
-                app.ExecutablePath,
-                false,
-                DockNativeMethods.IsIconic(shown));
-            return await FocusAsync(tracked, tracked.IsMinimized, app.DisplayName);
+            var instancePids = TrayAppRevealRules.InstanceProcessIdsFor(hierarchy, targetPid);
+            var preferredShown = FindShownWindow(instancePids);
+            if (preferredShown != 0)
+            {
+                DockNativeMethods.GetWindowThreadProcessId(preferredShown, out var shownPid);
+                return await FocusRevealedHandleAsync(preferredShown, shownPid, app);
+            }
+        }
+        else
+        {
+            var shown = FindShownWindow(processIds);
+            if (shown != 0)
+            {
+                DockNativeMethods.GetWindowThreadProcessId(shown, out var shownPid);
+                return await FocusRevealedHandleAsync(shown, shownPid, app);
+            }
         }
 
-        if (!IsHotkeyRegistered(hotkey)
-            || !ShellSurfaceNativeMethods.SendChord(ModifierKeysOf(hotkey), (ushort)hotkey.VirtualKey))
+        var rootCount = TrayAppRevealRules.CountRootInstances(hierarchy);
+        var canSendHotkey = hotkey is not null && IsHotkeyRegistered(hotkey);
+        var decision = TrayAppRevealRules.DecideWhenHidden(rootCount, canSendHotkey);
+        switch (decision)
         {
-            return await LaunchAsync(app);
+            case TrayRevealAction.NotifyMultiInstanceInTray:
+                return new WindowCommandResult(false, TrayAppRevealRules.FormatMultiInstanceTrayHint(app.DisplayName));
+            case TrayRevealAction.NotifyHotkeyUnavailable:
+                return new WindowCommandResult(false, TrayAppRevealRules.FormatTrayHotkeyHint(app.DisplayName));
+            case TrayRevealAction.LaunchNewProcess:
+                if (launchCooldown is not null && !launchCooldown.TryAcquire(cooldownKey))
+                {
+                    return new WindowCommandResult(true, $"正在启动 {app.DisplayName}");
+                }
+                return await LaunchAsync(app);
+        }
+
+        if (hotkey is null || !ShellSurfaceNativeMethods.SendChord(ModifierKeysOf(hotkey), (ushort)hotkey.VirtualKey))
+        {
+            return new WindowCommandResult(false, TrayAppRevealRules.FormatTrayHotkeyHint(app.DisplayName));
         }
 
         var deadline = Environment.TickCount64 + (long)TrayAppRevealRules.RevealTimeout.TotalMilliseconds;
@@ -328,7 +383,23 @@ internal static class WindowCommandService
             }
         }
 
-        return await LaunchAsync(app);
+        return new WindowCommandResult(false, TrayAppRevealRules.FormatTrayHotkeyHint(app.DisplayName));
+    }
+
+    private static Task<WindowCommandResult> FocusRevealedHandleAsync(
+        nint handle,
+        uint processId,
+        DockPinnedApp app)
+    {
+        var tracked = new TrackedWindow(
+            handle,
+            processId,
+            app.DisplayName,
+            app.AppUserModelId,
+            app.ExecutablePath,
+            false,
+            DockNativeMethods.IsIconic(handle));
+        return FocusAsync(tracked, tracked.IsMinimized, app.DisplayName);
     }
 
     internal static WindowCommandResult Close(IEnumerable<TrackedWindow> windows)
@@ -647,13 +718,84 @@ internal static class WindowCommandService
             50,
             out _) != 0;
 
+    private static List<ProcessHierarchyEntry> RunningProcessHierarchy(string executablePath)
+    {
+        var ids = RunningProcessIds(executablePath);
+        if (ids.Count == 0)
+        {
+            return [];
+        }
+
+        var parents = ReadParentProcessIds(ids);
+        var entries = new List<ProcessHierarchyEntry>(ids.Count);
+        foreach (var pid in ids)
+        {
+            parents.TryGetValue(pid, out var ppid);
+            entries.Add(new ProcessHierarchyEntry(pid, ppid));
+        }
+        return entries;
+    }
+
+    private static Dictionary<uint, uint> ReadParentProcessIds(HashSet<uint> targetPids)
+    {
+        var result = new Dictionary<uint, uint>(targetPids.Count);
+        var snapshot = DockNativeMethods.CreateToolhelp32Snapshot(DockNativeMethods.Th32csSnapProcess, 0);
+        if (snapshot == 0 || snapshot == DockNativeMethods.InvalidHandleValue)
+        {
+            return result;
+        }
+
+        try
+        {
+            var entry = new DockNativeMethods.ProcessEntry32W
+            {
+                Size = (uint)Marshal.SizeOf<DockNativeMethods.ProcessEntry32W>()
+            };
+            if (DockNativeMethods.Process32FirstW(snapshot, ref entry))
+            {
+                do
+                {
+                    if (targetPids.Contains(entry.ProcessId))
+                    {
+                        result[entry.ProcessId] = entry.ParentProcessId;
+                    }
+                }
+                while (DockNativeMethods.Process32NextW(snapshot, ref entry));
+            }
+        }
+        finally
+        {
+            DockNativeMethods.CloseHandle(snapshot);
+        }
+
+        return result;
+    }
+
     private static HashSet<uint> RunningProcessIds(string executablePath)
     {
         var ids = new HashSet<uint>();
+        int currentSessionId;
+        using (var current = Process.GetCurrentProcess())
+        {
+            currentSessionId = current.SessionId;
+        }
+
         foreach (var process in Process.GetProcessesByName(Path.GetFileNameWithoutExtension(executablePath)))
         {
             using (process)
             {
+                try
+                {
+                    if (process.SessionId != currentSessionId)
+                    {
+                        continue;
+                    }
+                }
+                catch (Exception exception) when (exception is Win32Exception or InvalidOperationException)
+                {
+                    continue;
+                }
+
                 if (string.Equals(
                         WindowCatalog.ExecutablePathOf((uint)process.Id),
                         executablePath,

@@ -125,6 +125,11 @@ public sealed class TopBarState
     /// screen recording or streaming; never exported with a theme.</summary>
     public bool? ShowWifiName { get; set; }
 
+    /// <summary>Whether the network module shows only the signal/ethernet icon without any
+    /// "WLAN" or SSID text label; tooltip still carries full connection details. Machine-local
+    /// and off by default (null or false).</summary>
+    public bool? NetworkIconOnly { get; set; }
+
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? ExtensionData { get; set; }
 }

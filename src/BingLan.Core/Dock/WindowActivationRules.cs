@@ -62,7 +62,9 @@ public static class WindowActivationRules
         return true;
     }
 
-    public static WindowCandidateInfo? SelectActivationTarget(IReadOnlyList<WindowCandidateInfo> liveWindows)
+    public static WindowCandidateInfo? SelectActivationTarget(
+        IReadOnlyList<WindowCandidateInfo> liveWindows,
+        Func<nint, int>? attentionPriority = null)
     {
         ArgumentNullException.ThrowIfNull(liveWindows);
         if (liveWindows.Count == 0)
@@ -70,12 +72,34 @@ public static class WindowActivationRules
             return null;
         }
 
-        return liveWindows.FirstOrDefault(w => !w.IsMinimized && w.CanActivateDirectly && w.HasTitle)
-            ?? liveWindows.FirstOrDefault(w => !w.IsMinimized && w.CanActivateDirectly)
-            ?? liveWindows.FirstOrDefault(w => w.IsMinimized && w.CanActivateDirectly && w.HasTitle)
-            ?? liveWindows.FirstOrDefault(w => w.IsMinimized && w.CanActivateDirectly)
-            ?? liveWindows[0];
+        if (attentionPriority is not null)
+        {
+            var activatable = liveWindows.Where(w => w.CanActivateDirectly).ToArray();
+            if (activatable.Length > 0)
+            {
+                var exactFlashing = activatable.Where(w => attentionPriority(w.Handle) >= 2).ToArray();
+                if (exactFlashing.Length > 0)
+                {
+                    return PickPreferredCandidate(exactFlashing);
+                }
+
+                var processFlashing = activatable.Where(w => attentionPriority(w.Handle) >= 1).ToArray();
+                if (processFlashing.Length > 0)
+                {
+                    return PickPreferredCandidate(processFlashing);
+                }
+            }
+        }
+
+        return PickPreferredCandidate(liveWindows);
     }
+
+    private static WindowCandidateInfo PickPreferredCandidate(IReadOnlyList<WindowCandidateInfo> candidates) =>
+        candidates.FirstOrDefault(w => !w.IsMinimized && w.CanActivateDirectly && w.HasTitle)
+        ?? candidates.FirstOrDefault(w => !w.IsMinimized && w.CanActivateDirectly)
+        ?? candidates.FirstOrDefault(w => w.IsMinimized && w.CanActivateDirectly && w.HasTitle)
+        ?? candidates.FirstOrDefault(w => w.IsMinimized && w.CanActivateDirectly)
+        ?? candidates[0];
 
     public static string FormatSwitchBlockedMessage(string displayName, bool targetElevated, bool foregroundElevated)
     {

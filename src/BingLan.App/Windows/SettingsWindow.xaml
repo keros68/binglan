@@ -1802,6 +1802,15 @@
                                                 <ComboBoxItem Content="周日"/>
                                             </ComboBox>
                                         </local:SettingsRow>
+                                        <local:SettingsRow Header="未完成待办跨天保留"
+                                                           Description="开启后前几天未完成的待办会自动留在今日列表，直到勾选完成或删除；也可在单条待办右键勾选“跨天常驻”"
+                                                           local:SettingsSearch.Keywords="永久待办 常驻待办 跨天 顺延 过期 未完成 保留 今日列表">
+                                            <CheckBox x:Name="TodoCarryOverCheckBox"
+                                                      AutomationProperties.Name="未完成待办跨天保留"
+                                                      Style="{StaticResource ToggleSwitchStyle}"
+                                                      Checked="TodoCarryOver_Changed"
+                                                      Unchecked="TodoCarryOver_Changed"/>
+                                        </local:SettingsRow>
                                     </local:SettingsGroup>
                                 </StackPanel>
 
@@ -2145,6 +2154,76 @@
                                                 <ComboBoxItem Content="5 秒（默认）" Tag="5"/>
                                                 <ComboBoxItem Content="10 秒" Tag="10"/>
                                             </ComboBox>
+                                        </local:SettingsRow>
+                                        <local:SettingsRow Header="平时全透明（移入显示）"
+                                                           Description="开启后平时整个文件收纳盒完全透明，鼠标移入或拖入文件时平滑显示；按“临时浮起文件收纳盒”快捷键或在设置中选中时也会显现"
+                                                           local:SettingsSearch.Keywords="桌面分组盒 文件收纳盒 全透明 透明 平时隐藏 移入显示 悬停显示 酷呆">
+                                            <CheckBox x:Name="FileBoxHideWhenIdleCheckBox"
+                                                      AutomationProperties.Name="平时全透明（移入显示）"
+                                                      Style="{StaticResource ToggleSwitchStyle}"
+                                                      Checked="FileBoxHideWhenIdle_Changed"
+                                                      Unchecked="FileBoxHideWhenIdle_Changed"/>
+                                        </local:SettingsRow>
+                                        <local:SettingsRow x:Name="FileBoxIdleHideDelayRow"
+                                                           Header="移出后隐藏延迟"
+                                                           Description="鼠标离开文件收纳盒后等待多久重新隐藏"
+                                                           Visibility="Collapsed"
+                                                           local:SettingsSearch.Keywords="隐藏延迟 全透明 移入显示 0.2秒 0.5秒 1秒 2秒">
+                                            <ComboBox x:Name="FileBoxIdleHideDelayComboBox"
+                                                      Width="180"
+                                                      AutomationProperties.Name="移出后隐藏延迟"
+                                                      SelectionChanged="FileBoxIdleHideDelay_Changed">
+                                                <ComboBoxItem Content="0.2 秒" Tag="0.2"/>
+                                                <ComboBoxItem Content="0.5 秒（默认）" Tag="0.5"/>
+                                                <ComboBoxItem Content="1 秒" Tag="1"/>
+                                                <ComboBoxItem Content="2 秒" Tag="2"/>
+                                            </ComboBox>
+                                        </local:SettingsRow>
+                                        <local:SettingsRow x:Name="FileBoxGroupTabsRow"
+                                                           Header="组合标签页"
+                                                           Description="切换标签页以分别设置各页的名称、视图与自动整理规则"
+                                                           Visibility="Collapsed"
+                                                           local:SettingsSearch.Keywords="组合盒子 组合收纳盒 标签页 合并 移出 拆分 酷呆">
+                                            <StackPanel Orientation="Horizontal">
+                                                <ComboBox x:Name="FileBoxGroupTabComboBox"
+                                                          Width="136"
+                                                          Margin="0,0,8,0"
+                                                          AutomationProperties.Name="当前编辑标签页"
+                                                          SelectionChanged="FileBoxGroupTab_Changed"/>
+                                                <Button x:Name="FileBoxDetachTabButton"
+                                                        Content="移出此页"
+                                                        Margin="0,0,6,0"
+                                                        Click="FileBoxDetachTab_Click"/>
+                                                <Button x:Name="FileBoxSplitGroupButton"
+                                                        Content="拆分全部"
+                                                        Click="FileBoxSplitGroup_Click"/>
+                                            </StackPanel>
+                                        </local:SettingsRow>
+                                        <local:SettingsRow x:Name="FileBoxHoverSwitchTabsRow"
+                                                           Header="悬停标签自动切换"
+                                                           Description="开启后鼠标移到左侧标签上即可直接切换分类，无需点击"
+                                                           Visibility="Collapsed"
+                                                           local:SettingsSearch.Keywords="组合盒子 标签页 悬停切换 自动切换">
+                                            <CheckBox x:Name="FileBoxHoverSwitchTabsCheckBox"
+                                                      AutomationProperties.Name="悬停标签自动切换"
+                                                      Style="{StaticResource ToggleSwitchStyle}"
+                                                      Checked="FileBoxHoverSwitchTabs_Changed"
+                                                      Unchecked="FileBoxHoverSwitchTabs_Changed"/>
+                                        </local:SettingsRow>
+                                        <local:SettingsRow x:Name="FileBoxMergeIntoRow"
+                                                           Header="合并到其他收纳盒"
+                                                           Description="把当前收纳盒作为标签页并入另一个盒子；也可直接把盒子拖到另一个盒子中央松手合并"
+                                                           Visibility="Collapsed"
+                                                           local:SettingsSearch.Keywords="组合盒子 合并收纳盒 标签页 酷呆">
+                                            <StackPanel Orientation="Horizontal">
+                                                <ComboBox x:Name="FileBoxMergeTargetComboBox"
+                                                          Width="168"
+                                                          Margin="0,0,8,0"
+                                                          AutomationProperties.Name="选择要并入的目标收纳盒"/>
+                                                <Button x:Name="FileBoxMergeButton"
+                                                        Content="合并"
+                                                        Click="FileBoxMerge_Click"/>
+                                            </StackPanel>
                                         </local:SettingsRow>
                                         <local:SettingsRow Header="桌面上的原图标"
                                                            Description="收纳只记路径不搬原文件。要隐藏 Windows 桌面图标，请开启“隐藏 Windows 桌面图标”；退出冰蓝桌面时自动恢复"
@@ -2818,6 +2897,16 @@
                                                       AutomationProperties.Name="系统托盘模块" Checked="TopBarSetting_Changed" Unchecked="TopBarSetting_Changed"/>
                                         </UniformGrid>
                                     </Border>
+                                    <local:SettingsRow x:Name="TopBarNetworkIconOnlyRow"
+                                                       Header="网络仅显示图标"
+                                                       Description="开启后顶栏只显示信号格或有线图标，隐藏“WLAN”与网络名称文字；悬停仍可查看完整信息"
+                                                       local:SettingsSearch.Keywords="WLAN Wi-Fi 网络 仅图标 隐藏文字">
+                                        <CheckBox x:Name="TopBarNetworkIconOnlyCheckBox"
+                                                  AutomationProperties.Name="网络仅显示图标"
+                                                  Style="{StaticResource ToggleSwitchStyle}"
+                                                  Checked="TopBarSetting_Changed"
+                                                  Unchecked="TopBarSetting_Changed"/>
+                                    </local:SettingsRow>
                                     <local:SettingsRow x:Name="TopBarShowWifiNameRow"
                                                        Header="在顶栏显示 Wi-Fi 名称"
                                                        Description="关闭时只显示信号格和“WLAN”，悬停仍可查看名称和信号强度；录屏或直播时建议关闭"

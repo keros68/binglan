@@ -52,7 +52,20 @@ public partial class FileBoxWindow : WidgetWindowBase
     internal event Action? PeekEscapeRequested;
 
     public FileBoxWindow(FileBoxState state)
+        : this([state])
     {
+    }
+
+    public FileBoxWindow(IReadOnlyList<FileBoxState> members)
+    {
+        ArgumentNullException.ThrowIfNull(members);
+        if (members.Count == 0)
+        {
+            throw new ArgumentException("A file box window requires at least one box state.", nameof(members));
+        }
+
+        _tabs = members.OrderBy(m => m.TabOrder).ToList();
+        var state = _tabs.FirstOrDefault(m => m.IsActiveTab) ?? _tabs[0];
         State = state;
         ConfirmDeleteOriginal = AskDeleteOriginal;
         ConfirmDeleteOriginals = AskDeleteOriginals;
@@ -66,17 +79,27 @@ public partial class FileBoxWindow : WidgetWindowBase
         ApplyViewMode();
         ApplyPlacement(state.Placement, state.IsLocked);
         WidgetCornerRadius = state.CornerRadius;
+        InitializeGroups();
         RefreshCount();
         if (state.IsCollapsed)
         {
             SetCollapsed(true);
         }
         RefreshPinOpenButton();
+        InitializeHoverReveal();
         _autoCollapseTimer.Tick += (_, _) => OnAutoCollapseTimerTick();
         _dragExpandTimer.Tick += (_, _) => OnDragExpandTimerTick();
         HookAutoCollapseContextMenus();
-        MouseEnter += (_, _) => RefreshAutoCollapseTimer();
-        MouseLeave += (_, _) => RefreshAutoCollapseTimer();
+        MouseEnter += (_, _) =>
+        {
+            RefreshAutoCollapseTimer();
+            RefreshHoverRevealState();
+        };
+        MouseLeave += (_, _) =>
+        {
+            RefreshAutoCollapseTimer();
+            RefreshHoverRevealState();
+        };
         DragEnter += (_, e) =>
         {
             _externalDragOver = true;
@@ -90,6 +113,7 @@ public partial class FileBoxWindow : WidgetWindowBase
                 _dragExpandTimer.Start();
             }
             RefreshAutoCollapseTimer();
+            RefreshHoverRevealState();
         };
         DragLeave += (_, _) =>
         {
@@ -101,6 +125,7 @@ public partial class FileBoxWindow : WidgetWindowBase
                 SetCollapsed(true, animate: true);
             }
             RefreshAutoCollapseTimer();
+            RefreshHoverRevealState();
         };
         Loaded += FileBoxWindow_Loaded;
         PreviewKeyDown += FileBoxWindow_PreviewKeyDown;
@@ -109,7 +134,7 @@ public partial class FileBoxWindow : WidgetWindowBase
         PreviewMouseLeftButtonUp += FileBoxWindow_TitleBarPointerUp;
     }
 
-    public FileBoxState State { get; }
+    public FileBoxState State { get; private set; }
 
     internal bool IsFoldAnimating => _foldAnimator.IsAnimating;
 
@@ -135,14 +160,100 @@ public partial class FileBoxWindow : WidgetWindowBase
 
     protected override void PopulateContextMenu(System.Windows.Controls.ContextMenu menu)
     {
+        var hideWhenIdle = new System.Windows.Controls.MenuItem
+        {
+            Header = "平时隐藏（移入显示）",
+            IsCheckable = true
+        };
+        hideWhenIdle.Click += (_, _) => SetHideWhenIdle(hideWhenIdle.IsChecked);
+
         var edgeDock = new System.Windows.Controls.MenuItem
         {
             Header = "贴边隐藏",
             IsCheckable = true
         };
         edgeDock.Click += (_, _) => EdgeDockToggled?.Invoke(this, edgeDock.IsChecked);
-        menu.Opened += (_, _) => edgeDock.IsChecked = IsEdgeDocked;
+
+        var mergeInto = new System.Windows.Controls.MenuItem
+        {
+            Header = "合并到其他文件收纳盒",
+            Visibility = Visibility.Collapsed
+        };
+
+        var hoverSwitch = new System.Windows.Controls.MenuItem
+        {
+            Header = "悬停标签自动切换",
+            IsCheckable = true,
+            Visibility = Visibility.Collapsed
+        };
+        hoverSwitch.Click += (_, _) => SetHoverSwitchTabs(hoverSwitch.IsChecked);
+
+        var detachTab = new System.Windows.Controls.MenuItem
+        {
+            Header = "移出当前标签",
+            Visibility = Visibility.Collapsed
+        };
+        detachTab.Click += (_, _) => DetachTabRequested?.Invoke(this, State);
+
+        var splitGroup = new System.Windows.Controls.MenuItem
+        {
+            Header = "拆分为独立收纳盒",
+            Visibility = Visibility.Collapsed
+        };
+        splitGroup.Click += (_, _) => SplitGroupRequested?.Invoke(this);
+
+        var deleteTab = new System.Windows.Controls.MenuItem
+        {
+            Header = "删除当前标签…",
+            Visibility = Visibility.Collapsed
+        };
+        deleteTab.Click += (_, _) => DeleteTabRequested?.Invoke(this, State);
+
+        var groupSeparator = new System.Windows.Controls.Separator
+        {
+            Visibility = Visibility.Collapsed
+        };
+
+        menu.Opened += (_, _) =>
+        {
+            hideWhenIdle.IsChecked = State.HideWhenIdle;
+            hideWhenIdle.IsEnabled = !IsEdgeDocked;
+            edgeDock.IsChecked = IsEdgeDocked;
+
+            mergeInto.Items.Clear();
+            foreach (var other in OtherBoxes())
+            {
+                if (!other.IsVisible || other.IsEdgeDocked)
+                {
+                    continue;
+                }
+                var captured = other;
+                var label = FileBoxGroupRules.FormatGroupDisplayTitle(captured.Tabs, captured.State.Id);
+                var target = new System.Windows.Controls.MenuItem { Header = label };
+                target.Click += (_, _) => MergeRequested?.Invoke(this, captured);
+                mergeInto.Items.Add(target);
+            }
+            mergeInto.Visibility = !IsEdgeDocked && mergeInto.Items.Count > 0
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+
+            var groupedVisibility = IsGrouped ? Visibility.Visible : Visibility.Collapsed;
+            groupSeparator.Visibility = groupedVisibility;
+            hoverSwitch.Visibility = groupedVisibility;
+            hoverSwitch.IsChecked = State.HoverSwitchTabs;
+            detachTab.Visibility = groupedVisibility;
+            splitGroup.Visibility = groupedVisibility;
+            deleteTab.Visibility = groupedVisibility;
+        };
+
+        menu.Items.Add(hideWhenIdle);
         menu.Items.Add(edgeDock);
+        menu.Items.Add(mergeInto);
+        menu.Items.Add(groupSeparator);
+        menu.Items.Add(hoverSwitch);
+        menu.Items.Add(detachTab);
+        menu.Items.Add(splitGroup);
+        menu.Items.Add(deleteTab);
     }
 
     protected override bool SuppressLayeredClip => IsEdgeDocked && !IsEdgeDockExpanded;
@@ -169,6 +280,10 @@ public partial class FileBoxWindow : WidgetWindowBase
     {
         IsEdgeDockExpanded = false;
         _autoCollapseTimer.Stop();
+        _idleHideTimer.Stop();
+        _isIdleHiddenVisual = false;
+        IdleHitSurface.Visibility = Visibility.Collapsed;
+        TabStripHost.Visibility = Visibility.Collapsed;
         EdgeDockSlideTransform.BeginAnimation(System.Windows.Media.TranslateTransform.XProperty, null);
         EdgeDockSlideTransform.X = 0;
         BodySurface.BeginAnimation(OpacityProperty, null);
@@ -197,6 +312,9 @@ public partial class FileBoxWindow : WidgetWindowBase
     {
         IsEdgeDockExpanded = true;
         _autoCollapseTimer.Stop();
+        _idleHideTimer.Stop();
+        _isIdleHiddenVisual = false;
+        IdleHitSurface.Visibility = Visibility.Collapsed;
         if (State.IsCollapsed)
         {
             SetCollapsed(false, animate: false);
@@ -204,7 +322,10 @@ public partial class FileBoxWindow : WidgetWindowBase
         EdgeDockTab.Visibility = Visibility.Collapsed;
         BodySurface.Visibility = Visibility.Visible;
         BoxLayout.Visibility = Visibility.Visible;
-        MinWidth = FileBoxEdgeDockRules.MinExpandedWidthDip;
+        RefreshTabStripLayout();
+        MinWidth = IsGrouped
+            ? Math.Max(FileBoxEdgeDockRules.MinExpandedWidthDip, FileBoxGroupRules.GroupedMinWidthDip)
+            : FileBoxEdgeDockRules.MinExpandedWidthDip;
         MinHeight = FileBoxEdgeDockRules.MinExpandedHeightDip;
         UpdateEdgeDockPosition(expandedBounds);
         RefreshLayeredClip();
@@ -248,7 +369,9 @@ public partial class FileBoxWindow : WidgetWindowBase
         EdgeDockTab.Visibility = Visibility.Collapsed;
         BodySurface.Visibility = Visibility.Visible;
         BoxLayout.Visibility = Visibility.Visible;
-        MinWidth = FileBoxEdgeDockRules.MinExpandedWidthDip;
+        MinWidth = IsGrouped
+            ? Math.Max(FileBoxEdgeDockRules.MinExpandedWidthDip, FileBoxGroupRules.GroupedMinWidthDip)
+            : FileBoxEdgeDockRules.MinExpandedWidthDip;
         MinHeight = State.IsCollapsed ? CollapsedHeight : FileBoxEdgeDockRules.MinExpandedHeightDip;
         MaxHeight = State.IsCollapsed ? CollapsedHeight : double.PositiveInfinity;
         // Crossing to a monitor with different DPI triggers WM_DPICHANGED resizing on the first
@@ -256,7 +379,9 @@ public partial class FileBoxWindow : WidgetWindowBase
         UpdateEdgeDockPosition(restoredBounds);
         UpdateEdgeDockPosition(restoredBounds);
         RefreshLayeredClip();
+        RefreshTabStripLayout();
         RefreshAutoCollapseTimer();
+        RefreshHoverRevealState();
     }
 
     internal void UpdateEdgeDockPosition(BingLan.Core.Dock.PixelRect bounds)
@@ -283,6 +408,7 @@ public partial class FileBoxWindow : WidgetWindowBase
             return;
         }
         State.AutoCollapse = enabled;
+        SyncGroupSharedProperties();
         if (!enabled)
         {
             _pinnedOpenForSession = false;
@@ -301,6 +427,7 @@ public partial class FileBoxWindow : WidgetWindowBase
         }
 
         State.AutoCollapseDelaySeconds = coerced;
+        SyncGroupSharedProperties();
         RefreshPinOpenButton();
         RefreshAutoCollapseTimer();
         NotifyStateChanged();
@@ -356,14 +483,24 @@ public partial class FileBoxWindow : WidgetWindowBase
     {
         _autoCollapseTimer.Stop();
         _dragExpandTimer.Stop();
+        DisposeHoverReveal();
+        DisposeGroups();
         _closeCts.Cancel();
         _closeCts.Dispose();
         base.OnClosed(e);
     }
 
-    protected override void OnTitleEditingChanged(bool isEditing) => RefreshAutoCollapseTimer();
+    protected override void OnTitleEditingChanged(bool isEditing)
+    {
+        RefreshAutoCollapseTimer();
+        RefreshHoverRevealState();
+    }
 
-    protected override void OnDragEnded() => RefreshAutoCollapseTimer();
+    protected override void OnDragEnded()
+    {
+        RefreshAutoCollapseTimer();
+        RefreshHoverRevealState();
+    }
 
     /// <summary>The other open boxes a mapping can be transferred to.</summary>
     internal Func<IReadOnlyList<FileBoxWindow>> OtherBoxes { get; set; } = () => [];
@@ -447,6 +584,7 @@ public partial class FileBoxWindow : WidgetWindowBase
         {
             TitleEditor.Text = committed;
         }
+        RefreshTabStripItems();
         RefreshEdgeDockTabToolTip();
         if (changed)
         {
@@ -464,6 +602,7 @@ public partial class FileBoxWindow : WidgetWindowBase
             EditableWidgetTitleKind.FileBox,
             GetOtherFileBoxTitles());
         TitleEditor.Text = State.Title;
+        RefreshTabStripItems();
         RefreshEdgeDockTabToolTip();
         NotifyStateChanged();
         if (!string.Equals(previous, State.Title, StringComparison.Ordinal))
@@ -475,6 +614,7 @@ public partial class FileBoxWindow : WidgetWindowBase
     protected override void OnLockChanged(bool locked)
     {
         State.IsLocked = locked;
+        SyncGroupSharedProperties();
     }
 
     private const double CollapsedHeight = 48d;
@@ -514,10 +654,12 @@ public partial class FileBoxWindow : WidgetWindowBase
         CollapsedSummaryText.Visibility = collapsed ? Visibility.Visible : Visibility.Collapsed;
         RefreshPinOpenButton();
         RefreshCollapsedSummary();
+        SyncGroupSharedProperties();
 
         var bodyElements = FoldBodyElements();
         if (collapsed)
         {
+            TabStripHost.Visibility = Visibility.Collapsed;
             FileBoxMotionOverlay.Children.Clear();
             void CommitCollapsedLayout()
             {
@@ -562,7 +704,9 @@ public partial class FileBoxWindow : WidgetWindowBase
                 _foldAnimator.Snap();
             }
         }
+        RefreshTabStripLayout();
         RefreshAutoCollapseTimer();
+        RefreshHoverRevealState();
     }
 
     private async void FileBoxWindow_Loaded(object sender, RoutedEventArgs e)
@@ -571,7 +715,9 @@ public partial class FileBoxWindow : WidgetWindowBase
         {
             SetCollapsed(true);
         }
+        RefreshTabStripLayout();
         RefreshAutoCollapseTimer();
+        RefreshHoverRevealState();
         if (_initialIconLoadStarted)
         {
             return;
@@ -627,6 +773,7 @@ public partial class FileBoxWindow : WidgetWindowBase
 
     private async void ImportDesktop_Click(object sender, RoutedEventArgs e)
     {
+        var targetTab = State;
         AddButton.IsEnabled = false;
         StatusText.Text = "正在扫描用户与公共桌面…";
 
@@ -639,9 +786,11 @@ public partial class FileBoxWindow : WidgetWindowBase
             };
             var paths = await Task.Run(
                 () => FileMappingService.EnumerateDirectChildren(desktopDirectories));
-            var added = await AddMappingsAsync(paths);
+            var added = await AddMappingsToBoxAsync(targetTab.Id, paths);
             StatusText.Text = added > 0
-                ? $"已新增 {added} 项"
+                ? (targetTab.Id == State.Id
+                    ? $"已新增 {added} 项"
+                    : $"已向“{targetTab.Title}”新增 {added} 项")
                 : "没有新的桌面项目可导入";
         }
         finally
@@ -691,6 +840,7 @@ public partial class FileBoxWindow : WidgetWindowBase
         }
         State.CornerRadius = WidgetCornerRadius;
         State.Items = _items.Select(x => x.Mapping).ToList();
+        SyncGroupSharedProperties();
     }
 
     private const string InternalBoxDragFormat = "BingLan.FileBoxMappings";
@@ -735,37 +885,28 @@ public partial class FileBoxWindow : WidgetWindowBase
 
     private async void Window_Drop(object sender, System.Windows.DragEventArgs e)
     {
-        _externalDragOver = false;
-        _dragExpandTimer.Stop();
-        var restoreCollapse = _expandedForExternalDrag;
-        _expandedForExternalDrag = false;
-        RefreshAutoCollapseTimer();
+        var restoreCollapse = BeginExternalDropCleanup();
         if (e.Data.GetDataPresent(InternalBoxDragFormat)
             && e.Data.GetData(InternalBoxDragFormat) is InternalBoxDragPayload payload
             && payload.SourceBoxId != State.Id)
         {
-            var sourceBox = OtherBoxes().FirstOrDefault(other => other.State.Id == payload.SourceBoxId);
-            if (sourceBox is not null)
+            if (ResolveBoxAndTab(payload.SourceBoxId) is { } resolved)
             {
                 var copyOnly = (e.KeyStates & System.Windows.DragDropKeyStates.ControlKey) != 0;
-                if (copyOnly)
-                {
-                    CopyMappingsFrom(sourceBox, payload.MappingIds);
-                }
-                else
-                {
-                    sourceBox.TransferMappingsByIdsTo(payload.MappingIds, this);
-                }
+                TransferMappingIdsBetweenTabs(
+                    resolved.Window,
+                    resolved.Tab,
+                    this,
+                    State,
+                    payload.MappingIds,
+                    copyOnly);
             }
         }
         else if (e.Data.GetData(System.Windows.DataFormats.FileDrop) is string[] paths)
         {
             await AddMappingsWithStatusAsync(paths);
         }
-        if (restoreCollapse && !State.IsCollapsed)
-        {
-            SetCollapsed(true, animate: true);
-        }
+        EndExternalDropCleanup(restoreCollapse);
     }
 
     private System.Windows.Point? _tileDragStart;
@@ -830,6 +971,7 @@ public partial class FileBoxWindow : WidgetWindowBase
         {
             _isTileOrFileDragActive = false;
             RefreshAutoCollapseTimer();
+            RefreshHoverRevealState();
             DragOutEnded?.Invoke();
         }
     }
@@ -1114,15 +1256,7 @@ public partial class FileBoxWindow : WidgetWindowBase
             }
             else if (Equals(item.Header, "转移到其他文件收纳盒"))
             {
-                var others = OtherBoxes();
-                item.Items.Clear();
-                foreach (var other in others)
-                {
-                    var target = new System.Windows.Controls.MenuItem { Header = other.State.Title };
-                    target.Click += (_, _) => TransferMapping(tile, other);
-                    item.Items.Add(target);
-                }
-                item.Visibility = others.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+                PopulateTransferTargets(item, [tile]);
             }
         }
     }
@@ -1183,15 +1317,35 @@ public partial class FileBoxWindow : WidgetWindowBase
     /// Moves this PC, the Recycle Bin, Downloads and the desktop folder to the given box;
     /// they are places, not apps or files.
     /// </summary>
-    internal void MoveSystemPlacesTo(FileBoxWindow target)
+    internal void MoveSystemPlacesTo(FileBoxWindow target) =>
+        MoveSystemPlacesToTab(target, target.State);
+
+    internal void MoveSystemPlacesToTab(FileBoxWindow targetWindow, FileBoxState targetTab)
     {
+        CaptureState();
         var places = new[] { KnownFolders.GetDownloadsPath(), DesktopFolderPath() };
-        foreach (var tile in _items
-                     .Where(tile => tile.IsShellEntry
-                         || places.Any(place => string.Equals(place, tile.Path, StringComparison.OrdinalIgnoreCase)))
-                     .ToList())
+        foreach (var sourceTab in _tabs.ToList())
         {
-            TransferMapping(tile, target);
+            if (sourceTab.Id == targetTab.Id)
+            {
+                continue;
+            }
+
+            var matchingIds = sourceTab.Items
+                .Where(item => FileMappingService.IsShellEntry(item.Path)
+                    || places.Any(place => string.Equals(place, item.Path, StringComparison.OrdinalIgnoreCase)))
+                .Select(item => item.Id)
+                .ToList();
+            if (matchingIds.Count > 0)
+            {
+                TransferMappingIdsBetweenTabs(
+                    this,
+                    sourceTab,
+                    targetWindow,
+                    targetTab,
+                    matchingIds,
+                    copyOnly: false);
+            }
         }
     }
 
@@ -1329,27 +1483,45 @@ public partial class FileBoxWindow : WidgetWindowBase
 
     private async Task<bool> AddSystemEntryAsync(string path, string title)
     {
+        var targetTab = State;
         var (icon, isMissing) = await Task.Run(() => (
             ShellIconProvider.GetIcon(path),
             !FileMappingService.IsShellEntry(path) && !File.Exists(path) && !Directory.Exists(path)));
+        if (_closeCts.IsCancellationRequested || !ContainsBox(targetTab.Id))
+        {
+            return false;
+        }
         CaptureState();
-        var added = FileMappingService.AddSystemEntry(State, path, title);
+        var added = FileMappingService.AddSystemEntry(targetTab, path, title);
         if (added == 0)
         {
             StatusText.Text = "该系统入口已存在";
             return false;
         }
 
-        var mapping = State.Items.Single(item => item.Path == path);
-        var tile = new FileTile(mapping, icon) { IsMissing = isMissing };
-        _items.Add(tile);
-        RefreshCount();
-        NotifyStateChanged();
-        if (IsLoaded)
+        var mapping = targetTab.Items.Single(item => item.Path == path);
+        if (targetTab.Id == State.Id)
         {
-            AnimateTileEnter([tile]);
+            var tile = new FileTile(mapping, icon) { IsMissing = isMissing };
+            _items.Add(tile);
+            RefreshCount();
+            NotifyStateChanged();
+            if (IsLoaded)
+            {
+                AnimateTileEnter([tile]);
+            }
+            StatusText.Text = $"已添加“{title}”";
         }
-        StatusText.Text = $"已添加“{title}”";
+        else
+        {
+            if (icon is not null)
+            {
+                _tabIconCache[mapping.Id] = (icon, isMissing);
+            }
+            RefreshTabStripItems();
+            NotifyStateChanged();
+            StatusText.Text = $"已向“{targetTab.Title}”添加“{title}”";
+        }
         return true;
     }
 
@@ -1507,15 +1679,7 @@ public partial class FileBoxWindow : WidgetWindowBase
                     item.Header = $"删除 {deletable.Count} 项到回收站…";
                     break;
                 case "BatchTransfer":
-                    var others = OtherBoxes();
-                    item.Items.Clear();
-                    foreach (var other in others)
-                    {
-                        var target = new System.Windows.Controls.MenuItem { Header = other.State.Title };
-                        target.Click += (_, _) => BatchTransferMappings(other, selected);
-                        item.Items.Add(target);
-                    }
-                    item.Visibility = others.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+                    PopulateTransferTargets(item, selected);
                     break;
             }
         }
@@ -1668,6 +1832,7 @@ public partial class FileBoxWindow : WidgetWindowBase
             return false;
         }
 
+        var targetTab = State;
         _deletingOriginal = true;
         RecycleResult result;
         try
@@ -1692,12 +1857,19 @@ public partial class FileBoxWindow : WidgetWindowBase
             return false;
         }
 
-        AnimateTileExit(tile);
-        _items.Remove(tile);
-        _selectedIds.Remove(tile.Mapping.Id);
-        FileMappingService.Remove(State, tile.Mapping.Id);
+        if (targetTab.Id == State.Id)
+        {
+            AnimateTileExit(tile);
+            _items.Remove(tile);
+            _selectedIds.Remove(tile.Mapping.Id);
+        }
+        FileMappingService.Remove(targetTab, tile.Mapping.Id);
         CaptureState();
-        RefreshCount();
+        if (targetTab.Id == State.Id)
+        {
+            RefreshCount();
+        }
+        RefreshTabStripItems();
         NotifyStateChanged();
         StatusText.Text = $"已将“{tile.Name}”移到回收站";
         return true;
@@ -1750,6 +1922,7 @@ public partial class FileBoxWindow : WidgetWindowBase
             return 0;
         }
 
+        var targetTab = State;
         _deletingOriginal = true;
         var recycled = 0;
         var failed = 0;
@@ -1772,10 +1945,13 @@ public partial class FileBoxWindow : WidgetWindowBase
 
                 if (result == RecycleResult.Recycled)
                 {
-                    AnimateTileExit(tile);
-                    _items.Remove(tile);
-                    _selectedIds.Remove(tile.Mapping.Id);
-                    FileMappingService.Remove(State, tile.Mapping.Id);
+                    if (targetTab.Id == State.Id)
+                    {
+                        AnimateTileExit(tile);
+                        _items.Remove(tile);
+                        _selectedIds.Remove(tile.Mapping.Id);
+                    }
+                    FileMappingService.Remove(targetTab, tile.Mapping.Id);
                     recycled++;
                 }
                 else if (result == RecycleResult.Cancelled)
@@ -1796,9 +1972,13 @@ public partial class FileBoxWindow : WidgetWindowBase
 
         if (recycled > 0)
         {
-            ClearSelection();
+            if (targetTab.Id == State.Id)
+            {
+                ClearSelection();
+                RefreshCount();
+            }
             CaptureState();
-            RefreshCount();
+            RefreshTabStripItems();
             NotifyStateChanged();
         }
         StatusText.Text = cancelled
@@ -1911,12 +2091,18 @@ public partial class FileBoxWindow : WidgetWindowBase
 
     internal async Task<int> AddMappingsAsync(
         IEnumerable<string> paths, Func<string, ImageSource?>? iconLoader = null) =>
-        (await PrepareAndAddMappingsAsync(paths, countInvalid: false, iconLoader)).Added;
+        (await PrepareAndAddMappingsForTabAsync(State, paths, countInvalid: false, iconLoader)).Added;
 
-    private async Task<(int Added, int Invalid, int Total)> PrepareAndAddMappingsAsync(
-        IEnumerable<string> paths, bool countInvalid, Func<string, ImageSource?>? iconLoader = null)
+    internal async Task<(int Added, int Invalid, int Total)> PrepareAndAddMappingsForTabAsync(
+        FileBoxState targetTab,
+        IEnumerable<string> paths,
+        bool countInvalid,
+        Func<string, ImageSource?>? iconLoader = null)
     {
-        var knownPaths = _items.Select(tile => tile.Path).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var knownPaths = (targetTab.Id == State.Id
+                ? _items.Select(tile => tile.Path)
+                : targetTab.Items.Select(item => item.Path))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var normalized = paths.Select(TryGetFullPath).ToArray();
         var candidates = normalized
             .OfType<string>()
@@ -1928,42 +2114,61 @@ public partial class FileBoxWindow : WidgetWindowBase
             return (0, countInvalid ? normalized.Length : 0, normalized.Length);
         }
 
+        var loadIcons = targetTab.Id == State.Id;
         var (existingCandidates, preparedIcons, invalid) = await Task.Run(() =>
         {
             var existing = candidates.Where(path => File.Exists(path) || Directory.Exists(path))
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
             var invalidCount = countInvalid ? normalized.Count(path => path is null || !existing.Contains(path)) : 0;
             var newPaths = candidates.Where(path => existing.Contains(path) && !knownPaths.Contains(path)).ToArray();
-            return (newPaths, LoadIcons(newPaths, iconLoader ?? ShellIconProvider.GetIcon), invalidCount);
+            var icons = loadIcons ? LoadIcons(newPaths, iconLoader ?? ShellIconProvider.GetIcon) : new Dictionary<string, ImageSource?>(StringComparer.OrdinalIgnoreCase);
+            return (newPaths, icons, invalidCount);
         });
-        if (existingCandidates.Length == 0 || _closeCts.IsCancellationRequested)
+        if (existingCandidates.Length == 0 || _closeCts.IsCancellationRequested || !ContainsBox(targetTab.Id))
         {
             return (0, invalid, normalized.Length);
         }
 
         CaptureState();
-        var existingIds = State.Items.Select(item => item.Id).ToHashSet();
-        var added = FileMappingService.AddPrepared(State, existingCandidates);
+        var existingIds = targetTab.Items.Select(item => item.Id).ToHashSet();
+        var added = FileMappingService.AddPrepared(targetTab, existingCandidates);
         if (added == 0)
         {
             return (0, invalid, normalized.Length);
         }
 
-        var addedTiles = new List<FileTile>(added);
-        foreach (var mapping in State.Items
-                     .Where(item => !existingIds.Contains(item.Id))
-                     .OrderBy(item => item.Order))
+        var newMappings = targetTab.Items
+            .Where(item => !existingIds.Contains(item.Id))
+            .OrderBy(item => item.Order)
+            .ToList();
+        if (targetTab.Id == State.Id)
         {
-            preparedIcons.TryGetValue(mapping.Path, out var icon);
-            var tile = new FileTile(mapping, icon);
-            _items.Add(tile);
-            addedTiles.Add(tile);
+            var addedTiles = new List<FileTile>(newMappings.Count);
+            foreach (var mapping in newMappings)
+            {
+                preparedIcons.TryGetValue(mapping.Path, out var icon);
+                var tile = new FileTile(mapping, icon);
+                _items.Add(tile);
+                addedTiles.Add(tile);
+            }
+            RefreshCount();
+            NotifyStateChanged();
+            if (IsLoaded)
+            {
+                AnimateTileEnter(addedTiles);
+            }
         }
-        RefreshCount();
-        NotifyStateChanged();
-        if (IsLoaded)
+        else
         {
-            AnimateTileEnter(addedTiles);
+            foreach (var mapping in newMappings)
+            {
+                if (preparedIcons.TryGetValue(mapping.Path, out var icon) && icon is not null)
+                {
+                    _tabIconCache[mapping.Id] = (icon, false);
+                }
+            }
+            RefreshTabStripItems();
+            NotifyStateChanged();
         }
         return (added, invalid, normalized.Length);
     }
@@ -1971,28 +2176,35 @@ public partial class FileBoxWindow : WidgetWindowBase
     internal int RemoveGoneMappings(IReadOnlySet<Guid> goneIds)
     {
         CaptureState();
-        var removed = FileMappingService.RemoveGone(State, goneIds);
-        if (removed > 0)
+        var totalRemoved = 0;
+        var activeRemoved = 0;
+        foreach (var tab in _tabs)
+        {
+            var removed = FileMappingService.RemoveGone(tab, goneIds);
+            totalRemoved += removed;
+            if (tab.Id == State.Id)
+            {
+                activeRemoved = removed;
+            }
+        }
+        if (activeRemoved > 0)
         {
             ReloadItems();
             PruneSelection();
+        }
+        if (totalRemoved > 0)
+        {
+            RefreshTabStripItems();
             NotifyStateChanged();
         }
-        return removed;
+        return totalRemoved;
     }
 
     internal void SetOperationStatus(string message) => StatusText.Text = message;
 
     internal async Task<string> AddMappingsWithStatusAsync(
-        IEnumerable<string> paths, Func<string, ImageSource?>? iconLoader = null)
-    {
-        var (added, invalid, total) = await PrepareAndAddMappingsAsync(paths, countInvalid: true, iconLoader);
-        var skipped = invalid > 0 ? $"{invalid} 项路径无效，已跳过" : string.Empty;
-        StatusText.Text = added > 0
-            ? skipped.Length > 0 ? $"已新增 {added} 项；{skipped}" : $"已新增 {added} 项"
-            : skipped.Length > 0 && invalid == total ? skipped : "这些项目已经在文件收纳盒中" + (skipped.Length > 0 ? $"；{skipped}" : string.Empty);
-        return StatusText.Text;
-    }
+        IEnumerable<string> paths, Func<string, ImageSource?>? iconLoader = null) =>
+        await AddMappingsWithStatusToBoxAsync(State.Id, paths, iconLoader);
 
     private void RefreshTile(FileTile tile)
     {
@@ -2137,13 +2349,14 @@ public partial class FileBoxWindow : WidgetWindowBase
 
     internal void RefreshCollapsedSummary()
     {
-        CollapsedSummaryText.Text = CardFoldSummaryRules.FormatFileBoxSummary(_items.Count);
+        CollapsedSummaryText.Text = FileBoxGroupRules.FormatCollapsedSummary(_items.Count, _tabs?.Count ?? 1);
     }
 
     private void RefreshCount()
     {
         CountText.Text = CardFoldSummaryRules.FormatFileBoxSummary(_items.Count);
         RefreshCollapsedSummary();
+        RefreshTabStripItems();
         var isEmpty = _items.Count == 0;
         var becameEmpty = isEmpty && FileBoxEmptyState.Visibility != Visibility.Visible;
         FileBoxEmptyState.Visibility = isEmpty ? Visibility.Visible : Visibility.Collapsed;
@@ -2167,7 +2380,8 @@ public partial class FileBoxWindow : WidgetWindowBase
             AddButton.ContextMenu,
             SortButton.ContextMenu,
             TryFindResource("FileTileContextMenu") as System.Windows.Controls.ContextMenu,
-            TryFindResource("FileTileBatchContextMenu") as System.Windows.Controls.ContextMenu
+            TryFindResource("FileTileBatchContextMenu") as System.Windows.Controls.ContextMenu,
+            TryFindResource("FileBoxTabContextMenu") as System.Windows.Controls.ContextMenu
         ];
         foreach (var menu in menus)
         {
@@ -2175,8 +2389,16 @@ public partial class FileBoxWindow : WidgetWindowBase
             {
                 continue;
             }
-            menu.Opened += (_, _) => RefreshAutoCollapseTimer();
-            menu.Closed += (_, _) => RefreshAutoCollapseTimer();
+            menu.Opened += (_, _) =>
+            {
+                RefreshAutoCollapseTimer();
+                RefreshHoverRevealState();
+            };
+            menu.Closed += (_, _) =>
+            {
+                RefreshAutoCollapseTimer();
+                RefreshHoverRevealState();
+            };
         }
     }
 
@@ -2185,12 +2407,14 @@ public partial class FileBoxWindow : WidgetWindowBase
         || AddButton.ContextMenu is { IsOpen: true }
         || SortButton.ContextMenu is { IsOpen: true }
         || TryFindResource("FileTileContextMenu") is System.Windows.Controls.ContextMenu { IsOpen: true }
-        || TryFindResource("FileTileBatchContextMenu") is System.Windows.Controls.ContextMenu { IsOpen: true };
+        || TryFindResource("FileTileBatchContextMenu") is System.Windows.Controls.ContextMenu { IsOpen: true }
+        || TryFindResource("FileBoxTabContextMenu") is System.Windows.Controls.ContextMenu { IsOpen: true };
 
     private T RunModalInteraction<T>(Func<T> action)
     {
         _modalDialogDepth++;
         RefreshAutoCollapseTimer();
+        RefreshHoverRevealState();
         try
         {
             return action();
@@ -2199,6 +2423,7 @@ public partial class FileBoxWindow : WidgetWindowBase
         {
             _modalDialogDepth = Math.Max(0, _modalDialogDepth - 1);
             RefreshAutoCollapseTimer();
+            RefreshHoverRevealState();
         }
     }
 

@@ -133,6 +133,12 @@ public sealed class TodoWidgetState
     /// <summary>Whether the weekly calendar starts each row on Sunday instead of Monday.</summary>
     public bool WeekStartsOnSunday { get; set; }
 
+    /// <summary>
+    /// Whether incomplete to-dos from earlier calendar days automatically carry over into
+    /// today's list until completed or deleted. Off by default.
+    /// </summary>
+    public bool CarryOverIncomplete { get; set; }
+
     /// <summary>Whether the card is folded up to its title bar.</summary>
     public bool IsCollapsed { get; set; }
 
@@ -183,6 +189,7 @@ public sealed class TodoItemState : INotifyPropertyChanged
     private DateTime? _date;
     private TodoItemKind _kind;
     private TimeOnly? _time;
+    private bool _isPersistent;
 
     public Guid Id { get; set; } = Guid.NewGuid();
     public string Text
@@ -305,6 +312,24 @@ public sealed class TodoItemState : INotifyPropertyChanged
         }
     }
 
+    /// <summary>
+    /// Whether this to-do stays visible in today's list across calendar days until completed,
+    /// without needing a deadline. Only applies when <see cref="Kind"/> is <see cref="TodoItemKind.Todo"/>.
+    /// </summary>
+    public bool IsPersistent
+    {
+        get => _isPersistent;
+        set
+        {
+            if (_isPersistent == value)
+            {
+                return;
+            }
+            _isPersistent = value;
+            OnPropertyChanged();
+        }
+    }
+
     /// <summary>When the entry was created; null for entries made before dates were tracked.</summary>
     public DateTimeOffset? CreatedDate { get; set; }
 
@@ -376,6 +401,36 @@ public sealed class FileBoxState
     /// Null keeps the default 5-second delay for existing profiles.
     /// </summary>
     public double? AutoCollapseDelaySeconds { get; set; }
+
+    /// <summary>
+    /// Whether this box stays fully transparent while idle and reveals smoothly when the pointer
+    /// or a file drag enters its bounds. Off by default.
+    /// </summary>
+    public bool HideWhenIdle { get; set; }
+
+    /// <summary>
+    /// Delay in seconds after the pointer leaves before an idle-hidden box fades back out.
+    /// Null keeps the default 0.5-second delay.
+    /// </summary>
+    public double? IdleHideDelaySeconds { get; set; }
+
+    /// <summary>
+    /// Optional group identifier when multiple file boxes are combined into one tabbed window.
+    /// Null means a standalone file box.
+    /// </summary>
+    public Guid? GroupId { get; set; }
+
+    /// <summary>Zero-based tab order inside the group when <see cref="GroupId"/> is set.</summary>
+    public int TabOrder { get; set; }
+
+    /// <summary>Whether this box is the active tab in its group.</summary>
+    public bool IsActiveTab { get; set; }
+
+    /// <summary>
+    /// When grouped, whether hovering a tab in the vertical tab strip switches to it without clicking.
+    /// Off by default; synced across members of the same group.
+    /// </summary>
+    public bool HoverSwitchTabs { get; set; }
 
     /// <summary>Whether mappings show as tiles or as a compact list; tiles by default.</summary>
     public FileBoxViewMode ViewMode { get; set; }

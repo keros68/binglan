@@ -243,13 +243,13 @@ public sealed partial class WidgetCoordinator
 
     private async Task<string> SendLauncherPathToFileBoxAsync(Guid id, string path)
     {
-        var box = _windows.OfType<FileBoxWindow>().FirstOrDefault(window => window.State.Id == id);
+        var box = FindFileBoxWindow(id);
         if (box is null || !_state.FileBoxes.Any(item => item.Id == id))
         {
             return "该文件收纳盒已移除。";
         }
 
-        var status = await box.AddMappingsWithStatusAsync([path]);
+        var status = await box.AddMappingsWithStatusToBoxAsync(id, [path]);
         return _state.FileBoxes.Any(item => item.Id == id) ? status : "该文件收纳盒已移除。";
     }
 

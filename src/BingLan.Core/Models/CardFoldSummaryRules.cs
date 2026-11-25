@@ -34,7 +34,8 @@ public static class CardFoldSummaryRules
         bool weeklyView,
         DateTime today,
         DateTime? weekStart,
-        DateTime? weekEnd)
+        DateTime? weekEnd,
+        bool carryOverIncomplete = false)
     {
         ArgumentNullException.ThrowIfNull(items);
         var todayDate = today.Date;
@@ -53,7 +54,7 @@ public static class CardFoldSummaryRules
 
             var inScope = hasWeekRange
                 ? item.Date is { } date && date.Date >= startDate && date.Date <= endDate
-                : TodoService.BelongsToTodayList(item, todayDate);
+                : TodoService.BelongsToTodayList(item, todayDate, carryOverIncomplete);
             if (!inScope)
             {
                 continue;
@@ -77,8 +78,9 @@ public static class CardFoldSummaryRules
         bool weeklyView,
         DateTime today,
         DateTime? weekStart = null,
-        DateTime? weekEnd = null) =>
-        CountScopedTodos(items, weeklyView, today, weekStart, weekEnd).OpenCount;
+        DateTime? weekEnd = null,
+        bool carryOverIncomplete = false) =>
+        CountScopedTodos(items, weeklyView, today, weekStart, weekEnd, carryOverIncomplete).OpenCount;
 
     public static int CountOpenTodos(
         TodoWidgetState widget,
@@ -87,7 +89,7 @@ public static class CardFoldSummaryRules
         DateTime? weekEnd = null)
     {
         ArgumentNullException.ThrowIfNull(widget);
-        return CountOpenTodos(widget.Items, widget.WeeklyView, today, weekStart, weekEnd);
+        return CountOpenTodos(widget.Items, widget.WeeklyView, today, weekStart, weekEnd, widget.CarryOverIncomplete);
     }
 
     public static string FormatTodoSummary(
@@ -95,9 +97,10 @@ public static class CardFoldSummaryRules
         bool weeklyView,
         DateTime today,
         DateTime? weekStart = null,
-        DateTime? weekEnd = null)
+        DateTime? weekEnd = null,
+        bool carryOverIncomplete = false)
     {
-        var counts = CountScopedTodos(items, weeklyView, today, weekStart, weekEnd);
+        var counts = CountScopedTodos(items, weeklyView, today, weekStart, weekEnd, carryOverIncomplete);
         return FormatTodoSummary(counts.OpenCount, counts.CompletedCount);
     }
 
@@ -108,6 +111,6 @@ public static class CardFoldSummaryRules
         DateTime? weekEnd = null)
     {
         ArgumentNullException.ThrowIfNull(widget);
-        return FormatTodoSummary(widget.Items, widget.WeeklyView, today, weekStart, weekEnd);
+        return FormatTodoSummary(widget.Items, widget.WeeklyView, today, weekStart, weekEnd, widget.CarryOverIncomplete);
     }
 }

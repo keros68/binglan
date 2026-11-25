@@ -23,6 +23,7 @@ Run("倒数日排序、标签与今日列表归属", TestTodoCountdown);
 Run("倒数日字段持久化与 v39 迁移", TestTodoCountdownPersistence);
 Run("待办临期判定、今日排列与关联文件", TestTodoDueSoonAndLinks);
 Run("待办截止时间与分钟倒计时", TestTodoDeadlines);
+Run("常驻待办与未完成待办跨天保留", TestTodoPersistentAndCarryOver);
 if (Environment.GetEnvironmentVariable("BINGLAN_TODO_LEGACY_SAMPLE_PATH") is { Length: > 0 })
 {
     Run("真实待办副本日期迁移", TestLegacyTodoSampleMigration);
@@ -1266,6 +1267,74 @@ static void TestTodoDeadlines()
     finally
     {
         if (Directory.Exists(temp)) Directory.Delete(temp, true);
+    }
+}
+
+static void TestTodoPersistentAndCarryOver()
+{
+    var today = new DateTime(2026, 11, 25);
+    var yesterday = today.AddDays(-1);
+    var tomorrow = today.AddDays(1);
+    var widget = new TodoWidgetState();
+
+    var pinned = TodoService.Add(widget, "买猫粮", yesterday);
+    var plainPast = TodoService.Add(widget, "昨日未完成", yesterday);
+    var future = TodoService.Add(widget, "下周安排", tomorrow);
+    var pastEvent = TodoService.Add(widget, "昨日会议", yesterday);
+    TodoService.SetKind(widget, pastEvent.Id, TodoItemKind.Event);
+
+    Assert(!TodoService.BelongsToTodayList(pinned, today), "普通历史待办默认不进入今日列表");
+    Assert(TodoService.SetPersistent(widget, pinned.Id, true), "应能将待办设为跨天常驻");
+    Assert(!TodoService.SetPersistent(widget, pastEvent.Id, true), "行程不能设为跨天常驻");
+    Assert(TodoService.BelongsToTodayList(pinned, today), "未完成的常驻待办应跨天留在今日列表");
+    Assert(TopBarModuleRules.CountIncompleteTodosToday([widget], today) == 1, "顶栏今日计数应包含未完成常驻待办");
+    Assert(CardFoldSummaryRules.FormatTodoSummary(widget, today) == "1 项未完成", "折叠摘要应计入常驻待办");
+
+    // 勾选完成后停止跨天保留，留在原日历日期。
+    TodoService.SetCompleted(widget, pinned.Id, true);
+    Assert(!TodoService.BelongsToTodayList(pinned, today), "完成的历史常驻待办不再留在今日列表");
+    TodoService.SetCompleted(widget, pinned.Id, false);
+
+    // 转为行程时自动清除常驻标记。
+    TodoService.SetKind(widget, pinned.Id, TodoItemKind.Event);
+    Assert(!pinned.IsPersistent, "转为行程后应清除常驻标记");
+    TodoService.SetKind(widget, pinned.Id, TodoItemKind.Todo);
+    TodoService.SetPersistent(widget, pinned.Id, true);
+
+    // 卡片级“未完成待办跨天保留”开关：只顺延今天及之前的未完成待办，不影响未来日期与历史行程。
+    widget.CarryOverIncomplete = true;
+    Assert(TodoService.BelongsToTodayList(plainPast, today, widget.CarryOverIncomplete), "开启跨天保留后昨日未完成待办应留在今日列表");
+    Assert(!TodoService.BelongsToTodayList(future, today, widget.CarryOverIncomplete), "未来日期的待办不应提前进入今日列表");
+    Assert(!TodoService.BelongsToTodayList(pastEvent, today, widget.CarryOverIncomplete), "历史行程不应随待办跨天保留");
+    Assert(TopBarModuleRules.CountIncompleteTodosToday([widget], today) == 2, "开启跨天保留后顶栏计数应包含历史未完成待办");
+    Assert(CardFoldSummaryRules.FormatTodoSummary(widget, today) == "2 项未完成", "开启跨天保留后折叠摘要应同步计入");
+
+    TodoService.SetCompleted(widget, plainPast.Id, true);
+    Assert(!TodoService.BelongsToTodayList(plainPast, today, widget.CarryOverIncomplete), "已完成的昨日待办不应继续跨天保留");
+    Assert(TopBarModuleRules.CountIncompleteTodosToday([widget], today) == 1, "完成后顶栏计数应立即减少");
+
+    // 持久化往返与旧数据默认关闭。
+    var temp = Path.Combine(Path.GetTempPath(), $"BingLan-todo-persist-{Guid.NewGuid():N}");
+    Directory.CreateDirectory(temp);
+    try
+    {
+        var store = new LocalStateStore(temp);
+        File.WriteAllText(store.StatePath, """{ "SchemaVersion": 63, "TodoWidgets": [{ "Items": [{ "Text": "旧待办" }] }] }""");
+        var migrated = store.Load();
+        Assert(!migrated.TodoWidgets[0].CarryOverIncomplete && !migrated.TodoWidgets[0].Items[0].IsPersistent,
+            "旧数据升级后跨天保留与单条常驻应默认关闭");
+
+        var saved = new AppState { TodoWidgets = [widget] };
+        store.Save(saved);
+        var reloaded = store.Load().TodoWidgets.Single();
+        Assert(reloaded.CarryOverIncomplete
+            && reloaded.Items.Single(x => x.Id == pinned.Id).IsPersistent
+            && !reloaded.Items.Single(x => x.Id == plainPast.Id).IsPersistent,
+            "跨天保留开关与单条常驻标记应在保存重载后保留");
+    }
+    finally
+    {
+        Directory.Delete(temp, true);
     }
 }
 
