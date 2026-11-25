@@ -130,6 +130,11 @@ public sealed class TopBarState
     /// and off by default (null or false).</summary>
     public bool? NetworkIconOnly { get; set; }
 
+    /// <summary>Whether the centred search entry opens the inline search popup instead of the
+    /// overview card. Machine-local and off by default (null or false) so existing profiles keep
+    /// the behaviour they had before the popup existed; never exported with a theme.</summary>
+    public bool? SearchInline { get; set; }
+
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? ExtensionData { get; set; }
 }
