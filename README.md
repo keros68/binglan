@@ -29,7 +29,7 @@
 - **冰蓝 Dock**：固定应用与运行中的应用分区显示，支持未读提醒、窗口切换和可选的 macOS 式悬停放大（默认关闭，强度 1.2–1.7 倍可调）。左侧的 Windows 开始、冰蓝总览卡和显示桌面入口可分别隐藏。拖入程序、文件或文件夹到空白处即可固定，把文件拖到应用图标上可直接用该应用打开（在运行中的应用上悬停约 0.5 秒可抬起窗口）；放不下时自动缩小图标并可横向滚动；隐藏时缩成可拖动的小把手，悬停或拖入文件时展开。
 - **任务栏**：保持默认、透明、模糊或智能隐藏。退出或异常结束后恢复原状态。
 - **任务栏位置**：在 Windows 设置中换边，冰蓝按工作区和识别到的任务栏边位让开空间。冰蓝设置内可打开 Windows 任务栏设置。
-- **顶部信息条**：屏幕最上方的满宽状态栏，显示时间、待办概要、天气、性能、电量、音量、网络（支持 Wi-Fi 信号格，默认隐藏名称防录屏暴露，可选“网络仅显示图标”隐藏文字、悬停仍看完整名称与信号）、输入法与带应用小图标的消息提示，并在正中提供触发冰蓝总览卡的“搜索应用、文件…”入口及全局热键（默认 `Ctrl+Alt+F`）。可选“苹果式”桌面模式。
+- **顶部信息条**：屏幕最上方的满宽状态栏，显示时间、待办概要、天气、性能、电量、音量、网络（支持 Wi-Fi 信号格，默认隐藏名称防录屏暴露，可选“网络仅显示图标”隐藏文字、悬停仍看完整名称与信号）、输入法与带应用小图标的消息提示，并在正中提供触发冰蓝总览卡的“搜索应用、文件…”入口及全局热键（默认 `Ctrl+Alt+F`），也可在「设置 → 顶部信息条」按需开启「搜索入口直接弹出搜索框」（优先搜索本机文件，无匹配时按 Enter 用浏览器搜索）。可选“苹果式”桌面模式。
 - **多显示器**：卡片按显示器组合分别记住位置，拔掉外接屏后自动收拢到剩余屏幕，接回后恢复原位；也可在「设置 → 桌面方案」按需开启「每屏独立桌面卡片」，为每台副屏单独配置桌面卡片、快捷入口与布局预设（默认关闭且单屏零负担，副屏断开时销毁窗口并在重连后自动恢复位置与尺寸）。
 - **外观**：所有全局与各部分外观设置集中在“外观样式”页——支持浅色玻璃、深色玻璃、纯透明（无底板）三种材质与一键纯透明推荐效果，下方“各部分外观”固定列出桌面卡片、冰蓝总览卡、冰蓝 Dock、顶部信息条的状态并支持就地展开自定义或一键恢复跟随；另提供四套横竖屏布局预设、卡片间自动留白、网格对齐，以及从 Rainmeter 皮肤只读导入字体和配色。主题可导出分享，不含称呼、城市、待办和文件路径。
 - **设置中心**：左侧导航不分组命名：首页「桌面方案」在最上，接着按屏幕位置从上到下依次是桌面卡片、顶部信息条、冰蓝 Dock、Windows 任务栏，再是冰蓝总览卡和外观样式，最后一条分隔线之后是通用设置三组共八页，记住上次打开的页面（旧配置自动迁移，不出现空白页）；首页提供「我想…」常用任务直达入口（换外观、开关 Dock/顶栏、设天气城市、改快捷键、隐藏桌面图标、整理桌面文件）；总览卡、Dock、顶部信息条页仅留一行外观摘要与“去调整 ›”入口直达外观样式页；“桌面卡片”页提供清晰的左侧选中指示与列表溢出提示，详情顶部固定操作栏直接露出改名（文件收纳盒/待办/便签与桌面卡片双向同步，自动清理不可见控制字符并防同类型重名，右键列表条目可快速重命名）、显示/隐藏、锁定位置、恢复默认位置与删除/从桌面移除；每页低频项折叠在“更多选项”中，支持搜索（Ctrl+F，保留“桌面组件”“顶栏与底栏”“清爽桌面”“分组盒”“速览”“Dock 外观”“顶栏颜色”“总览卡透明”等旧词与同义词）并自动展开定位。
@@ -46,7 +46,7 @@
 
 ## 快速开始
 
-稳定版：[v0.5.2](https://github.com/keros68/binglan/releases/tag/v0.5.2) · [安装版](https://github.com/keros68/binglan/releases/download/v0.5.2/BingLan-Setup-0.5.2.exe) · [免安装版](https://github.com/keros68/binglan/releases/download/v0.5.2/BingLan-0.5.2-portable.zip)。另附[兼容性验收工具](https://github.com/keros68/binglan/releases/download/v0.2.52/BingLan-0.2.52-tray-preview.zip)，使用步骤见[托盘验收说明](docs/TRAY-PREVIEW.md)。
+稳定版：[v0.6.0](https://github.com/keros68/binglan/releases/tag/v0.6.0) · [安装版](https://github.com/keros68/binglan/releases/download/v0.6.0/BingLan-Setup-0.6.0.exe) · [免安装版](https://github.com/keros68/binglan/releases/download/v0.6.0/BingLan-0.6.0-portable.zip)。另附[兼容性验收工具](https://github.com/keros68/binglan/releases/download/v0.2.52/BingLan-0.2.52-tray-preview.zip)，使用步骤见[托盘验收说明](docs/TRAY-PREVIEW.md)。
 
 1. 打开 [Releases](https://github.com/keros68/binglan/releases/latest)，下载 `BingLan-Setup-*.exe`（安装版）或 `BingLan-*-portable.zip`（免安装版）。
 2. 安装版运行安装包，按当前用户安装，不需要管理员权限；免安装版解压到任意文件夹后运行其中的 `BingLan.exe`。两者均自带 .NET 运行时，尚未加入代码签名，首次运行需按 Windows 提示手动放行。
@@ -70,7 +70,7 @@
 ```powershell
 dotnet build .\BingLan.slnx -c Release
 dotnet run --project .\tests\BingLan.SmokeTests\BingLan.SmokeTests.csproj -c Release
-pwsh -NoProfile -File .\installer\build.ps1 -Version 0.5.2
+pwsh -NoProfile -File .\installer\build.ps1 -Version 0.6.0
 ```
 
 完整测试命令、技术方案和当前实现见[开发说明](docs/DEVELOPMENT.md)，安装包细节见[安装包](docs/INSTALLER.md)。
