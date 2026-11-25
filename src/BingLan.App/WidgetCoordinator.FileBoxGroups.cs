@@ -12,6 +12,10 @@ public sealed partial class WidgetCoordinator
 
     private FileBoxWindow? FindFileBoxWindow(Guid boxId) =>
         _windows.OfType<FileBoxWindow>()
+            .FirstOrDefault(window => window.ContainsBox(boxId));
+
+    private FileBoxWindow? FindPrimaryFileBoxWindow(Guid boxId) =>
+        _windows.OfType<FileBoxWindow>()
             .FirstOrDefault(window => !IsSecondaryWindow(window) && window.ContainsBox(boxId));
 
     private FileBoxWindow ShowFileBoxGroup(IReadOnlyList<FileBoxState> members)

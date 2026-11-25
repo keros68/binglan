@@ -2719,6 +2719,11 @@ public sealed partial class WidgetCoordinator : IDisposable
 
     private void SetWidgetVisibility(WidgetWindowBase window, bool visible)
     {
+        if (_isExiting || window.IsClosingOrClosed || !_windows.Contains(window))
+        {
+            return;
+        }
+
         switch (window)
         {
             case FileBoxWindow box:
@@ -2727,7 +2732,19 @@ public sealed partial class WidgetCoordinator : IDisposable
                 if (visible)
                 {
                     _windowsHiddenFromTray.Remove(box);
-                    box.Show();
+                    if (IsSecondaryWindow(box))
+                    {
+                        if (_multiScreen?.TryShowSecondaryWindow(box) != true)
+                        {
+                            box.State.IsHidden = true;
+                            box.SyncGroupSharedProperties();
+                            return;
+                        }
+                    }
+                    else
+                    {
+                        box.Show();
+                    }
                     if (box.IsEdgeDocked)
                     {
                         _edgeDock.ApplyAll();
@@ -2748,7 +2765,18 @@ public sealed partial class WidgetCoordinator : IDisposable
                 _windowsHiddenFromTray.Remove(note);
                 if (visible)
                 {
-                    note.Show();
+                    if (IsSecondaryWindow(note))
+                    {
+                        if (_multiScreen?.TryShowSecondaryWindow(note) != true)
+                        {
+                            note.State.IsHidden = true;
+                            return;
+                        }
+                    }
+                    else
+                    {
+                        note.Show();
+                    }
                 }
                 else
                 {
@@ -3159,7 +3187,7 @@ public sealed partial class WidgetCoordinator : IDisposable
 
                 foreach (var (boxId, paths) in distribution.ByBox)
                 {
-                    if (FindFileBoxWindow(boxId) is { } boxWindow)
+                    if (FindPrimaryFileBoxWindow(boxId) is { } boxWindow)
                     {
                         var added = await boxWindow.AddMappingsToBoxAsync(boxId, paths);
                         if (added > 0)
@@ -3208,7 +3236,7 @@ public sealed partial class WidgetCoordinator : IDisposable
             var left = 0;
             foreach (var (boxId, paths) in distribution.ByBox)
             {
-                if (FindFileBoxWindow(boxId) is { } boxWindow)
+                if (FindPrimaryFileBoxWindow(boxId) is { } boxWindow)
                 {
                     added += await boxWindow.AddMappingsToBoxAsync(boxId, paths);
                 }
@@ -3249,7 +3277,7 @@ public sealed partial class WidgetCoordinator : IDisposable
                 }
                 else
                 {
-                    window = FindFileBoxWindow(state.Id)!;
+                    window = FindPrimaryFileBoxWindow(state.Id)!;
                     if (window.State.Id == state.Id)
                     {
                         window.AssignDesktopCategory(category, GetCategoryTitle(category));

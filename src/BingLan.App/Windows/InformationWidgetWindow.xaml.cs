@@ -156,6 +156,8 @@ public partial class InformationWidgetWindow : WidgetWindowBase
         return experience;
     }
 
+    public void ReapplyDesktopExperience() => ApplyDesktopExperience(_experience);
+
     public void ApplyDesktopExperience(DesktopExperienceState experience)
     {
         DesktopExperienceRules.Normalize(experience);
@@ -868,7 +870,8 @@ public partial class InformationWidgetWindow : WidgetWindowBase
                     requestedCity,
                     requestedLatitude,
                     requestedLongitude,
-                    forceRefresh: manual)
+                    forceRefresh: manual,
+                    currentTime: DateTimeOffset.Now)
                 .ConfigureAwait(false);
         }
         catch (Exception exception)

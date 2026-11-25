@@ -1055,6 +1055,7 @@ internal sealed class MultiScreenHost : IDisposable
                 var destComponent = destExperience.GetComponent(infoKind);
                 if (destComponent.IsVisible)
                 {
+                    RestoreDeclinedBuiltInDrop(infoWindow, previousKey, infoKind, landingLayoutKey);
                     return false;
                 }
 
@@ -1079,6 +1080,7 @@ internal sealed class MultiScreenHost : IDisposable
                 var destComponent = destExperience.GetComponent(DesktopComponentKind.QuickLaunch);
                 if (destComponent.IsVisible)
                 {
+                    RestoreDeclinedBuiltInDrop(quickWindow, previousKey, DesktopComponentKind.QuickLaunch, landingLayoutKey);
                     return false;
                 }
 
@@ -1102,6 +1104,83 @@ internal sealed class MultiScreenHost : IDisposable
             default:
                 return false;
         }
+    }
+
+    private void RestoreDeclinedBuiltInDrop(
+        WidgetWindowBase window,
+        string? previousKey,
+        DesktopComponentKind kind,
+        string layoutKey)
+    {
+        var sourceMonitor = previousKey is null
+            ? _connectedMonitors.FirstOrDefault(m => m.IsPrimary)
+            : _connectedMonitors.FirstOrDefault(m => string.Equals(m.MonitorKey, previousKey, StringComparison.Ordinal));
+        if (sourceMonitor is null)
+        {
+            return;
+        }
+
+        var srcComponent = ScreenProfileAccessor.GetExperience(_state, previousKey).GetComponent(kind);
+        PixelRect restorePx;
+        if (window.LastDragStartBounds is { HasArea: true } startBounds
+            && MonitorIdentityResolver.FindByBounds(_connectedMonitors, startBounds) is { } startMonitor
+            && string.Equals(startMonitor.ScreenKey, previousKey, StringComparison.Ordinal))
+        {
+            restorePx = startBounds;
+        }
+        else
+        {
+            restorePx = ResolveTargetPixelBounds(srcComponent.Placement, sourceMonitor, layoutKey);
+        }
+
+        ApplyPhysicalBounds(
+            window,
+            restorePx,
+            sourceMonitor.Dpi,
+            srcComponent.Placement,
+            layoutKey,
+            previousKey is not null ? sourceMonitor.WorkingArea : null);
+        _callbacks.ScheduleSave();
+    }
+
+    internal bool TryShowSecondaryWindow(WidgetWindowBase window)
+    {
+        if (_disposed || !_secondaryWindows.TryGetValue(window, out var tag))
+        {
+            return false;
+        }
+
+        var monitor = _connectedMonitors.FirstOrDefault(m =>
+            string.Equals(m.MonitorKey, tag.ScreenKey, StringComparison.Ordinal));
+        if (monitor is null)
+        {
+            return false;
+        }
+
+        var placement = window switch
+        {
+            NoteWidgetWindow note => note.State.Placement,
+            FileBoxWindow box => box.State.Placement,
+            TodoWidgetWindow todo => todo.State.Placement,
+            _ => null
+        };
+        if (placement is null)
+        {
+            return false;
+        }
+
+        var layoutKey = CurrentLayoutKey(_connectedMonitors);
+        var targetPx = ResolveTargetPixelBounds(placement, monitor, layoutKey);
+        using (WindowScreenRecovery.DeferShowRecovery())
+        {
+            window.Show();
+            ApplyPhysicalBounds(window, targetPx, monitor.Dpi, placement, layoutKey, monitor.WorkingArea);
+            if (window is not FileBoxWindow { IsEdgeDocked: true })
+            {
+                window.ApplyReservedEdges(WindowScreenRecovery.ReservedEdgeTarget, layoutKey);
+            }
+        }
+        return true;
     }
 
     internal bool TryCaptureSecondaryWindow(WidgetWindowBase window)
@@ -1632,7 +1711,10 @@ internal sealed class MultiScreenHost : IDisposable
                 break;
             case FileBoxWindow box:
                 box.CaptureState();
-                RecordLocal(box.State.Placement);
+                if (!box.IsEdgeDocked)
+                {
+                    RecordLocal(box.State.Placement);
+                }
                 box.SyncGroupSharedProperties();
                 break;
             case InformationWidgetWindow info:
@@ -1817,6 +1899,7 @@ internal sealed class MultiScreenHost : IDisposable
                 break;
             }
 
+            window.ClearLastDragStartBounds();
             moved |= NativeMethods.SetWindowPos(
                 handle,
                 0,

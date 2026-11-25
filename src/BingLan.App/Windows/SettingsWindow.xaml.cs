@@ -1207,7 +1207,7 @@ public partial class SettingsWindow : Window
         _applyDisplaySettings(greetingName, use24HourClock);
         foreach (var information in _widgetProvider().OfType<InformationWidgetWindow>())
         {
-            information.ApplyDesktopExperience(_desktopExperience);
+            information.ReapplyDesktopExperience();
             information.RefreshConfiguredValues(false);
         }
         DisplaySettingsStatusText.Text = "已保存";

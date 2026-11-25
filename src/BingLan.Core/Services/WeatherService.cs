@@ -109,7 +109,8 @@ public sealed class WeatherService
         double latitude,
         double longitude,
         bool forceRefresh,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        DateTimeOffset? currentTime = null)
     {
         var trimmedCity = city?.Trim() ?? "";
         if (trimmedCity.Length == 0)
@@ -132,7 +133,7 @@ public sealed class WeatherService
             {
                 // Deduplicate concurrent/automatic refreshes across multiple monitors sharing one WeatherService,
                 // honoring both the fresh interval and any active failure backoff set inside the gate.
-                var now = _time.GetLocalNow();
+                var now = currentTime ?? _time.GetLocalNow();
                 if (!ShouldAttemptRefresh(state, now) && state.LastSnapshot is not null)
                 {
                     return state.LastSnapshot;

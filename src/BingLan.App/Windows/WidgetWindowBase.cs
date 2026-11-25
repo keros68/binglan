@@ -53,6 +53,9 @@ public class WidgetWindowBase : Window
 
     private MoveSession? _moveSession;
     private DragState? _drag;
+    internal BingLan.Core.Dock.PixelRect? LastDragStartBounds { get; private set; }
+
+    internal void ClearLastDragStartBounds() => LastDragStartBounds = null;
 
     private const double SnapThresholdDip = 8d;
     private const double SnapReachDip = 64d;
@@ -1937,10 +1940,12 @@ public class WidgetWindowBase : Window
             return false;
         }
 
+        var startBounds = new BingLan.Core.Dock.PixelRect(bounds.Left, bounds.Top, bounds.Right, bounds.Bottom);
+        LastDragStartBounds = startBounds;
         _drag = new DragState(
             cursorX,
             cursorY,
-            new BingLan.Core.Dock.PixelRect(bounds.Left, bounds.Top, bounds.Right, bounds.Bottom),
+            startBounds,
             edges);
         return true;
     }
