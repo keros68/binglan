@@ -16,11 +16,6 @@ internal sealed record WindowScreenTag(
     string ScreenKey,
     DesktopComponentKind? BuiltInKind);
 
-internal sealed record MoveWidgetResult(
-    bool Succeeded,
-    string Message,
-    WidgetWindowBase? MovedWindow);
-
 internal sealed class MultiScreenCoordinatorCallbacks
 {
     public required Func<InformationWidgetState> GetInformationState { get; init; }

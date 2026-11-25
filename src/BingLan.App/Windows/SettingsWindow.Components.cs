@@ -60,6 +60,10 @@ public partial class SettingsWindow
         RefreshComponentList(
             preferredWindow: preferred ?? _selectedComponentEntry?.Window,
             preferredKind: preferred is null ? _selectedComponentEntry?.Kind : null);
+        if (IsMultiScreenActive)
+        {
+            RefreshMultiScreenTopologyBarsOnly();
+        }
     }
 
     private void OnObservedFileBoxActiveTabChanged(FileBoxWindow box)
@@ -257,7 +261,7 @@ public partial class SettingsWindow
         DesktopComponentKind kind,
         DesktopComponentSettingsEntry entry)
     {
-        var component = _desktopExperience.GetComponent(kind);
+        var component = ActiveDesktopExperience.GetComponent(kind);
         var isTodo = kind == DesktopComponentKind.Todo;
         var canRename = isTodo && entry.Window is TodoWidgetWindow;
 

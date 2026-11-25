@@ -1789,7 +1789,8 @@ public sealed partial class WidgetCoordinator : IDisposable
                     _dock.Apply();
                     SaveNow();
                     return added;
-                }
+                },
+                MultiScreen = BuildMultiScreenSettingsBridge()
             },
             topBarState: _state.TopBar,
             applyTopBar: ApplyTopBar,

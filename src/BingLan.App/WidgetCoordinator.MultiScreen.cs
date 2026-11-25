@@ -84,7 +84,6 @@ public sealed partial class WidgetCoordinator
         // destroy their secondary windows instead of letting GatherOnArrival pull them onto primary.
         SyncMultiScreenRuntime();
         NotifyMultiScreenUiChanged(refreshComponentList: true);
-        _settingsWindow?.RefreshWidgetsAfterGroupChange(null);
     }
 
     private void DisposeMultiScreenHost(bool capturePlacement = true)
@@ -119,11 +118,7 @@ public sealed partial class WidgetCoordinator
             UpdateSamplingMode = UpdateSamplingMode,
             ScheduleSave = ScheduleSave,
             SaveNow = SaveNow,
-            RefreshSettingsUi = () =>
-            {
-                NotifyMultiScreenUiChanged(refreshComponentList: true);
-                _settingsWindow?.RefreshWidgetsAfterGroupChange(null);
-            },
+            RefreshSettingsUi = () => NotifyMultiScreenUiChanged(refreshComponentList: true),
             IsDesktopHidden = () => _desktopHidden,
             EnsureDesktopVisible = () =>
             {

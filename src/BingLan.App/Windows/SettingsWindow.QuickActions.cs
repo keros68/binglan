@@ -78,6 +78,12 @@ public partial class SettingsWindow
     {
         ClearQuickActionFallbackStatus();
 
+        if (string.Equals(action.Key, SettingsQuickActions.OrganizeDesktopFilesKey, StringComparison.Ordinal)
+            && _activeScreenKey is not null)
+        {
+            SelectActiveScreen(null);
+        }
+
         var refreshedComponents = false;
         if (string.Equals(action.ExpectedPageKey, SettingsNavigationRules.ComponentsPageKey, StringComparison.Ordinal))
         {
@@ -144,7 +150,7 @@ public partial class SettingsWindow
         if (string.Equals(action.Key, SettingsQuickActions.OrganizeDesktopFilesKey, StringComparison.Ordinal)
             || string.Equals(action.ExpectedScope, "FileBox", StringComparison.Ordinal))
         {
-            return _widgetProvider().OfType<FileBoxWindow>().Any();
+            return GetActiveScreenWindows().OfType<FileBoxWindow>().Any();
         }
 
         if (string.Equals(action.ExpectedScope, "Kind:Weather", StringComparison.Ordinal))
