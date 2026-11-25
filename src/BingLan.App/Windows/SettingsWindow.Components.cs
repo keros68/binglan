@@ -60,6 +60,10 @@ public partial class SettingsWindow
         RefreshComponentList(
             preferredWindow: preferred ?? _selectedComponentEntry?.Window,
             preferredKind: preferred is null ? _selectedComponentEntry?.Kind : null);
+        if (IsMultiScreenActive)
+        {
+            RefreshMultiScreenTopologyBarsOnly();
+        }
     }
 
     private void OnObservedFileBoxActiveTabChanged(FileBoxWindow box)

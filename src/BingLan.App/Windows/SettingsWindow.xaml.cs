@@ -223,6 +223,7 @@ public partial class SettingsWindow : Window
         LoadStyle();
         RefreshBackupList();
         InitializeComponentsPageEnhancements();
+        InitializeMultiScreenUi();
         _initializingNavigation = true;
         try
         {
@@ -341,6 +342,7 @@ public partial class SettingsWindow : Window
             if (!_isClosed)
             {
                 ApplyHostWorkAreaConstraint(recenter: false);
+                RefreshMultiScreenUi();
             }
         });
 
@@ -600,7 +602,7 @@ public partial class SettingsWindow : Window
             SelectByTag(ClockAlignmentSelector, _informationState.ClockAlignment.ToString());
             _loadingDisplaySettings = false;
             _loadingDivider = true;
-            var clock = _desktopExperience.GetComponent(DesktopComponentKind.TimeDate);
+            var clock = ActiveDesktopExperience.GetComponent(DesktopComponentKind.TimeDate);
             ClockDividerCheckBox.IsChecked = clock.ShowDivider;
             ClockDividerThicknessSlider.Value = clock.DividerThickness;
             ClockDividerThicknessText.Text = $"{clock.DividerThickness:0.#} px";
@@ -622,11 +624,12 @@ public partial class SettingsWindow : Window
                 : Visibility.Collapsed;
             if (kind == DesktopComponentKind.QuickLaunch)
             {
-                _quickPlaces = _maintenance.QuickPlaces()
+                _quickPlaces = GetActiveQuickPlaces()
                     .Select(item => new QuickPlaceState { Icon = item.Icon, Name = item.Name, Target = item.Target })
                     .ToList();
                 ShowQuickPlaces(0);
             }
+            UpdateMoveScreenControls(entry);
             ComponentDetailsScrollViewer.ScrollToTop();
             return;
         }
@@ -662,6 +665,7 @@ public partial class SettingsWindow : Window
         DisplayContentSettingsCard.Visibility = Visibility.Collapsed;
         WeatherContentSettingsCard.Visibility = Visibility.Collapsed;
         QuickPlacesSettingsCard.Visibility = Visibility.Collapsed;
+        UpdateMoveScreenControls(entry);
         ComponentDetailsScrollViewer.ScrollToTop();
     }
 
@@ -669,8 +673,8 @@ public partial class SettingsWindow : Window
         WidgetWindowBase? window,
         [NotNullWhen(true)] out TodoWidgetWindow? todoWindow)
     {
-        var primaryId = _maintenance.PrimaryTodoId()
-            ?? _widgetProvider().OfType<TodoWidgetWindow>().FirstOrDefault()?.State.Id;
+        var primaryId = GetActivePrimaryTodoId()
+            ?? GetActiveScreenWindows().OfType<TodoWidgetWindow>().FirstOrDefault()?.State.Id;
         if (window is TodoWidgetWindow candidate
             && primaryId is { } id
             && id != candidate.State.Id)
@@ -690,7 +694,7 @@ public partial class SettingsWindow : Window
         _loadingComponentEditor = true;
         try
         {
-            var component = _desktopExperience.GetComponent(kind);
+            var component = ActiveDesktopExperience.GetComponent(kind);
             TodoWidgetWindow? secondaryTodo = null;
             var isSecondaryTodo = kind == DesktopComponentKind.Todo
                 && IsSecondaryTodoWindow(targetWindow, out secondaryTodo);
@@ -1009,7 +1013,7 @@ public partial class SettingsWindow : Window
     private void SaveQuickPlaces()
     {
         var index = QuickPlaceList.SelectedIndex;
-        _maintenance.SetQuickPlaces(_quickPlaces
+        SaveActiveQuickPlaces(_quickPlaces
             .Select(item => new QuickPlaceState { Icon = item.Icon, Name = item.Name, Target = item.Target })
             .ToList());
         ShowQuickPlaces(index);
@@ -1176,11 +1180,12 @@ public partial class SettingsWindow : Window
         {
             return;
         }
-        var clock = _desktopExperience.GetComponent(DesktopComponentKind.TimeDate);
+        var activeExperience = ActiveDesktopExperience;
+        var clock = activeExperience.GetComponent(DesktopComponentKind.TimeDate);
         clock.ShowDivider = ClockDividerCheckBox.IsChecked == true;
         clock.DividerThickness = ClockDividerThicknessSlider.Value;
         ClockDividerThicknessText.Text = $"{clock.DividerThickness:0.#} px";
-        _applyDesktopExperience(_desktopExperience);
+        ApplyActiveDesktopExperience(activeExperience);
         DisplaySettingsStatusText.Text = "已保存";
     }
 
@@ -1207,7 +1212,7 @@ public partial class SettingsWindow : Window
         _applyDisplaySettings(greetingName, use24HourClock);
         foreach (var information in _widgetProvider().OfType<InformationWidgetWindow>())
         {
-            information.ReapplyDesktopExperience();
+            information.ApplyDesktopExperience(GetExperienceForInformationWindow(information));
             information.RefreshConfiguredValues(false);
         }
         DisplaySettingsStatusText.Text = "已保存";
@@ -1273,7 +1278,8 @@ public partial class SettingsWindow : Window
             return;
         }
 
-        var component = _desktopExperience.GetComponent(kind);
+        var activeExperience = ActiveDesktopExperience;
+        var component = activeExperience.GetComponent(kind);
         var density = SelectedComponentDensitySelector.SelectedIndex switch
         {
             0 => DesktopInformationDensity.Comfortable,
@@ -1331,7 +1337,7 @@ public partial class SettingsWindow : Window
             secondaryTodo.ApplyPlacement(todoState.Placement, SelectedComponentLockedCheckBox.IsChecked == true);
             if (visibilityChanged)
             {
-                _applyDesktopExperience(_desktopExperience);
+                ApplyActiveDesktopExperience(activeExperience);
             }
             _applyWidgetLock(secondaryTodo, SelectedComponentLockedCheckBox.IsChecked == true);
         }
@@ -1373,7 +1379,7 @@ public partial class SettingsWindow : Window
                 // 把窗口当前尺寸写回组件 Placement。放在后面时窗口已拿到上面写入的
                 // 新尺寸，回写与设置一致；放在前面则会用旧尺寸覆盖，卡片尺寸设置
                 // 永远不生效。
-                _applyDesktopExperience(_desktopExperience);
+                ApplyActiveDesktopExperience(activeExperience);
                 _applyWidgetLock(
                     targetWindow,
                     SelectedComponentLockedCheckBox.IsChecked == true);
@@ -1381,7 +1387,7 @@ public partial class SettingsWindow : Window
             else
             {
                 component.IsLocked = SelectedComponentLockedCheckBox.IsChecked == true;
-                _applyDesktopExperience(_desktopExperience);
+                ApplyActiveDesktopExperience(activeExperience);
             }
         }
         ComponentSettingsStatusText.Text = $"已保存“{_selectedComponentEntry.Name}”设置";
@@ -1437,7 +1443,7 @@ public partial class SettingsWindow : Window
     }
 
     private bool HasOwnLook(DesktopComponentKind kind) => !DesktopStyleRules.FollowsSharedLook(
-        _desktopExperience.GetComponent(kind),
+        ActiveDesktopExperience.GetComponent(kind),
         _maintenance.Style,
         QuickPlacesWindow.ClearBarOpacity);
 
@@ -1445,7 +1451,8 @@ public partial class SettingsWindow : Window
     // material would.
     private void FollowSharedLook(DesktopComponentKind kind)
     {
-        var component = _desktopExperience.GetComponent(kind);
+        var activeExperience = ActiveDesktopExperience;
+        var component = activeExperience.GetComponent(kind);
         var look = DesktopStyleRules.ComponentLook(kind, _maintenance.Style, QuickPlacesWindow.ClearBarOpacity);
         component.Appearance.BackgroundColor = look.BackgroundColor;
         component.Appearance.BackgroundOpacity = look.BackgroundOpacity;
@@ -1456,7 +1463,7 @@ public partial class SettingsWindow : Window
             component.Appearance.HeaderColor = glass.HeaderColor;
             component.Appearance.HeaderOpacity = glass.HeaderOpacity;
         }
-        _applyDesktopExperience(_desktopExperience);
+        ApplyActiveDesktopExperience(activeExperience);
         if (_selectedComponentEntry?.Kind == kind)
         {
             _componentApplyTimer.Stop();
@@ -1539,6 +1546,7 @@ public partial class SettingsWindow : Window
 
     public void ShowWidgetSettings(WidgetWindowBase window)
     {
+        SyncActiveScreenForTargetWindow(window);
         SelectNavigationPage("Components");
         ShowPage("Components");
         RefreshComponentList(window);
@@ -1687,7 +1695,7 @@ public partial class SettingsWindow : Window
             FileBoxMergeTargetComboBox.Items.Clear();
             if (!box.IsEdgeDocked)
             {
-                foreach (var other in _widgetProvider().OfType<FileBoxWindow>())
+                foreach (var other in GetActiveScreenWindows().OfType<FileBoxWindow>())
                 {
                     if (ReferenceEquals(other, box) || !other.IsVisible || other.IsEdgeDocked)
                     {
@@ -1951,7 +1959,7 @@ public partial class SettingsWindow : Window
     // The new card is selected so it can be adjusted right away.
     private void AddWidget(NewWidgetKind kind)
     {
-        if (_maintenance.AddWidget(kind) is { } window)
+        if (AddWidgetOnActiveScreen(kind) is { } window)
         {
             if (kind == NewWidgetKind.FileBox)
             {
@@ -2841,7 +2849,7 @@ public partial class SettingsWindow : Window
             return;
         }
 
-        var reset = _maintenance.ResetWidgetPlacement(entry.Window, entry.Kind);
+        var reset = ResetActiveWidgetPlacement(entry.Window, entry.Kind);
         ComponentSettingsStatusText.Text = reset ? "已恢复默认位置" : "这张卡片没有默认位置";
         RefreshComponentList(entry.Window, entry.Kind);
     }
@@ -4505,7 +4513,7 @@ public partial class SettingsWindow : Window
             return;
         }
 
-        var windows = _widgetProvider();
+        var windows = GetActiveScreenWindows();
         SyncObservedWidgetTitles(windows);
         var entries = new List<DesktopComponentSettingsEntry>();
         foreach (var kind in CurrentComponentKinds)
@@ -4544,6 +4552,10 @@ public partial class SettingsWindow : Window
         {
             ScrollSelectedComponentIntoView(selected);
         }
+        else
+        {
+            UpdateMoveScreenControls(null);
+        }
         ScheduleComponentListOverflowUpdate();
     }
 
@@ -4551,7 +4563,7 @@ public partial class SettingsWindow : Window
         DesktopComponentKind kind,
         WidgetWindowBase? window)
     {
-        var component = _desktopExperience.GetComponent(kind);
+        var component = ActiveDesktopExperience.GetComponent(kind);
         var locked = window?.IsWidgetLocked ?? component.IsLocked;
         return new DesktopComponentSettingsEntry(
             window is null ? DesktopExperienceRules.GetComponentName(kind) : GetWidgetName(window),
@@ -4649,20 +4661,24 @@ public partial class SettingsWindow : Window
 
     private void RenderPresetPreviews(DesktopLayoutPreset preset)
     {
-        PresetPreviewImage.Source = ThemePreviewRenderer.RenderPreset(preset, _desktopExperience);
-        QuietPresetThumb.Source = ThemePreviewRenderer.RenderPreset(DesktopLayoutPreset.QuietInformation, _desktopExperience);
-        GlacierPresetThumb.Source = ThemePreviewRenderer.RenderPreset(DesktopLayoutPreset.GlacierWorkbench, _desktopExperience);
-        ApplePresetThumb.Source = ThemePreviewRenderer.RenderPreset(DesktopLayoutPreset.TransparentApple, _desktopExperience);
-        CenterClockPresetThumb.Source = ThemePreviewRenderer.RenderPreset(DesktopLayoutPreset.CenterClock, _desktopExperience);
+        var experience = ActiveDesktopExperience;
+        PresetPreviewImage.Source = ThemePreviewRenderer.RenderPreset(preset, experience);
+        QuietPresetThumb.Source = ThemePreviewRenderer.RenderPreset(DesktopLayoutPreset.QuietInformation, experience);
+        GlacierPresetThumb.Source = ThemePreviewRenderer.RenderPreset(DesktopLayoutPreset.GlacierWorkbench, experience);
+        ApplePresetThumb.Source = ThemePreviewRenderer.RenderPreset(DesktopLayoutPreset.TransparentApple, experience);
+        CenterClockPresetThumb.Source = ThemePreviewRenderer.RenderPreset(DesktopLayoutPreset.CenterClock, experience);
     }
 
     private void ApplyLayout_Click(object sender, RoutedEventArgs e)
     {
-        _desktopExperience.ActivePreset = GetSelectedPreset();
-        DesktopExperienceRules.Normalize(_desktopExperience);
-        _applyLayoutPreset(_desktopExperience);
-        LayoutStatusText.Text =
-            $"已应用“{DesktopExperienceRules.GetPresetName(_desktopExperience.ActivePreset)}”";
+        var experience = ActiveDesktopExperience;
+        experience.ActivePreset = GetSelectedPreset();
+        DesktopExperienceRules.Normalize(experience);
+        ApplyActiveLayoutPreset(experience);
+        var presetName = DesktopExperienceRules.GetPresetName(experience.ActivePreset);
+        LayoutStatusText.Text = IsMultiScreenActive
+            ? $"已将“{presetName}”应用到 {ActiveScreenDisplayName()}"
+            : $"已应用“{presetName}”";
     }
 
     private DesktopLayoutPreset GetSelectedPreset()

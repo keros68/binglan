@@ -19,6 +19,62 @@ public enum NewWidgetKind
 /// <summary>Result of binding one missing theme slot to a local app.</summary>
 public sealed record BindOutcome(bool Succeeded, string Message);
 
+/// <summary>
+/// Summary of one connected or remembered monitor shown in the multi-screen topology switcher.
+/// </summary>
+public sealed record MonitorCardOption(
+    string? ScreenKey,
+    string MonitorKey,
+    string DisplayLabel,
+    string ShortLabel,
+    string ResolutionSummary,
+    int DisplayIndex,
+    bool IsPrimary,
+    bool IsConnected,
+    BingLan.Core.Dock.PixelRect Bounds,
+    BingLan.Core.Dock.PixelRect WorkingArea,
+    uint Dpi,
+    int CardCount);
+
+/// <summary>Result of moving a desktop card to another screen.</summary>
+public sealed record MoveWidgetResult(
+    bool Succeeded,
+    string Message,
+    WidgetWindowBase? ResultingWindow);
+
+/// <summary>
+/// Bridge between <see cref="SettingsWindow"/> and <see cref="WidgetCoordinator"/> for
+/// multi-screen card profile management. Null in single-screen tests that do not attach it.
+/// </summary>
+public sealed class MultiScreenSettingsBridge
+{
+    public Func<bool> IsEnabled { get; init; } = () => false;
+    public Func<bool> HasMultipleMonitors { get; init; } = () => false;
+    public Func<int> GetConnectedMonitorCount { get; init; } = () => 1;
+    public Func<bool> HasSavedSecondaryState { get; init; } = () => false;
+    public Action<bool> SetEnabled { get; init; } = _ => { };
+    public Func<IReadOnlyList<MonitorCardOption>> GetScreens { get; init; } = () => [];
+    public Func<string?, BingLan.Core.Models.DesktopExperienceState> GetExperience { get; init; } =
+        _ => BingLan.Core.Models.DesktopExperienceRules.CreateDefault();
+    public Action<string?, BingLan.Core.Models.DesktopExperienceState> ApplyExperience { get; init; } = (_, _) => { };
+    public Action<string?, BingLan.Core.Models.DesktopExperienceState> ApplyLayoutPreset { get; init; } = (_, _) => { };
+    public Func<string?, IReadOnlyList<BingLan.Core.Models.QuickPlaceState>> GetQuickPlaces { get; init; } = _ => [];
+    public Action<string?, List<BingLan.Core.Models.QuickPlaceState>> SetQuickPlaces { get; init; } = (_, _) => { };
+    public Func<string?, Guid?> GetPrimaryTodoId { get; init; } = _ => null;
+    public Func<string?, IReadOnlyList<WidgetWindowBase>> GetWindowsForScreen { get; init; } = _ => [];
+    public Func<WidgetWindowBase, string?> GetScreenKeyForWindow { get; init; } = _ => null;
+    public Func<string?, NewWidgetKind, WidgetWindowBase?> AddWidgetOnScreen { get; init; } = (_, _) => null;
+    public Func<string?, WidgetWindowBase?, BingLan.Core.Models.DesktopComponentKind?, bool> ResetWidgetPlacement { get; init; } =
+        (_, _, _) => false;
+    public Func<string, string> CopyPrimaryProfileToScreen { get; init; } = _ => string.Empty;
+    public Func<WidgetWindowBase, string?, MoveWidgetResult> MoveWidgetToScreen { get; init; } =
+        (_, _) => new MoveWidgetResult(false, string.Empty, null);
+    public Func<IReadOnlyList<BingLan.Core.Models.DisconnectedScreenWidget>> GetDisconnectedWidgets { get; init; } =
+        () => [];
+    public Func<Guid, string, bool> MoveDisconnectedWidgetToPrimary { get; init; } = (_, _) => false;
+    public Func<string, int> MoveAllDisconnectedFromScreenToPrimary { get; init; } = _ => 0;
+}
+
 /// <summary>Startup, data folder, backup and theme actions offered by the settings window.</summary>
 public sealed class SettingsMaintenance
 {
@@ -126,4 +182,5 @@ public sealed class SettingsMaintenance
     public Action ApplyGlobalHotkeys { get; init; } = () => { };
     public Func<string?>? GetLastSettingsPage { get; init; }
     public Action<string>? SetLastSettingsPage { get; init; }
+    public MultiScreenSettingsBridge? MultiScreen { get; init; }
 }

@@ -529,6 +529,10 @@
                             </StackPanel>
                         </local:SettingsRow>
                     </local:SettingsGroup>
+
+                    <Border x:Name="SchemeMultiScreenHost"
+                            Visibility="Collapsed"
+                            local:SettingsSearch.Exclude="True"/>
                 </StackPanel>
             </ScrollViewer>
 
@@ -1088,6 +1092,10 @@
                             </StackPanel>
                         </Expander.Header>
                         <StackPanel>
+                            <Border x:Name="LayoutMultiScreenBarHost"
+                                    Margin="18,12,18,0"
+                                    Visibility="Collapsed"
+                                    local:SettingsSearch.Exclude="True"/>
                             <local:SettingsRow Header="布局预设"
                                                Description="改变桌面卡片的摆放位置，选好后点击“应用布局”"
                                                local:SettingsSearch.Keywords="布局 摆放">
@@ -1211,6 +1219,7 @@
                   local:SettingsSearch.Keywords="桌面组件 组件">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
                     <RowDefinition Height="*"/>
                 </Grid.RowDefinitions>
                 <Grid>
@@ -1244,7 +1253,13 @@
                     </StackPanel>
                 </Grid>
 
-                <Grid Grid.Row="1" Margin="0,16,0,0">
+                <Border x:Name="ComponentsMultiScreenBarHost"
+                        Grid.Row="1"
+                        Margin="0,12,0,0"
+                        Visibility="Collapsed"
+                        local:SettingsSearch.Exclude="True"/>
+
+                <Grid Grid.Row="2" Margin="0,16,0,0">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="230"/>
                         <ColumnDefinition Width="20"/>
@@ -1428,6 +1443,10 @@
                                             local:SettingsSearch.EntryName="删除此卡片"
                                             local:SettingsSearch.Keywords="删除 移除 从桌面移除 隐藏 位置"
                                             Click="DeleteComponent_Click"/>
+                                    <Border x:Name="BuiltInMoveScreenHost"
+                                            Margin="8,4,0,0"
+                                            Visibility="Collapsed"
+                                            local:SettingsSearch.Exclude="True"/>
                                 </WrapPanel>
                             </StackPanel>
                         </Border>
@@ -1502,6 +1521,10 @@
                                             local:SettingsSearch.EntryName="删除此卡片"
                                             local:SettingsSearch.Keywords="删除 移除 位置"
                                             Click="DeleteComponent_Click"/>
+                                    <Border x:Name="SelectedWidgetMoveScreenHost"
+                                            Margin="8,4,0,0"
+                                            Visibility="Collapsed"
+                                            local:SettingsSearch.Exclude="True"/>
                                 </WrapPanel>
                             </StackPanel>
                         </Border>

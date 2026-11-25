@@ -50,6 +50,9 @@ internal static class MultiScreenUiTests
         try
         {
             TestMonitorIdentityStability();
+            TestSingleScreenZeroOverheadSettingsUi(show, pump);
+            TestDisabledDualMonitorZeroQdcAndNoFalseOffline(show, pump);
+            TestDualMonitorLifecycleSettingsAndHotUnplug(show, pump);
             TestMultiScreenHostLifecycleAndHotUnplug(show, pump);
             TestRealCoordinatorToggleAndPrimaryOrganizeIsolation(pump);
             TestDualScreenWeatherDedupWithRunningSampler(show, pump);
@@ -142,6 +145,405 @@ internal static class MultiScreenUiTests
         Check(keyV1 == "slot:DISPLAY3" && keyV1 == keyV2,
             $"无硬件路径回退键不应绑定易变分辨率，实际 {keyV1} vs {keyV2}");
     }
+
+    private static void TestSingleScreenZeroOverheadSettingsUi(Action<Window> show, Action pump)
+    {
+        var single = CreatePrimaryOnlyMonitors();
+        MonitorIdentityResolver.ResolveOverrideForTests = () => single;
+        MonitorIdentityResolver.ResetQueryDisplayConfigCallCountForTests();
+
+        var info = new InformationWidgetState();
+        var exp = DesktopExperienceRules.CreateDefault();
+        var bridge = new MultiScreenSettingsBridge
+        {
+            IsEnabled = () => false,
+            HasMultipleMonitors = () => false,
+            GetConnectedMonitorCount = () => 1,
+            HasSavedSecondaryState = () => false,
+            GetScreens = () => [],
+            GetDisconnectedWidgets = () => []
+        };
+        var settings = new SettingsWindow(
+            new CityLookupService(),
+            info,
+            exp,
+            (_, _) => { },
+            _ => { },
+            _ => { },
+            maintenance: new SettingsMaintenance { MultiScreen = bridge });
+        show(settings);
+        try
+        {
+            pump();
+            Check(!settings.IsMultiScreenUiVisible, "单屏无多屏存档时桌面方案页多屏区块必须保持 Collapsed");
+            Check(!settings.IsMultiScreenTopologyBarVisible, "单屏无多屏存档时拓扑切换栏必须保持 Collapsed");
+            Check(!settings.HasInstantiatedMultiScreenChildren,
+                "单屏模式下不得实例化任何多屏子控件（Child 全部为 null）");
+            Check(MonitorIdentityResolver.QueryDisplayConfigCallCountForTests == 0,
+                "单屏模式不得触发 QueryDisplayConfig");
+        }
+        finally
+        {
+            settings.Close();
+            pump();
+        }
+    }
+
+    private static void TestDisabledDualMonitorZeroQdcAndNoFalseOffline(Action<Window> show, Action pump)
+    {
+        var temp = Path.Combine(Path.GetTempPath(), "binglan-ms-qdc-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(temp);
+        var activeMonitors = CreateDualMonitors(@"\\.\DISPLAY1");
+        MonitorIdentityResolver.ResolveOverrideForTests = () => activeMonitors;
+
+        // Pre-seed a saved disabled multi-screen state with cards assigned to DISPLAY1.
+        var store = new LocalStateStore(temp);
+        var seed = LocalStateStore.CreateDefault();
+        var profile = ScreenProfileAccessor.EnsureScreenProfile(seed, SecondaryHardwareKey, @"\\.\DISPLAY1", "副屏 2");
+        profile.Experience.GetComponent(DesktopComponentKind.Weather).IsVisible = true;
+        seed.MultiScreen!.IsEnabled = false;
+        var savedNote = NoteService.CreateDefaultWidget();
+        savedNote.Title = "在线但关闭多屏的便签";
+        savedNote.ScreenKey = SecondaryHardwareKey;
+        seed.NoteWidgets.Add(savedNote);
+        store.Save(seed);
+
+        var coordinator = new WidgetCoordinator(interactiveQa: true, dataDirectory: temp);
+        SettingsWindow? settings = null;
+        try
+        {
+            MonitorIdentityResolver.ResetQueryDisplayConfigCallCountForTests();
+            var bridge = coordinator.BuildMultiScreenSettingsBridge();
+            settings = new SettingsWindow(
+                new CityLookupService(),
+                new InformationWidgetState(),
+                DesktopExperienceRules.CreateDefault(),
+                (_, _) => { },
+                _ => { },
+                _ => { },
+                maintenance: new SettingsMaintenance { MultiScreen = bridge });
+            show(settings);
+            pump();
+
+            Check(settings.IsMultiScreenUiVisible && !settings.IsMultiScreenTopologyBarVisible,
+                "双屏但多屏关闭时，桌面方案页应显示总开关且桌面卡片页不显示拓扑栏");
+            Check(MonitorIdentityResolver.QueryDisplayConfigCallCountForTests == 0,
+                $"双屏但关闭多屏开关时打开设置页严禁触发 QueryDisplayConfig，实际触发 {MonitorIdentityResolver.QueryDisplayConfigCallCountForTests} 次");
+            Check(bridge.GetDisconnectedWidgets().Count == 0,
+                $"双屏物理在线仅关闭多屏开关时，不得把在线副屏卡片误报为未连接，实际误报 {bridge.GetDisconnectedWidgets().Count} 张");
+
+            // Now genuinely unplug DISPLAY1 (single monitor attached) -> offline cards must appear with 0 QDC calls.
+            activeMonitors = CreatePrimaryOnlyMonitors();
+            var offline = bridge.GetDisconnectedWidgets();
+            Check(MonitorIdentityResolver.QueryDisplayConfigCallCountForTests == 0,
+                "副屏拔出成单屏后判别离线卡片也不应触发 QueryDisplayConfig");
+            Check(offline.Any(item => item.Id == savedNote.Id)
+                && offline.Any(item => item.KindName == ScreenProfileAccessor.DisconnectedBuiltInInfoKind),
+                $"真拔掉副屏后应准确发现已保存的离线便签与内置信息卡，实际 {offline.Count} 项");
+        }
+        finally
+        {
+            settings?.Close();
+            DisposeCoordinatorWindows(coordinator);
+            coordinator.Dispose();
+            pump();
+            try { Directory.Delete(temp, recursive: true); } catch { }
+        }
+    }
+
+    private static void TestDualMonitorLifecycleSettingsAndHotUnplug(Action<Window> show, Action pump)
+    {
+        var primaryOnly = CreatePrimaryOnlyMonitors();
+        var dualMonitors = CreateDualMonitors(@"\\.\DISPLAY1");
+        var repluggedDualMonitors = CreateDualMonitors(@"\\.\DISPLAY9");
+        var activeMonitors = dualMonitors;
+        MonitorIdentityResolver.ResolveOverrideForTests = () => activeMonitors;
+
+        var state = LocalStateStore.CreateDefault();
+        state.DesktopExperience.GetComponent(DesktopComponentKind.TimeDate).IsVisible = true;
+        state.DesktopExperience.GetComponent(DesktopComponentKind.Todo).IsVisible = true;
+
+        var windows = new List<WidgetWindowBase>();
+        var hiddenFromTray = new List<WidgetWindowBase>();
+        using var sampler = new WindowsPerformanceSamplingService();
+        var weather = new WeatherService();
+
+        var host = new MultiScreenHost(
+            state,
+            windows,
+            hiddenFromTray,
+            new MultiScreenCoordinatorCallbacks
+            {
+                GetInformationState = () => state.InformationWidgets[0],
+                CreateInformationWindow = (infoState, experience, kind) =>
+                {
+                    var win = new InformationWidgetWindow(infoState, sampler, weather, experience, kind)
+                    {
+                        ShowInTaskbar = false
+                    };
+                    windows.Add(win);
+                    return win;
+                },
+                CreateTodoWindow = (todoState, _) =>
+                {
+                    var win = new TodoWidgetWindow(todoState) { ShowInTaskbar = false };
+                    windows.Add(win);
+                    return win;
+                },
+                CreateNoteWindow = noteState =>
+                {
+                    var win = new NoteWidgetWindow(noteState) { ShowInTaskbar = false };
+                    windows.Add(win);
+                    return win;
+                },
+                CreateFileBoxWindow = members =>
+                {
+                    var win = new FileBoxWindow(members) { ShowInTaskbar = false };
+                    windows.Add(win);
+                    return win;
+                },
+                CreateQuickPlacesWindow = () =>
+                {
+                    var win = new QuickPlacesWindow { ShowInTaskbar = false };
+                    windows.Add(win);
+                    return win;
+                },
+                ApplyTodoComponent = (_, _) => { },
+                CopyTodoLookFromComponent = (_, _) => { },
+                SyncComponentFromTodo = (_, _) => { },
+                UseSharedLook = _ => { },
+                ApplyEdgeDock = () => { },
+                UpdateSamplingMode = () => { },
+                ScheduleSave = () => { },
+                SaveNow = () => { },
+                RefreshSettingsUi = () => { },
+                IsDesktopHidden = () => false,
+                EnsureDesktopVisible = () => { },
+                RunSuppressingExperienceChanges = action => action()
+            });
+
+        SettingsWindow? settings = null;
+        try
+        {
+            // 0. ApplyPhysicalBounds zero-handle guard must NOT mutate Placement/DisplayLayouts when Handle == 0.
+            var unshownNote = NoteService.CreateDefaultWidget();
+            unshownNote.Placement = new WindowPlacement { Left = 111, Top = 222, Width = 300, Height = 260 };
+            var unshownWin = new NoteWidgetWindow(unshownNote) { ShowInTaskbar = false };
+            var appliedUnshown = MultiScreenHost.ApplyPhysicalBounds(
+                unshownWin, new PixelRect(2100, -20, 2400, 240), 96, unshownNote.Placement, "test-layout");
+            Check(!appliedUnshown && unshownNote.Placement.Left == 111 && unshownNote.Placement.Top == 222
+                && unshownNote.Placement.DisplayLayouts.Count == 0,
+                "未创建 HWND（handle==0）时 ApplyPhysicalBounds 必须返回 false 且不得提前改写 Placement 或 DisplayLayouts");
+
+            // 1. Enabling multi-screen on a brand-new unknown secondary monitor keeps it blank (0 windows).
+            state.MultiScreen = new MultiScreenState { IsEnabled = true };
+            host.SyncConnectedScreens(activeMonitors);
+            pump();
+            Check(host.SecondaryWindowCount == 0 && windows.Count == 0,
+                $"新接入未知副屏应保持空白零窗口，实际 SecondaryWindowCount={host.SecondaryWindowCount}");
+
+            // 2. Settings UI shows multi-screen toggle & topology switcher when dual monitors connected.
+            var bridge = new MultiScreenSettingsBridge
+            {
+                IsEnabled = () => state.MultiScreen is { IsEnabled: true },
+                HasMultipleMonitors = () => activeMonitors.Count >= 2,
+                GetConnectedMonitorCount = () => activeMonitors.Count,
+                HasSavedSecondaryState = () => state.MultiScreen is { Screens.Count: > 0 },
+                SetEnabled = enabled =>
+                {
+                    state.MultiScreen ??= new MultiScreenState();
+                    state.MultiScreen.IsEnabled = enabled;
+                    if (enabled)
+                    {
+                        host.SyncConnectedScreens(activeMonitors);
+                    }
+                    else
+                    {
+                        host.SyncConnectedScreens(primaryOnly);
+                    }
+                },
+                GetScreens = () => activeMonitors.Select(m => new MonitorCardOption(
+                    m.ScreenKey, m.MonitorKey, m.DisplayLabel, m.IsPrimary ? "主屏" : $"副屏 {m.DisplayIndex}",
+                    m.ResolutionSummary, m.DisplayIndex, m.IsPrimary, true, m.Bounds, m.WorkingArea, m.Dpi,
+                    m.IsPrimary ? 2 : host.GetWindowsForSecondaryScreen(m.MonitorKey).Count)).ToList(),
+                GetExperience = key => ScreenProfileAccessor.GetExperience(state, key),
+                ApplyExperience = (key, exp) =>
+                {
+                    if (key is not null)
+                    {
+                        host.ApplyExperienceForScreen(key, exp, saveImmediate: false);
+                    }
+                },
+                ApplyLayoutPreset = (key, exp) =>
+                {
+                    if (key is not null)
+                    {
+                        host.ApplyLayoutPresetForScreen(key, exp);
+                    }
+                },
+                GetQuickPlaces = key => ScreenProfileAccessor.GetQuickPlaces(state, key),
+                SetQuickPlaces = (key, items) =>
+                {
+                    if (key is not null)
+                    {
+                        host.ApplyQuickPlacesForScreen(key, items);
+                    }
+                },
+                GetPrimaryTodoId = key => ScreenProfileAccessor.GetPrimaryTodoId(state, key),
+                GetWindowsForScreen = key => key is null
+                    ? windows.Where(w => !host.IsSecondaryWindow(w)).ToList()
+                    : host.GetWindowsForSecondaryScreen(key),
+                GetScreenKeyForWindow = w => host.TryGetScreenKey(w),
+                AddWidgetOnScreen = (key, kind) => key is not null ? host.AddWidgetOnScreen(key, kind) : null,
+                CopyPrimaryProfileToScreen = key => host.CopyPrimaryProfileToScreen(key),
+                MoveWidgetToScreen = (w, key) => host.MoveWindowToScreen(w, key, activeMonitors),
+                GetDisconnectedWidgets = () => ScreenProfileAccessor.FindDisconnectedScreenWidgets(
+                    state,
+                    activeMonitors.Where(m => !m.IsPrimary).Select(m => m.MonitorKey).ToHashSet(StringComparer.Ordinal))
+            };
+
+            settings = new SettingsWindow(
+                new CityLookupService(),
+                state.InformationWidgets[0],
+                state.DesktopExperience,
+                (_, _) => { },
+                _ => { },
+                _ => { },
+                widgetProvider: () => windows.ToList(),
+                maintenance: new SettingsMaintenance { MultiScreen = bridge });
+            show(settings);
+            pump();
+
+            Check(settings.IsMultiScreenUiVisible && settings.IsMultiScreenTopologyBarVisible,
+                "双屏且开启多屏时，设置页应显示多屏入口与拓扑切换栏");
+
+            // Switch to secondary monitor and copy primary profile onto DISPLAY1 (2048, -50).
+            settings.SelectActiveScreen(SecondaryHardwareKey);
+            pump();
+            Check(settings.ActiveScreenKey == SecondaryHardwareKey, "切换屏幕后 ActiveScreenKey 应指向副屏");
+
+            var copyMsg = bridge.CopyPrimaryProfileToScreen(SecondaryHardwareKey);
+            pump();
+            Check(copyMsg.Contains("副屏", StringComparison.Ordinal), $"复制方案提示异常：{copyMsg}");
+            Check(host.SecondaryWindowCount >= 2, $"复制主屏方案后副屏应创建至少 2 个窗口，实际 {host.SecondaryWindowCount}");
+
+            // Verify secondary window physical bounds sit on DISPLAY1 (X >= 2048, Y >= -50).
+            var secondaryLive = host.GetWindowsForSecondaryScreen(SecondaryHardwareKey).ToList();
+            foreach (var secWin in secondaryLive)
+            {
+                var handle = new WindowInteropHelper(secWin).Handle;
+                if (handle == 0 || !GetWindowRect(handle, out var rect))
+                {
+                    throw new InvalidOperationException("副屏窗口应具备有效 HWND 与位置");
+                }
+                Check(rect.Left >= 2048 && rect.Top >= -50 && rect.Right <= 3755 && rect.Bottom <= 1017,
+                    $"副屏窗口物理坐标应落在 DISPLAY1 显示区 (2048,-50)-(3755,1017) 内，实际 ({rect.Left},{rect.Top})-({rect.Right},{rect.Bottom})");
+            }
+
+            // 3. QuickPlaces button-move & drag-reconcile preserve custom list and reset source screen.
+            state.QuickPlaces =
+            [
+                new QuickPlaceState { Icon = QuickPlaceRules.FolderIcon, Name = "专属工程", Target = @"C:\Projects" }
+            ];
+            state.DesktopExperience.GetComponent(DesktopComponentKind.QuickLaunch).IsVisible = true;
+            state.MultiScreen!.Screens[SecondaryHardwareKey].Experience.GetComponent(DesktopComponentKind.QuickLaunch).IsVisible = false;
+            var quickWin = new QuickPlacesWindow { ShowInTaskbar = false };
+            quickWin.SetItems(state.QuickPlaces);
+            windows.Add(quickWin);
+            show(quickWin);
+            pump();
+
+            var moveQuickRes = host.MoveWindowToScreen(quickWin, SecondaryHardwareKey, activeMonitors);
+            pump();
+            Check(moveQuickRes.Succeeded && host.IsSecondaryWindow(quickWin),
+                $"按钮移屏快捷入口应成功，实际：{moveQuickRes.Message}");
+            Check(ScreenProfileAccessor.GetQuickPlaces(state, SecondaryHardwareKey).Any(p => p.Target == @"C:\Projects")
+                && !state.QuickPlaces.Any(p => p.Target == @"C:\Projects"),
+                "按钮移屏快捷入口必须连同自定义列表搬迁并重置源屏列表");
+
+            // Drag QuickPlaces back onto primary monitor and run ReconcileWindowScreenAfterMove.
+            var quickHandle = new WindowInteropHelper(quickWin).Handle;
+            SetWindowPos(quickHandle, 0, 120, 120, 320, 64, SwpNoZOrder | SwpNoActivate);
+            pump();
+            Check(host.ReconcileWindowScreenAfterMove(quickWin) && !host.IsSecondaryWindow(quickWin),
+                "拖拽快捷入口回主屏后应自动切换归属");
+            Check(state.QuickPlaces.Any(p => p.Target == @"C:\Projects")
+                && !ScreenProfileAccessor.GetQuickPlaces(state, SecondaryHardwareKey).Any(p => p.Target == @"C:\Projects"),
+                "拖拽快捷入口跨屏后必须同步搬迁自定义列表并重置源屏");
+
+            // 4. Add a secondary Note and move it to Primary keeping its text intact.
+            var noteWin = host.AddWidgetOnScreen(SecondaryHardwareKey, NewWidgetKind.Note) as NoteWidgetWindow
+                ?? throw new InvalidOperationException("副屏新建便签失败");
+            noteWin.State.Content = "副屏迁移测试正文";
+            pump();
+            Check(host.IsSecondaryWindow(noteWin) && noteWin.State.ScreenKey == SecondaryHardwareKey,
+                "副屏新建便签应归属副屏");
+
+            var moveResult = host.MoveWindowToScreen(noteWin, targetScreenKey: null, activeMonitors);
+            pump();
+            Check(moveResult.Succeeded && !host.IsSecondaryWindow(noteWin)
+                && noteWin.State.ScreenKey is null && noteWin.State.Content == "副屏迁移测试正文",
+                "跨屏移回主屏后便签正文与归属应正确更新");
+
+            // 5. Cross-screen drag of a FileBox must clear EdgeDock anchor metadata.
+            var boxWin = host.AddWidgetOnScreen(SecondaryHardwareKey, NewWidgetKind.FileBox) as FileBoxWindow
+                ?? throw new InvalidOperationException("副屏新建收纳盒失败");
+            boxWin.State.EdgeDockSide = FileBoxEdgeDockSide.Right;
+            boxWin.State.EdgeDockOffsetDip = 88d;
+            boxWin.State.EdgeDockMonitorDeviceName = @"\\.\DISPLAY1";
+            var boxHandle = new WindowInteropHelper(boxWin).Handle;
+            SetWindowPos(boxHandle, 0, 200, 180, 360, 300, SwpNoZOrder | SwpNoActivate);
+            pump();
+            Check(host.ReconcileWindowScreenAfterMove(boxWin)
+                && !host.IsSecondaryWindow(boxWin)
+                && boxWin.State.ScreenKey is null
+                && boxWin.State.EdgeDockSide is null
+                && boxWin.State.EdgeDockOffsetDip is null
+                && boxWin.State.EdgeDockMonitorDeviceName is null,
+                "跨屏拖拽文件收纳盒后必须更新 ScreenKey 并清空原屏贴边停靠锚点");
+
+            // 6. Hot-unplug DISPLAY1: secondary windows MUST Close() (not Hide()), while JSON retains profile.
+            var beforeUnplugWindows = host.GetWindowsForSecondaryScreen(SecondaryHardwareKey).ToList();
+            Check(beforeUnplugWindows.Count >= 2, "拔屏前副屏应存在活窗口");
+            activeMonitors = primaryOnly;
+            host.SyncConnectedScreens(activeMonitors);
+            pump();
+            Check(host.SecondaryWindowCount == 0,
+                $"副屏拔出后 SecondaryWindowCount 必须归零，实际 {host.SecondaryWindowCount}");
+            Check(beforeUnplugWindows.All(w => !w.IsVisible && !w.IsLoaded && !windows.Contains(w)),
+                "副屏拔出后所有副屏窗口必须彻底 Close 销毁并移出窗口列表，绝不能仅 Hide 驻留");
+            Check(state.MultiScreen!.Screens.ContainsKey(SecondaryHardwareKey),
+                "副屏拔出后 JSON 副屏配置必须保留以便重连恢复");
+
+            // 7. Replug DISPLAY1 even with a changed GDI device name (DISPLAY9) -> restores by MonitorKey!
+            activeMonitors = repluggedDualMonitors;
+            host.SyncConnectedScreens(activeMonitors);
+            pump();
+            Check(host.SecondaryWindowCount >= 2,
+                $"副屏改号重连（DISPLAY9 但硬件 MonitorKey 不变）后应自动恢复副屏窗口，实际 {host.SecondaryWindowCount}");
+
+            // 8. Disabling / Disposing MultiScreenHost destroys every secondary window cleanly.
+            var beforeDisposeWindows = host.GetWindowsForSecondaryScreen(SecondaryHardwareKey).ToList();
+            host.Dispose();
+            pump();
+            Check(host.SecondaryWindowCount == 0
+                && beforeDisposeWindows.All(w => !w.IsVisible && !w.IsLoaded && !windows.Contains(w)),
+                "关闭多屏并释放 MultiScreenHost 后所有副屏窗口必须彻底 Close 销毁");
+        }
+        finally
+        {
+            settings?.Close();
+            host.Dispose();
+            foreach (var win in windows.ToList())
+            {
+                win.CanClose = true;
+                try { win.Close(); } catch (InvalidOperationException) { }
+            }
+            windows.Clear();
+            pump();
+        }
+    }
+
 
     private static void TestMultiScreenHostLifecycleAndHotUnplug(Action<Window> show, Action pump)
     {
