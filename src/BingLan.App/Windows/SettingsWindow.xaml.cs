@@ -3510,6 +3510,8 @@ public partial class SettingsWindow : Window
             TopBarShowWifiNameRow.IsEnabled = state.Modules.Network && state.NetworkIconOnly != true;
             TopBarBatteryCheckBox.IsChecked = state.Modules.Battery;
             TopBarSearchCheckBox.IsChecked = state.Modules.Search;
+            TopBarSearchInlineCheckBox.IsChecked = state.SearchInline == true;
+            TopBarSearchInlineRow.IsEnabled = state.Modules.Search;
             TopBarTrayOverflowCheckBox.IsChecked = state.Modules.TrayOverflow;
             TopBarTrayOverflowCheckBox.Visibility = OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000)
                 ? Visibility.Visible : Visibility.Collapsed;
@@ -3569,6 +3571,8 @@ public partial class SettingsWindow : Window
         TopBarShowWifiNameRow.IsEnabled = state.Modules.Network && state.NetworkIconOnly != true;
         state.Modules.Battery = TopBarBatteryCheckBox.IsChecked == true;
         state.Modules.Search = TopBarSearchCheckBox.IsChecked == true;
+        state.SearchInline = TopBarSearchInlineCheckBox.IsChecked == true;
+        TopBarSearchInlineRow.IsEnabled = state.Modules.Search;
         state.Modules.TrayOverflow = TopBarTrayOverflowCheckBox.IsChecked == true;
         if (TopBarMonitorComboBox.SelectedItem is ComboBoxItem { Tag: string deviceName })
         {

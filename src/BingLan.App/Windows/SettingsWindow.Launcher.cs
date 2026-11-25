@@ -39,11 +39,6 @@ public partial class SettingsWindow
                 LauncherEverythingCheckBox.IsChecked = _maintenance.IsLauncherUseEverything();
                 LauncherEverythingCheckBox.IsEnabled = enabled;
             }
-            if (LauncherInlineSearchCheckBox is not null)
-            {
-                LauncherInlineSearchCheckBox.IsChecked = _maintenance.IsLauncherSearchInline();
-                LauncherInlineSearchCheckBox.IsEnabled = enabled;
-            }
             if (LauncherFavoriteModeComboBox is not null)
             {
                 LauncherFavoriteModeComboBox.SelectedIndex = (int)_maintenance.GetLauncherFavoriteMode();
@@ -86,14 +81,6 @@ public partial class SettingsWindow
         if (_loadingLauncherEnabled) return;
 
         _maintenance.SetLauncherUseEverything(LauncherEverythingCheckBox.IsChecked == true);
-        LoadLauncherEnabled();
-    }
-
-    private void LauncherInlineSearch_Changed(object sender, RoutedEventArgs e)
-    {
-        if (_loadingLauncherEnabled) return;
-
-        _maintenance.SetLauncherSearchInline(LauncherInlineSearchCheckBox.IsChecked == true);
         LoadLauncherEnabled();
     }
 

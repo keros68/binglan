@@ -2435,15 +2435,6 @@
                                       Checked="LauncherEverything_Changed"
                                       Unchecked="LauncherEverything_Changed"/>
                         </local:SettingsRow>
-                        <local:SettingsRow x:Name="LauncherInlineSearchRow" Header="顶部信息条搜索直接搜索"
-                                           Description="开启后点顶部信息条的搜索会直接弹出搜索框（先搜本机文件，没有匹配时给一行浏览器搜索）；关闭时搜索仍打开冰蓝总览卡"
-                                           local:SettingsSearch.Keywords="搜索 内联 浮窗 总览卡 Everything 百度 浏览器 顶部信息条 搜索框">
-                            <CheckBox x:Name="LauncherInlineSearchCheckBox"
-                                      AutomationProperties.Name="顶部信息条搜索直接搜索"
-                                      Style="{StaticResource ToggleSwitchStyle}"
-                                      Checked="LauncherInlineSearch_Changed"
-                                      Unchecked="LauncherInlineSearch_Changed"/>
-                        </local:SettingsRow>
                     </local:SettingsGroup>
 
                     <Expander x:Name="LauncherMoreFold"
@@ -2922,6 +2913,16 @@
                                                        local:SettingsSearch.Keywords="Wi-Fi SSID 网络名称 隐私 录屏">
                                         <CheckBox x:Name="TopBarShowWifiNameCheckBox"
                                                   AutomationProperties.Name="在顶栏显示 Wi-Fi 名称"
+                                                  Style="{StaticResource ToggleSwitchStyle}"
+                                                  Checked="TopBarSetting_Changed"
+                                                  Unchecked="TopBarSetting_Changed"/>
+                                    </local:SettingsRow>
+                                    <local:SettingsRow x:Name="TopBarSearchInlineRow"
+                                                       Header="搜索入口直接弹出搜索框"
+                                                       Description="开启后点击顶栏搜索会直接在顶栏下方弹出搜索框（优先查本机文件，无匹配时按 Enter 用浏览器搜索）；关闭时打开冰蓝总览卡"
+                                                       local:SettingsSearch.Keywords="搜索 内联 浮窗 总览卡 Everything 百度 浏览器 顶部信息条 搜索框">
+                                        <CheckBox x:Name="TopBarSearchInlineCheckBox"
+                                                  AutomationProperties.Name="搜索入口直接弹出搜索框"
                                                   Style="{StaticResource ToggleSwitchStyle}"
                                                   Checked="TopBarSetting_Changed"
                                                   Unchecked="TopBarSetting_Changed"/>

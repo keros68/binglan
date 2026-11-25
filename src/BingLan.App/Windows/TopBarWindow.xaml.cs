@@ -2453,27 +2453,31 @@ public sealed partial class TopBarWindow : Window
             open.Close();
             return;
         }
-        if (_searchButton is not { } button || button.ActualWidth <= 0d)
+
+        System.Windows.Point anchorPixels;
+        if (_searchButton is { ActualWidth: > 0d } button)
+        {
+            anchorPixels = button.PointToScreen(
+                new System.Windows.Point(button.ActualWidth / 2d, button.ActualHeight));
+        }
+        else if (ActualWidth > 0d && ActualHeight > 0d)
+        {
+            anchorPixels = PointToScreen(new System.Windows.Point(ActualWidth / 2d, ActualHeight));
+        }
+        else
         {
             return;
         }
 
-        var anchorPixels = button.PointToScreen(
-            new System.Windows.Point(button.ActualWidth / 2d, button.ActualHeight));
-        var dpi = System.Windows.Media.VisualTreeHelper.GetDpi(this);
-        var anchor = new System.Windows.Point(anchorPixels.X / dpi.DpiScaleX, anchorPixels.Y / dpi.DpiScaleY);
-        // The bar's own colour comes from the wallpaper behind it, so a fixed tint can
-        // never match it. Sample the screen area the panel is about to cover, in physical
-        // pixels, and fall back to the bar's flat colour only when the read fails.
         var flat = (Color)ColorConverter.ConvertFromString(DesktopStyleRules.TopBar(_style, _state).Surface);
-        var sampleLeft = (int)Math.Round((anchor.X - TopBarSearchWindow.SurfaceWidth / 2d) * dpi.DpiScaleX);
-        var sampleTop = (int)Math.Round(anchor.Y * dpi.DpiScaleY);
-        var sampleWidth = (int)Math.Round(TopBarSearchWindow.SurfaceWidth * dpi.DpiScaleX);
-        var sampleHeight = (int)Math.Round(120d * dpi.DpiScaleY);
-        var look = SampleBarPixels()
-            ?? TopBarSearchLook.FromBackdrop(sampleLeft, sampleTop, sampleWidth, sampleHeight)
-            ?? TopBarSearchLook.FromBar(flat, _palette);
-        var popup = new TopBarSearchWindow(look, anchor, _environment.IsEverythingSearchEnabled);
+        var look = TopBarSearchLook.FromBar(flat, _palette);
+        var monitor = _appBar?.Monitor ?? _monitor;
+        var popup = new TopBarSearchWindow(
+            look,
+            (int)Math.Round(anchorPixels.X),
+            (int)Math.Round(anchorPixels.Y),
+            monitor,
+            _environment.IsEverythingSearchEnabled);
         popup.Closed += (_, _) =>
         {
             if (ReferenceEquals(_searchPopup, popup))
@@ -2483,28 +2487,6 @@ public sealed partial class TopBarWindow : Window
         };
         _searchPopup = popup;
         popup.Show();
-    }
-
-    /// <summary>
-    /// Reads the bar's own rendered pixels so the panel inherits the material hue the user
-    /// actually sees. The band sits below the glyph baseline so text biases the average as
-    /// little as possible. Null when the bar is gone or the screen cannot be read.
-    /// </summary>
-    private TopBarSearchLook? SampleBarPixels()
-    {
-        if (_handle == 0 || !DockNativeMethods.GetWindowRect(_handle, out var rect))
-        {
-            return null;
-        }
-        var width = rect.Right - rect.Left;
-        var height = rect.Bottom - rect.Top;
-        if (width <= 24 || height <= 8)
-        {
-            return null;
-        }
-        var bandTop = rect.Top + (int)(height * 0.78);
-        var bandHeight = Math.Max(2, rect.Bottom - bandTop - 2);
-        return TopBarSearchLook.FromBarStrip(rect.Left + 8, bandTop, width - 16, bandHeight);
     }
 
 
@@ -3329,7 +3311,7 @@ public sealed partial class TopBarWindow : Window
             PointerOverDock: pointerOverBar,
             InteractionActive: _menuOpen || _capsuleExpanded
                 || _todoFlyout?.IsOpen == true || _clockFlyout?.IsOpen == true
-                || _inputMethodFlyout?.IsOpen == true,
+                || _inputMethodFlyout?.IsOpen == true || _searchPopup is not null,
             OverlapIsMaximizedWindow: zoomed);
         _autoHide.Update(input, DateTimeOffset.UtcNow);
         if (_autoHide.IsShown != IsVisible)

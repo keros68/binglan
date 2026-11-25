@@ -1566,12 +1566,6 @@ public sealed partial class WidgetCoordinator : IDisposable
                     _state.LauncherPreferences.UseEverything = enabled;
                     ScheduleSave();
                 },
-                IsLauncherSearchInline = () => _state.TopBar.SearchInline == true,
-                SetLauncherSearchInline = enabled =>
-                {
-                    _state.TopBar.SearchInline = enabled;
-                    ScheduleSave();
-                },
                 GetLauncherFavoriteMode = () => _state.LauncherPreferences.FavoriteMode,
                 SetLauncherFavoriteMode = mode =>
                 {

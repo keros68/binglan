@@ -6,9 +6,11 @@ using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Effects;
 using System.Windows.Threading;
+using BingLan.App.Dock;
 using BingLan.App.Interop;
 using BingLan.App.Services;
 using BingLan.App.TopBar;
+using BingLan.Core.Dock;
 using BingLan.Core.Models;
 using BingLan.Core.TopBar;
 
@@ -28,12 +30,16 @@ internal sealed class TopBarSearchWindow : Window
     private const double SurfaceMinHeight = 96d;
     private const double AnchorGap = 6d;
     private const double EdgeMargin = 8d;
+    private const string IdleStatus = "输入关键词搜索本机文件，无匹配时按 Enter 用浏览器搜索";
     private static readonly TimeSpan DebounceInterval = TimeSpan.FromMilliseconds(160);
 
     private readonly Brush _ink;
     private readonly Brush _muted;
     private readonly Brush _surface;
     private readonly Brush _border;
+    private readonly int _anchorX;
+    private readonly int _anchorY;
+    private readonly MonitorSnapshot? _monitor;
     private readonly bool _everythingEnabled;
     private readonly TextBox _input;
     private readonly ListBox _list;
@@ -48,12 +54,20 @@ internal sealed class TopBarSearchWindow : Window
     private bool _activated;
     private bool _openingResult;
 
-    internal TopBarSearchWindow(TopBarSearchLook look, Point anchorDip, bool everythingEnabled)
+    internal TopBarSearchWindow(
+        TopBarSearchLook look,
+        int anchorX,
+        int anchorY,
+        MonitorSnapshot? monitor,
+        bool everythingEnabled)
     {
         _ink = FrozenBrush(look.Foreground);
         _muted = FrozenBrush(look.MutedForeground);
         _surface = FrozenBrush(look.Background);
         _border = FrozenBrush(look.Border);
+        _anchorX = anchorX;
+        _anchorY = anchorY;
+        _monitor = monitor;
         _everythingEnabled = everythingEnabled;
 
         WindowStyle = WindowStyle.None;
@@ -69,9 +83,10 @@ internal sealed class TopBarSearchWindow : Window
         MinHeight = SurfaceMinHeight;
         SizeToContent = SizeToContent.Height;
 
-        var workArea = SystemParameters.WorkArea;
-        Left = Math.Clamp(anchorDip.X - SurfaceWidth / 2d, workArea.Left + EdgeMargin, workArea.Right - SurfaceWidth - EdgeMargin);
-        Top = anchorDip.Y + AnchorGap;
+        var initialScale = monitor is { Dpi: > 0 } ? monitor.Dpi / 96d : 1d;
+        var (initialLeftPx, initialTopPx) = ComputePositionPixels(initialScale);
+        Left = initialLeftPx / initialScale;
+        Top = initialTopPx / initialScale;
 
         var highContrast = AccessibilityThemeManager.IsHighContrastEnabled || SystemParameters.HighContrast;
         var ink = highContrast ? SystemColors.WindowTextBrush : _ink;
@@ -155,6 +170,16 @@ internal sealed class TopBarSearchWindow : Window
         stack.Children.Add(_list);
         stack.Children.Add(_status);
 
+        var shadow = new DropShadowEffect
+        {
+            BlurRadius = 22,
+            ShadowDepth = 4,
+            Direction = 270,
+            Opacity = 0.32,
+            Color = Colors.Black
+        };
+        shadow.Freeze();
+
         var card = new Border
         {
             Background = highContrast ? SystemColors.WindowBrush : _surface,
@@ -163,14 +188,7 @@ internal sealed class TopBarSearchWindow : Window
             CornerRadius = new CornerRadius(12),
             Padding = new Thickness(14, 12, 14, 10),
             Child = stack,
-            Effect = new DropShadowEffect
-            {
-                BlurRadius = 22,
-                ShadowDepth = 4,
-                Direction = 270,
-                Opacity = 0.32,
-                Color = Colors.Black
-            }
+            Effect = shadow
         };
         Content = card;
 
@@ -223,16 +241,62 @@ internal sealed class TopBarSearchWindow : Window
     protected override void OnSourceInitialized(EventArgs e)
     {
         base.OnSourceInitialized(e);
-        if (PresentationSource.FromVisual(this) is HwndSource source && _everythingEnabled)
+        if (PresentationSource.FromVisual(this) is HwndSource source)
         {
-            _everything = new EverythingSearchClient(source);
+            if (_everythingEnabled)
+            {
+                _everything = new EverythingSearchClient(source);
+            }
+            if (source.Handle != 0)
+            {
+                var dpi = VisualTreeHelper.GetDpi(this);
+                var targetScale = _monitor is { Dpi: > 0 } ? _monitor.Dpi / 96d : dpi.DpiScaleX;
+                var (leftPx, topPx) = ComputePositionPixels(targetScale);
+                NativeMethods.SetWindowPos(
+                    source.Handle,
+                    DockNativeMethods.HwndTopmost,
+                    leftPx,
+                    topPx,
+                    0,
+                    0,
+                    NativeMethods.SwpNoSize | NativeMethods.SwpNoActivate);
+            }
         }
         // No accent material here on purpose: the accented blur needs an opaque
         // redirection surface and renders as a flat grey block on this transparent
         // layered window, so the panel uses the bar's resolved flat colour instead.
-        SetStatus(_everythingEnabled
-            ? "输入关键词，从本机文件中搜索"
-            : "Everything 搜索未开启，当前只能搜索应用");
+        SetStatus(IdleStatus);
+    }
+
+    private (int Left, int Top) ComputePositionPixels(double scale)
+    {
+        var safeScale = double.IsFinite(scale) && scale > 0d ? scale : 1d;
+        var widthPx = (int)Math.Round(SurfaceWidth * safeScale);
+        var marginPx = (int)Math.Round(EdgeMargin * safeScale);
+        var gapPx = (int)Math.Round(AnchorGap * safeScale);
+
+        PixelRect workArea;
+        if (_monitor is { } monitor)
+        {
+            workArea = DockAppBarController.GetLiveWorkingArea(monitor);
+            if (workArea.Width <= 0 || workArea.Height <= 0)
+            {
+                workArea = monitor.WorkingArea.Width > 0 ? monitor.WorkingArea : monitor.Bounds;
+            }
+        }
+        else
+        {
+            var dipWork = SystemParameters.WorkArea;
+            workArea = new PixelRect(
+                (int)Math.Round(dipWork.Left * safeScale),
+                (int)Math.Round(dipWork.Top * safeScale),
+                (int)Math.Round(dipWork.Right * safeScale),
+                (int)Math.Round(dipWork.Bottom * safeScale));
+        }
+
+        var leftPx = TopBarSearchRowRules.ClampHorizontalPixels(_anchorX, widthPx, workArea.Left, workArea.Right, marginPx);
+        var topPx = _anchorY + gapPx;
+        return (leftPx, topPx);
     }
 
     private void OnInputChanged(object? sender, TextChangedEventArgs e)
@@ -244,7 +308,7 @@ internal sealed class TopBarSearchWindow : Window
             _rows.Clear();
             _list.Items.Clear();
             _list.Visibility = Visibility.Collapsed;
-            SetStatus(_everythingEnabled ? "输入关键词，从本机文件中搜索" : "Everything 搜索未开启");
+            SetStatus(IdleStatus);
             return;
         }
         _debounce.Start();
@@ -273,20 +337,43 @@ internal sealed class TopBarSearchWindow : Window
 
         try
         {
-            var found = _everything is null
-                ? EverythingSearchResult.Unavailable
-                : await _everything.SearchAsync(query, token);
-            if (_closed || token.IsCancellationRequested || version != _version)
+            var localAvailable = false;
+            IReadOnlyList<TopBarSearchCandidate> rawCandidates = [];
+
+            if (_everything is not null)
             {
-                return;
+                var everything = await _everything.SearchAsync(query, token);
+                if (_closed || token.IsCancellationRequested || version != _version)
+                {
+                    return;
+                }
+                if (everything.Available)
+                {
+                    localAvailable = true;
+                    rawCandidates = everything.Candidates;
+                }
             }
 
-            IReadOnlyList<TopBarSearchCandidate> local = found.Available
-                ? TopBarSearchRules.Search(found.Candidates, query, TopBarSearchRules.MaxResults)
+            if (!localAvailable)
+            {
+                var indexed = await WindowsIndexSearchClient.SearchAsync(query, token);
+                if (_closed || token.IsCancellationRequested || version != _version)
+                {
+                    return;
+                }
+                if (indexed.Available)
+                {
+                    localAvailable = true;
+                    rawCandidates = indexed.Candidates;
+                }
+            }
+
+            IReadOnlyList<TopBarSearchCandidate> local = localAvailable
+                ? TopBarSearchRules.Search(rawCandidates, query, TopBarSearchRules.MaxResults)
                 : [];
             _rows.Clear();
             _rows.AddRange(TopBarSearchRowRules.Compose(local, query));
-            RenderRows(found.Available);
+            RenderRows(localAvailable);
         }
         catch (OperationCanceledException)
         {
@@ -316,7 +403,9 @@ internal sealed class TopBarSearchWindow : Window
         }
         var localCount = _rows.Count(row => row.Kind == TopBarSearchRowKind.Local);
         SetStatus(localCount == 0
-            ? "本机无匹配结果 · Enter 用浏览器搜索"
+            ? (localAvailable
+                ? "本机无匹配结果 · Enter 用浏览器搜索"
+                : "本机索引暂不可用 · Enter 用浏览器搜索")
             : $"{localCount} 个本机结果 · ↑↓ 选择，Enter 打开");
     }
 
@@ -441,11 +530,19 @@ internal sealed class TopBarSearchWindow : Window
         }
 
         var row = _rows[index];
-        var start = row.BrowserUrl is { Length: > 0 } url
-            ? new System.Diagnostics.ProcessStartInfo(url) { UseShellExecute = true }
-            : row.Local?.Path is { Length: > 0 } path
-                ? new System.Diagnostics.ProcessStartInfo(path) { UseShellExecute = true }
-                : null;
+        System.Diagnostics.ProcessStartInfo? start = null;
+        if (row.BrowserUrl is { Length: > 0 } url)
+        {
+            if (Uri.TryCreate(url, UriKind.Absolute, out var uri)
+                && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps))
+            {
+                start = new System.Diagnostics.ProcessStartInfo(uri.AbsoluteUri) { UseShellExecute = true };
+            }
+        }
+        else if (row.Local?.Path is { Length: > 0 } path)
+        {
+            start = new System.Diagnostics.ProcessStartInfo(path) { UseShellExecute = true };
+        }
         _openingResult = true;
         Close();
         if (start is not null)
@@ -534,104 +631,4 @@ internal sealed record TopBarSearchLook(
 
     private static Color Parse(string text) =>
         ColorConverter.ConvertFromString(text) is Color color ? color : Colors.White;
-
-    /// <summary>
-    /// Reads the bar's own rendered pixels. The bar's colour is produced by a blur the
-    /// panel cannot reproduce on a transparent layered window, so the panel copies the
-    /// colour the user actually sees instead of recomputing it from the settings.
-    /// </summary>
-    internal static TopBarSearchLook? FromBarStrip(int left, int top, int width, int height)
-    {
-        if (!TrySampleAverage(left, top, width, height, out var average))
-        {
-            return null;
-        }
-        return Compose(Color.FromArgb(BarStripAlpha, average.R, average.G, average.B), average);
-    }
-
-    /// <summary>
-    /// Fallback for when the bar itself cannot be read: average the pixels the panel is
-    /// about to cover and darken them slightly, the way frosted glass would.
-    /// </summary>
-    internal static TopBarSearchLook? FromBackdrop(int left, int top, int width, int height)
-    {
-        if (!TrySampleAverage(left, top, width, height, out var average))
-        {
-            return null;
-        }
-        const double Darken = 0.86;
-        var surface = Color.FromArgb(
-            BackdropAlpha,
-            (byte)(average.R * Darken),
-            (byte)(average.G * Darken),
-            (byte)(average.B * Darken));
-        return Compose(surface, average);
-    }
-
-    /// <summary>Ink, muted ink and border follow the sampled brightness.</summary>
-    private static TopBarSearchLook Compose(Color surface, Color reference)
-    {
-        var luminance = (0.299 * reference.R + 0.587 * reference.G + 0.114 * reference.B) / 255d;
-        return luminance >= 0.55
-            ? new TopBarSearchLook(
-                surface,
-                Color.FromArgb(0x30, 0, 0, 0),
-                Color.FromRgb(0x2B, 0x2F, 0x36),
-                Color.FromArgb(0xC0, 0x2B, 0x2F, 0x36))
-            : new TopBarSearchLook(
-                surface,
-                Color.FromArgb(0x30, 0xFF, 0xFF, 0xFF),
-                Colors.White,
-                Color.FromArgb(0xC0, 0xFF, 0xFF, 0xFF));
-    }
-
-    /// <summary>
-    /// Averages a screen region on a coarse stride: 9x9 over a 560x120 capture is about
-    /// 800 samples, far more than a tint needs, and cheap enough to run when the panel opens.
-    /// </summary>
-    private static bool TrySampleAverage(int left, int top, int width, int height, out Color average)
-    {
-        average = default;
-        if (width <= 0 || height <= 0)
-        {
-            return false;
-        }
-        try
-        {
-            using var bitmap = new System.Drawing.Bitmap(width, height);
-            using (var graphics = System.Drawing.Graphics.FromImage(bitmap))
-            {
-                graphics.CopyFromScreen(left, top, 0, 0, new System.Drawing.Size(width, height));
-            }
-
-            long r = 0, g = 0, b = 0, count = 0;
-            for (var y = 0; y < height; y += 9)
-            {
-                for (var x = 0; x < width; x += 9)
-                {
-                    var pixel = bitmap.GetPixel(x, y);
-                    r += pixel.R;
-                    g += pixel.G;
-                    b += pixel.B;
-                    count++;
-                }
-            }
-            if (count == 0)
-            {
-                return false;
-            }
-            average = Color.FromRgb((byte)(r / count), (byte)(g / count), (byte)(b / count));
-            return true;
-        }
-        catch (Exception exception) when (exception is System.Runtime.InteropServices.ExternalException
-            or ArgumentException
-            or InvalidOperationException
-            or PlatformNotSupportedException)
-        {
-            return false;
-        }
-    }
-
-    private const byte BackdropAlpha = 0xD9;
-    private const byte BarStripAlpha = 0xE6;
 }

@@ -24,6 +24,7 @@ public static class TopBarSearchRowTests
         TestBrowserUrlEscapesTheQuery();
         TestLongQueryShortensOnlyTheTitle();
         TestTemplateWithoutPlaceholder();
+        TestClampHorizontalPixels();
     }
 
     private static TopBarSearchCandidate File(string name, string path) =>
@@ -92,5 +93,25 @@ public static class TopBarSearchRowTests
     {
         var url = TopBarSearchRowRules.BuildBrowserUrl("https://example.com/search", "关键词");
         Assert(url == "https://example.com/search", "缺少占位符的模板应原样返回，不能抛异常");
+    }
+
+    private static void TestClampHorizontalPixels()
+    {
+        // Primary monitor centered
+        Assert(TopBarSearchRowRules.ClampHorizontalPixels(960, 560, 0, 1920, 8) == 680,
+            "主屏居中锚点应按宽度一半向左对齐");
+        // Primary monitor clamped to left/right edge
+        Assert(TopBarSearchRowRules.ClampHorizontalPixels(100, 560, 0, 1920, 8) == 8,
+            "靠近左边缘时应夹紧到工作区左边界加边距");
+        Assert(TopBarSearchRowRules.ClampHorizontalPixels(1900, 560, 0, 1920, 8) == 1352,
+            "靠近右边缘时应夹紧到工作区右边界减宽度与边距");
+        // Negative-coordinate secondary monitor (left of primary)
+        Assert(TopBarSearchRowRules.ClampHorizontalPixels(-960, 560, -1920, 0, 12) == -1240,
+            "负坐标副屏应按该副屏工作区居中，不能被主屏范围拉偏");
+        Assert(TopBarSearchRowRules.ClampHorizontalPixels(-1900, 560, -1920, 0, 12) == -1908,
+            "负坐标副屏左边缘夹紧应留在副屏内部");
+        // Narrow monitor smaller than popup width
+        Assert(TopBarSearchRowRules.ClampHorizontalPixels(200, 560, 100, 500, 8) == 100,
+            "工作区窄于弹窗宽度时应回退到工作区左边界");
     }
 }

@@ -100,4 +100,22 @@ public static class TopBarSearchRowRules
             ? string.Format(System.Globalization.CultureInfo.InvariantCulture, template, escaped)
             : template;
     }
+
+    /// <summary>
+    /// Clamps the popup's horizontal origin in physical pixels so it stays centered under
+    /// <paramref name="anchorX"/> while remaining inside the target monitor's working area.
+    /// When the working area is narrower than the popup, aligns to the left edge.
+    /// </summary>
+    public static int ClampHorizontalPixels(int anchorX, int widthPx, int workLeft, int workRight, int marginPx)
+    {
+        var minLeft = workLeft + marginPx;
+        var maxLeft = workRight - widthPx - marginPx;
+        if (maxLeft < minLeft)
+        {
+            return workLeft;
+        }
+
+        var desired = anchorX - widthPx / 2;
+        return Math.Clamp(desired, minLeft, maxLeft);
+    }
 }
