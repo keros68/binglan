@@ -50,6 +50,7 @@ internal sealed class TopBarSearchWindow : Window
     private EverythingSearchClient? _everything;
     private CancellationTokenSource? _cancellation;
     private int _version;
+    private bool _closing;
     private bool _closed;
     private bool _activated;
     private bool _openingResult;
@@ -218,7 +219,7 @@ internal sealed class TopBarSearchWindow : Window
         // window on screen where Escape could not reach it.
         Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, () =>
         {
-            if (_closed)
+            if (_closing || _closed)
             {
                 return;
             }
@@ -228,8 +229,24 @@ internal sealed class TopBarSearchWindow : Window
                 Keyboard.Focus(_input);
                 return;
             }
-            Close();
+            RequestClose();
         });
+    }
+
+    internal void RequestClose()
+    {
+        if (_closing || _closed)
+        {
+            return;
+        }
+        _closing = true;
+        Close();
+    }
+
+    protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
+    {
+        _closing = true;
+        base.OnClosing(e);
     }
 
     protected override void OnActivated(EventArgs e)
@@ -473,7 +490,7 @@ internal sealed class TopBarSearchWindow : Window
         {
             case Key.Escape:
                 e.Handled = true;
-                Close();
+                RequestClose();
                 break;
             case Key.Down:
                 e.Handled = true;
@@ -544,7 +561,7 @@ internal sealed class TopBarSearchWindow : Window
             start = new System.Diagnostics.ProcessStartInfo(path) { UseShellExecute = true };
         }
         _openingResult = true;
-        Close();
+        RequestClose();
         if (start is not null)
         {
             _ = ShellLauncher.StartAsync(start);
@@ -553,14 +570,23 @@ internal sealed class TopBarSearchWindow : Window
 
     /// <summary>
     /// Losing activation closes the popup, but opening a result deactivates us on purpose
-    /// and must not race the close that follows.
+    /// and must not race the close that follows. Deferring out of WM_ACTIVATE also prevents
+    /// re-entering Close() while the window is already being torn down.
     /// </summary>
     private void CloseUnlessOpeningResult()
     {
-        if (!_openingResult && _activated)
+        if (_closing || _closed || _openingResult || !_activated)
         {
-            Close();
+            return;
         }
+        _closing = true;
+        Dispatcher.BeginInvoke(DispatcherPriority.Normal, () =>
+        {
+            if (!_closed)
+            {
+                Close();
+            }
+        });
     }
 
     private void CancelSearch()

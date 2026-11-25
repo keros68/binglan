@@ -598,7 +598,7 @@ public sealed partial class TopBarWindow : Window
         if (_searchPopup is { } searchPopup)
         {
             _searchPopup = null;
-            searchPopup.Close();
+            searchPopup.RequestClose();
         }
         _inputMethodSubscription?.Dispose();
         _inputMethodSubscription = null;
@@ -2466,7 +2466,7 @@ public sealed partial class TopBarWindow : Window
     {
         if (_searchPopup is { } open)
         {
-            open.Close();
+            open.RequestClose();
             return;
         }
 
