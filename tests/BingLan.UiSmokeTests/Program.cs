@@ -6939,13 +6939,14 @@ internal static class Program
             try
             {
                 var commands = typeof(IceBlueDockWindow).GetProperty("VisibleCommands", Private)!;
-                Assert(!((ValueTuple<bool, bool, bool>)commands.GetValue(dock)!).Item2,
+                bool ShowsLauncher() => ((ValueTuple<bool, bool, bool, bool>)commands.GetValue(dock)!).Item2;
+                Assert(!ShowsLauncher(),
                     "总开关关闭时 Dock 入口应隐藏");
                 dock.LauncherEnabled = true;
-                Assert(((ValueTuple<bool, bool, bool>)commands.GetValue(dock)!).Item2,
+                Assert(ShowsLauncher(),
                     "重新启用时 Dock 入口应恢复");
                 appState.Dock.ShowLauncherButton = false;
-                Assert(!((ValueTuple<bool, bool, bool>)commands.GetValue(dock)!).Item2,
+                Assert(!ShowsLauncher(),
                     "重新启用后仍应尊重独立的 Dock 入口偏好");
             }
             finally
