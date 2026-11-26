@@ -661,6 +661,22 @@ internal static class FileBoxRuleTests
                 && !json.Contains("EdgeDockOffsetDip", StringComparison.OrdinalIgnoreCase)
                 && !json.Contains("EdgeDockMonitorDeviceName", StringComparison.OrdinalIgnoreCase),
                 "主题包导出不得携带贴边隐藏本机字段");
+
+            // Drag-to-edge detection: triggers only on outer screen edges when pointer reaches the
+            // edge or the card overflows past it; never triggers on interior shared monitor edges.
+            var leftMon = new PixelRect(0, 0, 1920, 1080);
+            var rightMon = new PixelRect(1920, 0, 3840, 1080);
+            PixelRect[] dualMonitors = [leftMon, rightMon];
+            Assert(FileBoxEdgeDockRules.TryDetectDragDockSide(2, new PixelRect(0, 200, 320, 500), leftMon, 96, dualMonitors) == FileBoxEdgeDockSide.Left,
+                "指针拖到主屏左侧外边缘应触发左贴边");
+            Assert(FileBoxEdgeDockRules.TryDetectDragDockSide(1918, new PixelRect(1600, 200, 1920, 500), leftMon, 96, dualMonitors) is null,
+                "双屏中间相接内边不应触发拖边贴边隐藏");
+            Assert(FileBoxEdgeDockRules.TryDetectDragDockSide(3838, new PixelRect(3520, 200, 3840, 500), rightMon, 96, dualMonitors) == FileBoxEdgeDockSide.Right,
+                "指针拖到副屏右侧外边缘应触发右贴边");
+            Assert(FileBoxEdgeDockRules.TryDetectDragDockSide(120, new PixelRect(16, 200, 336, 500), leftMon, 96, dualMonitors) is null,
+                "普通贴近桌面左侧留白摆放不应误触发贴边隐藏");
+            Assert(FileBoxEdgeDockRules.TryDetectDragDockSide(120, new PixelRect(-32, 200, 288, 500), leftMon, 96, dualMonitors) == FileBoxEdgeDockSide.Left,
+                "将收纳盒明显拖出左外侧边松手应触发左贴边");
         }
         finally
         {

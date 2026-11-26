@@ -101,6 +101,9 @@ public sealed class SettingsMaintenance
     /// <summary>Shows or hides a standalone widget (note or file box) without deleting it.</summary>
     public Action<WidgetWindowBase, bool>? SetWidgetVisibility { get; init; }
 
+    /// <summary>Toggles left/right outer screen edge docking for a file box.</summary>
+    public Func<FileBoxWindow, bool, bool>? ToggleFileBoxEdgeDock { get; init; }
+
     /// <summary>Merges source file box (or group) into target as tabs; returns the combined host.</summary>
     public Func<FileBoxWindow, FileBoxWindow, FileBoxWindow?>? MergeFileBoxes { get; init; }
 

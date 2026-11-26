@@ -9,6 +9,7 @@ namespace BingLan.App;
 public sealed partial class WidgetCoordinator
 {
     private FileBoxWindow? _dragMergeTarget;
+    private (FileBoxWindow Box, int CursorX, int CursorY)? _pendingEdgeDockRelease;
 
     private FileBoxWindow? FindFileBoxWindow(Guid boxId) =>
         _windows.OfType<FileBoxWindow>()
@@ -101,6 +102,7 @@ public sealed partial class WidgetCoordinator
     {
         var target = _dragMergeTarget;
         ClearDragMergeHighlight();
+        _pendingEdgeDockRelease = null;
         if (wasMoving
             && !altHeld
             && target is not null
@@ -109,6 +111,19 @@ public sealed partial class WidgetCoordinator
             && _windows.Contains(target))
         {
             MergeFileBoxes(dragged, target);
+            return;
+        }
+
+        if (wasMoving
+            && !altHeld
+            && !dragged.IsEdgeDocked
+            && !dragged.State.IsLocked
+            && _windows.Contains(dragged)
+            && BingLan.App.Interop.DockNativeMethods.GetCursorPos(out var cursor))
+        {
+            // Defer docking until OnWindowDragCompleted has finished multi-screen ownership
+            // reconciliation so cross-monitor drags never clear the newly docked state.
+            _pendingEdgeDockRelease = (dragged, cursor.X, cursor.Y);
         }
     }
 

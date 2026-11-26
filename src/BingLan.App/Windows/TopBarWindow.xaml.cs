@@ -69,6 +69,36 @@ internal interface ITopBarEnvironment
     /// <summary>Opens the system quick-settings flyout (the taskbar tray's panel).</summary>
     void OpenQuickSettings(TopBarModuleKind kind);
 
+    /// <summary>Opens a Windows Settings ms-settings: URI directly without popping up the taskbar.</summary>
+    void OpenSystemSettings(string settingsUri) => OpenQuickSettings(TopBarModuleKind.Volume);
+
+    Task<TopBarAudioSnapshot> ReadAudioSnapshotAsync() => Task.FromResult(TopBarAudioSnapshot.Unavailable);
+
+    Task<bool> SetMasterVolumeAsync(int percent) => Task.FromResult(false);
+
+    Task<bool> SetMasterMuteAsync(bool muted) => Task.FromResult(false);
+
+    Task<bool> SetDefaultOutputDeviceAsync(string deviceId) => Task.FromResult(false);
+
+    Task<bool> SetAudioSessionVolumeAsync(string? deviceId, uint processId, int percent) => Task.FromResult(false);
+
+    Task<bool> SetAudioSessionMuteAsync(string? deviceId, uint processId, bool muted) => Task.FromResult(false);
+
+    Task<TopBarBatterySnapshot> ReadBatterySnapshotAsync() => Task.FromResult(
+        new TopBarBatterySnapshot(-1, TopBarBatteryStatus.Unknown, false, null, false, TopBarPowerMode.Unknown, false, 0));
+
+    Task<bool> SetPowerModeAsync(TopBarPowerMode mode) => Task.FromResult(false);
+
+    Task<bool> SetBuiltInBrightnessAsync(int percent) => Task.FromResult(false);
+
+    Task<TopBarNetworkSnapshot> ReadNetworkSnapshotAsync() => Task.FromResult(TopBarNetworkSnapshot.Disconnected);
+
+    Task<bool> ConnectSavedWifiAsync(Guid interfaceGuid, string profileName) => Task.FromResult(false);
+
+    Task<bool> DisconnectWifiAsync(Guid interfaceGuid) => Task.FromResult(false);
+
+    Task<bool> TriggerWifiScanAsync(Guid interfaceGuid) => Task.FromResult(false);
+
     void OpenInputMethod();
 
     IReadOnlyList<TopBarInputMethodOption> ReadInputMethodOptions();
@@ -173,6 +203,8 @@ public sealed partial class TopBarWindow : Window
     private Popup? _todoFlyout;
     private Popup? _clockFlyout;
     private Popup? _inputMethodFlyout;
+    private long? _flyoutPointerLeftSinceTick;
+    private nint _flyoutOpenedForegroundWindow;
     private DateTime _clockMonth;
     private MonitorSnapshot? _monitor;
     private TaskbarEdgeGuard.NativeTaskbarLayout? _nativeTaskbar;
@@ -345,12 +377,20 @@ public sealed partial class TopBarWindow : Window
             _monitor.Bounds,
             BingLan.App.Dock.DockAppBarController.GetLiveWorkingArea(_monitor),
             nativeTopEdgeOccupied: _nativeTaskbar?.Edge == DockEdge.Top);
+        var previousBounds = _appBar?.Bounds;
         _appBar?.Apply(_monitor, reserve,
             IsCapsule ? (_capsuleExpanded ? _capsuleExpandedHeight : CapsuleHeight) : _state.Height,
             IsCapsule ? (_capsuleExpanded ? CapsuleExpandedWidth : _capsuleCompactWidth) : null);
+        if (previousBounds is { } before && _appBar is { } afterBar && before != afterBar.Bounds)
+        {
+            CloseTodoFlyout(animate: false);
+            CloseClockFlyout();
+            CloseInputMethodFlyout();
+            CloseSystemFlyouts();
+        }
         // While a flyout is open the fast interval keeps its outside-click watch
         // prompt even in reserve mode.
-        _foregroundTimer.Interval = reserve && _todoFlyout is null && _clockFlyout is null && _inputMethodFlyout is null
+        _foregroundTimer.Interval = reserve && _todoFlyout is null && _clockFlyout is null && _inputMethodFlyout is null && !HasAnySystemFlyoutRef
             ? FullScreenCheckInterval
             : SmartHideCheckInterval;
         _foregroundTimer.Start();
@@ -610,6 +650,7 @@ public sealed partial class TopBarWindow : Window
         CloseTodoFlyout(animate: false);
         CloseClockFlyout();
         CloseInputMethodFlyout();
+        CloseSystemFlyouts();
         if (_searchPopup is { } searchPopup)
         {
             _searchPopup = null;
@@ -813,6 +854,7 @@ public sealed partial class TopBarWindow : Window
         CloseTodoFlyout(animate: false);
         CloseClockFlyout();
         CloseInputMethodFlyout();
+        CloseSystemFlyouts();
         CapsuleHeader.Children.Clear();
         CapsuleHeader.Visibility = IsCapsule ? Visibility.Visible : Visibility.Collapsed;
         ModuleHeader.Visibility = IsCapsule ? Visibility.Collapsed : Visibility.Visible;
@@ -917,16 +959,39 @@ public sealed partial class TopBarWindow : Window
                     _environment.OpenTaskManagerPerformance, GlyphDiagnostic);
                 break;
             case TopBarModuleKind.Battery:
-                AddModule(TopBarModuleKind.Battery, panel, "电量",
-                    () => _environment.OpenQuickSettings(TopBarModuleKind.Battery), GlyphBatteryUnknown);
+                AddModule(TopBarModuleKind.Battery, panel, "电量", () =>
+                {
+                    if (_modules.TryGetValue(TopBarModuleKind.Battery, out var batteryEl)
+                        && batteryEl is Button batteryBtn)
+                    {
+                        ToggleBatteryFlyout(batteryBtn);
+                    }
+                }, GlyphBatteryUnknown);
                 break;
             case TopBarModuleKind.Network:
-                AddModule(TopBarModuleKind.Network, panel, "网络",
-                    () => _environment.OpenQuickSettings(TopBarModuleKind.Network), GlyphWifiOff);
+                AddModule(TopBarModuleKind.Network, panel, "网络", () =>
+                {
+                    if (_modules.TryGetValue(TopBarModuleKind.Network, out var networkEl)
+                        && networkEl is Button networkBtn)
+                    {
+                        ToggleNetworkFlyout(networkBtn);
+                    }
+                }, GlyphWifiOff);
                 break;
             case TopBarModuleKind.Volume:
-                AddModule(TopBarModuleKind.Volume, panel, "音量",
-                    () => _environment.OpenQuickSettings(TopBarModuleKind.Volume), GlyphVolume);
+                AddModule(TopBarModuleKind.Volume, panel, "音量", () =>
+                {
+                    if (_modules.TryGetValue(TopBarModuleKind.Volume, out var volumeEl)
+                        && volumeEl is Button volumeBtn)
+                    {
+                        ToggleVolumeFlyout(volumeBtn);
+                    }
+                }, GlyphVolume);
+                if (_modules.TryGetValue(TopBarModuleKind.Volume, out var volumeControl)
+                    && volumeControl is Button volumeButton)
+                {
+                    AttachVolumeQuickWheel(volumeButton);
+                }
                 break;
             case TopBarModuleKind.TrayOverflow:
                 if (TrayOverflowController.IsSupported)
@@ -1305,16 +1370,19 @@ public sealed partial class TopBarWindow : Window
 
         CloseTodoFlyout(animate: false);
         CloseClockFlyout();
+        CloseSystemFlyouts();
+        CloseAllHoverToolTips();
         _inputMethodTargetForeground = DockNativeMethods.GetForegroundWindow();
 
         var highContrast = AccessibilityThemeManager.IsHighContrastEnabled || SystemParameters.HighContrast;
-        var flyoutPalette = _palette.Flyout;
+        var look = ResolveSystemFlyoutLook(highContrast);
+        var flyoutPalette = look.Palette;
         var card = new Border
         {
             Background = highContrast ? SystemColors.WindowBrush : FrozenBrush(flyoutPalette.Background),
             BorderBrush = highContrast ? SystemColors.WindowTextBrush : FrozenBrush(flyoutPalette.Border),
             BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(10),
+            CornerRadius = new CornerRadius(14),
             Padding = new Thickness(10, 10, 10, 10),
             Child = BuildInputMethodCard(highContrast, flyoutPalette)
         };
@@ -1325,13 +1393,16 @@ public sealed partial class TopBarWindow : Window
             PlacementTarget = button,
             Placement = PlacementMode.Bottom,
             HorizontalOffset = onRight ? -110 : -6,
-            VerticalOffset = 2,
+            VerticalOffset = 4,
             StaysOpen = true,
             AllowsTransparency = true,
             Child = card
         };
+        PopupGlassBackdrop? glass = look.AllowBackdropBlur ? new PopupGlassBackdrop(flyout, card, look) : null;
         flyout.Closed += (_, _) =>
         {
+            glass?.Dispose();
+            glass = null;
             if (ReferenceEquals(_inputMethodFlyout, flyout))
             {
                 _inputMethodFlyout = null;
@@ -1345,9 +1416,7 @@ public sealed partial class TopBarWindow : Window
         hostPanel.Children.Add(flyout);
         _inputMethodFlyout = flyout;
         flyout.IsOpen = true;
-        UpdateForegroundTimerInterval();
-        TopBarNativeMethods.ConsumeMouseButtonDown(TopBarNativeMethods.LeftMouseButton);
-        TopBarNativeMethods.ConsumeMouseButtonDown(TopBarNativeMethods.EscapeKey);
+        OnFlyoutOpened();
     }
 
     private FrameworkElement BuildInputMethodCard(bool highContrast, TopBarFlyoutPalette flyoutPalette)
@@ -1522,6 +1591,10 @@ public sealed partial class TopBarWindow : Window
         var template = new ControlTemplate(typeof(Button)) { VisualTree = shellFactory };
         var hoverTrigger = new Trigger { Property = UIElement.IsMouseOverProperty, Value = true };
         hoverTrigger.Setters.Add(new Setter(Border.BackgroundProperty, hoverBg, "Shell"));
+        if (highContrast)
+        {
+            hoverTrigger.Setters.Add(new Setter(System.Windows.Documents.TextElement.ForegroundProperty, SystemColors.HighlightTextBrush));
+        }
         template.Triggers.Add(hoverTrigger);
 
         var button = new Button
@@ -1571,6 +1644,7 @@ public sealed partial class TopBarWindow : Window
             && _todoFlyout is null
             && _clockFlyout is null
             && _inputMethodFlyout is null
+            && !HasAnySystemFlyoutRef
             ? FullScreenCheckInterval
             : SmartHideCheckInterval;
     }
@@ -1580,11 +1654,22 @@ public sealed partial class TopBarWindow : Window
 
     private ToolTip CreateGlassToolTip()
     {
+        var borderFactory = new FrameworkElementFactory(typeof(Border));
+        borderFactory.SetBinding(Border.BackgroundProperty, new System.Windows.Data.Binding(nameof(System.Windows.Controls.Control.Background)) { RelativeSource = System.Windows.Data.RelativeSource.TemplatedParent });
+        borderFactory.SetBinding(Border.BorderBrushProperty, new System.Windows.Data.Binding(nameof(System.Windows.Controls.Control.BorderBrush)) { RelativeSource = System.Windows.Data.RelativeSource.TemplatedParent });
+        borderFactory.SetBinding(Border.BorderThicknessProperty, new System.Windows.Data.Binding(nameof(System.Windows.Controls.Control.BorderThickness)) { RelativeSource = System.Windows.Data.RelativeSource.TemplatedParent });
+        borderFactory.SetBinding(Border.PaddingProperty, new System.Windows.Data.Binding(nameof(System.Windows.Controls.Control.Padding)) { RelativeSource = System.Windows.Data.RelativeSource.TemplatedParent });
+        borderFactory.SetValue(Border.CornerRadiusProperty, new CornerRadius(8));
+        borderFactory.SetValue(Border.SnapsToDevicePixelsProperty, true);
+        borderFactory.AppendChild(new FrameworkElementFactory(typeof(ContentPresenter)));
+
         var toolTip = new ToolTip
         {
             BorderThickness = new Thickness(1),
-            Padding = new Thickness(10, 8, 10, 9),
-            StaysOpen = true
+            Padding = new Thickness(10, 6, 10, 7),
+            StaysOpen = true,
+            HasDropShadow = false,
+            Template = new ControlTemplate(typeof(ToolTip)) { VisualTree = borderFactory }
         };
         ApplyToolTipStyle(toolTip);
         return toolTip;
@@ -1593,7 +1678,7 @@ public sealed partial class TopBarWindow : Window
     private void ApplyToolTipStyle(ToolTip toolTip)
     {
         var highContrast = AccessibilityThemeManager.IsHighContrastEnabled || SystemParameters.HighContrast;
-        var flyout = _palette.Flyout;
+        var flyout = ResolveSystemFlyoutLook(highContrast).Palette;
         toolTip.Background = highContrast ? SystemColors.WindowBrush : FrozenBrush(flyout.Background);
         toolTip.Foreground = highContrast ? SystemColors.WindowTextBrush : FrozenBrush(flyout.Foreground);
         toolTip.BorderBrush = highContrast ? SystemColors.WindowTextBrush : FrozenBrush(flyout.Border);
@@ -1689,18 +1774,21 @@ public sealed partial class TopBarWindow : Window
 
         CloseTodoFlyout(animate: false);
         CloseInputMethodFlyout();
+        CloseSystemFlyouts();
+        CloseAllHoverToolTips();
 
         _clockMonth = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
         var highContrast = AccessibilityThemeManager.IsHighContrastEnabled || SystemParameters.HighContrast;
-        var flyoutPalette = _palette.Flyout;
+        var look = ResolveSystemFlyoutLook(highContrast);
+        var flyoutPalette = look.Palette;
         var card = new Border
         {
             Background = highContrast ? SystemColors.WindowBrush : FrozenBrush(flyoutPalette.Background),
             BorderBrush = highContrast ? SystemColors.WindowTextBrush : FrozenBrush(flyoutPalette.Border),
             BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(10),
+            CornerRadius = new CornerRadius(14),
             Padding = new Thickness(16, 12, 16, 14),
-            Child = BuildClockCard()
+            Child = BuildClockCard(flyoutPalette)
         };
         var onRight = ReferenceEquals(button.Parent, RightModules);
         var flyout = new Popup
@@ -1708,13 +1796,16 @@ public sealed partial class TopBarWindow : Window
             PlacementTarget = button,
             Placement = PlacementMode.Bottom,
             HorizontalOffset = onRight ? -156 : -6,
-            VerticalOffset = 2,
+            VerticalOffset = 4,
             StaysOpen = true,
             AllowsTransparency = true,
             Child = card
         };
+        PopupGlassBackdrop? glass = look.AllowBackdropBlur ? new PopupGlassBackdrop(flyout, card, look) : null;
         flyout.Closed += (_, _) =>
         {
+            glass?.Dispose();
+            glass = null;
             if (ReferenceEquals(_clockFlyout, flyout))
             {
                 _clockFlyout = null;
@@ -1728,16 +1819,14 @@ public sealed partial class TopBarWindow : Window
         (button.Parent as Panel ?? RightModules).Children.Add(flyout);
         _clockFlyout = flyout;
         flyout.IsOpen = true;
-        UpdateForegroundTimerInterval();
-        // Like the to-do flyout: the opening click must not read as an outside click.
-        TopBarNativeMethods.ConsumeMouseButtonDown(TopBarNativeMethods.LeftMouseButton);
-        TopBarNativeMethods.ConsumeMouseButtonDown(TopBarNativeMethods.EscapeKey);
+        OnFlyoutOpened();
     }
 
-    private FrameworkElement BuildClockCard()
+    private FrameworkElement BuildClockCard(TopBarFlyoutPalette? paletteOverride = null)
     {
         var highContrast = AccessibilityThemeManager.IsHighContrastEnabled || SystemParameters.HighContrast;
-        var inkBrush = highContrast ? SystemColors.WindowTextBrush : FrozenBrush(_palette.Flyout.Foreground);
+        var flyoutPalette = paletteOverride ?? ResolveSystemFlyoutLook(highContrast).Palette;
+        var inkBrush = highContrast ? SystemColors.WindowTextBrush : FrozenBrush(flyoutPalette.Foreground);
         var panel = new StackPanel { Width = 268 };
         var now = DateTime.Now;
         panel.Children.Add(new TextBlock
@@ -1941,9 +2030,12 @@ public sealed partial class TopBarWindow : Window
 
         CloseClockFlyout();
         CloseInputMethodFlyout();
+        CloseSystemFlyouts();
+        CloseAllHoverToolTips();
 
         var highContrast = AccessibilityThemeManager.IsHighContrastEnabled || SystemParameters.HighContrast;
-        var flyoutPalette = _palette.Flyout;
+        var look = ResolveSystemFlyoutLook(highContrast);
+        var flyoutPalette = look.Palette;
         var inkBrush = highContrast ? SystemColors.WindowTextBrush : FrozenBrush(flyoutPalette.Foreground);
         var list = _environment.ReadTodoList();
         var items = list?.Items ?? [];
@@ -1978,7 +2070,7 @@ public sealed partial class TopBarWindow : Window
             Background = highContrast ? SystemColors.WindowBrush : FrozenBrush(flyoutPalette.Background),
             BorderBrush = highContrast ? SystemColors.WindowTextBrush : FrozenBrush(flyoutPalette.Border),
             BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(10),
+            CornerRadius = new CornerRadius(14),
             Padding = new Thickness(14, 10, 14, 12),
             Child = panel
         };
@@ -1991,13 +2083,16 @@ public sealed partial class TopBarWindow : Window
             PlacementTarget = button,
             Placement = PlacementMode.Bottom,
             HorizontalOffset = onRight ? -140 : -6,
-            VerticalOffset = 2,
+            VerticalOffset = 4,
             StaysOpen = true,
             AllowsTransparency = true,
             Child = card
         };
+        PopupGlassBackdrop? glass = look.AllowBackdropBlur ? new PopupGlassBackdrop(flyout, card, look) : null;
         flyout.Closed += (_, _) =>
         {
+            glass?.Dispose();
+            glass = null;
             if (ReferenceEquals(_todoFlyout, flyout))
             {
                 _todoFlyout = null;
@@ -2013,10 +2108,7 @@ public sealed partial class TopBarWindow : Window
         (button.Parent as Panel ?? LeftModules).Children.Add(flyout);
         _todoFlyout = flyout;
         flyout.IsOpen = true;
-        UpdateForegroundTimerInterval();
-        // The click that opened the flyout must not read as the next outside click.
-        TopBarNativeMethods.ConsumeMouseButtonDown(TopBarNativeMethods.LeftMouseButton);
-        TopBarNativeMethods.ConsumeMouseButtonDown(TopBarNativeMethods.EscapeKey);
+        OnFlyoutOpened();
     }
 
     private FrameworkElement CreateTodoRow(TodoItemState item, Brush? inkBrush = null)
@@ -2153,7 +2245,7 @@ public sealed partial class TopBarWindow : Window
         openTimer.Tick += (_, _) =>
         {
             openTimer.Stop();
-            if (_closing || !host.IsLoaded || !IsVisible
+            if (_closing || !host.IsLoaded || !IsVisible || HasAnyOpenFlyout
                 || toolTip.Content is null
                 || (toolTip.Content is TextBlock tb && string.IsNullOrWhiteSpace(tb.Text)))
             {
@@ -2365,39 +2457,160 @@ public sealed partial class TopBarWindow : Window
         UpdateForegroundTimerInterval();
     }
 
+    private void OnFlyoutOpened()
+    {
+        _flyoutPointerLeftSinceTick = null;
+        _flyoutOpenedForegroundWindow = DockNativeMethods.GetForegroundWindow();
+        UpdateForegroundTimerInterval();
+        TopBarNativeMethods.ConsumeMouseButtonDown(TopBarNativeMethods.LeftMouseButton);
+        TopBarNativeMethods.ConsumeMouseButtonDown(TopBarNativeMethods.RightMouseButton);
+        TopBarNativeMethods.ConsumeMouseButtonDown(TopBarNativeMethods.EscapeKey);
+    }
+
+    private void CloseAllOpenFlyouts()
+    {
+        if (_capsuleExpanded || _todoFlyout?.IsOpen == true) CloseTodoFlyout();
+        if (_clockFlyout?.IsOpen == true) CloseClockFlyout();
+        if (_inputMethodFlyout?.IsOpen == true) CloseInputMethodFlyout();
+        if (HasOpenSystemFlyout) CloseSystemFlyouts();
+        _flyoutPointerLeftSinceTick = null;
+        _flyoutOpenedForegroundWindow = 0;
+    }
+
+    private Popup? ActiveOpenPopup() =>
+        _volumeFlyout is { IsOpen: true } v ? v
+        : _batteryFlyout is { IsOpen: true } b ? b
+        : _networkFlyout is { IsOpen: true } n ? n
+        : _inputMethodFlyout is { IsOpen: true } im ? im
+        : _clockFlyout is { IsOpen: true } c ? c
+        : _todoFlyout is { IsOpen: true } t ? t
+        : null;
+
     /// <summary>
     /// A StaysOpen=false popup never hears clicks that land in other processes: the
     /// system drops the capture instead of telling the popup. While the flyout is open
-    /// the bar polls the button state and closes it when a click lands outside it.
+    /// the bar polls the button state and closes it when a click lands outside it,
+    /// when the foreground window changes, or after the pointer stays outside for a grace period.
     /// </summary>
     private void CloseFlyoutOnOutsideClick()
     {
+        if (!HasAnyOpenFlyout && !_capsuleExpanded)
+        {
+            _flyoutPointerLeftSinceTick = null;
+            _flyoutOpenedForegroundWindow = 0;
+            return;
+        }
+
         if (TopBarNativeMethods.IsMouseButtonDown(TopBarNativeMethods.EscapeKey))
         {
-            if (_capsuleExpanded || _todoFlyout?.IsOpen == true) CloseTodoFlyout();
-            if (_clockFlyout?.IsOpen == true) CloseClockFlyout();
-            if (_inputMethodFlyout?.IsOpen == true) CloseInputMethodFlyout();
+            CloseAllOpenFlyouts();
+            return;
         }
-        if (!TopBarNativeMethods.IsMouseButtonDown(TopBarNativeMethods.LeftMouseButton))
+
+        var activePopup = ActiveOpenPopup();
+        var sliderCaptured = activePopup?.Child is FrameworkElement activeChild
+            && Mouse.Captured is DependencyObject capturedObj
+            && IsDescendantOfVisual(capturedObj, activeChild);
+
+        var fg = DockNativeMethods.GetForegroundWindow();
+        if (!sliderCaptured
+            && fg != 0
+            && _flyoutOpenedForegroundWindow != 0
+            && fg != _flyoutOpenedForegroundWindow
+            && fg != _handle)
         {
+            CloseAllOpenFlyouts();
             return;
         }
 
         DockNativeMethods.GetCursorPos(out var cursor);
-        if (_capsuleExpanded && _appBar is { } appBar
-            && !(cursor.X >= appBar.Bounds.Left && cursor.X < appBar.Bounds.Right
-                && cursor.Y >= appBar.Bounds.Top && cursor.Y < appBar.Bounds.Bottom))
+        if (TopBarNativeMethods.IsMouseButtonDown(TopBarNativeMethods.LeftMouseButton)
+            || TopBarNativeMethods.IsMouseButtonDown(TopBarNativeMethods.RightMouseButton))
         {
-            CloseTodoFlyout();
+            if (_capsuleExpanded && _appBar is { } appBar
+                && !(cursor.X >= appBar.Bounds.Left && cursor.X < appBar.Bounds.Right
+                    && cursor.Y >= appBar.Bounds.Top && cursor.Y < appBar.Bounds.Bottom))
+            {
+                CloseTodoFlyout();
+            }
+            TryCloseOnOutsideClick(_todoFlyout, cursor);
+            TryCloseOnOutsideClick(_clockFlyout, cursor);
+            TryCloseOnOutsideClick(_inputMethodFlyout, cursor);
+            TryCloseSystemFlyoutsOnOutsideClick(cursor);
+            return;
         }
-        TryCloseOnOutsideClick(_todoFlyout, cursor);
-        TryCloseOnOutsideClick(_clockFlyout, cursor);
-        TryCloseOnOutsideClick(_inputMethodFlyout, cursor);
+
+        // Auto-close after the pointer leaves both the open popup and its bar button
+        // (with a short grace delay and vertical bridge so moving into the popup never flickers).
+        if (activePopup is null)
+        {
+            _flyoutPointerLeftSinceTick = null;
+            return;
+        }
+
+        var inside = IsPointerInsideFlyoutOrAnchor(activePopup, cursor);
+        var busy = sliderCaptured || IsSystemFlyoutBusy;
+        if (inside || busy)
+        {
+            _flyoutPointerLeftSinceTick = null;
+            return;
+        }
+
+        var now = Environment.TickCount64;
+        _flyoutPointerLeftSinceTick ??= now;
+        if (TopBarControlRules.ShouldAutoCloseFlyoutOnLeave(_flyoutPointerLeftSinceTick, now, pointerInsideFlyoutOrAnchor: false, interactionBusy: false))
+        {
+            CloseAllOpenFlyouts();
+        }
+    }
+
+    private bool IsPointerInsideFlyoutOrAnchor(Popup flyout, DockNativeMethods.NativePoint cursor)
+    {
+        if (flyout.Child is not FrameworkElement child
+            || System.Windows.PresentationSource.FromVisual(child) is not HwndSource source
+            || source.Handle == 0)
+        {
+            return true;
+        }
+
+        DockNativeMethods.GetWindowRect(source.Handle, out var rect);
+        const int margin = 6;
+        if (cursor.X >= rect.Left - margin && cursor.X < rect.Right + margin
+            && cursor.Y >= rect.Top - margin && cursor.Y < rect.Bottom + margin)
+        {
+            return true;
+        }
+
+        TopBarModuleKind? owner = flyout == _todoFlyout
+            ? TopBarModuleKind.TodoSummary
+            : flyout == _clockFlyout ? TopBarModuleKind.Clock
+            : flyout == _inputMethodFlyout ? TopBarModuleKind.InputMethod
+            : ResolveSystemFlyoutOwner(flyout);
+        if (owner is { } kind
+            && _modules.TryGetValue(kind, out var element)
+            && element is Button button
+            && button.IsLoaded)
+        {
+            var topLeft = button.PointToScreen(new System.Windows.Point(0, 0));
+            var bottomRight = button.PointToScreen(new System.Windows.Point(button.ActualWidth, button.ActualHeight));
+            var bridgeBottom = Math.Max(bottomRight.Y, rect.Top);
+            if (cursor.X >= topLeft.X - margin && cursor.X < bottomRight.X + margin
+                && cursor.Y >= topLeft.Y && cursor.Y <= bridgeBottom + margin)
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     private void TryCloseOnOutsideClick(Popup? flyout, DockNativeMethods.NativePoint cursor)
     {
         if (flyout is not { IsOpen: true } || flyout.Child is not FrameworkElement child)
+        {
+            return;
+        }
+
+        if (Mouse.Captured is DependencyObject captured && IsDescendantOfVisual(captured, child))
         {
             return;
         }
@@ -2417,7 +2630,8 @@ public sealed partial class TopBarWindow : Window
         TopBarModuleKind? owner = flyout == _todoFlyout
             ? TopBarModuleKind.TodoSummary
             : flyout == _clockFlyout ? TopBarModuleKind.Clock
-            : flyout == _inputMethodFlyout ? TopBarModuleKind.InputMethod : null;
+            : flyout == _inputMethodFlyout ? TopBarModuleKind.InputMethod
+            : ResolveSystemFlyoutOwner(flyout);
         if (owner is { } kind
             && _modules.TryGetValue(kind, out var element)
             && element is Button button)
@@ -2432,6 +2646,22 @@ public sealed partial class TopBarWindow : Window
         }
 
         flyout.IsOpen = false;
+    }
+
+    private static bool IsDescendantOfVisual(DependencyObject node, DependencyObject ancestor)
+    {
+        var current = node;
+        while (current is not null)
+        {
+            if (ReferenceEquals(current, ancestor))
+            {
+                return true;
+            }
+            current = current is Visual or System.Windows.Media.Media3D.Visual3D
+                ? VisualTreeHelper.GetParent(current)
+                : LogicalTreeHelper.GetParent(current);
+        }
+        return false;
     }
 
     /// <summary>The open to-do flyout, for tests; popups sit outside the visual tree.</summary>
@@ -2573,6 +2803,7 @@ public sealed partial class TopBarWindow : Window
         CloseTodoFlyout(animate: false);
         CloseClockFlyout();
         CloseInputMethodFlyout();
+        CloseSystemFlyouts();
         if (_state.SearchInline == true)
         {
             OpenSearchPopup();
@@ -3241,7 +3472,15 @@ public sealed partial class TopBarWindow : Window
     internal bool UsesDarkInk => _palette.UseDarkInk;
 
     private void OnHighContrastChanged(object? sender, EventArgs e) =>
-        Dispatcher.BeginInvoke(RefreshAppearance);
+        Dispatcher.BeginInvoke(() =>
+        {
+            if (_closing) return;
+            CloseTodoFlyout(animate: false);
+            CloseClockFlyout();
+            CloseInputMethodFlyout();
+            CloseSystemFlyouts();
+            RefreshAppearance();
+        });
 
     private void ApplySurface()
     {
@@ -3495,6 +3734,13 @@ public sealed partial class TopBarWindow : Window
                     && foreground
                     && TopBarReserveRules.IsWindowCoveringReservedBar(foregroundBounds, bounds));
             _appBar.SetFullScreenDetected(coveredByForeground);
+            if (coveredByForeground)
+            {
+                CloseTodoFlyout(animate: false);
+                CloseClockFlyout();
+                CloseInputMethodFlyout();
+                CloseSystemFlyouts();
+            }
             if (!IsVisible && !coveredByForeground)
             {
                 Show();
@@ -3534,7 +3780,7 @@ public sealed partial class TopBarWindow : Window
             PointerOverDock: pointerOverBar,
             InteractionActive: _menuOpen || _capsuleExpanded
                 || _todoFlyout?.IsOpen == true || _clockFlyout?.IsOpen == true
-                || _inputMethodFlyout?.IsOpen == true || _searchPopup is not null,
+                || _inputMethodFlyout?.IsOpen == true || HasOpenSystemFlyout || _searchPopup is not null,
             OverlapIsMaximizedWindow: zoomed);
         _autoHide.Update(input, DateTimeOffset.UtcNow);
         if (_autoHide.IsShown != IsVisible)
@@ -3554,6 +3800,7 @@ public sealed partial class TopBarWindow : Window
                 CloseTodoFlyout();
                 CloseClockFlyout();
                 CloseInputMethodFlyout();
+                CloseSystemFlyouts();
                 HideFromApp();
             }
         }
@@ -3733,10 +3980,8 @@ public sealed partial class TopBarWindow : Window
         {
             existing.IsOpen = false;
         }
-        var surfaceColor = IsCapsule && TryFindResource("FloatingGlassSurfaceBrush") is SolidColorBrush material
-            ? material.Color
-            : (Color)ColorConverter.ConvertFromString(DesktopStyleRules.TopBar(_style, _state).Surface);
-        var darkSurface = (0.2126d * surfaceColor.R + 0.7152d * surfaceColor.G + 0.0722d * surfaceColor.B) / 255d <= 0.6d;
+        var highContrast = AccessibilityThemeManager.IsHighContrastEnabled || SystemParameters.HighContrast;
+        var darkSurface = !ResolveSystemFlyoutLook(highContrast).Palette.UseDarkInk;
         var menu = new NonActivatingPopupMenu(Surface, PlacementMode.Mouse, darkSurface);
         if (!IsCapsule && hitModule is { } kind)
         {
@@ -3773,6 +4018,7 @@ public sealed partial class TopBarWindow : Window
                     _state.VolumeStyle = volIconOnly ? TopBarVolumeStyle.IconAndPercent : TopBarVolumeStyle.IconOnly;
                     ApplyTopBarQuickEdit();
                 });
+                menu.AddItem("打开 Windows 快速设置", () => _environment.OpenQuickSettings(TopBarModuleKind.Volume));
                 break;
             case TopBarModuleKind.Network:
                 var netIconOnly = TopBarRules.EffectiveNetworkDisplayMode(_state) == TopBarNetworkDisplayMode.IconOnly;
@@ -3781,6 +4027,7 @@ public sealed partial class TopBarWindow : Window
                     _state.NetworkIconOnly = !netIconOnly;
                     ApplyTopBarQuickEdit();
                 });
+                menu.AddItem("打开 Windows 快速设置", () => _environment.OpenQuickSettings(TopBarModuleKind.Network));
                 break;
             case TopBarModuleKind.Battery:
                 var batIconOnly = TopBarRules.EffectiveBatteryStyle(_state) == TopBarBatteryStyle.IconOnly;
@@ -3789,6 +4036,7 @@ public sealed partial class TopBarWindow : Window
                     _state.BatteryStyle = batIconOnly ? TopBarBatteryStyle.IconAndPercent : TopBarBatteryStyle.IconOnly;
                     ApplyTopBarQuickEdit();
                 });
+                menu.AddItem("打开 Windows 快速设置", () => _environment.OpenQuickSettings(TopBarModuleKind.Battery));
                 break;
             case TopBarModuleKind.InputMethod:
                 var imeBadgeOnly = TopBarRules.EffectiveInputMethodStyle(_state) == TopBarInputMethodStyle.BadgeOnly;

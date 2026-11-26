@@ -24,6 +24,8 @@ public static class FileBoxEdgeDockRules
     public const double MinExpandedWidthDip = 240d;
     public const double MinExpandedHeightDip = 180d;
     public const int EdgeAdjacencyTolerancePixels = 2;
+    public const double DragDockCursorThresholdDip = 6d;
+    public const double DragDockCardOverflowDip = 24d;
 
     public static readonly TimeSpan RevealDelay = TimeSpan.FromMilliseconds(250);
     public static readonly TimeSpan DragRevealDelay = TimeSpan.FromMilliseconds(80);
@@ -104,6 +106,46 @@ public static class FileBoxEdgeDockRules
         var distLeft = Math.Abs(centerX - monitorBounds.Left);
         var distRight = Math.Abs(monitorBounds.Right - centerX);
         return distLeft <= distRight ? FileBoxEdgeDockSide.Left : FileBoxEdgeDockSide.Right;
+    }
+
+    /// <summary>
+    /// Detects whether releasing a dragged file box should automatically edge-dock it to the
+    /// left or right outer boundary of <paramref name="monitorBounds"/>. Requires either the
+    /// pointer to reach the outer screen edge or the card to be pushed noticeably past it,
+    /// and never triggers on interior shared edges between multi-monitor displays.
+    /// </summary>
+    public static FileBoxEdgeDockSide? TryDetectDragDockSide(
+        int cursorX,
+        PixelRect cardBounds,
+        PixelRect monitorBounds,
+        uint monitorDpi,
+        IReadOnlyList<PixelRect> allMonitors)
+    {
+        ArgumentNullException.ThrowIfNull(allMonitors);
+        if (!monitorBounds.HasArea || !cardBounds.HasArea)
+        {
+            return null;
+        }
+
+        var scale = Math.Max(1d, monitorDpi / 96d);
+        var cursorThresholdPx = Math.Max(4, (int)Math.Round(DragDockCursorThresholdDip * scale));
+        var overflowPx = Math.Max(16, (int)Math.Round(DragDockCardOverflowDip * scale));
+
+        if (IsOuterEdge(monitorBounds, FileBoxEdgeDockSide.Left, allMonitors)
+            && (cursorX <= monitorBounds.Left + cursorThresholdPx
+                || cardBounds.Left <= monitorBounds.Left - overflowPx))
+        {
+            return FileBoxEdgeDockSide.Left;
+        }
+
+        if (IsOuterEdge(monitorBounds, FileBoxEdgeDockSide.Right, allMonitors)
+            && (cursorX >= monitorBounds.Right - cursorThresholdPx
+                || cardBounds.Right >= monitorBounds.Right + overflowPx))
+        {
+            return FileBoxEdgeDockSide.Right;
+        }
+
+        return null;
     }
 
     /// <summary>

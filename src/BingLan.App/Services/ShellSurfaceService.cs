@@ -189,6 +189,9 @@ internal static class ShellSurfaceService
     internal static bool OpenInputMethodSettings() =>
         OpenSettings("ms-settings:keyboard");
 
+    internal static bool OpenSystemSettings(string uri) =>
+        OpenSettings(uri);
+
     internal static bool IsStartButton(string id, string className) =>
         id == "StartButton" || className == "Start";
 

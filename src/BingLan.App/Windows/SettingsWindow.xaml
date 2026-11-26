@@ -2211,6 +2211,16 @@
                                                 <ComboBoxItem Content="2 秒" Tag="2"/>
                                             </ComboBox>
                                         </local:SettingsRow>
+                                        <local:SettingsRow x:Name="FileBoxEdgeDockRow"
+                                                           Header="贴边隐藏"
+                                                           Description="吸附到屏幕左右外侧边收成细色条，鼠标移到屏幕边缘自动滑出、移开收回；未锁定时把收纳盒拖到屏幕左右边缘松手也可直接贴边（按住 Alt 跳过）"
+                                                           local:SettingsSearch.Keywords="贴边隐藏 靠边隐藏 屏幕边缘 桌面边缘 自动隐藏 侧边 抽屉 文件收纳盒 分组盒 酷呆">
+                                            <CheckBox x:Name="FileBoxEdgeDockCheckBox"
+                                                      AutomationProperties.Name="贴边隐藏"
+                                                      Style="{StaticResource ToggleSwitchStyle}"
+                                                      Checked="FileBoxEdgeDock_Changed"
+                                                      Unchecked="FileBoxEdgeDock_Changed"/>
+                                        </local:SettingsRow>
                                         <local:SettingsRow x:Name="FileBoxGroupTabsRow"
                                                            Header="组合标签页"
                                                            Description="切换标签页以分别设置各页的名称、视图与自动整理规则"

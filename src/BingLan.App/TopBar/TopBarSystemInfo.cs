@@ -38,6 +38,45 @@ internal static class TopBarSystemInfo
             : null;
     }
 
+    internal static TopBarAudioSnapshot ReadAudioSnapshot() =>
+        AudioEndpointVolumeInterop.ReadAudioSnapshot();
+
+    internal static bool SetMasterVolume(int percent) =>
+        AudioEndpointVolumeInterop.SetMasterVolume(TopBarControlRules.ClampPercent(percent) / 100f);
+
+    internal static bool SetMasterMute(bool muted) =>
+        AudioEndpointVolumeInterop.SetMasterMute(muted);
+
+    internal static bool SetDefaultOutputDevice(string deviceId) =>
+        AudioEndpointVolumeInterop.SetDefaultOutputDevice(deviceId);
+
+    internal static bool SetAudioSessionVolume(string? deviceId, uint processId, int percent) =>
+        AudioEndpointVolumeInterop.SetSessionVolume(deviceId, processId, TopBarControlRules.ClampPercent(percent) / 100f);
+
+    internal static bool SetAudioSessionMute(string? deviceId, uint processId, bool muted) =>
+        AudioEndpointVolumeInterop.SetSessionMute(deviceId, processId, muted);
+
+    internal static TopBarBatterySnapshot ReadBatterySnapshot() =>
+        TopBarPowerInterop.ReadBatterySnapshot();
+
+    internal static bool SetPowerMode(TopBarPowerMode mode) =>
+        TopBarPowerInterop.SetPowerMode(mode);
+
+    internal static bool SetBuiltInBrightness(int percent) =>
+        TopBarPowerInterop.SetBuiltInBrightness(percent);
+
+    internal static TopBarNetworkSnapshot ReadNetworkSnapshot() =>
+        TopBarWifiInterop.ReadNetworkSnapshot();
+
+    internal static bool ConnectSavedWifi(Guid interfaceGuid, string profileName) =>
+        TopBarWifiInterop.ConnectSavedProfile(interfaceGuid, profileName);
+
+    internal static bool DisconnectWifi(Guid interfaceGuid) =>
+        TopBarWifiInterop.Disconnect(interfaceGuid);
+
+    internal static bool TriggerWifiScan(Guid interfaceGuid) =>
+        TopBarWifiInterop.TriggerScan(interfaceGuid);
+
     internal static TopBarNetworkStatus ReadNetwork()
     {
         try

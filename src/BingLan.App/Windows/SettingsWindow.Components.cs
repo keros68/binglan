@@ -97,7 +97,7 @@ public partial class SettingsWindow
             {
                 box.ActiveTabChanged -= OnObservedFileBoxActiveTabChanged;
                 box.WidgetChanged -= OnObservedFileBoxStateChanged;
-                box.EdgeDockToggled -= OnObservedFileBoxEdgeDockToggled;
+                box.EdgeDockStateChanged -= OnObservedFileBoxEdgeDockToggled;
             }
         }
         _observedTitleWindows.Clear();
@@ -148,7 +148,7 @@ public partial class SettingsWindow
             {
                 staleBox.ActiveTabChanged -= OnObservedFileBoxActiveTabChanged;
                 staleBox.WidgetChanged -= OnObservedFileBoxStateChanged;
-                staleBox.EdgeDockToggled -= OnObservedFileBoxEdgeDockToggled;
+                staleBox.EdgeDockStateChanged -= OnObservedFileBoxEdgeDockToggled;
             }
             _observedTitleWindows.Remove(stale);
         }
@@ -162,7 +162,7 @@ public partial class SettingsWindow
                 {
                     addedBox.ActiveTabChanged += OnObservedFileBoxActiveTabChanged;
                     addedBox.WidgetChanged += OnObservedFileBoxStateChanged;
-                    addedBox.EdgeDockToggled += OnObservedFileBoxEdgeDockToggled;
+                    addedBox.EdgeDockStateChanged += OnObservedFileBoxEdgeDockToggled;
                 }
             }
         }

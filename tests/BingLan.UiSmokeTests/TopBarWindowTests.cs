@@ -506,19 +506,62 @@ internal static class TopBarWindowTests
             pump();
             Assert(bar.ClockFlyout is null, "再次点击时钟模块应收起日历信息栏");
             Invoke(ButtonByName(bar, "音量模块"));
-            if (environment.QuickSettingsRequested != 1)
-            {
-                throw new InvalidOperationException("点击音量模块应唤起系统快速设置");
-            }
+            pump();
+            Assert(bar.VolumeFlyout?.IsOpen == true && environment.QuickSettingsRequested == 0,
+                "点击音量模块应弹出冰蓝自有声音控制浮层，不唤起原生任务栏快速设置");
+            var muteBtn = AllButtons(bar.VolumeFlyout!.Child)
+                .Single(candidate => AutomationProperties.GetName(candidate) == "静音");
+            Invoke(muteBtn);
+            pump();
+            Assert(environment.MasterMutedCalls.Count == 1 && environment.MasterMutedCalls[0],
+                "点击声音浮层静音按钮应联动系统静音");
+            var switchDeviceBtn = AllButtons(bar.VolumeFlyout!.Child)
+                .Single(candidate => AutomationProperties.GetName(candidate) == "切换输出设备 蓝牙耳机");
+            Invoke(switchDeviceBtn);
+            pump();
+            Assert(environment.SwitchedAudioDevices.SequenceEqual(["dev-bt"]),
+                "点击声音浮层输出设备应切换默认播放设备");
+            var soundSettingsBtn = AllButtons(bar.VolumeFlyout!.Child)
+                .Single(candidate => AutomationProperties.GetName(candidate) == "打开 Windows 声音设置");
+            Invoke(soundSettingsBtn);
+            pump();
+            Assert(bar.VolumeFlyout is null && environment.OpenedSettingsUris.Contains("ms-settings:sound"),
+                "点击声音浮层底部设置项应收起浮层并打开系统声音设置");
+
             Invoke(ButtonByName(bar, "电量模块"));
-            if (environment.QuickSettingsRequested != 2)
-            {
-                throw new InvalidOperationException("点击电量模块应唤起系统快速设置");
-            }
+            pump();
+            Assert(bar.BatteryFlyout?.IsOpen == true && bar.VolumeFlyout is null,
+                "点击电量模块应弹出冰蓝自有电源与电池浮层");
+            var perfModeBtn = AllButtons(bar.BatteryFlyout!.Child)
+                .Single(candidate => AutomationProperties.GetName(candidate) == "电源模式 最佳性能");
+            Invoke(perfModeBtn);
+            pump();
+            Assert(environment.PowerModeChanges.SequenceEqual([TopBarPowerMode.BestPerformance]),
+                "点击电池浮层电源模式应联动系统切换");
+            var powerSettingsBtn = AllButtons(bar.BatteryFlyout!.Child)
+                .Single(candidate => AutomationProperties.GetName(candidate) == "打开 Windows 电源与电池设置");
+            Invoke(powerSettingsBtn);
+            pump();
+            Assert(bar.BatteryFlyout is null && environment.OpenedSettingsUris.Contains("ms-settings:powersleep"),
+                "点击电池浮层底部设置项应收起浮层并打开系统电源设置");
+
             Invoke(ButtonByName(bar, "网络模块"));
-            Assert(environment.QuickSettingsKinds.SequenceEqual(new[]
-                { TopBarModuleKind.Volume, TopBarModuleKind.Battery, TopBarModuleKind.Network }),
-                "系统状态点击应保留对应模块，以便回退到各自设置页");
+            pump();
+            Assert(bar.NetworkFlyout?.IsOpen == true && bar.BatteryFlyout is null,
+                "点击网络模块应弹出冰蓝自有网络与 WLAN 浮层");
+            var connectSavedBtn = AllButtons(bar.NetworkFlyout!.Child)
+                .Single(candidate => AutomationProperties.GetName(candidate) == "连接到已保存 WLAN Office5G");
+            Invoke(connectSavedBtn);
+            pump();
+            Assert(environment.ConnectedWifiProfiles.SequenceEqual(["Office5G"]),
+                "点击已保存 WLAN 应直接触发系统配置连接");
+            var wifiSettingsBtn = AllButtons(bar.NetworkFlyout!.Child)
+                .Single(candidate => AutomationProperties.GetName(candidate) == "打开 Windows 网络和 Wi-Fi 设置");
+            Invoke(wifiSettingsBtn);
+            pump();
+            Assert(bar.NetworkFlyout is null && environment.OpenedSettingsUris.Contains("ms-settings:network-wifi")
+                && environment.QuickSettingsRequested == 0,
+                "点击网络浮层底部设置项应收起浮层并直接打开 Wi-Fi 设置页而不弹出原生任务栏");
             var imeButton = ButtonByName(bar, "输入法模块");
             Invoke(imeButton);
             pump();
@@ -1069,11 +1112,102 @@ internal static class TopBarWindowTests
                 ProfileGuid: Guid.Parse("22222222-2222-2222-2222-222222222222"))
         ];
 
+        internal List<string> OpenedSettingsUris { get; } = [];
+        internal List<bool> MasterMutedCalls { get; } = [];
+        internal List<string> SwitchedAudioDevices { get; } = [];
+        internal List<TopBarPowerMode> PowerModeChanges { get; } = [];
+        internal List<string> ConnectedWifiProfiles { get; } = [];
+
         public void OpenQuickSettings(TopBarModuleKind kind)
         {
             QuickSettingsRequested++;
             QuickSettingsKinds.Add(kind);
         }
+
+        public void OpenSystemSettings(string settingsUri) => OpenedSettingsUris.Add(settingsUri);
+
+        public Task<TopBarAudioSnapshot> ReadAudioSnapshotAsync() => Task.FromResult(
+            new TopBarAudioSnapshot(
+                MasterPercent: 60,
+                MasterMuted: false,
+                Available: true,
+                Devices:
+                [
+                    new TopBarAudioDevice("dev-spk", "扬声器", IsDefault: true),
+                    new TopBarAudioDevice("dev-bt", "蓝牙耳机", IsDefault: false)
+                ],
+                Sessions:
+                [
+                    new TopBarAudioSession(42, "Edge", 80, false, true)
+                ]));
+
+        public Task<bool> SetMasterVolumeAsync(int percent) => Task.FromResult(true);
+
+        public Task<bool> SetMasterMuteAsync(bool muted)
+        {
+            MasterMutedCalls.Add(muted);
+            return Task.FromResult(true);
+        }
+
+        public Task<bool> SetDefaultOutputDeviceAsync(string deviceId)
+        {
+            SwitchedAudioDevices.Add(deviceId);
+            return Task.FromResult(true);
+        }
+
+        public Task<bool> SetAudioSessionVolumeAsync(string? deviceId, uint processId, int percent) => Task.FromResult(true);
+
+        public Task<bool> SetAudioSessionMuteAsync(string? deviceId, uint processId, bool muted) => Task.FromResult(true);
+
+        public Task<TopBarBatterySnapshot> ReadBatterySnapshotAsync() => Task.FromResult(
+            new TopBarBatterySnapshot(
+                Percent: 85,
+                Status: TopBarBatteryStatus.OnBattery,
+                IsPowerSaver: false,
+                RemainingSeconds: 7200,
+                PowerModeSupported: true,
+                PowerMode: TopBarPowerMode.Balanced,
+                BrightnessSupported: true,
+                BrightnessPercent: 70));
+
+        public Task<bool> SetPowerModeAsync(TopBarPowerMode mode)
+        {
+            PowerModeChanges.Add(mode);
+            return Task.FromResult(true);
+        }
+
+        public Task<bool> SetBuiltInBrightnessAsync(int percent) => Task.FromResult(true);
+
+        public Task<TopBarNetworkSnapshot> ReadNetworkSnapshotAsync() => Task.FromResult(
+            new TopBarNetworkSnapshot(
+                IsConnected: true,
+                IsWireless: true,
+                ConnectionTitle: "Home5G",
+                CurrentSsid: "Home5G",
+                CurrentProfileName: "Home5G",
+                SignalQuality: 90,
+                LinkSpeedBitsPerSecond: 866_000_000L,
+                Ipv4Address: "192.168.1.25",
+                AdapterName: "Wi-Fi 6",
+                InterfaceGuid: Guid.Parse("AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE"),
+                HasWifiInterface: true,
+                WifiListAccessDenied: false,
+                AvailableNetworks:
+                [
+                    new TopBarWifiNetwork("Home5G", "Home5G", 90, true, true, true),
+                    new TopBarWifiNetwork("Office5G", "Office5G", 76, false, true, true),
+                    new TopBarWifiNetwork("CafeGuest", null, 55, false, false, true)
+                ]));
+
+        public Task<bool> ConnectSavedWifiAsync(Guid interfaceGuid, string profileName)
+        {
+            ConnectedWifiProfiles.Add(profileName);
+            return Task.FromResult(true);
+        }
+
+        public Task<bool> DisconnectWifiAsync(Guid interfaceGuid) => Task.FromResult(true);
+
+        public Task<bool> TriggerWifiScanAsync(Guid interfaceGuid) => Task.FromResult(true);
 
         public void OpenInputMethod() => InputMethodRequested++;
 

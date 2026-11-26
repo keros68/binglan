@@ -88,7 +88,44 @@ internal sealed class FileBoxEdgeDockController : IDisposable
         }
     }
 
-    internal bool ToggleEdgeDock(FileBoxWindow box, bool enable)
+    internal bool ToggleEdgeDock(FileBoxWindow box, bool enable) =>
+        ToggleEdgeDock(box, enable, explicitSide: null, explicitEntry: null);
+
+    internal bool TryDockOnDragRelease(FileBoxWindow box, int cursorX, int cursorY)
+    {
+        if (_disposed || box.IsEdgeDocked || box.State.IsLocked || !box.IsVisible)
+        {
+            return false;
+        }
+
+        RefreshMonitorCache();
+        if (_cachedEntries.Length == 0)
+        {
+            return false;
+        }
+
+        var boxRect = ReadWindowRect(box);
+        var currentEntry = FindMonitorEntryForDragRelease(boxRect, cursorX, cursorY)
+            ?? _cachedEntries[0];
+        var side = FileBoxEdgeDockRules.TryDetectDragDockSide(
+            cursorX,
+            boxRect,
+            currentEntry.Monitor.Bounds,
+            currentEntry.Monitor.Dpi,
+            _cachedBounds);
+        if (side is null)
+        {
+            return false;
+        }
+
+        return ToggleEdgeDock(box, enable: true, explicitSide: side, explicitEntry: currentEntry);
+    }
+
+    private bool ToggleEdgeDock(
+        FileBoxWindow box,
+        bool enable,
+        FileBoxEdgeDockSide? explicitSide,
+        EdgeDockMonitorEntry? explicitEntry)
     {
         if (_disposed)
         {
@@ -119,6 +156,7 @@ internal sealed class FileBoxEdgeDockController : IDisposable
             {
                 _peek.ReturnSingleBox(box);
             }
+            box.NotifyEdgeDockStateChanged();
             SyncTimerState();
             _saveState();
             return true;
@@ -130,8 +168,8 @@ internal sealed class FileBoxEdgeDockController : IDisposable
         }
 
         var boxRect = ReadWindowRect(box);
-        var currentEntry = FindMonitorEntryForRect(boxRect) ?? _cachedEntries[0];
-        var chosenSide = FileBoxEdgeDockRules.ChooseDockSide(boxRect, currentEntry.Monitor.Bounds, _cachedBounds);
+        var currentEntry = explicitEntry ?? FindMonitorEntryForRect(boxRect) ?? _cachedEntries[0];
+        var chosenSide = explicitSide ?? FileBoxEdgeDockRules.ChooseDockSide(boxRect, currentEntry.Monitor.Bounds, _cachedBounds);
         EdgeDockMonitorEntry targetEntry;
         FileBoxEdgeDockSide side;
         if (chosenSide is { } localSide)
@@ -174,6 +212,7 @@ internal sealed class FileBoxEdgeDockController : IDisposable
         box.State.EdgeDockMonitorDeviceName = targetEntry.Monitor.DeviceName;
 
         ApplyHiddenDockedBox(box, targetEntry, side);
+        box.NotifyEdgeDockStateChanged();
         SyncTimerState();
         _saveState();
         return true;
@@ -530,6 +569,48 @@ internal sealed class FileBoxEdgeDockController : IDisposable
         }
         entry = default;
         return false;
+    }
+
+    private EdgeDockMonitorEntry? FindMonitorEntryForDragRelease(PixelRect rect, int cursorX, int cursorY)
+    {
+        // Prefer the monitor with the largest intersection area with the card so edge-dock
+        // ownership matches MonitorFromRect / multi-screen reconciliation (even on vertically
+        // stacked monitors or when dragging a card's center past a secondary monitor's outer edge).
+        EdgeDockMonitorEntry? bestOverlap = null;
+        long bestArea = 0;
+        for (var i = 0; i < _cachedEntries.Length; i++)
+        {
+            var entry = _cachedEntries[i];
+            var b = entry.Monitor.Bounds;
+            var left = Math.Max(rect.Left, b.Left);
+            var top = Math.Max(rect.Top, b.Top);
+            var right = Math.Min(rect.Right, b.Right);
+            var bottom = Math.Min(rect.Bottom, b.Bottom);
+            if (right > left && bottom > top)
+            {
+                var area = (long)(right - left) * (bottom - top);
+                if (area > bestArea)
+                {
+                    bestArea = area;
+                    bestOverlap = entry;
+                }
+            }
+        }
+        if (bestOverlap is not null)
+        {
+            return bestOverlap;
+        }
+
+        for (var i = 0; i < _cachedEntries.Length; i++)
+        {
+            var entry = _cachedEntries[i];
+            var b = entry.Monitor.Bounds;
+            if (cursorX >= b.Left && cursorX < b.Right && cursorY >= b.Top && cursorY < b.Bottom)
+            {
+                return entry;
+            }
+        }
+        return FindMonitorEntryForRect(rect);
     }
 
     private EdgeDockMonitorEntry? FindMonitorEntryForRect(PixelRect rect)

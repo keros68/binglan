@@ -1698,6 +1698,9 @@ public partial class SettingsWindow : Window
                     && Math.Abs(option - hideDelaySeconds) < 0.001d)
                 ?? FileBoxIdleHideDelayComboBox.Items.OfType<ComboBoxItem>().FirstOrDefault(item => item.Tag as string == "0.5");
 
+            FileBoxEdgeDockCheckBox.IsChecked = box.IsEdgeDocked;
+            FileBoxEdgeDockCheckBox.IsEnabled = _maintenance.ToggleFileBoxEdgeDock is not null;
+
             FileBoxGroupTabsRow.Visibility = box.IsGrouped ? Visibility.Visible : Visibility.Collapsed;
             FileBoxHoverSwitchTabsRow.Visibility = box.IsGrouped ? Visibility.Visible : Visibility.Collapsed;
             FileBoxHoverSwitchTabsCheckBox.IsChecked = box.State.HoverSwitchTabs;
@@ -1762,6 +1765,28 @@ public partial class SettingsWindow : Window
         {
             _loadingViewMode = false;
         }
+    }
+
+    private void FileBoxEdgeDock_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_loadingViewMode || _selectedComponentEntry?.Window is not FileBoxWindow box)
+        {
+            return;
+        }
+
+        if (_maintenance.ToggleFileBoxEdgeDock is not { } toggle)
+        {
+            return;
+        }
+
+        var enabled = FileBoxEdgeDockCheckBox.IsChecked == true;
+        var applied = toggle(box, enabled);
+        LoadFileBoxViewMode(box);
+        ComponentSettingsStatusText.Text = !applied
+            ? $"“{box.State.Title}”当前无法切换贴边隐藏"
+            : enabled
+                ? $"“{box.State.Title}”已开启贴边隐藏，鼠标移到屏幕外侧边即可滑出"
+                : $"“{box.State.Title}”已取消贴边隐藏并回到桌面";
     }
 
     private void FileBoxHideWhenIdle_Changed(object sender, RoutedEventArgs e)

@@ -1088,6 +1088,57 @@ public static class TopBarTests
         DesktopModeRules.Apply(DesktopMode.AppleStyle, new DockState(), new TaskbarState(), appleBarCustomized, DesktopExperienceRules.CreateDefault());
         Assert(appleBarCustomized.VolumeStyle == TopBarVolumeStyle.IconAndPercent,
             "已有显式顶栏样式偏好的老用户切苹果式时不应被覆盖样式");
+
+        // System control flyout rules (Volume wheel, Battery text, Network link speed & Wi-Fi dedupe, Audio session normalization).
+        Assert(TopBarControlRules.AdjustVolumeByWheelDelta(50, 120) == 54
+            && TopBarControlRules.AdjustVolumeByWheelDelta(2, -120) == 0
+            && TopBarControlRules.AdjustVolumeByWheelDelta(98, 120) == 100,
+            "音量滚轮调节应按步长增减并限制在 0-100");
+        Assert(TopBarControlRules.FormatBatteryRemaining(TopBarBatteryStatus.OnBattery, 64, 5400, false) == "预计可用 1 小时 30 分钟"
+            && TopBarControlRules.FormatBatteryRemaining(TopBarBatteryStatus.Charging, 100, null, false) == "电池已充满"
+            && TopBarControlRules.FormatBatteryRemaining(TopBarBatteryStatus.PluggedIn, -1, null, false) == "未检测到电池",
+            "电池剩余时间与状态文案应准确区分放电、充满与无电池台式机");
+        Assert(TopBarControlRules.FormatLinkSpeed(1_000_000_000L) == "1 Gbps"
+            && TopBarControlRules.FormatLinkSpeed(866_000_000L) == "866 Mbps"
+            && TopBarControlRules.FormatLinkSpeed(0) is null,
+            "网络速率格式化应按 Gbps/Mbps 输出");
+        var dedupedWifi = TopBarControlRules.DeduplicateAndSortWifiNetworks([
+            new TopBarWifiNetwork("Guest", null, 95, false, false, true),
+            new TopBarWifiNetwork("Office", "Office", 62, false, true, true),
+            new TopBarWifiNetwork("Office", null, 80, false, false, true),
+            new TopBarWifiNetwork("Home5G", "Home5G", 70, true, true, true),
+            new TopBarWifiNetwork(" ", null, 99, false, false, false)
+        ]);
+        Assert(dedupedWifi.Count == 3
+            && dedupedWifi[0].Ssid == "Home5G" && dedupedWifi[0].IsConnected
+            && dedupedWifi[1].Ssid == "Office" && dedupedWifi[1].IsSaved && dedupedWifi[1].SignalQuality == 80 && dedupedWifi[1].ProfileName == "Office"
+            && dedupedWifi[2].Ssid == "Guest" && !dedupedWifi[2].IsSaved,
+            "WLAN 列表应合并重复 SSID 取最强信号并按已连接→已保存→信号强度排序");
+        var distinctProfiles = TopBarControlRules.DeduplicateAndSortWifiNetworks([
+            new TopBarWifiNetwork("Corp", "Corp-EAP", 80, false, true, true),
+            new TopBarWifiNetwork("Corp", "Corp-PSK", 70, false, true, true),
+            new TopBarWifiNetwork("Corp", null, 60, false, false, false)
+        ]);
+        Assert(distinctProfiles.Count == 3,
+            "同 SSID 但不同配置或不同安全模式的 WLAN 项不应被错误合并");
+        var mergedSessions = TopBarControlRules.NormalizeAudioSessions([
+            new TopBarAudioSession(100, "Edge", 40, true, false),
+            new TopBarAudioSession(100, "Edge", 70, false, true),
+            new TopBarAudioSession(200, "微信", 100, false, false),
+            new TopBarAudioSession(0, "System", 50, false, true)
+        ]);
+        Assert(mergedSessions.Count == 2
+            && mergedSessions[0].ProcessId == 100 && mergedSessions[0].VolumePercent == 70 && !mergedSessions[0].IsMuted && mergedSessions[0].IsActive
+            && mergedSessions[1].ProcessId == 200,
+            "音频会话应按进程合并、活跃会话置前并过滤无效进程");
+        Assert(!TopBarControlRules.ShouldAutoCloseFlyoutOnLeave(1000, 1000 + TopBarControlRules.FlyoutLeaveAutoCloseMs - 1, false, false),
+            "鼠标移出未满宽限时间不应提前关闭弹层");
+        Assert(TopBarControlRules.ShouldAutoCloseFlyoutOnLeave(1000, 1000 + TopBarControlRules.FlyoutLeaveAutoCloseMs, false, false),
+            "鼠标持续移出弹层与顶栏按钮满宽限时间应自动收起");
+        Assert(!TopBarControlRules.ShouldAutoCloseFlyoutOnLeave(1000, 5000, pointerInsideFlyoutOrAnchor: true, interactionBusy: false),
+            "鼠标仍在弹层或锚点按钮内时不应自动收起");
+        Assert(!TopBarControlRules.ShouldAutoCloseFlyoutOnLeave(1000, 5000, pointerInsideFlyoutOrAnchor: false, interactionBusy: true),
+            "正在拖动滑条或扫描连接网络时不应自动收起");
     }
 
     [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]

@@ -178,7 +178,12 @@ public partial class FileBoxWindow : WidgetWindowBase
 
     internal event Action<FileBoxWindow, bool>? EdgeDockToggled;
 
+    internal event Action<FileBoxWindow, bool>? EdgeDockStateChanged;
+
     internal event Action<FileBoxWindow>? EdgeDockFileDragNear;
+
+    internal void NotifyEdgeDockStateChanged() =>
+        EdgeDockStateChanged?.Invoke(this, IsEdgeDocked);
 
     protected override void PopulateContextMenu(System.Windows.Controls.ContextMenu menu)
     {

@@ -1243,6 +1243,16 @@ public sealed partial class WidgetCoordinator : IDisposable
 
     private void OnWindowDragCompleted(WidgetWindowBase window)
     {
+        var pendingEdgeDock = _pendingEdgeDockRelease;
+        if (pendingEdgeDock is { } pending && ReferenceEquals(pending.Box, window))
+        {
+            _pendingEdgeDockRelease = null;
+        }
+        else
+        {
+            pendingEdgeDock = null;
+        }
+
         if (_isApplyingDesktopExperience || window.IsClosingOrClosed || !_windows.Contains(window))
         {
             return;
@@ -1252,6 +1262,16 @@ public sealed partial class WidgetCoordinator : IDisposable
         {
             Capture(window);
             ScheduleSave();
+        }
+
+        if (pendingEdgeDock is { } edgeDockCandidate
+            && !edgeDockCandidate.Box.IsClosingOrClosed
+            && _windows.Contains(edgeDockCandidate.Box))
+        {
+            _edgeDock.TryDockOnDragRelease(
+                edgeDockCandidate.Box,
+                edgeDockCandidate.CursorX,
+                edgeDockCandidate.CursorY);
         }
     }
 
@@ -1672,6 +1692,7 @@ public sealed partial class WidgetCoordinator : IDisposable
                     ScheduleSave();
                 },
                 SetWidgetVisibility = SetWidgetVisibility,
+                ToggleFileBoxEdgeDock = (box, enabled) => _edgeDock.ToggleEdgeDock(box, enabled),
                 MergeFileBoxes = MergeFileBoxes,
                 DetachFileBoxTab = DetachFileBoxTab,
                 SplitFileBoxGroup = SplitFileBoxGroup,
@@ -3809,6 +3830,110 @@ public sealed partial class WidgetCoordinator : IDisposable
                 ReportShellFailure();
             }
         }
+
+        public void OpenSystemSettings(string settingsUri)
+        {
+            if (!ShellSurfaceService.OpenSystemSettings(settingsUri))
+            {
+                ReportShellFailure();
+            }
+        }
+
+        private readonly SemaphoreSlim _audioWriteGate = new(1, 1);
+        private readonly SemaphoreSlim _powerWriteGate = new(1, 1);
+        private readonly SemaphoreSlim _brightnessWriteGate = new(1, 1);
+        private long _audioWriteTicket;
+        private long _brightnessWriteTicket;
+
+        private async Task<bool> RunSerializedAsync(SemaphoreSlim gate, Func<bool> work)
+        {
+            await gate.WaitAsync().ConfigureAwait(false);
+            try
+            {
+                return await Task.Run(work).ConfigureAwait(false);
+            }
+            finally
+            {
+                gate.Release();
+            }
+        }
+
+        public Task<TopBarAudioSnapshot> ReadAudioSnapshotAsync() =>
+            Task.Run(TopBarSystemInfo.ReadAudioSnapshot);
+
+        public async Task<bool> SetMasterVolumeAsync(int percent)
+        {
+            var ticket = Interlocked.Increment(ref _audioWriteTicket);
+            await _audioWriteGate.WaitAsync().ConfigureAwait(false);
+            try
+            {
+                // Skip superseded slider drags so rapid motion never leaves Windows at an older value.
+                if (ticket != Interlocked.Read(ref _audioWriteTicket))
+                {
+                    return true;
+                }
+                return await Task.Run(() => TopBarSystemInfo.SetMasterVolume(percent)).ConfigureAwait(false);
+            }
+            finally
+            {
+                _audioWriteGate.Release();
+            }
+        }
+
+        public async Task<bool> SetMasterMuteAsync(bool muted)
+        {
+            // Advance the ticket so any queued earlier volume drag is skipped and cannot unmute after this mute.
+            Interlocked.Increment(ref _audioWriteTicket);
+            return await RunSerializedAsync(_audioWriteGate, () => TopBarSystemInfo.SetMasterMute(muted)).ConfigureAwait(false);
+        }
+
+        public async Task<bool> SetDefaultOutputDeviceAsync(string deviceId)
+        {
+            Interlocked.Increment(ref _audioWriteTicket);
+            return await RunSerializedAsync(_audioWriteGate, () => TopBarSystemInfo.SetDefaultOutputDevice(deviceId)).ConfigureAwait(false);
+        }
+
+        public Task<bool> SetAudioSessionVolumeAsync(string? deviceId, uint processId, int percent) =>
+            RunSerializedAsync(_audioWriteGate, () => TopBarSystemInfo.SetAudioSessionVolume(deviceId, processId, percent));
+
+        public Task<bool> SetAudioSessionMuteAsync(string? deviceId, uint processId, bool muted) =>
+            RunSerializedAsync(_audioWriteGate, () => TopBarSystemInfo.SetAudioSessionMute(deviceId, processId, muted));
+
+        public Task<TopBarBatterySnapshot> ReadBatterySnapshotAsync() =>
+            Task.Run(TopBarSystemInfo.ReadBatterySnapshot);
+
+        public Task<bool> SetPowerModeAsync(TopBarPowerMode mode) =>
+            RunSerializedAsync(_powerWriteGate, () => TopBarSystemInfo.SetPowerMode(mode));
+
+        public async Task<bool> SetBuiltInBrightnessAsync(int percent)
+        {
+            var ticket = Interlocked.Increment(ref _brightnessWriteTicket);
+            await _brightnessWriteGate.WaitAsync().ConfigureAwait(false);
+            try
+            {
+                if (ticket != Interlocked.Read(ref _brightnessWriteTicket))
+                {
+                    return true;
+                }
+                return await Task.Run(() => TopBarSystemInfo.SetBuiltInBrightness(percent)).ConfigureAwait(false);
+            }
+            finally
+            {
+                _brightnessWriteGate.Release();
+            }
+        }
+
+        public Task<TopBarNetworkSnapshot> ReadNetworkSnapshotAsync() =>
+            Task.Run(TopBarSystemInfo.ReadNetworkSnapshot);
+
+        public Task<bool> ConnectSavedWifiAsync(Guid interfaceGuid, string profileName) =>
+            Task.Run(() => TopBarSystemInfo.ConnectSavedWifi(interfaceGuid, profileName));
+
+        public Task<bool> DisconnectWifiAsync(Guid interfaceGuid) =>
+            Task.Run(() => TopBarSystemInfo.DisconnectWifi(interfaceGuid));
+
+        public Task<bool> TriggerWifiScanAsync(Guid interfaceGuid) =>
+            Task.Run(() => TopBarSystemInfo.TriggerWifiScan(interfaceGuid));
 
         public void OpenInputMethod()
         {
