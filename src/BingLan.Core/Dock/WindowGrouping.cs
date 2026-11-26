@@ -113,7 +113,7 @@ public static class WindowGrouping
             var name = Path.GetFileNameWithoutExtension(path);
             if (!string.IsNullOrWhiteSpace(name))
             {
-                return name;
+                return AppDisplayNameRules.Normalize(name, path) ?? name;
             }
         }
 

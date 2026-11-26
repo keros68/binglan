@@ -1674,6 +1674,8 @@ public partial class SettingsWindow : Window
             FileBoxTilesRadio.IsChecked = !list;
             FileBoxListRadio.IsChecked = list;
             FileBoxAutoCollapseCheckBox.IsChecked = box.State.AutoCollapse;
+            FileBoxHoverExpandCheckBox.IsChecked = box.State.HoverExpand;
+            FileBoxHoverExpandCheckBox.IsEnabled = !box.IsEdgeDocked;
             FileBoxAutoCollapseDelayRow.Visibility = box.State.AutoCollapse ? Visibility.Visible : Visibility.Collapsed;
             var delaySeconds = FileBoxAutoCollapseRules.CoerceDelaySeconds(box.State.AutoCollapseDelaySeconds);
             FileBoxAutoCollapseDelayComboBox.SelectedItem = FileBoxAutoCollapseDelayComboBox.Items
@@ -1719,7 +1721,9 @@ public partial class SettingsWindow : Window
                 FileBoxGroupTabComboBox.SelectedItem = selectedTabItem ?? FileBoxGroupTabComboBox.Items.OfType<ComboBoxItem>().FirstOrDefault();
             }
 
+            var previousMergeTarget = (FileBoxMergeTargetComboBox.SelectedItem as ComboBoxItem)?.Tag as FileBoxWindow;
             FileBoxMergeTargetComboBox.Items.Clear();
+            ComboBoxItem? restoredMergeTargetItem = null;
             if (!box.IsEdgeDocked)
             {
                 foreach (var other in GetActiveScreenWindows().OfType<FileBoxWindow>())
@@ -1728,18 +1732,30 @@ public partial class SettingsWindow : Window
                     {
                         continue;
                     }
-                    FileBoxMergeTargetComboBox.Items.Add(new ComboBoxItem
+                    var mergeItem = new ComboBoxItem
                     {
                         Content = FileBoxGroupRules.FormatGroupDisplayTitle(other.Tabs, other.State.Id),
                         Tag = other
-                    });
+                    };
+                    FileBoxMergeTargetComboBox.Items.Add(mergeItem);
+                    if (ReferenceEquals(other, previousMergeTarget))
+                    {
+                        restoredMergeTargetItem = mergeItem;
+                    }
                 }
             }
             var canMerge = FileBoxMergeTargetComboBox.Items.Count > 0 && _maintenance.MergeFileBoxes is not null;
             FileBoxMergeIntoRow.Visibility = canMerge ? Visibility.Visible : Visibility.Collapsed;
             if (canMerge)
             {
-                FileBoxMergeTargetComboBox.SelectedIndex = 0;
+                if (restoredMergeTargetItem is not null)
+                {
+                    FileBoxMergeTargetComboBox.SelectedItem = restoredMergeTargetItem;
+                }
+                else
+                {
+                    FileBoxMergeTargetComboBox.SelectedIndex = 0;
+                }
             }
         }
         finally
@@ -1868,6 +1884,20 @@ public partial class SettingsWindow : Window
         ComponentSettingsStatusText.Text = enabled
             ? $"“{box.State.Title}”已开启鼠标离开 {delayText} 后自动收起"
             : $"“{box.State.Title}”已关闭自动收起";
+    }
+
+    private void FileBoxHoverExpand_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_loadingViewMode || _selectedComponentEntry?.Window is not FileBoxWindow box || box.IsEdgeDocked)
+        {
+            return;
+        }
+
+        var enabled = FileBoxHoverExpandCheckBox.IsChecked == true;
+        box.SetHoverExpand(enabled);
+        ComponentSettingsStatusText.Text = enabled
+            ? $"“{box.State.Title}”已开启鼠标悬停标题栏自动展开"
+            : $"“{box.State.Title}”已关闭悬停自动展开";
     }
 
     private void FileBoxAutoCollapseDelay_Changed(object sender, SelectionChangedEventArgs e)

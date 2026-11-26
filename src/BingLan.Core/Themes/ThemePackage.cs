@@ -115,6 +115,8 @@ public sealed class ThemeBindings
     public TopBarInputMethodStyle? TopBarInputMethodStyle { get; set; }
     public TopBarWeatherStyle? TopBarWeatherStyle { get; set; }
     public TopBarPerformanceStyle? TopBarPerformanceStyle { get; set; }
+    public TopBarClockStyle? TopBarClockStyle { get; set; }
+    public TopBarAttentionStyle? TopBarAttentionStyle { get; set; }
     public bool? TopBarTrayIconOnly { get; set; }
     public bool TopBarFollowCardLook { get; set; } = true;
     public string TopBarSurfaceColor { get; set; } = TopBarState.DefaultSurfaceColor;

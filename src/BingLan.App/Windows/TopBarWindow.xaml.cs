@@ -1005,14 +1005,22 @@ public sealed partial class TopBarWindow : Window
         }
         else if (kind == TopBarModuleKind.Performance)
         {
-            var compactPerformance = TopBarRules.EffectivePerformanceStyle(_state) == TopBarPerformanceStyle.Compact;
-            text.MaxWidth = compactPerformance ? 200 : 360;
+            var perfStyle = TopBarRules.EffectivePerformanceStyle(_state);
+            text.MaxWidth = perfStyle switch
+            {
+                TopBarPerformanceStyle.CpuOnly => 96,
+                TopBarPerformanceStyle.Compact => 200,
+                _ => 360
+            };
             // The upload/download digits change width every second; reserving the widest
             // steady-state readout keeps the module from resizing, which would shuffle
             // the centred search box left and right once per tick.
-            text.MinWidth = compactPerformance
-                ? Math.Min(200d, MeasureTextWidth("CPU 100%  ↓1023.9 MB/s"))
-                : Math.Min(360d, MeasureTextWidth("CPU 100%  内存 100%  ↑1023.9 MB/s ↓1023.9 MB/s"));
+            text.MinWidth = perfStyle switch
+            {
+                TopBarPerformanceStyle.CpuOnly => Math.Min(96d, MeasureTextWidth("CPU 100%")),
+                TopBarPerformanceStyle.Compact => Math.Min(200d, MeasureTextWidth("CPU 100%  ↓1023.9 MB/s")),
+                _ => Math.Min(360d, MeasureTextWidth("CPU 100%  内存 100%  ↑1023.9 MB/s ↓1023.9 MB/s"))
+            };
         }
 
         FrameworkElement content = glyph is null ? text : CreateIconContent(glyph, text);
@@ -2720,7 +2728,11 @@ public sealed partial class TopBarWindow : Window
         }
         if (ModuleText(TopBarModuleKind.Clock) is { } clock)
         {
-            clock.Text = FormatClock(_environment.Use24HourClock, _environment.ShowDate, _environment.ShowLunarDate);
+            clock.Text = FormatClock(
+                _environment.Use24HourClock,
+                _environment.ShowDate,
+                _environment.ShowLunarDate,
+                TopBarRules.EffectiveClockStyle(_state));
         }
         if (ModuleText(TopBarModuleKind.TodoSummary) is { } todo)
         {
@@ -2920,8 +2932,12 @@ public sealed partial class TopBarWindow : Window
         }
     }
 
-    private static string FormatClock(bool use24HourClock, bool showDate, bool showLunarDate) =>
-        TopBarModuleRules.FormatClock(DateTime.Now, use24HourClock, showDate, showLunarDate);
+    private static string FormatClock(
+        bool use24HourClock,
+        bool showDate,
+        bool showLunarDate,
+        TopBarClockStyle style = TopBarClockStyle.Full) =>
+        TopBarModuleRules.FormatClock(DateTime.Now, use24HourClock, showDate, showLunarDate, style);
 
     private void RefreshAttention()
     {
@@ -2972,41 +2988,100 @@ public sealed partial class TopBarWindow : Window
 
                 var name = meta.Name;
                 var appIcon = ResolveAttentionIcon(meta.ExecutablePath);
-                var attentionText = new TextBlock
+                var iconOnly = TopBarRules.EffectiveAttentionStyle(_state) == TopBarAttentionStyle.IconOnly;
+                object buttonContent;
+                if (iconOnly)
                 {
-                    Text = name,
-                    TextTrimming = TextTrimming.CharacterEllipsis,
-                    VerticalAlignment = VerticalAlignment.Center,
-                    MaxWidth = 120
-                };
-                attentionText.SetResourceReference(TextBlock.ForegroundProperty, "TopBarAttentionBrush");
-                object buttonContent = attentionText;
-                if (appIcon is not null)
+                    UIElement iconElement;
+                    if (appIcon is not null)
+                    {
+                        var iconImage = new System.Windows.Controls.Image
+                        {
+                            Source = appIcon,
+                            Width = 16,
+                            Height = 16,
+                            VerticalAlignment = VerticalAlignment.Center,
+                            HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
+                            Stretch = Stretch.Uniform
+                        };
+                        RenderOptions.SetBitmapScalingMode(iconImage, BitmapScalingMode.HighQuality);
+                        iconElement = iconImage;
+                    }
+                    else
+                    {
+                        var fallbackGlyph = new TextBlock
+                        {
+                            Text = "\uE7E7",
+                            FontFamily = StatusIconFont,
+                            FontSize = 13,
+                            Width = 16,
+                            Height = 16,
+                            TextAlignment = TextAlignment.Center,
+                            VerticalAlignment = VerticalAlignment.Center,
+                            HorizontalAlignment = System.Windows.HorizontalAlignment.Center
+                        };
+                        fallbackGlyph.SetResourceReference(TextBlock.ForegroundProperty, "TopBarInkBrush");
+                        iconElement = fallbackGlyph;
+                    }
+                    var badgeDot = new System.Windows.Shapes.Ellipse
+                    {
+                        Width = 5.5,
+                        Height = 5.5,
+                        HorizontalAlignment = System.Windows.HorizontalAlignment.Right,
+                        VerticalAlignment = VerticalAlignment.Top,
+                        Margin = new Thickness(0, -1, -2, 0),
+                        IsHitTestVisible = false
+                    };
+                    badgeDot.SetResourceReference(System.Windows.Shapes.Shape.FillProperty, "TopBarAttentionBrush");
+                    buttonContent = new Grid
+                    {
+                        Width = 18,
+                        Height = 18,
+                        VerticalAlignment = VerticalAlignment.Center,
+                        Children = { iconElement, badgeDot }
+                    };
+                }
+                else
                 {
-                    var iconImage = new System.Windows.Controls.Image
+                    var attentionText = new TextBlock
                     {
-                        Source = appIcon,
-                        Width = 14,
-                        Height = 14,
-                        Margin = new Thickness(0, 0, 5, 0),
+                        Text = name,
+                        TextTrimming = TextTrimming.CharacterEllipsis,
                         VerticalAlignment = VerticalAlignment.Center,
-                        Stretch = Stretch.Uniform
+                        MaxWidth = 120
                     };
-                    RenderOptions.SetBitmapScalingMode(iconImage, BitmapScalingMode.HighQuality);
-                    buttonContent = new StackPanel
+                    attentionText.SetResourceReference(TextBlock.ForegroundProperty, "TopBarAttentionBrush");
+                    buttonContent = attentionText;
+                    if (appIcon is not null)
                     {
-                        Orientation = System.Windows.Controls.Orientation.Horizontal,
-                        VerticalAlignment = VerticalAlignment.Center,
-                        Children = { iconImage, attentionText }
-                    };
+                        var iconImage = new System.Windows.Controls.Image
+                        {
+                            Source = appIcon,
+                            Width = 14,
+                            Height = 14,
+                            Margin = new Thickness(0, 0, 5, 0),
+                            VerticalAlignment = VerticalAlignment.Center,
+                            Stretch = Stretch.Uniform
+                        };
+                        RenderOptions.SetBitmapScalingMode(iconImage, BitmapScalingMode.HighQuality);
+                        buttonContent = new StackPanel
+                        {
+                            Orientation = System.Windows.Controls.Orientation.Horizontal,
+                            VerticalAlignment = VerticalAlignment.Center,
+                            Children = { iconImage, attentionText }
+                        };
+                    }
                 }
                 var button = new Button
                 {
                     Style = (Style)Resources["ModuleButton"],
+                    Padding = iconOnly ? new Thickness(6, 0, 6, 0) : new Thickness(8, 0, 8, 0),
+                    MinWidth = 32,
                     Content = buttonContent,
                     Focusable = true,
                     Tag = window
                 };
+                SetModuleGlassToolTip(button, $"{name} · 有新消息（点击切换）");
                 System.Windows.Automation.AutomationProperties.SetName(button, $"{name}有新消息");
                 var capturedWindow = window;
                 var capturedProcessId = processId;
@@ -3724,18 +3799,54 @@ public sealed partial class TopBarWindow : Window
                 });
                 break;
             case TopBarModuleKind.Weather:
-                var weatherCompact = TopBarRules.EffectiveWeatherStyle(_state) == TopBarWeatherStyle.Compact;
-                menu.AddItem(weatherCompact ? "天气：显示城市与现象" : "天气：仅显示温度", () =>
+                var weatherStyle = TopBarRules.EffectiveWeatherStyle(_state);
+                var (nextWeatherLabel, nextWeatherStyle) = weatherStyle switch
                 {
-                    _state.WeatherStyle = weatherCompact ? TopBarWeatherStyle.Full : TopBarWeatherStyle.Compact;
+                    TopBarWeatherStyle.Compact => ("天气：显示温度与天气", TopBarWeatherStyle.TempAndCondition),
+                    TopBarWeatherStyle.TempAndCondition => ("天气：显示城市与完整信息", TopBarWeatherStyle.Full),
+                    _ => ("天气：仅显示温度", TopBarWeatherStyle.Compact)
+                };
+                menu.AddItem(nextWeatherLabel, () =>
+                {
+                    _state.WeatherStyle = nextWeatherStyle;
                     ApplyTopBarQuickEdit();
                 });
                 break;
             case TopBarModuleKind.Performance:
-                var perfCompact = TopBarRules.EffectivePerformanceStyle(_state) == TopBarPerformanceStyle.Compact;
-                menu.AddItem(perfCompact ? "性能：显示全部指标" : "性能：精简显示", () =>
+                var perfStyle = TopBarRules.EffectivePerformanceStyle(_state);
+                var (nextPerfLabel, nextPerfStyle) = perfStyle switch
                 {
-                    _state.PerformanceStyle = perfCompact ? TopBarPerformanceStyle.Full : TopBarPerformanceStyle.Compact;
+                    TopBarPerformanceStyle.CpuOnly => ("性能：显示 CPU 与下载速率", TopBarPerformanceStyle.Compact),
+                    TopBarPerformanceStyle.Compact => ("性能：显示全部指标", TopBarPerformanceStyle.Full),
+                    _ => ("性能：仅显示 CPU", TopBarPerformanceStyle.CpuOnly)
+                };
+                menu.AddItem(nextPerfLabel, () =>
+                {
+                    _state.PerformanceStyle = nextPerfStyle;
+                    ApplyTopBarQuickEdit();
+                });
+                break;
+            case TopBarModuleKind.Clock:
+                var clockStyle = TopBarRules.EffectiveClockStyle(_state);
+                var (nextClockLabel, nextClockStyle) = clockStyle switch
+                {
+                    TopBarClockStyle.Compact => ("时钟：显示日期与时间", TopBarClockStyle.DateAndTime),
+                    TopBarClockStyle.DateAndTime => ("时钟：完整显示（含农历）", TopBarClockStyle.Full),
+                    _ => ("时钟：极简显示（周几 + 时间）", TopBarClockStyle.Compact)
+                };
+                menu.AddItem(nextClockLabel, () =>
+                {
+                    _state.ClockStyle = nextClockStyle;
+                    ApplyTopBarQuickEdit();
+                });
+                break;
+            case TopBarModuleKind.Attention:
+                var attentionIconOnly = TopBarRules.EffectiveAttentionStyle(_state) == TopBarAttentionStyle.IconOnly;
+                menu.AddItem(attentionIconOnly ? "消息提示：显示应用名称" : "消息提示：仅显示图标", () =>
+                {
+                    _state.AttentionStyle = attentionIconOnly
+                        ? TopBarAttentionStyle.IconAndName
+                        : TopBarAttentionStyle.IconOnly;
                     ApplyTopBarQuickEdit();
                 });
                 break;

@@ -52,6 +52,8 @@ public static class ThemeRules
                 TopBarInputMethodStyle = TopBarRules.EffectiveInputMethodStyle(state.TopBar),
                 TopBarWeatherStyle = TopBarRules.EffectiveWeatherStyle(state.TopBar),
                 TopBarPerformanceStyle = TopBarRules.EffectivePerformanceStyle(state.TopBar),
+                TopBarClockStyle = TopBarRules.EffectiveClockStyle(state.TopBar),
+                TopBarAttentionStyle = TopBarRules.EffectiveAttentionStyle(state.TopBar),
                 TopBarTrayIconOnly = TopBarRules.EffectiveTrayIconOnly(state.TopBar),
                 TopBarFollowCardLook = state.TopBar.FollowCardLook,
                 TopBarSurfaceColor = state.TopBar.SurfaceColor,
@@ -347,6 +349,14 @@ public static class ThemeRules
         {
             package.Bindings.TopBarPerformanceStyle = null;
         }
+        if (package.Bindings.TopBarClockStyle is { } clockStyle && !Enum.IsDefined(clockStyle))
+        {
+            package.Bindings.TopBarClockStyle = null;
+        }
+        if (package.Bindings.TopBarAttentionStyle is { } attentionStyle && !Enum.IsDefined(attentionStyle))
+        {
+            package.Bindings.TopBarAttentionStyle = null;
+        }
         if (package.Bindings.TopBarLeftOrder is not null || package.Bindings.TopBarRightOrder is not null)
         {
             var includeSearch = package.Bindings.TopBarSearchPlacement == TopBarSearchPlacement.SideIcon;
@@ -443,6 +453,29 @@ public static class ThemeRules
         if (package.Bindings.TopBarPerformanceStyle is { } perfStyle && Enum.IsDefined(perfStyle))
         {
             topBar.PerformanceStyle = perfStyle;
+        }
+        var hasLegacyTopBarStyleSection = package.Bindings.TopBarModules is not null
+            || package.Bindings.TopBarLeftOrder is not null
+            || package.Bindings.TopBarRightOrder is not null
+            || package.Bindings.TopBarSearchPlacement is not null
+            || package.Bindings.TopBarVolumeStyle is not null
+            || package.Bindings.TopBarWeatherStyle is not null
+            || package.Bindings.TopBarPerformanceStyle is not null;
+        if (package.Bindings.TopBarClockStyle is { } clockStyle && Enum.IsDefined(clockStyle))
+        {
+            topBar.ClockStyle = clockStyle;
+        }
+        else if (hasLegacyTopBarStyleSection)
+        {
+            topBar.ClockStyle = null;
+        }
+        if (package.Bindings.TopBarAttentionStyle is { } attentionStyle && Enum.IsDefined(attentionStyle))
+        {
+            topBar.AttentionStyle = attentionStyle;
+        }
+        else if (hasLegacyTopBarStyleSection)
+        {
+            topBar.AttentionStyle = null;
         }
         if (package.Bindings.TopBarTrayIconOnly is { } trayIconOnly)
         {

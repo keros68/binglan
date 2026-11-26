@@ -37,6 +37,10 @@ public partial class FileBoxWindow : WidgetWindowBase
     {
         Interval = TimeSpan.FromMilliseconds(220)
     };
+    private readonly System.Windows.Threading.DispatcherTimer _hoverExpandTimer = new()
+    {
+        Interval = FileBoxAutoCollapseRules.HoverExpandDelay
+    };
     private Guid? _selectionAnchor;
     private bool _initialIconLoadStarted;
     private int _modalDialogDepth;
@@ -44,6 +48,7 @@ public partial class FileBoxWindow : WidgetWindowBase
     private bool _externalDragOver;
     private bool _expandedForExternalDrag;
     private bool _pinnedOpenForSession;
+    private bool _suppressHoverExpandUntilLeave;
     private bool _expandedHeightTemporarilyClamped;
     private (int X, int Y)? _foldedTitlePressPoint;
 
@@ -90,20 +95,25 @@ public partial class FileBoxWindow : WidgetWindowBase
         InitializeHoverReveal();
         _autoCollapseTimer.Tick += (_, _) => OnAutoCollapseTimerTick();
         _dragExpandTimer.Tick += (_, _) => OnDragExpandTimerTick();
+        _hoverExpandTimer.Tick += (_, _) => OnHoverExpandTimerTick();
         HookAutoCollapseContextMenus();
         MouseEnter += (_, _) =>
         {
             RefreshAutoCollapseTimer();
+            RefreshHoverExpandTimer();
             RefreshHoverRevealState();
         };
         MouseLeave += (_, _) =>
         {
+            _suppressHoverExpandUntilLeave = false;
             RefreshAutoCollapseTimer();
+            RefreshHoverExpandTimer();
             RefreshHoverRevealState();
         };
         DragEnter += (_, e) =>
         {
             _externalDragOver = true;
+            _hoverExpandTimer.Stop();
             if (IsEdgeDocked && !IsEdgeDockExpanded && e.Data.GetDataPresent(System.Windows.DataFormats.FileDrop))
             {
                 EdgeDockFileDragNear?.Invoke(this);
@@ -126,6 +136,7 @@ public partial class FileBoxWindow : WidgetWindowBase
                 SetCollapsed(true, animate: true);
             }
             RefreshAutoCollapseTimer();
+            RefreshHoverExpandTimer();
             RefreshHoverRevealState();
         };
         Loaded += FileBoxWindow_Loaded;
@@ -133,6 +144,14 @@ public partial class FileBoxWindow : WidgetWindowBase
         PreviewMouseLeftButtonDown += FileBoxWindow_BackgroundPointerDown;
         PreviewMouseLeftButtonDown += FileBoxWindow_TitleBarPointerDown;
         PreviewMouseLeftButtonUp += FileBoxWindow_TitleBarPointerUp;
+        PreviewMouseRightButtonDown += (_, _) =>
+        {
+            _hoverExpandTimer.Stop();
+            if (State.IsCollapsed)
+            {
+                _suppressHoverExpandUntilLeave = true;
+            }
+        };
     }
 
     public FileBoxState State { get; private set; }
@@ -142,6 +161,8 @@ public partial class FileBoxWindow : WidgetWindowBase
     internal bool InitialProbeCompleted { get; private set; }
 
     internal bool IsAutoCollapseTimerRunning => _autoCollapseTimer.IsEnabled;
+
+    internal bool IsHoverExpandTimerRunning => _hoverExpandTimer.IsEnabled;
 
     internal bool IsEdgeDocked => State.EdgeDockSide is not null;
 
@@ -161,6 +182,13 @@ public partial class FileBoxWindow : WidgetWindowBase
 
     protected override void PopulateContextMenu(System.Windows.Controls.ContextMenu menu)
     {
+        var hoverExpand = new System.Windows.Controls.MenuItem
+        {
+            Header = "悬停标题栏自动展开",
+            IsCheckable = true
+        };
+        hoverExpand.Click += (_, _) => SetHoverExpand(hoverExpand.IsChecked);
+
         var hideWhenIdle = new System.Windows.Controls.MenuItem
         {
             Header = "平时隐藏（移入显示）",
@@ -217,6 +245,8 @@ public partial class FileBoxWindow : WidgetWindowBase
 
         menu.Opened += (_, _) =>
         {
+            hoverExpand.IsChecked = State.HoverExpand;
+            hoverExpand.IsEnabled = !IsEdgeDocked;
             hideWhenIdle.IsChecked = State.HideWhenIdle;
             hideWhenIdle.IsEnabled = !IsEdgeDocked;
             edgeDock.IsChecked = IsEdgeDocked;
@@ -247,6 +277,7 @@ public partial class FileBoxWindow : WidgetWindowBase
             deleteTab.Visibility = groupedVisibility;
         };
 
+        menu.Items.Add(hoverExpand);
         menu.Items.Add(hideWhenIdle);
         menu.Items.Add(edgeDock);
         menu.Items.Add(mergeInto);
@@ -283,6 +314,7 @@ public partial class FileBoxWindow : WidgetWindowBase
     {
         IsEdgeDockExpanded = false;
         _autoCollapseTimer.Stop();
+        _hoverExpandTimer.Stop();
         _idleHideTimer.Stop();
         _isIdleHiddenVisual = false;
         IdleHitSurface.Visibility = Visibility.Collapsed;
@@ -315,6 +347,7 @@ public partial class FileBoxWindow : WidgetWindowBase
     {
         IsEdgeDockExpanded = true;
         _autoCollapseTimer.Stop();
+        _hoverExpandTimer.Stop();
         _idleHideTimer.Stop();
         _isIdleHiddenVisual = false;
         IdleHitSurface.Visibility = Visibility.Collapsed;
@@ -384,6 +417,7 @@ public partial class FileBoxWindow : WidgetWindowBase
         RefreshLayeredClip();
         RefreshTabStripLayout();
         RefreshAutoCollapseTimer();
+        RefreshHoverExpandTimer();
         RefreshHoverRevealState();
     }
 
@@ -428,6 +462,20 @@ public partial class FileBoxWindow : WidgetWindowBase
         }
         RefreshPinOpenButton();
         RefreshAutoCollapseTimer();
+        NotifyStateChanged();
+    }
+
+    public void SetHoverExpand(bool enabled)
+    {
+        if (State.HoverExpand == enabled)
+        {
+            RefreshHoverExpandTimer();
+            return;
+        }
+        State.HoverExpand = enabled;
+        _suppressHoverExpandUntilLeave = false;
+        SyncGroupSharedProperties();
+        RefreshHoverExpandTimer();
         NotifyStateChanged();
     }
 
@@ -492,10 +540,13 @@ public partial class FileBoxWindow : WidgetWindowBase
 
     internal void TriggerAutoCollapseTickForTesting() => OnAutoCollapseTimerTick();
 
+    internal void TriggerHoverExpandTickForTesting() => OnHoverExpandTimerTick();
+
     protected override void OnClosed(EventArgs e)
     {
         _autoCollapseTimer.Stop();
         _dragExpandTimer.Stop();
+        _hoverExpandTimer.Stop();
         DisposeHoverReveal();
         DisposeGroups();
         _closeCts.Cancel();
@@ -506,6 +557,7 @@ public partial class FileBoxWindow : WidgetWindowBase
     protected override void OnTitleEditingChanged(bool isEditing)
     {
         RefreshAutoCollapseTimer();
+        RefreshHoverExpandTimer();
         RefreshHoverRevealState();
     }
 
@@ -517,7 +569,12 @@ public partial class FileBoxWindow : WidgetWindowBase
 
     protected override void OnDragEnded()
     {
+        if (State.IsCollapsed && IsMouseOver)
+        {
+            _suppressHoverExpandUntilLeave = true;
+        }
         RefreshAutoCollapseTimer();
+        RefreshHoverExpandTimer();
         RefreshHoverRevealState();
         base.OnDragEnded();
     }
@@ -642,7 +699,14 @@ public partial class FileBoxWindow : WidgetWindowBase
 
     private void CollapseButton_Click(object sender, RoutedEventArgs e)
     {
-        SetCollapsed(!State.IsCollapsed, animate: true);
+        var collapsing = !State.IsCollapsed;
+        if (collapsing && IsMouseOver)
+        {
+            // Keep the box folded until the pointer leaves the title bar so hovering over
+            // the collapse button does not immediately bounce it back open.
+            _suppressHoverExpandUntilLeave = true;
+        }
+        SetCollapsed(collapsing, animate: true);
         NotifyStateChanged();
     }
 
@@ -669,6 +733,10 @@ public partial class FileBoxWindow : WidgetWindowBase
         if (collapsed)
         {
             _pinnedOpenForSession = false;
+        }
+        else
+        {
+            _suppressHoverExpandUntilLeave = false;
         }
         State.IsCollapsed = collapsed;
         CollapseButton.Content = collapsed ? "\uE70D" : "\uE70E";
@@ -733,6 +801,7 @@ public partial class FileBoxWindow : WidgetWindowBase
         }
         RefreshTabStripLayout();
         RefreshAutoCollapseTimer();
+        RefreshHoverExpandTimer();
         RefreshHoverRevealState();
     }
 
@@ -2471,11 +2540,13 @@ public partial class FileBoxWindow : WidgetWindowBase
             menu.Opened += (_, _) =>
             {
                 RefreshAutoCollapseTimer();
+                RefreshHoverExpandTimer();
                 RefreshHoverRevealState();
             };
             menu.Closed += (_, _) =>
             {
                 RefreshAutoCollapseTimer();
+                RefreshHoverExpandTimer();
                 RefreshHoverRevealState();
             };
         }
@@ -2493,6 +2564,7 @@ public partial class FileBoxWindow : WidgetWindowBase
     {
         _modalDialogDepth++;
         RefreshAutoCollapseTimer();
+        RefreshHoverExpandTimer();
         RefreshHoverRevealState();
         try
         {
@@ -2502,6 +2574,7 @@ public partial class FileBoxWindow : WidgetWindowBase
         {
             _modalDialogDepth = Math.Max(0, _modalDialogDepth - 1);
             RefreshAutoCollapseTimer();
+            RefreshHoverExpandTimer();
             RefreshHoverRevealState();
         }
     }
@@ -2552,8 +2625,58 @@ public partial class FileBoxWindow : WidgetWindowBase
         NotifyStateChanged();
     }
 
+    internal void RefreshHoverExpandTimer()
+    {
+        var mouseButtonPressed = Mouse.LeftButton == MouseButtonState.Pressed
+            || Mouse.RightButton == MouseButtonState.Pressed;
+        var shouldRun = FileBoxAutoCollapseRules.ShouldRunHoverExpandTimer(
+            State.HoverExpand,
+            State.IsCollapsed,
+            IsEdgeDocked,
+            IsMouseOver,
+            IsTitleEditing,
+            _modalDialogDepth > 0 || _isTileOrFileDragActive || _externalDragOver || HasOpenContextMenu() || mouseButtonPressed,
+            IsDraggingOrResizing,
+            _suppressHoverExpandUntilLeave);
+        if (shouldRun)
+        {
+            if (!_hoverExpandTimer.IsEnabled)
+            {
+                _hoverExpandTimer.Interval = FileBoxAutoCollapseRules.HoverExpandDelay;
+                _hoverExpandTimer.Start();
+            }
+        }
+        else
+        {
+            _hoverExpandTimer.Stop();
+        }
+    }
+
+    private void OnHoverExpandTimerTick()
+    {
+        _hoverExpandTimer.Stop();
+        var mouseButtonPressed = Mouse.LeftButton == MouseButtonState.Pressed
+            || Mouse.RightButton == MouseButtonState.Pressed;
+        if (!FileBoxAutoCollapseRules.ShouldRunHoverExpandTimer(
+                State.HoverExpand,
+                State.IsCollapsed,
+                IsEdgeDocked,
+                IsMouseOver,
+                IsTitleEditing,
+                _modalDialogDepth > 0 || _isTileOrFileDragActive || _externalDragOver || HasOpenContextMenu() || mouseButtonPressed,
+                IsDraggingOrResizing,
+                _suppressHoverExpandUntilLeave))
+        {
+            return;
+        }
+
+        SetCollapsed(false, animate: true);
+        NotifyStateChanged();
+    }
+
     private void FileBoxWindow_TitleBarPointerDown(object sender, MouseButtonEventArgs e)
     {
+        _hoverExpandTimer.Stop();
         if (e.ClickCount != 1
             || !DockNativeMethods.GetCursorPos(out var screenPt))
         {
@@ -2569,9 +2692,13 @@ public partial class FileBoxWindow : WidgetWindowBase
             || !DockNativeMethods.GetCursorPos(out var screenPt))
         {
             _foldedTitlePressPoint = null;
+            RefreshHoverExpandTimer();
             return;
         }
-        CompleteFoldedTitleBarClick(screenPt.X, screenPt.Y);
+        if (!CompleteFoldedTitleBarClick(screenPt.X, screenPt.Y))
+        {
+            RefreshHoverExpandTimer();
+        }
     }
 
     internal bool TryBeginFoldedTitleBarClick(

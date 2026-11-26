@@ -117,11 +117,11 @@ internal static class DockAppResolver
         try
         {
             var description = FileVersionInfo.GetVersionInfo(executablePath).FileDescription;
-            return string.IsNullOrWhiteSpace(description) ? null : description.Trim();
+            return AppDisplayNameRules.Normalize(description, executablePath);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            return null;
+            return AppDisplayNameRules.TryResolveCanonicalName(executablePath);
         }
     }
 

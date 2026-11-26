@@ -1970,6 +1970,32 @@ internal static class ThemeStyleTests
         Check(!FileBoxAutoCollapseRules.CanClickTitleBarToExpand(true, false, false, 0, 0),
             "已展开时不重复按折叠态点击处理");
 
+        Check(FileBoxAutoCollapseRules.HoverExpandDelay == TimeSpan.FromMilliseconds(180),
+            "悬停标题栏自动展开防误触延时应为 180ms");
+        Check(FileBoxAutoCollapseRules.ShouldRunHoverExpandTimer(true, true, false, true, false, false, false),
+            "开启悬停展开、折叠且悬停在标题栏时应启动展开倒计时");
+        Check(!FileBoxAutoCollapseRules.ShouldRunHoverExpandTimer(false, true, false, true, false, false, false),
+            "关闭悬停展开时不应启动展开倒计时");
+        Check(!FileBoxAutoCollapseRules.ShouldRunHoverExpandTimer(true, false, false, true, false, false, false),
+            "已展开状态不应重复启动悬停展开倒计时");
+        Check(!FileBoxAutoCollapseRules.ShouldRunHoverExpandTimer(true, true, true, true, false, false, false),
+            "贴边隐藏状态不应触发普通标题栏悬停展开");
+        Check(!FileBoxAutoCollapseRules.ShouldRunHoverExpandTimer(true, true, false, false, false, false, false),
+            "鼠标不在标题栏上时不应启动悬停展开");
+        Check(!FileBoxAutoCollapseRules.ShouldRunHoverExpandTimer(true, true, false, true, true, false, false),
+            "正在重命名标题时不应触发悬停展开");
+        Check(!FileBoxAutoCollapseRules.ShouldRunHoverExpandTimer(true, true, false, true, false, true, false),
+            "菜单/弹窗/拖放/按键期间不应触发悬停展开");
+        Check(!FileBoxAutoCollapseRules.ShouldRunHoverExpandTimer(true, true, false, true, false, false, true),
+            "正在拖动分组盒时不应触发悬停展开");
+        Check(!FileBoxAutoCollapseRules.ShouldRunHoverExpandTimer(true, true, false, true, false, false, false, suppressUntilPointerLeaves: true),
+            "手动折叠或拖动刚结束、鼠标尚未移开标题栏前不应弹回展开");
+
+        var groupSource = new FileBoxState { Title = "源", HoverExpand = true };
+        var groupSibling = new FileBoxState { Title = "同组", HoverExpand = false };
+        FileBoxGroupRules.SyncGroupSharedProperties(groupSource, [groupSource, groupSibling]);
+        Check(groupSibling.HoverExpand, "组合收纳盒应同步悬停标题栏自动展开开关");
+
         var temp = Path.Combine(Path.GetTempPath(), $"BingLanAutoCollapse-{Guid.NewGuid():N}");
         Directory.CreateDirectory(temp);
         try
@@ -1989,33 +2015,39 @@ internal static class ThemeStyleTests
             var migrated = store.Load();
             Check(migrated.SchemaVersion == AppState.CurrentSchemaVersion && AppState.CurrentSchemaVersion >= 48,
                 "v47 状态应迁移到含自动收起字段的当前 SchemaVersion");
-            Check(!migrated.FileBoxes.Single().AutoCollapse,
-                "旧配置与缺省字段加载后分组盒自动收起应默认关闭");
+            Check(!migrated.FileBoxes.Single().AutoCollapse && !migrated.FileBoxes.Single().HoverExpand,
+                "旧配置与缺省字段加载后分组盒自动收起与悬停展开应默认关闭");
 
             migrated.FileBoxes.Single().AutoCollapse = true;
+            migrated.FileBoxes.Single().HoverExpand = true;
             migrated.FileBoxes.Single().AutoCollapseDelaySeconds = 0.5d;
             store.Save(migrated);
 
             var reloaded = store.Load();
             Check(reloaded.FileBoxes.Single().AutoCollapse
+                    && reloaded.FileBoxes.Single().HoverExpand
                     && reloaded.FileBoxes.Single().AutoCollapseDelaySeconds == 0.5d,
-                "分组盒 AutoCollapse=true 与自定义延迟应正确持久化往返");
+                "分组盒 AutoCollapse/HoverExpand 与自定义延迟应正确持久化往返");
 
             var json = File.ReadAllText(store.StatePath);
             var root = System.Text.Json.Nodes.JsonNode.Parse(json)!.AsObject();
             root["SchemaVersion"] = 47;
             root["FileBoxes"]!.AsArray()[0]!.AsObject().Remove("AutoCollapse");
+            root["FileBoxes"]!.AsArray()[0]!.AsObject().Remove("HoverExpand");
             File.WriteAllText(store.StatePath, root.ToJsonString());
 
             var downgraded = store.Load();
-            Check(!downgraded.FileBoxes.Single().AutoCollapse && downgraded.FileBoxes.Single().Title == "桌面文件",
-                "缺少 AutoCollapse 字段时应安全回退为关闭并保留标题");
+            Check(!downgraded.FileBoxes.Single().AutoCollapse
+                    && !downgraded.FileBoxes.Single().HoverExpand
+                    && downgraded.FileBoxes.Single().Title == "桌面文件",
+                "缺少 AutoCollapse/HoverExpand 字段时应安全回退为关闭并保留标题");
 
             var exported = ThemeRules.Export(migrated, "测试主题", Area, AppVersion);
             var exportedJson = System.Text.Json.JsonSerializer.Serialize(exported);
             Check(!exportedJson.Contains("AutoCollapse", StringComparison.Ordinal)
+                && !exportedJson.Contains("HoverExpand", StringComparison.Ordinal)
                 && !exportedJson.Contains("桌面文件", StringComparison.Ordinal),
-                "主题包导出不应包含分组盒个人数据或自动收起开关");
+                "主题包导出不应包含分组盒个人数据或自动收起/悬停展开开关");
         }
         finally
         {

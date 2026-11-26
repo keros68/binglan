@@ -277,29 +277,29 @@ public static class AttentionFlashRules
         string? executablePath,
         string? windowTitle)
     {
-        if (!string.IsNullOrWhiteSpace(fileDescription))
+        if (AppDisplayNameRules.Normalize(fileDescription, executablePath) is { } normalizedDescription)
         {
-            return fileDescription.Trim();
+            return normalizedDescription;
         }
 
-        if (!string.IsNullOrWhiteSpace(groupDisplayName))
+        if (AppDisplayNameRules.Normalize(groupDisplayName, executablePath) is { } normalizedGroup)
         {
-            return groupDisplayName.Trim();
+            return normalizedGroup;
         }
 
         if (!string.IsNullOrWhiteSpace(executablePath)
             && !DockFileDropRules.IsFrameHostPath(executablePath))
         {
             var fileName = Path.GetFileNameWithoutExtension(executablePath.Trim().Trim('"'));
-            if (!string.IsNullOrWhiteSpace(fileName))
+            if (AppDisplayNameRules.Normalize(fileName, executablePath) is { } normalizedExe)
             {
-                return fileName;
+                return normalizedExe;
             }
         }
 
-        if (!string.IsNullOrWhiteSpace(windowTitle))
+        if (AppDisplayNameRules.Normalize(windowTitle) is { } normalizedTitle)
         {
-            return windowTitle.Trim();
+            return normalizedTitle;
         }
 
         return "消息";

@@ -426,6 +426,9 @@ public sealed class FileBoxState
     /// <summary>Whether an expanded box folds back after the pointer leaves.</summary>
     public bool AutoCollapse { get; set; }
 
+    /// <summary>Whether hovering the collapsed title bar unfolds the box automatically. Off by default.</summary>
+    public bool HoverExpand { get; set; }
+
     /// <summary>
     /// Idle delay in seconds before an expanded box folds back when <see cref="AutoCollapse"/> is on.
     /// Null keeps the default 5-second delay for existing profiles.

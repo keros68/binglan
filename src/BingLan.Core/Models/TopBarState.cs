@@ -50,13 +50,28 @@ public enum TopBarInputMethodStyle
 public enum TopBarWeatherStyle
 {
     Full,
-    Compact
+    Compact,
+    TempAndCondition
 }
 
 public enum TopBarPerformanceStyle
 {
     Full,
+    Compact,
+    CpuOnly
+}
+
+public enum TopBarClockStyle
+{
+    Full,
+    DateAndTime,
     Compact
+}
+
+public enum TopBarAttentionStyle
+{
+    IconAndName,
+    IconOnly
 }
 
 public enum TopBarSearchPlacement
@@ -208,6 +223,12 @@ public sealed class TopBarState
     /// <summary>Performance readout style; null preserves legacy Full (CPU + RAM + up/down).</summary>
     public TopBarPerformanceStyle? PerformanceStyle { get; set; }
 
+    /// <summary>Clock readout style; null preserves legacy Full (follows desktop time/date/lunar settings).</summary>
+    public TopBarClockStyle? ClockStyle { get; set; }
+
+    /// <summary>Attention readout style; null preserves legacy IconAndName.</summary>
+    public TopBarAttentionStyle? AttentionStyle { get; set; }
+
     /// <summary>Whether the tray overflow entry shows only the chevron icon without text; null preserves false.</summary>
     public bool? TrayIconOnly { get; set; }
 
@@ -287,6 +308,22 @@ public static class TopBarRules
             : TopBarPerformanceStyle.Full;
     }
 
+    public static TopBarClockStyle EffectiveClockStyle(TopBarState state)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        return state.ClockStyle is { } style && Enum.IsDefined(style)
+            ? style
+            : TopBarClockStyle.Full;
+    }
+
+    public static TopBarAttentionStyle EffectiveAttentionStyle(TopBarState state)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        return state.AttentionStyle is { } style && Enum.IsDefined(style)
+            ? style
+            : TopBarAttentionStyle.IconAndName;
+    }
+
     public static bool EffectiveTrayIconOnly(TopBarState state)
     {
         ArgumentNullException.ThrowIfNull(state);
@@ -341,6 +378,8 @@ public static class TopBarRules
             || state.InputMethodStyle is not null
             || state.WeatherStyle is not null
             || state.PerformanceStyle is not null
+            || state.ClockStyle is not null
+            || state.AttentionStyle is not null
             || state.TrayIconOnly is not null
             || state.SearchPlacement is not null
             || state.NetworkIconOnly == true
@@ -359,7 +398,9 @@ public static class TopBarRules
                 state.InputMethodStyle = TopBarInputMethodStyle.BadgeOnly;
                 state.TrayIconOnly = true;
                 state.WeatherStyle = TopBarWeatherStyle.Compact;
-                state.PerformanceStyle = TopBarPerformanceStyle.Compact;
+                state.PerformanceStyle = TopBarPerformanceStyle.CpuOnly;
+                state.ClockStyle = TopBarClockStyle.Compact;
+                state.AttentionStyle = TopBarAttentionStyle.IconOnly;
                 state.SearchPlacement = TopBarSearchPlacement.SideIcon;
                 break;
             case TopBarDensityPreset.Balanced:
@@ -368,8 +409,10 @@ public static class TopBarRules
                 state.BatteryStyle = TopBarBatteryStyle.IconAndPercent;
                 state.InputMethodStyle = TopBarInputMethodStyle.BadgeOnly;
                 state.TrayIconOnly = true;
-                state.WeatherStyle = TopBarWeatherStyle.Full;
+                state.WeatherStyle = TopBarWeatherStyle.TempAndCondition;
                 state.PerformanceStyle = TopBarPerformanceStyle.Compact;
+                state.ClockStyle = TopBarClockStyle.DateAndTime;
+                state.AttentionStyle = TopBarAttentionStyle.IconAndName;
                 state.SearchPlacement = TopBarSearchPlacement.CenterBar;
                 break;
             default:
@@ -380,6 +423,8 @@ public static class TopBarRules
                 state.TrayIconOnly = false;
                 state.WeatherStyle = TopBarWeatherStyle.Full;
                 state.PerformanceStyle = TopBarPerformanceStyle.Full;
+                state.ClockStyle = TopBarClockStyle.Full;
+                state.AttentionStyle = TopBarAttentionStyle.IconAndName;
                 state.SearchPlacement = TopBarSearchPlacement.CenterBar;
                 break;
         }
@@ -395,6 +440,8 @@ public static class TopBarRules
         var tray = EffectiveTrayIconOnly(state);
         var weather = EffectiveWeatherStyle(state);
         var perf = EffectivePerformanceStyle(state);
+        var clock = EffectiveClockStyle(state);
+        var attention = EffectiveAttentionStyle(state);
         var search = EffectiveSearchPlacement(state);
 
         if (vol == TopBarVolumeStyle.IconOnly
@@ -403,7 +450,9 @@ public static class TopBarRules
             && ime == TopBarInputMethodStyle.BadgeOnly
             && tray
             && weather == TopBarWeatherStyle.Compact
-            && perf == TopBarPerformanceStyle.Compact
+            && perf == TopBarPerformanceStyle.CpuOnly
+            && clock == TopBarClockStyle.Compact
+            && attention == TopBarAttentionStyle.IconOnly
             && search == TopBarSearchPlacement.SideIcon)
         {
             return TopBarDensityPreset.MacMinimal;
@@ -414,8 +463,10 @@ public static class TopBarRules
             && bat == TopBarBatteryStyle.IconAndPercent
             && ime == TopBarInputMethodStyle.BadgeOnly
             && tray
-            && weather == TopBarWeatherStyle.Full
+            && weather == TopBarWeatherStyle.TempAndCondition
             && perf == TopBarPerformanceStyle.Compact
+            && clock == TopBarClockStyle.DateAndTime
+            && attention == TopBarAttentionStyle.IconAndName
             && search == TopBarSearchPlacement.CenterBar)
         {
             return TopBarDensityPreset.Balanced;
@@ -428,6 +479,8 @@ public static class TopBarRules
             && !tray
             && weather == TopBarWeatherStyle.Full
             && perf == TopBarPerformanceStyle.Full
+            && clock == TopBarClockStyle.Full
+            && attention == TopBarAttentionStyle.IconAndName
             && search == TopBarSearchPlacement.CenterBar)
         {
             return TopBarDensityPreset.Detailed;
@@ -570,7 +623,7 @@ public static class TopBarRules
     public static string LayoutSignature(TopBarState state)
     {
         ArgumentNullException.ThrowIfNull(state);
-        return $"{OrderSignature(state)}|{EffectiveSearchPlacement(state)}|{EffectivePerformanceStyle(state)}|{EffectiveTrayIconOnly(state)}";
+        return $"{OrderSignature(state)}|{EffectiveSearchPlacement(state)}|{EffectivePerformanceStyle(state)}|{EffectiveClockStyle(state)}|{EffectiveAttentionStyle(state)}|{EffectiveTrayIconOnly(state)}";
     }
 
     private static bool ShouldPreserveSearchInStoredOrder(TopBarState state) =>
@@ -802,6 +855,14 @@ public static class TopBarRules
         if (state.PerformanceStyle is { } perfStyle && !Enum.IsDefined(perfStyle))
         {
             state.PerformanceStyle = null;
+        }
+        if (state.ClockStyle is { } clockStyle && !Enum.IsDefined(clockStyle))
+        {
+            state.ClockStyle = null;
+        }
+        if (state.AttentionStyle is { } attentionStyle && !Enum.IsDefined(attentionStyle))
+        {
+            state.AttentionStyle = null;
         }
         if (state.SearchPlacement is { } searchPlacement && !Enum.IsDefined(searchPlacement))
         {

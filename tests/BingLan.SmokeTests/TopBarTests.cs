@@ -292,6 +292,18 @@ public static class TopBarTests
             "微信主窗口已最小化时，其隐藏窗口闪烁仍应提示");
         Assert(AttentionFlashRules.ChooseDisplayName("微信", null, @"D:\App\Weixin.exe", "") == "微信",
             "托盘驻留无可见窗口时优先显示程序友好名称而非泛化的“消息”");
+        Assert(AttentionFlashRules.ChooseDisplayName("Weixin", "Weixin", @"D:\Program Files\Tencent\Weixin\Weixin.exe", "") == "微信",
+            "微信 4.x 的拼音 Weixin 应规范化为中文“微信”");
+        Assert(AttentionFlashRules.ChooseDisplayName("WeChat Work", "WXWork", @"D:\Program Files\WXWork\WXWork.exe", "") == "企业微信",
+            "企业微信的 WeChat Work / WXWork 应规范化为中文“企业微信”");
+        Assert(AttentionFlashRules.ChooseDisplayName("DingtalkLauncher", null, @"D:\App\DingtalkLauncher.exe", "") == "钉钉",
+            "钉钉启动器进程名应规范化为中文“钉钉”");
+        Assert(AttentionFlashRules.ChooseDisplayName("Feishu", null, @"D:\App\Feishu.exe", "") == "飞书",
+            "飞书英文名应规范化为中文“飞书”");
+        Assert(AttentionFlashRules.ChooseDisplayName("Contoso Editor", null, @"D:\Tools\Code.exe", "") == "Contoso Editor",
+            "已有明确程序描述名时不应被同名可执行文件名覆盖");
+        Assert(AttentionFlashRules.ChooseDisplayName(null, null, @"D:\Tools\Code.exe", "") == "VS Code",
+            "缺少程序描述名时应按可执行文件名规范化");
     }
 
     private static void TestModuleRules()
@@ -968,6 +980,10 @@ public static class TopBarTests
         Assert(TopBarModuleRules.FormatBatteryLabel(85, TopBarBatteryStyle.IconOnly) == string.Empty
             && TopBarModuleRules.FormatBatteryLabel(85, TopBarBatteryStyle.IconAndPercent) == "85%",
             "电量样式应支持仅图标与百分比切换");
+        var cpuOnlyPerf = TopBarModuleRules.FormatPerformanceLabel(
+            new PerformanceSnapshot(12.4, 48.2, 1024, 2 * 1024 * 1024, DateTimeOffset.Now),
+            TopBarPerformanceStyle.CpuOnly);
+        Assert(cpuOnlyPerf == "CPU 12%", $"性能极简模式应只显示 CPU 占用，实际：{cpuOnlyPerf}");
         var compactPerf = TopBarModuleRules.FormatPerformanceLabel(
             new PerformanceSnapshot(12.4, 48.2, 1024, 2 * 1024 * 1024, DateTimeOffset.Now),
             TopBarPerformanceStyle.Compact);
@@ -975,10 +991,15 @@ public static class TopBarTests
             && compactPerf.Contains('↓')
             && !compactPerf.Contains("内存", StringComparison.Ordinal),
             $"性能精简模式应只显示 CPU 与下载速率，实际：{compactPerf}");
-        var compactWeather = TopBarModuleRules.FormatWeatherLabel(
-            new WeatherSnapshot(WeatherStatus.Fresh, "杭州市", 18.4, 22, 14, 55, "多云", false, DateTimeOffset.Now, null),
-            TopBarWeatherStyle.Compact);
-        Assert(compactWeather == "18°", $"天气简洁模式应仅显示温度，实际：{compactWeather}");
+        var weatherSnap = new WeatherSnapshot(WeatherStatus.Fresh, "杭州市", 18.4, 22, 14, 55, "多云", false, DateTimeOffset.Now, null);
+        var compactWeather = TopBarModuleRules.FormatWeatherLabel(weatherSnap, TopBarWeatherStyle.Compact);
+        Assert(compactWeather == "18°", $"天气极简模式应仅显示温度，实际：{compactWeather}");
+        var balancedWeather = TopBarModuleRules.FormatWeatherLabel(weatherSnap, TopBarWeatherStyle.TempAndCondition);
+        Assert(balancedWeather == "18° 多云", $"天气简明模式应显示温度与天气现象，实际：{balancedWeather}");
+        Assert(TopBarModuleRules.FormatClock(sampleDay, true, true, true, TopBarClockStyle.Compact) == "周二 20:24",
+            "时钟极简模式应仅显示周几与时间");
+        Assert(TopBarModuleRules.FormatClock(sampleDay, true, true, true, TopBarClockStyle.DateAndTime) == "11月24日 周二  20:24",
+            "时钟标准模式应显示公历日期、周几与时间且不含农历");
 
         var freshDefault = LocalStateStore.CreateDefault();
         Assert(TopBarRules.DetectDensityPreset(freshDefault.TopBar) == TopBarDensityPreset.MacMinimal,
@@ -1036,17 +1057,23 @@ public static class TopBarTests
             && themeTarget.BatteryStyle == TopBarBatteryStyle.IconOnly
             && themeTarget.InputMethodStyle == TopBarInputMethodStyle.BadgeOnly
             && themeTarget.WeatherStyle == TopBarWeatherStyle.Compact
-            && themeTarget.PerformanceStyle == TopBarPerformanceStyle.Compact
+            && themeTarget.PerformanceStyle == TopBarPerformanceStyle.CpuOnly
+            && themeTarget.ClockStyle == TopBarClockStyle.Compact
+            && themeTarget.AttentionStyle == TopBarAttentionStyle.IconOnly
             && themeTarget.TrayIconOnly == true,
-            "主题导出与导入应保留搜索侧边图标形态、各模块显示风格与自定义左侧顺序");
+            "主题导出与导入应保留搜索侧边图标形态、各模块三档显示风格与自定义左侧顺序");
 
-        // Pre-v0.6.2 theme with TopBar order/modules but null TopBarSearchPlacement restores CenterBar on a fresh MacMinimal profile.
+        // Pre-v0.6.3 theme without ClockStyle/AttentionStyle restores legacy Full/IconAndName on a fresh MacMinimal profile.
         var oldTopBarTheme = ThemeRules.Export(new AppState { TopBar = { IsEnabled = true } }, "旧顶栏主题", new ThemeArea(0, 0, 1920, 1040), new Version(0, 6, 1));
         oldTopBarTheme.Bindings.TopBarSearchPlacement = null;
+        oldTopBarTheme.Bindings.TopBarClockStyle = null;
+        oldTopBarTheme.Bindings.TopBarAttentionStyle = null;
         var freshMacTarget = LocalStateStore.CreateDefault().TopBar;
         ThemeRules.ApplyTopBar(oldTopBarTheme, freshMacTarget);
-        Assert(TopBarRules.EffectiveSearchPlacement(freshMacTarget) == TopBarSearchPlacement.CenterBar,
-            "导入不含 SearchPlacement 的旧版顶栏主题应恢复居中搜索条");
+        Assert(TopBarRules.EffectiveSearchPlacement(freshMacTarget) == TopBarSearchPlacement.CenterBar
+            && TopBarRules.EffectiveClockStyle(freshMacTarget) == TopBarClockStyle.Full
+            && TopBarRules.EffectiveAttentionStyle(freshMacTarget) == TopBarAttentionStyle.IconAndName,
+            "导入不含 SearchPlacement/ClockStyle/AttentionStyle 的旧版顶栏主题应恢复居中搜索条与旧版完整时钟/文字消息");
 
         // AppleStyle desktop mode applies MacMinimal only when user has not set explicit display styles yet.
         var appleBarUntouched = new TopBarState();

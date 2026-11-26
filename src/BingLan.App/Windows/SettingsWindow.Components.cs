@@ -96,9 +96,43 @@ public partial class SettingsWindow
             if (window is FileBoxWindow box)
             {
                 box.ActiveTabChanged -= OnObservedFileBoxActiveTabChanged;
+                box.WidgetChanged -= OnObservedFileBoxStateChanged;
+                box.EdgeDockToggled -= OnObservedFileBoxEdgeDockToggled;
             }
         }
         _observedTitleWindows.Clear();
+    }
+
+    private void OnObservedFileBoxStateChanged(WidgetWindowBase window)
+    {
+        if (_isClosed || _loadingViewMode || window is not FileBoxWindow box)
+        {
+            return;
+        }
+        if (!Dispatcher.CheckAccess())
+        {
+            Dispatcher.BeginInvoke(() => OnObservedFileBoxStateChanged(window));
+            return;
+        }
+        if (ReferenceEquals(_selectedComponentEntry?.Window, box))
+        {
+            LoadFileBoxViewMode(box);
+        }
+    }
+
+    private void OnObservedFileBoxEdgeDockToggled(FileBoxWindow box, bool _)
+    {
+        if (_isClosed)
+        {
+            return;
+        }
+        Dispatcher.BeginInvoke(() =>
+        {
+            if (!_isClosed && ReferenceEquals(_selectedComponentEntry?.Window, box))
+            {
+                LoadFileBoxViewMode(box);
+            }
+        });
     }
 
     private void SyncObservedWidgetTitles(IEnumerable<WidgetWindowBase> windows)
@@ -113,6 +147,8 @@ public partial class SettingsWindow
             if (stale is FileBoxWindow staleBox)
             {
                 staleBox.ActiveTabChanged -= OnObservedFileBoxActiveTabChanged;
+                staleBox.WidgetChanged -= OnObservedFileBoxStateChanged;
+                staleBox.EdgeDockToggled -= OnObservedFileBoxEdgeDockToggled;
             }
             _observedTitleWindows.Remove(stale);
         }
@@ -125,6 +161,8 @@ public partial class SettingsWindow
                 if (added is FileBoxWindow addedBox)
                 {
                     addedBox.ActiveTabChanged += OnObservedFileBoxActiveTabChanged;
+                    addedBox.WidgetChanged += OnObservedFileBoxStateChanged;
+                    addedBox.EdgeDockToggled += OnObservedFileBoxEdgeDockToggled;
                 }
             }
         }

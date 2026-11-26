@@ -610,7 +610,8 @@ public partial class SettingsWindow
                     "天气显示方式",
                     "悬停始终可查看城市、今日高低温、湿度与更新时间",
                     [
-                        ("简洁（仅温度）", "Compact"),
+                        ("极简（仅温度）", "Compact"),
+                        ("简明（温度 + 天气）", "TempAndCondition"),
                         ("完整（城市 + 温度 + 天气）", "Full")
                     ],
                     TopBarRules.EffectiveWeatherStyle(state).ToString());
@@ -620,6 +621,7 @@ public partial class SettingsWindow
                     "性能显示方式",
                     "点击打开任务管理器性能页，悬停查看完整 CPU、内存与上下行速率",
                     [
+                        ("极简（仅 CPU）", "CpuOnly"),
                         ("精简（CPU + 下载速率）", "Compact"),
                         ("完整（CPU / 内存 / 上下行）", "Full")
                     ],
@@ -645,16 +647,29 @@ public partial class SettingsWindow
                 UpdateTopBarSearchEngineUi(state);
                 break;
             case TopBarModuleKind.Clock:
-                TopBarSelectedModuleNote.Text = "时钟的 12/24 小时制、日期与农历显示跟随桌面时间日期设置；点击顶栏时钟可打开月历。";
-                TopBarSelectedModuleNote.Visibility = Visibility.Visible;
+                PopulateStyleCombo(
+                    "时钟显示方式",
+                    "12/24 小时制与日期/农历开关跟随桌面时间卡片（关闭桌面“显示日期”时仅显示时间）；点击顶栏时钟可打开月历",
+                    [
+                        ("极简（周几 + 时间，Mac 风格）", "Compact"),
+                        ("标准（日期 + 周几 + 时间）", "DateAndTime"),
+                        ("完整（含农历，跟随桌面设置）", "Full")
+                    ],
+                    TopBarRules.EffectiveClockStyle(state).ToString());
                 break;
             case TopBarModuleKind.TodoSummary:
                 TopBarSelectedModuleNote.Text = "显示今日未完成待办计数，点击弹出待办清单浮层可直接勾选完成。";
                 TopBarSelectedModuleNote.Visibility = Visibility.Visible;
                 break;
             case TopBarModuleKind.Attention:
-                TopBarSelectedModuleNote.Text = "当有应用闪烁请求注意时自动出现（最多 3 个），平时不占顶栏空间。";
-                TopBarSelectedModuleNote.Visibility = Visibility.Visible;
+                PopulateStyleCombo(
+                    "消息提示显示方式",
+                    "有应用闪烁请求注意时自动出现（最多 3 个），自动规范微信、企业微信等常见软件名称",
+                    [
+                        ("仅应用图标（Mac 风格）", "IconOnly"),
+                        ("图标 + 应用名称", "IconAndName")
+                    ],
+                    TopBarRules.EffectiveAttentionStyle(state).ToString());
                 break;
         }
     }
@@ -774,10 +789,33 @@ public partial class SettingsWindow
                 state.InputMethodStyle = tag == "BadgeOnly" ? TopBarInputMethodStyle.BadgeOnly : TopBarInputMethodStyle.BadgeAndName;
                 break;
             case TopBarModuleKind.Weather:
-                state.WeatherStyle = tag == "Compact" ? TopBarWeatherStyle.Compact : TopBarWeatherStyle.Full;
+                state.WeatherStyle = tag switch
+                {
+                    "Compact" => TopBarWeatherStyle.Compact,
+                    "TempAndCondition" => TopBarWeatherStyle.TempAndCondition,
+                    _ => TopBarWeatherStyle.Full
+                };
                 break;
             case TopBarModuleKind.Performance:
-                state.PerformanceStyle = tag == "Compact" ? TopBarPerformanceStyle.Compact : TopBarPerformanceStyle.Full;
+                state.PerformanceStyle = tag switch
+                {
+                    "CpuOnly" => TopBarPerformanceStyle.CpuOnly,
+                    "Compact" => TopBarPerformanceStyle.Compact,
+                    _ => TopBarPerformanceStyle.Full
+                };
+                break;
+            case TopBarModuleKind.Clock:
+                state.ClockStyle = tag switch
+                {
+                    "Compact" => TopBarClockStyle.Compact,
+                    "DateAndTime" => TopBarClockStyle.DateAndTime,
+                    _ => TopBarClockStyle.Full
+                };
+                break;
+            case TopBarModuleKind.Attention:
+                state.AttentionStyle = tag == "IconOnly"
+                    ? TopBarAttentionStyle.IconOnly
+                    : TopBarAttentionStyle.IconAndName;
                 break;
             case TopBarModuleKind.TrayOverflow:
                 state.TrayIconOnly = tag == "IconOnly";
@@ -857,8 +895,13 @@ public partial class SettingsWindow
         TopBarModuleKind.Network when TopBarRules.EffectiveNetworkDisplayMode(state) == TopBarNetworkDisplayMode.IconOnly => "图标",
         TopBarModuleKind.Battery when TopBarRules.EffectiveBatteryStyle(state) == TopBarBatteryStyle.IconOnly => "图标",
         TopBarModuleKind.InputMethod when TopBarRules.EffectiveInputMethodStyle(state) == TopBarInputMethodStyle.BadgeOnly => "徽标",
-        TopBarModuleKind.Weather when TopBarRules.EffectiveWeatherStyle(state) == TopBarWeatherStyle.Compact => "精简",
+        TopBarModuleKind.Weather when TopBarRules.EffectiveWeatherStyle(state) == TopBarWeatherStyle.Compact => "极简",
+        TopBarModuleKind.Weather when TopBarRules.EffectiveWeatherStyle(state) == TopBarWeatherStyle.TempAndCondition => "简明",
+        TopBarModuleKind.Performance when TopBarRules.EffectivePerformanceStyle(state) == TopBarPerformanceStyle.CpuOnly => "极简",
         TopBarModuleKind.Performance when TopBarRules.EffectivePerformanceStyle(state) == TopBarPerformanceStyle.Compact => "精简",
+        TopBarModuleKind.Clock when TopBarRules.EffectiveClockStyle(state) == TopBarClockStyle.Compact => "极简",
+        TopBarModuleKind.Clock when TopBarRules.EffectiveClockStyle(state) == TopBarClockStyle.DateAndTime => "标准",
+        TopBarModuleKind.Attention when TopBarRules.EffectiveAttentionStyle(state) == TopBarAttentionStyle.IconOnly => "图标",
         TopBarModuleKind.TrayOverflow when TopBarRules.EffectiveTrayIconOnly(state) => "图标",
         TopBarModuleKind.Search when TopBarRules.EffectiveSearchPlacement(state) == TopBarSearchPlacement.SideIcon => "图标",
         _ => string.Empty

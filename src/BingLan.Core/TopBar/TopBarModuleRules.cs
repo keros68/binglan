@@ -454,15 +454,21 @@ public static class TopBarModuleRules
     {
         if (snapshot is null)
         {
-            return style == TopBarPerformanceStyle.Compact ? "…" : "性能 …";
+            return style == TopBarPerformanceStyle.Full ? "性能 …" : "…";
         }
 
-        return style == TopBarPerformanceStyle.Compact
-            ? $"CPU {PerformanceSamplingRules.FormatPercent(snapshot.CpuPercent)}  ↓{PerformanceSamplingRules.FormatRate(snapshot.DownloadBytesPerSecond)}"
-            : $"CPU {PerformanceSamplingRules.FormatPercent(snapshot.CpuPercent)}  "
+        return style switch
+        {
+            TopBarPerformanceStyle.CpuOnly =>
+                $"CPU {PerformanceSamplingRules.FormatPercent(snapshot.CpuPercent)}",
+            TopBarPerformanceStyle.Compact =>
+                $"CPU {PerformanceSamplingRules.FormatPercent(snapshot.CpuPercent)}  ↓{PerformanceSamplingRules.FormatRate(snapshot.DownloadBytesPerSecond)}",
+            _ =>
+                $"CPU {PerformanceSamplingRules.FormatPercent(snapshot.CpuPercent)}  "
                 + $"内存 {PerformanceSamplingRules.FormatPercent(snapshot.MemoryPercent)}  "
                 + $"↑{PerformanceSamplingRules.FormatRate(snapshot.UploadBytesPerSecond)} "
-                + $"↓{PerformanceSamplingRules.FormatRate(snapshot.DownloadBytesPerSecond)}";
+                + $"↓{PerformanceSamplingRules.FormatRate(snapshot.DownloadBytesPerSecond)}"
+        };
     }
 
     public static string FormatPerformanceTooltip(PerformanceSnapshot? snapshot) =>
@@ -479,18 +485,25 @@ public static class TopBarModuleRules
     {
         if (snapshot is null)
         {
-            return style == TopBarWeatherStyle.Compact ? "—" : "天气 —";
+            return style == TopBarWeatherStyle.Full ? "天气 —" : "—";
         }
 
         if (snapshot.Status == WeatherStatus.NoCity)
         {
-            return style == TopBarWeatherStyle.Compact ? "未设城市" : "天气 未设置";
+            return style == TopBarWeatherStyle.Full ? "天气 未设置" : "未设城市";
         }
 
         if (style == TopBarWeatherStyle.Compact)
         {
             return snapshot.TemperatureCelsius is { } temp
                 ? $"{Math.Round(temp):0}°"
+                : snapshot.Condition;
+        }
+
+        if (style == TopBarWeatherStyle.TempAndCondition)
+        {
+            return snapshot.TemperatureCelsius is { } temp
+                ? $"{Math.Round(temp):0}° {snapshot.Condition}"
                 : snapshot.Condition;
         }
 
@@ -502,13 +515,14 @@ public static class TopBarModuleRules
 
     /// <summary>
     /// Formats the top bar clock readout, following the time/date widget's 12/24-hour,
-    /// date visibility and lunar date preferences while prefixing weekdays with "周".
+    /// date visibility and lunar date preferences while applying the top bar's clock density style.
     /// </summary>
     public static string FormatClock(
         DateTime now,
         bool use24HourClock,
         bool showDate = true,
-        bool showLunarDate = false)
+        bool showLunarDate = false,
+        TopBarClockStyle style = TopBarClockStyle.Full)
     {
         var time = use24HourClock
             ? now.ToString("HH:mm", CultureInfo.InvariantCulture)
@@ -518,8 +532,14 @@ public static class TopBarModuleRules
             return time;
         }
 
-        var date = $"{now.Month}月{now.Day}日 周{"日一二三四五六"[(int)now.DayOfWeek]}";
-        if (showLunarDate)
+        var weekday = $"周{"日一二三四五六"[(int)now.DayOfWeek]}";
+        if (style == TopBarClockStyle.Compact)
+        {
+            return $"{weekday} {time}";
+        }
+
+        var date = $"{now.Month}月{now.Day}日 {weekday}";
+        if (style == TopBarClockStyle.Full && showLunarDate)
         {
             var lunar = LunarDayText.ShortMonthDay(now);
             if (!string.IsNullOrEmpty(lunar))

@@ -156,6 +156,7 @@ public partial class FileBoxWindow
         RefreshEdgeDockTabToolTip();
         RefreshPinOpenButton();
         RefreshAutoCollapseTimer();
+        RefreshHoverExpandTimer();
         RefreshHoverRevealState();
         NotifyTitleChanged();
         ActiveTabChanged?.Invoke(this);
@@ -736,6 +737,7 @@ public partial class FileBoxWindow
         var restoreCollapse = _expandedForExternalDrag;
         _expandedForExternalDrag = false;
         RefreshAutoCollapseTimer();
+        RefreshHoverExpandTimer();
         RefreshHoverRevealState();
         return restoreCollapse;
     }
@@ -744,6 +746,10 @@ public partial class FileBoxWindow
     {
         if (restoreCollapse && !State.IsCollapsed)
         {
+            if (IsMouseOver || IsCursorInsideWindow())
+            {
+                _suppressHoverExpandUntilLeave = true;
+            }
             SetCollapsed(true, animate: true);
         }
     }

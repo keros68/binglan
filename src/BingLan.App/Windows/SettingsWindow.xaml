@@ -2178,6 +2178,15 @@
                                                 <ComboBoxItem Content="10 秒" Tag="10"/>
                                             </ComboBox>
                                         </local:SettingsRow>
+                                        <local:SettingsRow Header="鼠标悬停标题栏自动展开"
+                                                           Description="收纳盒折叠成标题条后，鼠标悬停在标题栏片刻自动展开，无需点击；搭配“鼠标离开后自动收起”可实现抽屉式自动展开与收回"
+                                                           local:SettingsSearch.Keywords="桌面分组盒 分组盒 文件盒 文件收纳盒 围栏 Fences 悬停展开 鼠标悬停 自动展开 标题栏 抽屉">
+                                            <CheckBox x:Name="FileBoxHoverExpandCheckBox"
+                                                      AutomationProperties.Name="鼠标悬停标题栏自动展开"
+                                                      Style="{StaticResource ToggleSwitchStyle}"
+                                                      Checked="FileBoxHoverExpand_Changed"
+                                                      Unchecked="FileBoxHoverExpand_Changed"/>
+                                        </local:SettingsRow>
                                         <local:SettingsRow Header="平时全透明（移入显示）"
                                                            Description="开启后平时整个文件收纳盒完全透明，鼠标移入或拖入文件时平滑显示；按“临时浮起文件收纳盒”快捷键或在设置中选中时也会显现"
                                                            local:SettingsSearch.Keywords="桌面分组盒 文件收纳盒 全透明 透明 平时隐藏 移入显示 悬停显示 酷呆">
