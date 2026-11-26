@@ -610,6 +610,7 @@ public sealed partial class TopBarWindow : Window
         CloseTodoFlyout(animate: false);
         CloseClockFlyout();
         CloseInputMethodFlyout();
+        CloseVolumeFlyout();
         if (_searchPopup is { } searchPopup)
         {
             _searchPopup = null;
@@ -925,8 +926,14 @@ public sealed partial class TopBarWindow : Window
                     () => _environment.OpenQuickSettings(TopBarModuleKind.Network), GlyphWifiOff);
                 break;
             case TopBarModuleKind.Volume:
+                // The bar's own panel replaces the trip to the system quick settings; the
+                // device switch inside it still falls back there when the call is refused.
                 AddModule(TopBarModuleKind.Volume, panel, "音量",
-                    () => _environment.OpenQuickSettings(TopBarModuleKind.Volume), GlyphVolume);
+                    () => ToggleVolumeFlyout(
+                        _modules.TryGetValue(TopBarModuleKind.Volume, out var volumeButton)
+                            ? volumeButton as Button
+                            : null),
+                    GlyphVolume);
                 break;
             case TopBarModuleKind.TrayOverflow:
                 if (TrayOverflowController.IsSupported)
@@ -1664,6 +1671,418 @@ public sealed partial class TopBarWindow : Window
         panel.Children.Add(button);
     }
 
+    // ---------------------------------------------------------------- 音量浮层
+
+    private const double VolumePanelWidth = 300d;
+    private const double VolumeRowWidth = VolumePanelWidth - 32d;
+    private const int VolumeWheelStep = 5;
+
+    private Popup? _volumeFlyout;
+    private System.Windows.Controls.Slider? _volumeSlider;
+    private TextBlock? _volumeValue;
+    private TextBlock? _volumeGlyph;
+    private TextBlock? _volumeMuteLabel;
+    private Button? _volumeDeviceRow;
+    private StackPanel? _volumeDeviceList;
+    private bool _volumeDeviceListOpen;
+    private bool _volumeSyncing;
+
+    /// <summary>
+    /// The bar's own volume panel: level, slider, mute and the playback device list. It
+    /// replaces the trip to the system quick settings for the everyday case; switching a
+    /// device falls back to quick settings when the endpoint refuses the call.
+    /// </summary>
+    private void ToggleVolumeFlyout(Button? button)
+    {
+        if (_volumeFlyout?.IsOpen == true)
+        {
+            CloseVolumeFlyout();
+            return;
+        }
+        if (button is null)
+        {
+            return;
+        }
+
+        CloseTodoFlyout(animate: false);
+        CloseClockFlyout();
+        CloseInputMethodFlyout();
+
+        var highContrast = AccessibilityThemeManager.IsHighContrastEnabled || SystemParameters.HighContrast;
+        var flyoutPalette = _palette.Flyout;
+        var card = new Border
+        {
+            Background = highContrast ? SystemColors.WindowBrush : FrozenBrush(flyoutPalette.Background),
+            BorderBrush = highContrast ? SystemColors.WindowTextBrush : FrozenBrush(flyoutPalette.Border),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(10),
+            Padding = new Thickness(16, 13, 16, 10),
+            Child = BuildVolumeCard()
+        };
+        var onRight = ReferenceEquals(button.Parent, RightModules);
+        var flyout = new Popup
+        {
+            PlacementTarget = button,
+            Placement = PlacementMode.Bottom,
+            // Right-aligned with the icon: the panel's right edge sits under the glyph.
+            HorizontalOffset = onRight ? -(VolumePanelWidth - 34d) : -6d,
+            VerticalOffset = 2,
+            StaysOpen = true,
+            AllowsTransparency = true,
+            Child = card
+        };
+        flyout.Closed += (_, _) =>
+        {
+            if (ReferenceEquals(_volumeFlyout, flyout))
+            {
+                _volumeFlyout = null;
+            }
+            if (flyout.Parent is Panel parent)
+            {
+                parent.Children.Remove(flyout);
+            }
+            _volumeDeviceListOpen = false;
+            UpdateForegroundTimerInterval();
+        };
+        (button.Parent as Panel ?? RightModules).Children.Add(flyout);
+        _volumeFlyout = flyout;
+        // IsOpen reads back false in the turn it is set, so the first fill waits for the
+        // popup to actually open instead of being skipped by the "is it open" guard.
+        flyout.Opened += (_, _) => RefreshVolumeCard();
+        flyout.IsOpen = true;
+        UpdateForegroundTimerInterval();
+        TopBarNativeMethods.ConsumeMouseButtonDown(TopBarNativeMethods.LeftMouseButton);
+        TopBarNativeMethods.ConsumeMouseButtonDown(TopBarNativeMethods.EscapeKey);
+    }
+
+    private void CloseVolumeFlyout()
+    {
+        _volumeFlyout?.SetCurrentValue(Popup.IsOpenProperty, false);
+        _volumeFlyout = null;
+        _volumeDeviceListOpen = false;
+    }
+
+    private FrameworkElement BuildVolumeCard()
+    {
+        var highContrast = AccessibilityThemeManager.IsHighContrastEnabled || SystemParameters.HighContrast;
+        var ink = highContrast ? SystemColors.WindowTextBrush : FrozenBrush(_palette.Flyout.Foreground);
+        var panel = new StackPanel { Width = VolumePanelWidth };
+
+        // Header: only the glyph is clickable (mute); the caption mirrors the state and the
+        // percentage sits on the right edge.
+        var header = new DockPanel { Margin = new Thickness(0, 0, 0, 10) };
+        var muteButton = new Button
+        {
+            Style = (Style)Resources["ModuleButton"],
+            Padding = new Thickness(0),
+            Width = 26,
+            Height = 26,
+            Focusable = true,
+            ToolTip = "静音 / 取消静音"
+        };
+        System.Windows.Automation.AutomationProperties.SetName(muteButton, "静音");
+        _volumeGlyph = new TextBlock
+        {
+            Text = GlyphVolume,
+            FontFamily = StatusIconFont,
+            FontSize = 13,
+            Foreground = ink,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        muteButton.Content = _volumeGlyph;
+        muteButton.Click += (_, _) => ToggleVolumeMute();
+        DockPanel.SetDock(muteButton, System.Windows.Controls.Dock.Left);
+        header.Children.Add(muteButton);
+
+        _volumeMuteLabel = new TextBlock
+        {
+            Text = "音量",
+            Foreground = ink,
+            Opacity = 0.60,
+            FontSize = 11.5,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(7, 0, 0, 0)
+        };
+        System.Windows.Automation.AutomationProperties.SetName(_volumeMuteLabel, "音量标签");
+        DockPanel.SetDock(_volumeMuteLabel, System.Windows.Controls.Dock.Left);
+        header.Children.Add(_volumeMuteLabel);
+
+        _volumeValue = new TextBlock
+        {
+            Text = "--",
+            Foreground = ink,
+            FontSize = 17,
+            FontWeight = FontWeights.SemiBold,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        // Tabular figures keep the header from shifting as the number changes.
+        System.Windows.Documents.Typography.SetNumeralAlignment(
+            _volumeValue,
+            FontNumeralAlignment.Tabular);
+        header.Children.Add(_volumeValue);
+        panel.Children.Add(header);
+
+        _volumeSlider = new System.Windows.Controls.Slider
+        {
+            Minimum = 0,
+            Maximum = 100,
+            SmallChange = VolumeWheelStep,
+            LargeChange = 10,
+            IsMoveToPointEnabled = true,
+            Width = VolumeRowWidth,
+            HorizontalAlignment = HorizontalAlignment.Left,
+            Margin = new Thickness(0, 0, 0, 2),
+            Style = (Style)Resources["VolumeSliderStyle"]
+        };
+        System.Windows.Automation.AutomationProperties.SetName(_volumeSlider, "音量滑条");
+        // The template paints the filled part with the slider's own foreground.
+        _volumeSlider.Foreground = ink;
+        _volumeSlider.ValueChanged += (_, _) => ApplyVolumeSlider();
+        // The wheel only reaches this handler while the pointer is over the slider, which is
+        // exactly the "只在滑条上生效" rule; the module icon stays inert.
+        _volumeSlider.PreviewMouseWheel += (_, e) =>
+        {
+            if (_volumeSlider is null)
+            {
+                return;
+            }
+            e.Handled = true;
+            _volumeSlider.Value = Math.Clamp(
+                _volumeSlider.Value + (e.Delta > 0 ? VolumeWheelStep : -VolumeWheelStep),
+                0d,
+                100d);
+        };
+        panel.Children.Add(_volumeSlider);
+
+        var divider = new Border
+        {
+            Height = 1,
+            Background = highContrast ? SystemColors.WindowTextBrush : FrozenBrush(_palette.Flyout.Divider),
+            Opacity = highContrast ? 0.4 : 0.9,
+            Margin = new Thickness(0, 10, 0, 0)
+        };
+        panel.Children.Add(divider);
+
+        _volumeDeviceRow = new Button
+        {
+            Style = (Style)Resources["ModuleButton"],
+            Padding = new Thickness(2, 0, 0, 0),
+            Height = 38,
+            HorizontalContentAlignment = HorizontalAlignment.Stretch,
+            Focusable = true,
+            ToolTip = "切换播放设备"
+        };
+        System.Windows.Automation.AutomationProperties.SetName(_volumeDeviceRow, "播放设备");
+        var deviceText = new TextBlock
+        {
+            Text = "设备：读取中…",
+            Foreground = ink,
+            Opacity = 0.80,
+            FontSize = 12,
+            Margin = new Thickness(0, 0, 8, 0),
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        var deviceArrow = new TextBlock
+        {
+            Text = "\uE70D",
+            FontFamily = StatusIconFont,
+            FontSize = 9,
+            Foreground = ink,
+            Opacity = 0.45,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        var deviceRow = new DockPanel();
+        DockPanel.SetDock(deviceArrow, System.Windows.Controls.Dock.Right);
+        deviceRow.Children.Add(deviceArrow);
+        deviceRow.Children.Add(deviceText);
+        _volumeDeviceRow.Content = deviceRow;
+        _volumeDeviceRow.Tag = deviceText;
+        _volumeDeviceRow.Click += (_, _) => ToggleVolumeDeviceList();
+        panel.Children.Add(_volumeDeviceRow);
+
+        _volumeDeviceList = new StackPanel { Margin = new Thickness(0, 2, 0, 0), Visibility = Visibility.Collapsed };
+        panel.Children.Add(_volumeDeviceList);
+        return panel;
+    }
+
+    /// <summary>Reads the live state into the panel and rebuilds the device rows.</summary>
+    private void RefreshVolumeCard()
+    {
+        if (_volumeFlyout is null)
+        {
+            return;
+        }
+
+        var volume = AudioEndpointVolumeInterop.ReadMasterVolume();
+        _volumeSyncing = true;
+        try
+        {
+            if (_volumeSlider is not null)
+            {
+                _volumeSlider.Value = volume is { } reading
+                    ? Math.Round(reading.Scalar * 100d)
+                    : 0d;
+                _volumeSlider.IsEnabled = volume is not null;
+            }
+            if (_volumeValue is not null)
+            {
+                _volumeValue.Text = volume is { } value
+                    ? (value.Muted ? "静音" : $"{(int)Math.Round(value.Scalar * 100d)}%")
+                    : "--";
+            }
+            if (_volumeGlyph is not null)
+            {
+                _volumeGlyph.Text = volume switch
+                {
+                    null => GlyphVolumeMuted,
+                    { Muted: true } => GlyphVolumeMuted,
+                    { Scalar: <= 0f } => GlyphVolume0,
+                    { Scalar: < 0.34f } => GlyphVolume1,
+                    { Scalar: < 0.67f } => GlyphVolume2,
+                    _ => GlyphVolume3
+                };
+            }
+            if (_volumeMuteLabel is not null)
+            {
+                _volumeMuteLabel.Text = volume is { Muted: true } ? "已静音" : "音量";
+            }
+        }
+        finally
+        {
+            _volumeSyncing = false;
+        }
+
+        RefreshVolumeDevices();
+    }
+
+    private void ApplyVolumeSlider()
+    {
+        if (_volumeSyncing || _volumeSlider is null)
+        {
+            return;
+        }
+
+        var scalar = (float)(_volumeSlider.Value / 100d);
+        AudioEndpointVolumeInterop.WriteMasterVolumeScalar(scalar);
+        if (_volumeValue is not null)
+        {
+            _volumeValue.Text = $"{(int)Math.Round(_volumeSlider.Value)}%";
+        }
+    }
+
+    private void ToggleVolumeMute()
+    {
+        var volume = AudioEndpointVolumeInterop.ReadMasterVolume();
+        var mute = volume is not { Muted: true };
+        if (!AudioEndpointVolumeInterop.TrySetMuted(mute, out _))
+        {
+            // The endpoint refused the write (some drivers do); the media key is the path
+            // the shell itself uses and always toggles the default endpoint.
+            AudioEndpointVolumeInterop.SendMuteKey();
+            // The key is handled asynchronously by the shell; re-read after it lands.
+            _ = Task.Delay(150).ContinueWith(
+                _ => Dispatcher.BeginInvoke(RefreshVolumeCard),
+                TaskScheduler.Default);
+        }
+        RefreshVolumeCard();
+    }
+
+    private void ToggleVolumeDeviceList()
+    {
+        _volumeDeviceListOpen = !_volumeDeviceListOpen;
+        if (_volumeDeviceList is not null)
+        {
+            _volumeDeviceList.Visibility = _volumeDeviceListOpen ? Visibility.Visible : Visibility.Collapsed;
+        }
+        RefreshVolumeDevices();
+    }
+
+    private void RefreshVolumeDevices()
+    {
+        var devices = AudioRenderDeviceInterop.EnumerateRenderDevices();
+        var current = devices.FirstOrDefault(device => device.IsDefault);
+        if (_volumeDeviceRow?.Tag is TextBlock label)
+        {
+            label.Text = current is null ? "设备：无可用输出" : $"设备：{current.Name}";
+        }
+
+        if (_volumeDeviceList is null)
+        {
+            return;
+        }
+        _volumeDeviceList.Children.Clear();
+        if (!_volumeDeviceListOpen)
+        {
+            return;
+        }
+
+        var highContrast = AccessibilityThemeManager.IsHighContrastEnabled || SystemParameters.HighContrast;
+        var ink = highContrast ? SystemColors.WindowTextBrush : FrozenBrush(_palette.Flyout.Foreground);
+        foreach (var device in devices)
+        {
+            var item = new Button
+            {
+                Style = (Style)Resources["ModuleButton"],
+                Padding = new Thickness(2, 0, 2, 0),
+                Height = 32,
+                HorizontalContentAlignment = HorizontalAlignment.Stretch,
+                Focusable = true,
+                ToolTip = device.Name
+            };
+            System.Windows.Automation.AutomationProperties.SetName(item, device.Name);
+            var row = new DockPanel();
+            var check = new TextBlock
+            {
+                Text = device.IsDefault ? "\uE73E" : string.Empty,
+                FontFamily = StatusIconFont,
+                FontSize = 11,
+                Foreground = ink,
+                Width = 16,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            DockPanel.SetDock(check, System.Windows.Controls.Dock.Right);
+            row.Children.Add(check);
+            row.Children.Add(new TextBlock
+            {
+                Text = device.Name,
+                Foreground = ink,
+                Opacity = device.IsDefault ? 0.95 : 0.62,
+                FontWeight = device.IsDefault ? FontWeights.SemiBold : FontWeights.Normal,
+                FontSize = 12,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                VerticalAlignment = VerticalAlignment.Center
+            });
+            item.Content = row;
+            var id = device.Id;
+            item.Click += (_, _) => SwitchVolumeDevice(id);
+            _volumeDeviceList.Children.Add(item);
+        }
+    }
+
+    /// <summary>
+    /// Switches the default playback device. The system API behind this is undocumented, so
+    /// a refusal is recoverable: the panel closes and the system quick settings open, where
+    /// the same choice is always available.
+    /// </summary>
+    private void SwitchVolumeDevice(string deviceId)
+    {
+        if (!AudioRenderDeviceInterop.SetDefaultRenderDevice(deviceId))
+        {
+            CloseVolumeFlyout();
+            _environment.OpenQuickSettings(TopBarModuleKind.Volume);
+            return;
+        }
+
+        // The endpoint change lands asynchronously in the audio service; re-read after it
+        // settles instead of showing the previous default for a moment.
+        _ = Task.Delay(250).ContinueWith(
+            _ => Dispatcher.BeginInvoke(RefreshVolumeCard),
+            TaskScheduler.Default);
+    }
+
     // ---------------------------------------------------------------- 日历信息栏
 
     /// <summary>
@@ -2369,6 +2788,7 @@ public sealed partial class TopBarWindow : Window
             if (_capsuleExpanded || _todoFlyout?.IsOpen == true) CloseTodoFlyout();
             if (_clockFlyout?.IsOpen == true) CloseClockFlyout();
             if (_inputMethodFlyout?.IsOpen == true) CloseInputMethodFlyout();
+            if (_volumeFlyout?.IsOpen == true) CloseVolumeFlyout();
         }
         if (!TopBarNativeMethods.IsMouseButtonDown(TopBarNativeMethods.LeftMouseButton))
         {
@@ -2385,6 +2805,7 @@ public sealed partial class TopBarWindow : Window
         TryCloseOnOutsideClick(_todoFlyout, cursor);
         TryCloseOnOutsideClick(_clockFlyout, cursor);
         TryCloseOnOutsideClick(_inputMethodFlyout, cursor);
+        TryCloseOnOutsideClick(_volumeFlyout, cursor);
     }
 
     private void TryCloseOnOutsideClick(Popup? flyout, DockNativeMethods.NativePoint cursor)
@@ -3459,7 +3880,8 @@ public sealed partial class TopBarWindow : Window
             PointerOverDock: pointerOverBar,
             InteractionActive: _menuOpen || _capsuleExpanded
                 || _todoFlyout?.IsOpen == true || _clockFlyout?.IsOpen == true
-                || _inputMethodFlyout?.IsOpen == true || _searchPopup is not null,
+                || _inputMethodFlyout?.IsOpen == true || _volumeFlyout?.IsOpen == true
+                || _searchPopup is not null,
             OverlapIsMaximizedWindow: zoomed);
         _autoHide.Update(input, DateTimeOffset.UtcNow);
         if (_autoHide.IsShown != IsVisible)

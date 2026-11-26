@@ -93,6 +93,116 @@ internal static class AudioEndpointVolumeInterop
         }
     }
 
+    // Drag and wheel gestures fire many writes; an empty event context is what the shell's
+    // own volume slider passes, and it keeps the endpoint from logging one event per tick.
+    private static Guid _noEventContext = Guid.Empty;
+
+    /// <summary>Writes the default endpoint's master volume (0–1). False when audio is unavailable.</summary>
+    internal static bool WriteMasterVolumeScalar(float scalar) => WithDefaultEndpoint(endpoint =>
+        endpoint.SetMasterVolumeLevelScalar(Math.Clamp(scalar, 0f, 1f), ref _noEventContext) == 0);
+
+    /// <summary>
+    /// Mutes through the endpoint, reporting the raw HRESULT so the caller can tell "no
+    /// device" apart from "the driver refused". Some drivers reject a non-null event
+    /// context on SetMute, so the context is passed as a null pointer.
+    /// </summary>
+    internal static bool TrySetMuted(bool muted, out int hresult)
+    {
+        var result = 0;
+        var written = WithDefaultEndpoint(endpoint =>
+        {
+            result = endpoint.SetMute(muted, 0);
+            return result == 0;
+        });
+        hresult = written ? 0 : result;
+        return written;
+    }
+
+    /// <summary>
+    /// Toggles mute through the media key instead of the endpoint. Used when a driver
+    /// refuses <c>SetMute</c>; the shell handles the key exactly as a keyboard would.
+    /// </summary>
+    internal static void SendMuteKey()
+    {
+        const byte VkVolumeMute = 0xAD;
+        const uint KeyEventKeyUp = 0x0002;
+        keybd_event(VkVolumeMute, 0, 0, 0);
+        keybd_event(VkVolumeMute, 0, KeyEventKeyUp, 0);
+    }
+
+    [DllImport("user32.dll")]
+    private static extern void keybd_event(byte virtualKey, byte scanCode, uint flags, nuint extraInfo);
+
+    /// <summary>
+    /// Opens the default endpoint and runs one write against it, releasing every COM object
+    /// on both success and failure. Reads keep their own path so the bar's one-second refresh
+    /// never pays for this setup twice.
+    /// </summary>
+    private static bool WithDefaultEndpoint(Func<IAudioEndpointVolume, bool> write)
+    {
+        try
+        {
+            var enumeratorType = Type.GetTypeFromCLSID(new Guid(EnumeratorClsid));
+            if (enumeratorType is null)
+            {
+                return false;
+            }
+
+            var enumerator = (IMMDeviceEnumerator)Activator.CreateInstance(enumeratorType)!;
+            try
+            {
+                if (enumerator.GetDefaultAudioEndpoint(Render, ConsoleRole, out var device) != 0
+                    || device is null)
+                {
+                    return false;
+                }
+
+                try
+                {
+                    var endpointId = new Guid(EndpointInterfaceId);
+                    if (device.Activate(ref endpointId, ClsctxInprocServer, 0, out var endpoint) != 0
+                        || endpoint is null)
+                    {
+                        return false;
+                    }
+
+                    try
+                    {
+                        return write(endpoint);
+                    }
+                    finally
+                    {
+                        Marshal.ReleaseComObject(endpoint);
+                    }
+                }
+                finally
+                {
+                    Marshal.ReleaseComObject(device);
+                }
+            }
+            finally
+            {
+                Marshal.ReleaseComObject(enumerator);
+            }
+        }
+        catch (COMException)
+        {
+            return false;
+        }
+        catch (InvalidComObjectException)
+        {
+            return false;
+        }
+        catch (InvalidCastException)
+        {
+            return false;
+        }
+        catch (InvalidOperationException)
+        {
+            return false;
+        }
+    }
+
     // Interfaces are declared in the exact order of the real vtables: COM interop
     // places each method by its position here, so a shortened interface would call
     // the wrong slot.
@@ -175,7 +285,7 @@ internal static class AudioEndpointVolumeInterop
         int GetChannelVolumeLevelScalar(int channel, out float level);
 
         [PreserveSig]
-        int SetMute(bool mute, ref Guid context);
+        int SetMute([MarshalAs(UnmanagedType.Bool)] bool mute, nint context);
 
         [PreserveSig]
         int GetMute(out bool mute);
