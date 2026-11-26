@@ -344,8 +344,11 @@ public sealed class LocalStateStore
 
     public static AppState CreateDefault()
     {
+        var topBar = new TopBarState();
+        TopBarRules.ApplyDensityPreset(topBar, TopBarDensityPreset.MacMinimal);
         return new AppState
         {
+            TopBar = topBar,
             InformationWidgets = [new InformationWidgetState()],
             TodoWidgets = [TodoService.CreateDefaultWidget()],
             FileBoxes = [new FileBoxState()]

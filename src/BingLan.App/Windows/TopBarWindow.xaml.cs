@@ -62,6 +62,10 @@ internal interface ITopBarEnvironment
 
     void OpenTopBarSettings();
 
+    void OpenTopBarSettings(TopBarModuleKind? focusModule) => OpenTopBarSettings();
+
+    void TopBarStateChanged() { }
+
     /// <summary>Opens the system quick-settings flyout (the taskbar tray's panel).</summary>
     void OpenQuickSettings(TopBarModuleKind kind);
 
@@ -309,20 +313,25 @@ public sealed partial class TopBarWindow : Window
                     : TopBarRules.IsModuleOn(_state.Modules, kind);
                 return mask | (enabled ? 1 << (int)kind : 0);
             });
-        var orderSignature = TopBarRules.OrderSignature(_state);
-        if (_moduleMask != moduleMask || _appliedDisplayMode != DisplayMode || _orderSignature != orderSignature)
+        var layoutSignature = TopBarRules.LayoutSignature(_state);
+        if (_moduleMask != moduleMask || _appliedDisplayMode != DisplayMode || _orderSignature != layoutSignature)
         {
             BuildModules();
             _moduleMask = moduleMask;
-            _orderSignature = orderSignature;
+            _orderSignature = layoutSignature;
             _appliedDisplayMode = DisplayMode;
         }
         if (_searchButton is { } searchButton)
         {
-            searchButton.Height = Math.Clamp(_state.Height - 10d, 18d, 30d);
-            searchButton.ToolTip = string.IsNullOrWhiteSpace(_state.SearchHotkey)
-                ? "搜索应用、文件"
-                : $"搜索应用、文件（{_state.SearchHotkey}）";
+            if (TopBarRules.EffectiveSearchPlacement(_state) == TopBarSearchPlacement.CenterBar)
+            {
+                searchButton.Height = Math.Clamp(_state.Height - 10d, 18d, 30d);
+            }
+            SetModuleGlassToolTip(
+                searchButton,
+                string.IsNullOrWhiteSpace(_state.SearchHotkey)
+                    ? "搜索应用、文件"
+                    : $"搜索应用、文件（{_state.SearchHotkey}）");
         }
         ApplySurface();
         _autoHide = new DockAutoHideState();
@@ -811,7 +820,10 @@ public sealed partial class TopBarWindow : Window
         _capsuleStatus = null;
         _capsuleChevron = null;
 
-        AddSearchModule();
+        if (TopBarRules.EffectiveSearchPlacement(_state) == TopBarSearchPlacement.CenterBar)
+        {
+            AddSearchModule();
+        }
 
         CenterHost.HorizontalAlignment = HorizontalAlignment.Center;
         Surface.Padding = new Thickness(0);
@@ -857,9 +869,9 @@ public sealed partial class TopBarWindow : Window
                 Style = (Style)Resources["ModuleButton"],
                 Content = content,
                 HorizontalContentAlignment = HorizontalAlignment.Stretch,
-                MinHeight = CapsuleHeight - 2,
-                ToolTip = "今日待办，点击查看列表"
+                MinHeight = CapsuleHeight - 2
             };
+            SetModuleGlassToolTip(summary, "今日待办，点击查看列表");
             AutomationProperties.SetName(summary, "今日待办概要，点击查看列表");
             summary.Click += (_, _) => ToggleTodoFlyout(summary);
             CapsuleHeader.Children.Add(summary);
@@ -932,14 +944,26 @@ public sealed partial class TopBarWindow : Window
                         }
                         _environment.OpenTrayOverflow();
                     }, "\uE70E");
-                    if (ModuleText(TopBarModuleKind.TrayOverflow) is { } trayText) trayText.Text = "托盘";
+                    if (ModuleText(TopBarModuleKind.TrayOverflow) is { } trayText)
+                    {
+                        ApplyIconTextModule(
+                            TopBarModuleKind.TrayOverflow,
+                            trayText,
+                            TopBarRules.EffectiveTrayIconOnly(_state) ? string.Empty : "托盘",
+                            "打开 Windows 隐藏的托盘图标");
+                    }
                     if (_modules.TryGetValue(TopBarModuleKind.TrayOverflow, out var trayButton))
                     {
-                        trayButton.ToolTip = "打开 Windows 隐藏的托盘图标";
                         trayButton.PreviewMouseLeftButtonDown += (_, _) =>
                             visibleOnPress = TrayOverflowController.IsVisible;
                         trayButton.MouseLeave += (_, _) => visibleOnPress = false;
                     }
+                }
+                break;
+            case TopBarModuleKind.Search:
+                if (IsSearchEntryEnabled && TopBarRules.EffectiveSearchPlacement(_state) == TopBarSearchPlacement.SideIcon)
+                {
+                    AddSideSearchModule(panel);
                 }
                 break;
             case TopBarModuleKind.InputMethod:
@@ -981,12 +1005,14 @@ public sealed partial class TopBarWindow : Window
         }
         else if (kind == TopBarModuleKind.Performance)
         {
-            text.MaxWidth = 360;
+            var compactPerformance = TopBarRules.EffectivePerformanceStyle(_state) == TopBarPerformanceStyle.Compact;
+            text.MaxWidth = compactPerformance ? 200 : 360;
             // The upload/download digits change width every second; reserving the widest
             // steady-state readout keeps the module from resizing, which would shuffle
             // the centred search box left and right once per tick.
-            text.MinWidth = Math.Min(360d, MeasureTextWidth(
-                "CPU 100%  内存 100%  ↑1023.9 MB/s ↓1023.9 MB/s"));
+            text.MinWidth = compactPerformance
+                ? Math.Min(200d, MeasureTextWidth("CPU 100%  ↓1023.9 MB/s"))
+                : Math.Min(360d, MeasureTextWidth("CPU 100%  内存 100%  ↑1023.9 MB/s ↓1023.9 MB/s"));
         }
 
         FrameworkElement content = glyph is null ? text : CreateIconContent(glyph, text);
@@ -1024,6 +1050,13 @@ public sealed partial class TopBarWindow : Window
             Focusable = true
         };
         System.Windows.Automation.AutomationProperties.SetName(button, $"{label}模块");
+        if (kind is TopBarModuleKind.Battery or TopBarModuleKind.Volume or TopBarModuleKind.Network
+            or TopBarModuleKind.Performance or TopBarModuleKind.TrayOverflow)
+        {
+            var toolTip = CreateGlassToolTip();
+            AttachHoverToolTip(button, toolTip);
+            button.ToolTip = toolTip;
+        }
         button.Click += (_, _) => click();
         _modules[kind] = button;
         panel.Children.Add(button);
@@ -1235,8 +1268,9 @@ public sealed partial class TopBarWindow : Window
         }
         if (_inputMethodNameText is { } name)
         {
+            var badgeOnly = TopBarRules.EffectiveInputMethodStyle(_state) == TopBarInputMethodStyle.BadgeOnly;
             name.Text = _inputMethodName ?? string.Empty;
-            name.Visibility = _inputMethodName is null
+            name.Visibility = badgeOnly || _inputMethodName is null
                 ? Visibility.Collapsed
                 : Visibility.Visible;
         }
@@ -2111,7 +2145,9 @@ public sealed partial class TopBarWindow : Window
         openTimer.Tick += (_, _) =>
         {
             openTimer.Stop();
-            if (_closing || !host.IsLoaded || !IsVisible)
+            if (_closing || !host.IsLoaded || !IsVisible
+                || toolTip.Content is null
+                || (toolTip.Content is TextBlock tb && string.IsNullOrWhiteSpace(tb.Text)))
             {
                 toolTip.IsOpen = false;
                 return;
@@ -2134,11 +2170,45 @@ public sealed partial class TopBarWindow : Window
             openTimer.Stop();
             toolTip.IsOpen = false;
         };
+        host.PreviewMouseDown += (_, _) =>
+        {
+            openTimer.Stop();
+            toolTip.IsOpen = false;
+        };
         host.Unloaded += (_, _) =>
         {
             openTimer.Stop();
             toolTip.IsOpen = false;
         };
+    }
+
+    private void SetModuleGlassToolTip(FrameworkElement element, string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return;
+        }
+
+        if (element.ToolTip is not ToolTip toolTip)
+        {
+            toolTip = CreateGlassToolTip();
+            AttachHoverToolTip(element, toolTip);
+            element.ToolTip = toolTip;
+        }
+
+        if (toolTip.Content is TextBlock block)
+        {
+            block.Text = text;
+        }
+        else
+        {
+            toolTip.Content = new TextBlock
+            {
+                Text = text,
+                TextWrapping = TextWrapping.Wrap,
+                MaxWidth = 320
+            };
+        }
     }
 
     private void ToggleCapsuleDetails()
@@ -2404,9 +2474,13 @@ public sealed partial class TopBarWindow : Window
             Height = Math.Clamp(_state.Height - 10d, 18d, 30d),
             VerticalAlignment = VerticalAlignment.Center,
             Focusable = true,
-            ToolTip = $"搜索应用、文件（{_state.SearchHotkey}）",
             Content = content
         };
+        SetModuleGlassToolTip(
+            button,
+            string.IsNullOrWhiteSpace(_state.SearchHotkey)
+                ? "搜索应用、文件"
+                : $"搜索应用、文件（{_state.SearchHotkey}）");
         AutomationProperties.SetName(button, "搜索入口");
         button.Click += (_, _) => Dispatcher.BeginInvoke(TriggerSearch, DispatcherPriority.Input);
 
@@ -2416,6 +2490,38 @@ public sealed partial class TopBarWindow : Window
         UpdateSearchHostWidth();
     }
 
+    private void AddSideSearchModule(StackPanel panel)
+    {
+        var searchIcon = new TextBlock
+        {
+            Text = GlyphSearch,
+            FontFamily = StatusIconFont,
+            FontSize = 13.5,
+            Opacity = 0.92,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 0, 1)
+        };
+        searchIcon.SetResourceReference(TextBlock.ForegroundProperty, "TopBarInkBrush");
+        var button = new Button
+        {
+            Style = (Style)Resources["ModuleButton"],
+            Padding = new Thickness(6, 0, 6, 0),
+            MinWidth = 32,
+            Focusable = true,
+            Content = searchIcon
+        };
+        SetModuleGlassToolTip(
+            button,
+            string.IsNullOrWhiteSpace(_state.SearchHotkey)
+                ? "搜索应用、文件"
+                : $"搜索应用、文件（{_state.SearchHotkey}）");
+        AutomationProperties.SetName(button, "搜索入口");
+        button.Click += (_, _) => Dispatcher.BeginInvoke(TriggerSearch, DispatcherPriority.Input);
+        _searchButton = button;
+        _modules[TopBarModuleKind.Search] = button;
+        panel.Children.Add(button);
+    }
+
     /// <summary>
     /// Clamps the centered entry button to the symmetric clear room left by the wider
     /// side module so it never overlaps either side; collapses the button only when even
@@ -2423,7 +2529,10 @@ public sealed partial class TopBarWindow : Window
     /// </summary>
     private void UpdateSearchHostWidth()
     {
-        if (IsCapsule || _searchButton is not { } button || Surface.ActualWidth <= 0)
+        if (IsCapsule
+            || TopBarRules.EffectiveSearchPlacement(_state) != TopBarSearchPlacement.CenterBar
+            || _searchButton is not { } button
+            || Surface.ActualWidth <= 0)
         {
             return;
         }
@@ -2650,20 +2759,50 @@ public sealed partial class TopBarWindow : Window
         }
         if (ModuleText(TopBarModuleKind.Performance) is { } performance)
         {
-            var snapshot = _lastSnapshot;
-            performance.Text = snapshot is null
-                ? "性能 …"
-                : $"CPU {PerformanceSamplingRules.FormatPercent(snapshot.CpuPercent)}  "
-                    + $"内存 {PerformanceSamplingRules.FormatPercent(snapshot.MemoryPercent)}  "
-                    + $"↑{PerformanceSamplingRules.FormatRate(snapshot.UploadBytesPerSecond)} "
-                    + $"↓{PerformanceSamplingRules.FormatRate(snapshot.DownloadBytesPerSecond)}";
+            var perfStyle = TopBarRules.EffectivePerformanceStyle(_state);
+            performance.Text = TopBarModuleRules.FormatPerformanceLabel(_lastSnapshot, perfStyle);
+            if (_modules.TryGetValue(TopBarModuleKind.Performance, out var perfElement))
+            {
+                SetModuleGlassToolTip(perfElement, TopBarModuleRules.FormatPerformanceTooltip(_lastSnapshot));
+            }
         }
+
+        UpdateInputMethodVisuals();
 
         // System facts change slowly and some calls are not free, so they refresh on a
         // slower cadence than the clock; the input method also follows focus changes.
         if (_tick % SystemInfoTickDivisor == 0)
         {
             RenderSystemModules();
+        }
+    }
+
+    private void ApplyIconTextModule(
+        TopBarModuleKind kind,
+        TextBlock valueText,
+        string label,
+        string? tooltip)
+    {
+        valueText.Text = label;
+        var showText = !string.IsNullOrEmpty(label);
+        valueText.Visibility = showText ? Visibility.Visible : Visibility.Collapsed;
+        if (ModuleIcon(kind) is { } icon)
+        {
+            icon.Margin = showText
+                ? new Thickness(0, 0, 6, 1)
+                : new Thickness(0, 0, 0, 1);
+        }
+        if (_modules.TryGetValue(kind, out var element))
+        {
+            if (element is Button button)
+            {
+                button.Padding = showText ? new Thickness(8, 0, 8, 0) : new Thickness(6, 0, 6, 0);
+                button.MinWidth = 32;
+            }
+            if (!string.IsNullOrEmpty(tooltip))
+            {
+                SetModuleGlassToolTip(element, tooltip);
+            }
         }
     }
 
@@ -2677,7 +2816,9 @@ public sealed partial class TopBarWindow : Window
         if (ModuleText(TopBarModuleKind.Battery) is { } battery)
         {
             var (percent, status) = facts.Battery;
-            battery.Text = percent < 0 ? "—" : $"{percent}%";
+            var label = TopBarModuleRules.FormatBatteryLabel(percent, TopBarRules.EffectiveBatteryStyle(_state));
+            var tooltip = TopBarModuleRules.FormatBatteryTooltip(percent, status);
+            ApplyIconTextModule(TopBarModuleKind.Battery, battery, label, tooltip);
             if (ModuleIcon(TopBarModuleKind.Battery) is { } batteryIcon)
             {
                 batteryIcon.Text = percent < 0
@@ -2689,7 +2830,9 @@ public sealed partial class TopBarWindow : Window
         {
             var percent = facts.Volume?.Percent;
             var muted = facts.Volume?.Muted == true;
-            volume.Text = muted ? "静音" : percent is { } value ? $"{value}%" : "—";
+            var label = TopBarModuleRules.FormatVolumeLabel(percent, muted, TopBarRules.EffectiveVolumeStyle(_state));
+            var tooltip = TopBarModuleRules.FormatVolumeTooltip(percent, muted);
+            ApplyIconTextModule(TopBarModuleKind.Volume, volume, label, tooltip);
             if (ModuleIcon(TopBarModuleKind.Volume) is { } volumeIcon)
             {
                 volumeIcon.Text = muted ? GlyphVolumeMuted : percent switch
@@ -2708,18 +2851,9 @@ public sealed partial class TopBarWindow : Window
                 facts.Network,
                 _state.ShowWifiName == true,
                 _state.NetworkIconOnly == true);
-            network.Text = networkLabel;
-            var showNetworkText = !string.IsNullOrEmpty(networkLabel);
-            network.Visibility = showNetworkText ? Visibility.Visible : Visibility.Collapsed;
-            if (_modules.TryGetValue(TopBarModuleKind.Network, out var networkButton))
-            {
-                networkButton.ToolTip = facts.Network.Tooltip;
-            }
+            ApplyIconTextModule(TopBarModuleKind.Network, network, networkLabel, facts.Network.Tooltip);
             if (ModuleIcon(TopBarModuleKind.Network) is { } networkIcon)
             {
-                networkIcon.Margin = showNetworkText
-                    ? new Thickness(0, 0, 6, 1)
-                    : new Thickness(0, 0, 0, 1);
                 networkIcon.Text = !facts.Network.Connected
                     ? GlyphWifiOff
                     : !facts.Network.IsWireless
@@ -2738,21 +2872,10 @@ public sealed partial class TopBarWindow : Window
     private void RenderWeather(TextBlock text)
     {
         var snapshot = _environment.ReadWeather();
-        if (snapshot is null)
-        {
-            text.Text = "天气 —";
-            return;
-        }
-
-        // Online geocoding names like "南岗区 · 黑龙江省·哈尔滨市 · 中国" or "绥化市-黑龙江省绥化市-中国"
-        // read as a trail; the bar shows the compact location only, and the tooltip keeps the full text.
-        var city = WeatherSnapshot.CompactLocation(snapshot.City);
-        text.Text = snapshot.Status == WeatherStatus.NoCity
-            ? "天气 未设置"
-            : snapshot.TemperatureCelsius is { } temperature
-                ? $"{city} {Math.Round(temperature):0}° {snapshot.Condition}"
-                : $"{city} {snapshot.Condition}";
-        if (_modules.TryGetValue(TopBarModuleKind.Weather, out var module) && module.ToolTip is ToolTip toolTip)
+        text.Text = TopBarModuleRules.FormatWeatherLabel(snapshot, TopBarRules.EffectiveWeatherStyle(_state));
+        if (snapshot is not null
+            && _modules.TryGetValue(TopBarModuleKind.Weather, out var module)
+            && module.ToolTip is ToolTip toolTip)
         {
             toolTip.Content = new TextBlock
             {
@@ -3498,11 +3621,33 @@ public sealed partial class TopBarWindow : Window
         Surface.MouseRightButtonUp += (_, args) =>
         {
             args.Handled = true;
-            Dispatcher.BeginInvoke(OpenBarContextMenu, DispatcherPriority.Input);
+            var hitModule = HitTestModule(args.OriginalSource as DependencyObject);
+            Dispatcher.BeginInvoke(() => OpenBarContextMenu(hitModule), DispatcherPriority.Input);
         };
     }
 
-    private void OpenBarContextMenu()
+    private TopBarModuleKind? HitTestModule(DependencyObject? source)
+    {
+        var current = source;
+        while (current is not null)
+        {
+            if (ReferenceEquals(current, _attentionPanel))
+            {
+                return TopBarModuleKind.Attention;
+            }
+            foreach (var (kind, element) in _modules)
+            {
+                if (ReferenceEquals(current, element))
+                {
+                    return kind;
+                }
+            }
+            current = VisualTreeHelper.GetParent(current);
+        }
+        return null;
+    }
+
+    private void OpenBarContextMenu(TopBarModuleKind? hitModule = null)
     {
         if (_closing || !IsVisible)
         {
@@ -3518,9 +3663,13 @@ public sealed partial class TopBarWindow : Window
             : (Color)ColorConverter.ConvertFromString(DesktopStyleRules.TopBar(_style, _state).Surface);
         var darkSurface = (0.2126d * surfaceColor.R + 0.7152d * surfaceColor.G + 0.0722d * surfaceColor.B) / 255d <= 0.6d;
         var menu = new NonActivatingPopupMenu(Surface, PlacementMode.Mouse, darkSurface);
+        if (!IsCapsule && hitModule is { } kind)
+        {
+            AddModuleQuickActions(menu, kind);
+        }
         if (IsCapsule && IsSearchEntryEnabled)
             menu.AddItem("搜索应用、文件…", () => Dispatcher.BeginInvoke(TriggerSearch, DispatcherPriority.Input));
-        menu.AddItem("在冰蓝桌面中设置…", _environment.OpenTopBarSettings);
+        menu.AddItem("在冰蓝桌面中设置…", () => _environment.OpenTopBarSettings(hitModule));
         menu.AddItem("退出冰蓝桌面", _environment.ExitApp);
         menu.Opened += (_, _) =>
         {
@@ -3536,5 +3685,89 @@ public sealed partial class TopBarWindow : Window
             }
         };
         menu.IsOpen = true;
+    }
+
+    private void AddModuleQuickActions(NonActivatingPopupMenu menu, TopBarModuleKind kind)
+    {
+        switch (kind)
+        {
+            case TopBarModuleKind.Volume:
+                var volIconOnly = TopBarRules.EffectiveVolumeStyle(_state) == TopBarVolumeStyle.IconOnly;
+                menu.AddItem(volIconOnly ? "音量：显示百分比" : "音量：仅显示图标", () =>
+                {
+                    _state.VolumeStyle = volIconOnly ? TopBarVolumeStyle.IconAndPercent : TopBarVolumeStyle.IconOnly;
+                    ApplyTopBarQuickEdit();
+                });
+                break;
+            case TopBarModuleKind.Network:
+                var netIconOnly = TopBarRules.EffectiveNetworkDisplayMode(_state) == TopBarNetworkDisplayMode.IconOnly;
+                menu.AddItem(netIconOnly ? "网络：显示文字" : "网络：仅显示图标", () =>
+                {
+                    _state.NetworkIconOnly = !netIconOnly;
+                    ApplyTopBarQuickEdit();
+                });
+                break;
+            case TopBarModuleKind.Battery:
+                var batIconOnly = TopBarRules.EffectiveBatteryStyle(_state) == TopBarBatteryStyle.IconOnly;
+                menu.AddItem(batIconOnly ? "电量：显示百分比" : "电量：仅显示图标", () =>
+                {
+                    _state.BatteryStyle = batIconOnly ? TopBarBatteryStyle.IconAndPercent : TopBarBatteryStyle.IconOnly;
+                    ApplyTopBarQuickEdit();
+                });
+                break;
+            case TopBarModuleKind.InputMethod:
+                var imeBadgeOnly = TopBarRules.EffectiveInputMethodStyle(_state) == TopBarInputMethodStyle.BadgeOnly;
+                menu.AddItem(imeBadgeOnly ? "输入法：显示名称" : "输入法：仅显示徽标", () =>
+                {
+                    _state.InputMethodStyle = imeBadgeOnly ? TopBarInputMethodStyle.BadgeAndName : TopBarInputMethodStyle.BadgeOnly;
+                    ApplyTopBarQuickEdit();
+                });
+                break;
+            case TopBarModuleKind.Weather:
+                var weatherCompact = TopBarRules.EffectiveWeatherStyle(_state) == TopBarWeatherStyle.Compact;
+                menu.AddItem(weatherCompact ? "天气：显示城市与现象" : "天气：仅显示温度", () =>
+                {
+                    _state.WeatherStyle = weatherCompact ? TopBarWeatherStyle.Full : TopBarWeatherStyle.Compact;
+                    ApplyTopBarQuickEdit();
+                });
+                break;
+            case TopBarModuleKind.Performance:
+                var perfCompact = TopBarRules.EffectivePerformanceStyle(_state) == TopBarPerformanceStyle.Compact;
+                menu.AddItem(perfCompact ? "性能：显示全部指标" : "性能：精简显示", () =>
+                {
+                    _state.PerformanceStyle = perfCompact ? TopBarPerformanceStyle.Full : TopBarPerformanceStyle.Compact;
+                    ApplyTopBarQuickEdit();
+                });
+                break;
+            case TopBarModuleKind.TrayOverflow:
+                var trayIconOnly = TopBarRules.EffectiveTrayIconOnly(_state);
+                menu.AddItem(trayIconOnly ? "托盘：显示文字" : "托盘：仅显示图标", () =>
+                {
+                    _state.TrayIconOnly = !trayIconOnly;
+                    ApplyTopBarQuickEdit();
+                });
+                break;
+            case TopBarModuleKind.Search:
+                var sideIcon = TopBarRules.EffectiveSearchPlacement(_state) == TopBarSearchPlacement.SideIcon;
+                menu.AddItem(sideIcon ? "搜索：切换为居中搜索条" : "搜索：切换为放大镜图标", () =>
+                {
+                    _state.SearchPlacement = sideIcon ? TopBarSearchPlacement.CenterBar : TopBarSearchPlacement.SideIcon;
+                    ApplyTopBarQuickEdit();
+                });
+                break;
+        }
+
+        var label = TopBarRules.ModuleLabel(kind);
+        menu.AddItem($"隐藏「{label}」", () =>
+        {
+            TopBarRules.SetModule(_state.Modules, kind, false);
+            ApplyTopBarQuickEdit();
+        });
+    }
+
+    private void ApplyTopBarQuickEdit()
+    {
+        ApplyState();
+        _environment.TopBarStateChanged();
     }
 }

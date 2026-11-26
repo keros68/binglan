@@ -538,6 +538,75 @@ static void TestKeepOutOfReservedEdges()
         new PixelRect(80, 300, 480, 600),
         PlacementResolver.KeepOutOfReservedEdges(new PixelRect(20, 300, 420, 600), monitor, leftTaskbar),
         "左侧被占用时卡片应右移到工作区内");
+
+    // Scrollable file boxes clamp height at the bottom edge instead of shifting Top upward.
+    AssertEqual(
+        new PixelRect(100, 300, 466, 1250),
+        PlacementResolver.KeepOutOfReservedEdgesClampingBottom(
+            new PixelRect(100, 300, 466, 1380), monitor, workArea, minimumHeight: 166, isLocked: false),
+        "超长文件收纳盒顶到底部保留区时应保持顶边位置不变并收紧高度");
+    AssertEqual(
+        new PixelRect(100, 300, 466, 1250),
+        PlacementResolver.KeepOutOfReservedEdgesClampingBottom(
+            new PixelRect(100, 300, 466, 1380), monitor, workArea, minimumHeight: 166, isLocked: true),
+        "锁定的超长文件收纳盒顶到底部保留区时更不得上移顶边");
+    AssertEqual(
+        new PixelRect(100, 1150, 466, 1316),
+        PlacementResolver.KeepOutOfReservedEdgesClampingBottom(
+            new PixelRect(100, 1150, 466, 1400), monitor, workArea, minimumHeight: 166, isLocked: true),
+        "锁定状态下即便剩余高度小于最小高度也不应上移顶边");
+
+    AssertEqual(
+        new PixelRect(100, 700, 466, 1250),
+        PlacementResolver.FitExpandedWithinWorkArea(
+            new PixelRect(100, 700, 466, 1350), workArea, minimumHeight: 166, anchorTop: true, isLocked: false),
+        "文件收纳盒向下展开顶到工作区底边时应锚定顶边并收缩高度");
+    AssertEqual(
+        new PixelRect(100, 1150, 466, 1316),
+        PlacementResolver.FitExpandedWithinWorkArea(
+            new PixelRect(100, 1150, 466, 1400), workArea, minimumHeight: 166, anchorTop: true, isLocked: true),
+        "锁定的文件收纳盒展开触底时不得改变顶边位置");
+    AssertEqual(
+        new PixelRect(100, 1084, 466, 1250),
+        PlacementResolver.FitExpandedWithinWorkArea(
+            new PixelRect(100, 1150, 466, 1400), workArea, minimumHeight: 166, anchorTop: true, isLocked: false),
+        "未锁定且剩余空间不足最小高度时仅按最小高度微调顶边，而非按原超长高度大跨度上移");
+    AssertEqual(
+        new PixelRect(100, 700, 466, 1250),
+        PlacementResolver.ResolveShownBounds(
+            new PixelRect(100, 700, 466, 1300),
+            placement: null,
+            currentLayout: null,
+            workAreas: [workArea],
+            fallback: workArea,
+            minimumWidth: 226,
+            minimumHeight: 166,
+            anchorTop: true,
+            isLocked: true),
+        "首次显示恢复时超长文件收纳盒也应锚定顶边并收紧高度，不把顶边往上顶");
+
+    var topReservedWork = new PixelRect(0, 48, 2560, 1250);
+    AssertEqual(
+        new PixelRect(100, 48, 466, 448),
+        PlacementResolver.KeepOutOfReservedEdgesClampingBottom(
+            new PixelRect(100, 0, 466, 400), monitor, topReservedWork, minimumHeight: 166, isLocked: true),
+        "顶栏占用顶部空间时即便是锁定的收纳盒也应让出顶栏标题区域");
+
+    var upperWork = new PixelRect(0, -1080, 1920, -80);
+    var lowerWork = new PixelRect(0, 0, 1920, 1000);
+    AssertEqual(
+        new PixelRect(100, -400, 466, -80),
+        PlacementResolver.ResolveShownBounds(
+            new PixelRect(100, -400, 466, 500),
+            placement: null,
+            currentLayout: null,
+            workAreas: [upperWork, lowerWork],
+            fallback: lowerWork,
+            minimumWidth: 226,
+            minimumHeight: 166,
+            anchorTop: true,
+            isLocked: true),
+        "上下双屏跨屏显示恢复时应按顶边所在上屏收紧高度，而非跳到下屏");
 }
 
 static void TestPlacementRecovery()

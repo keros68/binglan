@@ -955,6 +955,112 @@ public static class TopBarTests
             "跨盒复制映射应保留源盒项、复制路径与自定义标题并分配新 Id");
         Assert(!FileMappingService.CopyMapping(boxA, boxB, mapping.Id, out _),
             "目标盒已存在同路径映射时应跳过复制");
+
+        // 13. Mac-style top bar module formatting, density presets, and drag placement (including Search SideIcon).
+        Assert(TopBarModuleRules.FormatVolumeLabel(78, muted: false, TopBarVolumeStyle.IconAndPercent) == "78%",
+            "非静音百分比档位应显示音量百分比");
+        Assert(TopBarModuleRules.FormatVolumeLabel(78, muted: true, TopBarVolumeStyle.IconAndPercent) == string.Empty,
+            "静音时即使在百分比档位也不应显示“静音”文字，仅保留静音图标");
+        Assert(TopBarModuleRules.FormatVolumeLabel(78, muted: false, TopBarVolumeStyle.IconOnly) == string.Empty,
+            "仅图标档位应隐藏音量百分比文字");
+        Assert(TopBarModuleRules.FormatVolumeTooltip(78, muted: true) == "音量：静音（78%）",
+            "静音悬停提示应保留静音状态与原音量");
+        Assert(TopBarModuleRules.FormatBatteryLabel(85, TopBarBatteryStyle.IconOnly) == string.Empty
+            && TopBarModuleRules.FormatBatteryLabel(85, TopBarBatteryStyle.IconAndPercent) == "85%",
+            "电量样式应支持仅图标与百分比切换");
+        var compactPerf = TopBarModuleRules.FormatPerformanceLabel(
+            new PerformanceSnapshot(12.4, 48.2, 1024, 2 * 1024 * 1024, DateTimeOffset.Now),
+            TopBarPerformanceStyle.Compact);
+        Assert(compactPerf.Contains("CPU", StringComparison.Ordinal)
+            && compactPerf.Contains('↓')
+            && !compactPerf.Contains("内存", StringComparison.Ordinal),
+            $"性能精简模式应只显示 CPU 与下载速率，实际：{compactPerf}");
+        var compactWeather = TopBarModuleRules.FormatWeatherLabel(
+            new WeatherSnapshot(WeatherStatus.Fresh, "杭州市", 18.4, 22, 14, 55, "多云", false, DateTimeOffset.Now, null),
+            TopBarWeatherStyle.Compact);
+        Assert(compactWeather == "18°", $"天气简洁模式应仅显示温度，实际：{compactWeather}");
+
+        var freshDefault = LocalStateStore.CreateDefault();
+        Assert(TopBarRules.DetectDensityPreset(freshDefault.TopBar) == TopBarDensityPreset.MacMinimal,
+            "全新用户默认配置应采用 Mac 极简顶栏风格");
+        var (freshLeft, freshRight) = TopBarRules.ResolveOrder(freshDefault.TopBar);
+        Assert(!freshLeft.Contains(TopBarModuleKind.Search) && freshRight.Contains(TopBarModuleKind.Search),
+            "Mac 极简下搜索应作为放大镜图标默认排入右侧区");
+
+        var presetState = new TopBarState();
+        TopBarRules.ApplyDensityPreset(presetState, TopBarDensityPreset.Balanced);
+        Assert(TopBarRules.DetectDensityPreset(presetState) == TopBarDensityPreset.Balanced
+            && TopBarRules.EffectiveSearchPlacement(presetState) == TopBarSearchPlacement.CenterBar,
+            "均衡预设应可识别且保持居中搜索条");
+        TopBarRules.ApplyDensityPreset(presetState, TopBarDensityPreset.Detailed);
+        Assert(TopBarRules.DetectDensityPreset(presetState) == TopBarDensityPreset.Detailed,
+            "信息流预设应可识别");
+
+        // Dragging Search onto Left side automatically switches it to SideIcon and places it at index 0.
+        Assert(TopBarRules.PlaceModule(presetState, TopBarModuleKind.Search, TopBarModuleSide.Left, 0)
+            && TopBarRules.EffectiveSearchPlacement(presetState) == TopBarSearchPlacement.SideIcon,
+            "拖放搜索到左侧应自动切换为侧边图标模式");
+        var (searchLeft, searchRight) = TopBarRules.ResolveOrder(presetState);
+        Assert(searchLeft[0] == TopBarModuleKind.Search && !searchRight.Contains(TopBarModuleKind.Search),
+            "拖放到左侧首位后搜索应排在左侧第一项");
+        Assert(TopBarRules.MoveModule(presetState, TopBarModuleKind.Search, 1),
+            "侧边图标模式下搜索应支持左右移动");
+
+        // Temporarily switching Search to CenterBar and back to SideIcon preserves its custom side position.
+        TopBarRules.PlaceModule(presetState, TopBarModuleKind.Search, TopBarModuleSide.Left, 0);
+        TopBarRules.ApplyDensityPreset(presetState, TopBarDensityPreset.Balanced);
+        TopBarRules.Normalize(presetState);
+        Assert(TopBarRules.EffectiveSearchPlacement(presetState) == TopBarSearchPlacement.CenterBar,
+            "切到均衡预设应将搜索居中");
+        TopBarRules.ApplyDensityPreset(presetState, TopBarDensityPreset.MacMinimal);
+        TopBarRules.Normalize(presetState);
+        var (restoredLeft, restoredRight) = TopBarRules.ResolveOrder(presetState);
+        Assert(restoredLeft[0] == TopBarModuleKind.Search && !restoredRight.Contains(TopBarModuleKind.Search),
+            "临时切到居中后再切回侧边图标应保留搜索原先在左侧的自定义位置");
+
+        // Theme export/import round-trip preserves SideIcon placement, display styles, and custom Search side order.
+        var themeSource = new AppState();
+        themeSource.TopBar.IsEnabled = true;
+        TopBarRules.ApplyDensityPreset(themeSource.TopBar, TopBarDensityPreset.MacMinimal);
+        TopBarRules.PlaceModule(themeSource.TopBar, TopBarModuleKind.Search, TopBarModuleSide.Left, 0);
+        var themePkg = ThemeRules.Export(themeSource, "Mac 顶栏主题", new ThemeArea(0, 0, 1920, 1040), new Version(0, 6, 2));
+        ThemeRules.Normalize(themePkg);
+        var themeTarget = new TopBarState();
+        TopBarRules.ApplyDensityPreset(themeTarget, TopBarDensityPreset.Detailed);
+        ThemeRules.ApplyTopBar(themePkg, themeTarget);
+        var (importedLeft, importedRight) = TopBarRules.ResolveOrder(themeTarget);
+        Assert(TopBarRules.EffectiveSearchPlacement(themeTarget) == TopBarSearchPlacement.SideIcon
+            && importedLeft[0] == TopBarModuleKind.Search
+            && !importedRight.Contains(TopBarModuleKind.Search)
+            && themeTarget.VolumeStyle == TopBarVolumeStyle.IconOnly
+            && themeTarget.BatteryStyle == TopBarBatteryStyle.IconOnly
+            && themeTarget.InputMethodStyle == TopBarInputMethodStyle.BadgeOnly
+            && themeTarget.WeatherStyle == TopBarWeatherStyle.Compact
+            && themeTarget.PerformanceStyle == TopBarPerformanceStyle.Compact
+            && themeTarget.TrayIconOnly == true,
+            "主题导出与导入应保留搜索侧边图标形态、各模块显示风格与自定义左侧顺序");
+
+        // Pre-v0.6.2 theme with TopBar order/modules but null TopBarSearchPlacement restores CenterBar on a fresh MacMinimal profile.
+        var oldTopBarTheme = ThemeRules.Export(new AppState { TopBar = { IsEnabled = true } }, "旧顶栏主题", new ThemeArea(0, 0, 1920, 1040), new Version(0, 6, 1));
+        oldTopBarTheme.Bindings.TopBarSearchPlacement = null;
+        var freshMacTarget = LocalStateStore.CreateDefault().TopBar;
+        ThemeRules.ApplyTopBar(oldTopBarTheme, freshMacTarget);
+        Assert(TopBarRules.EffectiveSearchPlacement(freshMacTarget) == TopBarSearchPlacement.CenterBar,
+            "导入不含 SearchPlacement 的旧版顶栏主题应恢复居中搜索条");
+
+        // AppleStyle desktop mode applies MacMinimal only when user has not set explicit display styles yet.
+        var appleBarUntouched = new TopBarState();
+        DesktopModeRules.Apply(DesktopMode.AppleStyle, new DockState(), new TaskbarState(), appleBarUntouched, DesktopExperienceRules.CreateDefault());
+        Assert(TopBarRules.DetectDensityPreset(appleBarUntouched) == TopBarDensityPreset.MacMinimal,
+            "首次应用苹果式方案时应为顶栏套用 Mac 极简风格");
+        var appleBarLegacyDefaults = new TopBarState { NetworkIconOnly = false, ShowWifiName = false };
+        DesktopModeRules.Apply(DesktopMode.AppleStyle, new DockState(), new TaskbarState(), appleBarLegacyDefaults, DesktopExperienceRules.CreateDefault());
+        Assert(TopBarRules.DetectDensityPreset(appleBarLegacyDefaults) == TopBarDensityPreset.MacMinimal,
+            "老版本默认落盘的 NetworkIconOnly=false/ShowWifiName=false 不应被误判为自定义样式");
+        var appleBarCustomized = new TopBarState { VolumeStyle = TopBarVolumeStyle.IconAndPercent, WeatherStyle = TopBarWeatherStyle.Full };
+        DesktopModeRules.Apply(DesktopMode.AppleStyle, new DockState(), new TaskbarState(), appleBarCustomized, DesktopExperienceRules.CreateDefault());
+        Assert(appleBarCustomized.VolumeStyle == TopBarVolumeStyle.IconAndPercent,
+            "已有显式顶栏样式偏好的老用户切苹果式时不应被覆盖样式");
     }
 
     [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]

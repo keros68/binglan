@@ -74,6 +74,10 @@ public static class DesktopModeRules
 
         Apply(mode, dock, taskbar);
         topBar.IsEnabled = mode == DesktopMode.AppleStyle;
+        if (mode == DesktopMode.AppleStyle && !TopBarRules.HasExplicitDisplayStyles(topBar))
+        {
+            TopBarRules.ApplyDensityPreset(topBar, TopBarDensityPreset.MacMinimal);
+        }
         foreach (var kind in TopBarInfoCardKinds)
         {
             experience.GetComponent(kind).IsVisible = mode != DesktopMode.AppleStyle;

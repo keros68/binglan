@@ -2892,99 +2892,336 @@
                                             </StackPanel>
                                         </Border>
                                     </local:SettingsRow>
-                                    <local:SettingsRow Header="模块"
-                                                       Description="勾选要在顶部信息条显示的内容；全局搜索热键可在“冰蓝总览卡”页设置"/>
-                                    <Border Padding="20,4,8,8" Background="{DynamicResource SettingsSurfaceHoverBrush}">
-                                        <UniformGrid x:Name="TopBarModulesPanel" Columns="5" SizeChanged="TopBarModules_SizeChanged">
-                                            <CheckBox x:Name="TopBarClockCheckBox" Content="时钟与日期" Margin="0,8,12,8"
-                                                      AutomationProperties.Name="时钟与日期模块" Checked="TopBarSetting_Changed" Unchecked="TopBarSetting_Changed"/>
-                                            <CheckBox x:Name="TopBarTodoSummaryCheckBox" Content="待办概要" Margin="0,8,12,8"
-                                                      AutomationProperties.Name="待办概要模块" Checked="TopBarSetting_Changed" Unchecked="TopBarSetting_Changed"/>
-                                            <CheckBox x:Name="TopBarWeatherCheckBox" Content="天气" Margin="0,8,12,8"
-                                                      AutomationProperties.Name="天气模块" Checked="TopBarSetting_Changed" Unchecked="TopBarSetting_Changed"/>
-                                            <CheckBox x:Name="TopBarPerformanceCheckBox" Content="性能" Margin="0,8,12,8"
-                                                      AutomationProperties.Name="性能模块" Checked="TopBarSetting_Changed" Unchecked="TopBarSetting_Changed"/>
-                                            <CheckBox x:Name="TopBarAttentionCheckBox" Content="消息提示" Margin="0,8,12,8"
-                                                      AutomationProperties.Name="消息提示模块" Checked="TopBarSetting_Changed" Unchecked="TopBarSetting_Changed"/>
-                                            <CheckBox x:Name="TopBarInputMethodCheckBox" Content="输入法" Margin="0,8,12,8"
-                                                      AutomationProperties.Name="输入法模块" Checked="TopBarSetting_Changed" Unchecked="TopBarSetting_Changed"/>
-                                            <CheckBox x:Name="TopBarVolumeCheckBox" Content="音量" Margin="0,8,12,8"
-                                                      AutomationProperties.Name="音量模块" Checked="TopBarSetting_Changed" Unchecked="TopBarSetting_Changed"/>
-                                            <CheckBox x:Name="TopBarNetworkCheckBox" Content="网络" Margin="0,8,12,8"
-                                                      AutomationProperties.Name="网络模块" Checked="TopBarSetting_Changed" Unchecked="TopBarSetting_Changed"/>
-                                            <CheckBox x:Name="TopBarBatteryCheckBox" Content="电量" Margin="0,8,12,8"
-                                                      AutomationProperties.Name="电量模块" Checked="TopBarSetting_Changed" Unchecked="TopBarSetting_Changed"/>
-                                            <CheckBox x:Name="TopBarSearchCheckBox" Content="搜索" Margin="0,8,12,8"
-                                                      AutomationProperties.Name="搜索模块" Checked="TopBarSetting_Changed" Unchecked="TopBarSetting_Changed"/>
-                                            <CheckBox x:Name="TopBarTrayOverflowCheckBox" Content="系统托盘" Margin="0,8,12,8"
-                                                      AutomationProperties.Name="系统托盘模块" Checked="TopBarSetting_Changed" Unchecked="TopBarSetting_Changed"/>
-                                        </UniformGrid>
-                                    </Border>
-                                    <local:SettingsRow x:Name="TopBarNetworkIconOnlyRow"
-                                                       Header="网络仅显示图标"
-                                                       Description="开启后顶栏只显示信号格或有线图标，隐藏“WLAN”与网络名称文字；悬停仍可查看完整信息"
-                                                       local:SettingsSearch.Keywords="WLAN Wi-Fi 网络 仅图标 隐藏文字">
-                                        <CheckBox x:Name="TopBarNetworkIconOnlyCheckBox"
-                                                  AutomationProperties.Name="网络仅显示图标"
-                                                  Style="{StaticResource ToggleSwitchStyle}"
-                                                  Checked="TopBarSetting_Changed"
-                                                  Unchecked="TopBarSetting_Changed"/>
-                                    </local:SettingsRow>
-                                    <local:SettingsRow x:Name="TopBarShowWifiNameRow"
-                                                       Header="在顶栏显示 Wi-Fi 名称"
-                                                       Description="关闭时只显示信号格和“WLAN”，悬停仍可查看名称和信号强度；录屏或直播时建议关闭"
-                                                       local:SettingsSearch.Keywords="Wi-Fi SSID 网络名称 隐私 录屏">
-                                        <CheckBox x:Name="TopBarShowWifiNameCheckBox"
-                                                  AutomationProperties.Name="在顶栏显示 Wi-Fi 名称"
-                                                  Style="{StaticResource ToggleSwitchStyle}"
-                                                  Checked="TopBarSetting_Changed"
-                                                  Unchecked="TopBarSetting_Changed"/>
-                                    </local:SettingsRow>
-                                    <local:SettingsRow x:Name="TopBarSearchInlineRow"
-                                                       Header="搜索入口直接弹出搜索框"
-                                                       Description="开启后点击顶栏搜索会在顶栏下方弹出搜索框（优先查本机文件，支持输入网址直达或按 Enter 调用默认浏览器搜索）；关闭时打开冰蓝总览卡"
-                                                       local:SettingsSearch.Keywords="搜索 内联 浮窗 总览卡 Everything 必应 Bing Google 谷歌 百度 搜索引擎 默认浏览器 顶部信息条 搜索框">
-                                        <CheckBox x:Name="TopBarSearchInlineCheckBox"
-                                                  AutomationProperties.Name="搜索入口直接弹出搜索框"
-                                                  Style="{StaticResource ToggleSwitchStyle}"
-                                                  Checked="TopBarSetting_Changed"
-                                                  Unchecked="TopBarSetting_Changed"/>
-                                    </local:SettingsRow>
-                                    <local:SettingsRow x:Name="TopBarSearchEngineRow"
-                                                       Header="网页搜索引擎"
-                                                       Description="在顶栏搜索框按 Enter 进行网页搜索时通过默认浏览器打开；输入网址时会直接打开网页"
-                                                       Visibility="Collapsed"
-                                                       local:SettingsSearch.Keywords="搜索引擎 必应 Bing Google 谷歌 百度 自定义网址 默认浏览器 顶栏搜索">
-                                        <ComboBox x:Name="TopBarSearchEngineComboBox"
-                                                  Width="180"
-                                                  AutomationProperties.Name="顶栏网页搜索引擎"
-                                                  SelectionChanged="TopBarSetting_Changed">
-                                            <ComboBoxItem Content="必应（默认）" Tag="bing"/>
-                                            <ComboBoxItem Content="Google" Tag="google"/>
-                                            <ComboBoxItem Content="百度" Tag="baidu"/>
-                                            <ComboBoxItem Content="自定义网址" Tag="custom"/>
-                                        </ComboBox>
-                                    </local:SettingsRow>
-                                    <local:SettingsRow x:Name="TopBarSearchCustomUrlRow"
-                                                       Header="自定义搜索网址"
-                                                       Description="填写包含 {0} 关键词占位符的 http/https 网址，例如 https://duckduckgo.com/?q={0}"
-                                                       Visibility="Collapsed"
-                                                       local:SettingsSearch.Keywords="自定义搜索 搜索引擎 网址模板 占位符 顶栏搜索">
-                                        <StackPanel Width="280">
-                                            <TextBox x:Name="TopBarSearchCustomUrlTextBox"
-                                                     Width="280"
-                                                     AutomationProperties.Name="自定义搜索网址模板"
-                                                     ToolTip="例如：https://duckduckgo.com/?q={0}；按回车或离开输入框后生效"
-                                                     LostFocus="TopBarSearchCustomUrl_Commit"
-                                                     KeyDown="TopBarSearchCustomUrl_KeyDown"/>
-                                            <TextBlock x:Name="TopBarSearchCustomUrlErrorText"
-                                                       Margin="2,4,0,0"
-                                                       FontSize="11.5"
-                                                       Foreground="#C42B1C"
-                                                       TextWrapping="Wrap"
+                                    <local:SettingsRow x:Name="TopBarDensityRow"
+                                                       Header="顶栏风格"
+                                                       Description="一键套用 Mac 极简纯图标、均衡或完整信息流；之后仍可点击下方模块逐项微调"
+                                                       local:SettingsSearch.Keywords="Mac 极简 苹果 风格 预设 仅图标 静音 紧凑 信息流 均衡 音量 电量 网络 输入法 天气 性能 托盘">
+                                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                            <Border Style="{StaticResource SegmentHostStyle}">
+                                                <StackPanel Orientation="Horizontal">
+                                                    <RadioButton x:Name="TopBarDensityMacRadio"
+                                                                 GroupName="TopBarDensity"
+                                                                 Style="{StaticResource SegmentRadioStyle}"
+                                                                 Content="Mac 极简"
+                                                                 AutomationProperties.Name="顶栏风格 Mac 极简"
+                                                                 Checked="TopBarDensityPreset_Click"/>
+                                                    <RadioButton x:Name="TopBarDensityBalancedRadio"
+                                                                 GroupName="TopBarDensity"
+                                                                 Style="{StaticResource SegmentRadioStyle}"
+                                                                 Content="均衡"
+                                                                 AutomationProperties.Name="顶栏风格 均衡"
+                                                                 Checked="TopBarDensityPreset_Click"/>
+                                                    <RadioButton x:Name="TopBarDensityDetailedRadio"
+                                                                 GroupName="TopBarDensity"
+                                                                 Style="{StaticResource SegmentRadioStyle}"
+                                                                 Content="信息流"
+                                                                 AutomationProperties.Name="顶栏风格 信息流"
+                                                                 Checked="TopBarDensityPreset_Click"/>
+                                                </StackPanel>
+                                            </Border>
+                                            <TextBlock x:Name="TopBarDensityCustomBadge"
+                                                       Margin="10,0,0,0"
+                                                       VerticalAlignment="Center"
+                                                       FontSize="12"
+                                                       Foreground="{DynamicResource SettingsFaintInkBrush}"
+                                                       Text="已自定义"
                                                        Visibility="Collapsed"/>
                                         </StackPanel>
                                     </local:SettingsRow>
+                                    <StackPanel x:Name="TopBarVisualEditorPanel"
+                                                Margin="18,10,18,14"
+                                                local:SettingsSearch.EntryName="模块"
+                                                local:SettingsSearch.Keywords="模块 排序 拖拽 组合 布局 音量 静音 仅图标 网络 WLAN Wi-Fi 电量 输入法 徽标 天气 性能 托盘 搜索 搜索引擎 必应 Google 百度 自定义网址 内联 顶部信息条">
+                                        <Grid Margin="0,0,0,8">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel>
+                                                <TextBlock FontSize="13.5"
+                                                           FontWeight="SemiBold"
+                                                           Foreground="{DynamicResource IceInkBrush}"
+                                                           Text="模拟顶栏与模块编排"/>
+                                                <TextBlock Style="{StaticResource CaptionStyle}"
+                                                           Margin="0,2,0,0"
+                                                           Text="拖拽胶囊即可自由排序或左右互移，拖到下方可隐藏；点击任意胶囊单独调整该模块样式"/>
+                                            </StackPanel>
+                                        </Grid>
+
+                                        <!-- 所见即所得模拟顶栏条 -->
+                                        <Border Padding="8,7"
+                                                CornerRadius="10"
+                                                BorderThickness="1"
+                                                Background="{DynamicResource SettingsSurfaceHoverBrush}"
+                                                BorderBrush="{DynamicResource SettingsSurfaceBorderBrush}">
+                                            <Grid x:Name="TopBarVisualBarGrid">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="0.85*"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                    <ColumnDefinition Width="1.85*"/>
+                                                </Grid.ColumnDefinitions>
+                                                <Border x:Name="TopBarVisualLeftZone"
+                                                        Grid.Column="0"
+                                                        MinHeight="34"
+                                                        Padding="4,3"
+                                                        CornerRadius="7"
+                                                        BorderThickness="1"
+                                                        BorderBrush="Transparent"
+                                                        Background="Transparent"
+                                                        AllowDrop="True"
+                                                        DragOver="TopBarVisualZone_DragOver"
+                                                        DragLeave="TopBarVisualZone_DragLeave"
+                                                        Drop="TopBarVisualLeftZone_Drop">
+                                                    <WrapPanel x:Name="TopBarVisualLeftHost" VerticalAlignment="Center"/>
+                                                </Border>
+                                                <Border x:Name="TopBarVisualCenterZone"
+                                                        Grid.Column="1"
+                                                        MinWidth="112"
+                                                        MinHeight="34"
+                                                        VerticalAlignment="Center"
+                                                        Margin="6,0"
+                                                        Padding="6,3"
+                                                        CornerRadius="7"
+                                                        BorderThickness="1"
+                                                        BorderBrush="{DynamicResource SettingsSurfaceBorderBrush}"
+                                                        Background="Transparent"
+                                                        AllowDrop="True"
+                                                        DragOver="TopBarVisualCenterZone_DragOver"
+                                                        DragLeave="TopBarVisualZone_DragLeave"
+                                                        Drop="TopBarVisualCenterZone_Drop">
+                                                    <StackPanel x:Name="TopBarVisualCenterHost"
+                                                                Orientation="Horizontal"
+                                                                HorizontalAlignment="Center"
+                                                                VerticalAlignment="Center"/>
+                                                </Border>
+                                                <Border x:Name="TopBarVisualRightZone"
+                                                        Grid.Column="2"
+                                                        MinHeight="34"
+                                                        Padding="4,3"
+                                                        CornerRadius="7"
+                                                        BorderThickness="1"
+                                                        BorderBrush="Transparent"
+                                                        Background="Transparent"
+                                                        AllowDrop="True"
+                                                        DragOver="TopBarVisualZone_DragOver"
+                                                        DragLeave="TopBarVisualZone_DragLeave"
+                                                        Drop="TopBarVisualRightZone_Drop">
+                                                    <WrapPanel x:Name="TopBarVisualRightHost"
+                                                               HorizontalAlignment="Right"
+                                                               VerticalAlignment="Center"/>
+                                                </Border>
+                                            </Grid>
+                                        </Border>
+
+                                        <!-- 未启用模块池 -->
+                                        <Border x:Name="TopBarVisualHiddenZone"
+                                                Margin="0,8,0,0"
+                                                Padding="10,7"
+                                                CornerRadius="8"
+                                                BorderThickness="1"
+                                                BorderBrush="{DynamicResource SettingsSurfaceBorderBrush}"
+                                                Background="Transparent"
+                                                AllowDrop="True"
+                                                DragOver="TopBarVisualZone_DragOver"
+                                                DragLeave="TopBarVisualZone_DragLeave"
+                                                Drop="TopBarVisualHiddenZone_Drop">
+                                            <StackPanel>
+                                                <TextBlock FontSize="11.5"
+                                                           Foreground="{DynamicResource SettingsFaintInkBrush}"
+                                                           Text="未启用模块（点击胶囊或拖回上方顶栏即可启用，把上方胶囊拖到这里可隐藏）"/>
+                                                <WrapPanel x:Name="TopBarVisualHiddenHost" Margin="0,6,0,0"/>
+                                            </StackPanel>
+                                        </Border>
+
+                                        <!-- 当前选中模块的专属设置面板 -->
+                                        <Border x:Name="TopBarSelectedModuleCard"
+                                                Margin="0,10,0,0"
+                                                Padding="14,10"
+                                                CornerRadius="10"
+                                                BorderThickness="1"
+                                                Background="{DynamicResource SettingsSurfaceHoverBrush}"
+                                                BorderBrush="{DynamicResource SettingsSurfaceBorderBrush}">
+                                            <StackPanel>
+                                                <Grid Margin="0,0,0,8">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <StackPanel VerticalAlignment="Center">
+                                                        <TextBlock x:Name="TopBarSelectedModuleTitle"
+                                                                   FontSize="13.5"
+                                                                   FontWeight="SemiBold"
+                                                                   Foreground="{DynamicResource IceInkBrush}"/>
+                                                        <TextBlock x:Name="TopBarSelectedModuleSummary"
+                                                                   Style="{StaticResource CaptionStyle}"
+                                                                   Margin="0,2,0,0"/>
+                                                    </StackPanel>
+                                                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                                        <Button x:Name="TopBarSelectedMoveLeftButton"
+                                                                Style="{StaticResource GhostButtonStyle}"
+                                                                Content="←"
+                                                                MinWidth="30"
+                                                                Height="28"
+                                                                Padding="6,0"
+                                                                Margin="0,0,4,0"
+                                                                ToolTip="向左移"
+                                                                Click="TopBarSelectedMoveLeft_Click"/>
+                                                        <Button x:Name="TopBarSelectedMoveRightButton"
+                                                                Style="{StaticResource GhostButtonStyle}"
+                                                                Content="→"
+                                                                MinWidth="30"
+                                                                Height="28"
+                                                                Padding="6,0"
+                                                                Margin="0,0,6,0"
+                                                                ToolTip="向右移"
+                                                                Click="TopBarSelectedMoveRight_Click"/>
+                                                        <Button x:Name="TopBarSelectedSwitchSideButton"
+                                                                Style="{StaticResource GhostButtonStyle}"
+                                                                Height="28"
+                                                                Padding="10,0"
+                                                                Margin="0,0,10,0"
+                                                                Click="TopBarSelectedSwitchSide_Click"/>
+                                                        <CheckBox x:Name="TopBarSelectedModuleEnabledCheckBox"
+                                                                  AutomationProperties.Name="启用当前选中顶栏模块"
+                                                                  Style="{StaticResource ToggleSwitchStyle}"
+                                                                  Checked="TopBarSelectedModuleEnabled_Changed"
+                                                                  Unchecked="TopBarSelectedModuleEnabled_Changed"/>
+                                                    </StackPanel>
+                                                </Grid>
+
+                                                <StackPanel x:Name="TopBarSelectedModuleStylePanel">
+                                                    <!-- 通用样式下拉（音量/网络/电量/输入法/天气/性能/托盘共用） -->
+                                                    <Grid x:Name="TopBarSelectedStyleRow" Margin="0,4,0,0" Visibility="Collapsed">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*"/>
+                                                            <ColumnDefinition Width="Auto"/>
+                                                        </Grid.ColumnDefinitions>
+                                                        <StackPanel VerticalAlignment="Center" Margin="0,0,12,0">
+                                                            <TextBlock x:Name="TopBarSelectedStyleHeader"
+                                                                       FontSize="13"
+                                                                       Foreground="{DynamicResource IceInkBrush}"/>
+                                                            <TextBlock x:Name="TopBarSelectedStyleDesc"
+                                                                       Style="{StaticResource CaptionStyle}"
+                                                                       Margin="0,2,0,0"/>
+                                                        </StackPanel>
+                                                        <ComboBox x:Name="TopBarSelectedStyleComboBox"
+                                                                  Grid.Column="1"
+                                                                  Width="210"
+                                                                  VerticalAlignment="Center"
+                                                                  AutomationProperties.Name="顶栏选中模块显示样式"
+                                                                  SelectionChanged="TopBarSelectedStyle_Changed"/>
+                                                    </Grid>
+
+                                                    <!-- 搜索模块专属面板 -->
+                                                    <StackPanel x:Name="TopBarSelectedSearchPanel"
+                                                                Visibility="Collapsed"
+                                                                local:SettingsSearch.AccordionPart="TopBarModule:Search">
+                                                        <Grid x:Name="TopBarSearchPlacementRow"
+                                                              Margin="0,4,0,8"
+                                                              local:SettingsSearch.EntryName="搜索入口位置与形态"
+                                                              local:SettingsSearch.Keywords="搜索 放大镜 Spotlight 居中 侧边 图标">
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="*"/>
+                                                                <ColumnDefinition Width="Auto"/>
+                                                            </Grid.ColumnDefinitions>
+                                                            <StackPanel VerticalAlignment="Center" Margin="0,0,12,0">
+                                                                <TextBlock FontSize="13" Foreground="{DynamicResource IceInkBrush}" Text="搜索入口位置与形态"/>
+                                                                <TextBlock Style="{StaticResource CaptionStyle}" Margin="0,2,0,0" Text="放大镜图标模式可像 Mac Spotlight 一样拖到右侧或左侧，让顶栏居中留白"/>
+                                                            </StackPanel>
+                                                            <ComboBox x:Name="TopBarSearchPlacementComboBox"
+                                                                      Grid.Column="1"
+                                                                      Width="210"
+                                                                      VerticalAlignment="Center"
+                                                                      AutomationProperties.Name="顶栏搜索入口位置与形态"
+                                                                      SelectionChanged="TopBarSearchOptions_Changed">
+                                                                <ComboBoxItem Content="紧凑放大镜图标（Mac 风格）" Tag="SideIcon"/>
+                                                                <ComboBoxItem Content="居中搜索条" Tag="CenterBar"/>
+                                                            </ComboBox>
+                                                        </Grid>
+                                                        <Grid x:Name="TopBarSearchInlineRow"
+                                                              Margin="0,4,0,8"
+                                                              local:SettingsSearch.EntryName="搜索入口直接弹出搜索框"
+                                                              local:SettingsSearch.Keywords="内联 搜索框 搜索引擎 浏览器 必应 Google 百度">
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="*"/>
+                                                                <ColumnDefinition Width="Auto"/>
+                                                            </Grid.ColumnDefinitions>
+                                                            <StackPanel VerticalAlignment="Center" Margin="0,0,12,0">
+                                                                <TextBlock FontSize="13" Foreground="{DynamicResource IceInkBrush}" Text="搜索入口直接弹出搜索框"/>
+                                                                <TextBlock Style="{StaticResource CaptionStyle}" Margin="0,2,0,0" Text="开启后在顶栏下方弹出磨砂玻璃搜索框（本机应用/文件优先，无匹配时用默认浏览器搜索）；关闭时打开冰蓝总览卡"/>
+                                                            </StackPanel>
+                                                            <CheckBox x:Name="TopBarSearchInlineCheckBox"
+                                                                      Grid.Column="1"
+                                                                      VerticalAlignment="Center"
+                                                                      AutomationProperties.Name="搜索入口直接弹出搜索框"
+                                                                      Style="{StaticResource ToggleSwitchStyle}"
+                                                                      Checked="TopBarSearchOptions_Changed"
+                                                                      Unchecked="TopBarSearchOptions_Changed"/>
+                                                        </Grid>
+                                                        <Grid x:Name="TopBarSearchEngineRow"
+                                                              Margin="0,4,0,8"
+                                                              Visibility="Collapsed"
+                                                              local:SettingsSearch.EntryName="网页搜索引擎"
+                                                              local:SettingsSearch.Keywords="搜索 引擎 必应 Bing Google 百度 自定义网址">
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="*"/>
+                                                                <ColumnDefinition Width="Auto"/>
+                                                            </Grid.ColumnDefinitions>
+                                                            <StackPanel VerticalAlignment="Center" Margin="0,0,12,0">
+                                                                <TextBlock FontSize="13" Foreground="{DynamicResource IceInkBrush}" Text="网页搜索引擎"/>
+                                                                <TextBlock Style="{StaticResource CaptionStyle}" Margin="0,2,0,0" Text="本机无匹配时按 Enter 通过默认浏览器打开搜索；输入网址时直达网页"/>
+                                                            </StackPanel>
+                                                            <ComboBox x:Name="TopBarSearchEngineComboBox"
+                                                                      Grid.Column="1"
+                                                                      Width="180"
+                                                                      VerticalAlignment="Center"
+                                                                      AutomationProperties.Name="顶栏网页搜索引擎"
+                                                                      SelectionChanged="TopBarSearchOptions_Changed">
+                                                                <ComboBoxItem Content="必应（默认）" Tag="bing"/>
+                                                                <ComboBoxItem Content="Google" Tag="google"/>
+                                                                <ComboBoxItem Content="百度" Tag="baidu"/>
+                                                                <ComboBoxItem Content="自定义网址" Tag="custom"/>
+                                                            </ComboBox>
+                                                        </Grid>
+                                                        <Grid x:Name="TopBarSearchCustomUrlRow"
+                                                              Margin="0,4,0,0"
+                                                              Visibility="Collapsed"
+                                                              local:SettingsSearch.EntryName="自定义搜索网址"
+                                                              local:SettingsSearch.Keywords="自定义 搜索 网址 URL 模板 占位符">
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="*"/>
+                                                                <ColumnDefinition Width="Auto"/>
+                                                            </Grid.ColumnDefinitions>
+                                                            <StackPanel VerticalAlignment="Center" Margin="0,0,12,0">
+                                                                <TextBlock FontSize="13" Foreground="{DynamicResource IceInkBrush}" Text="自定义搜索网址"/>
+                                                                <TextBlock Style="{StaticResource CaptionStyle}" Margin="0,2,0,0" Text="填写含 {0} 关键词占位符的 http/https 网址，例如 https://duckduckgo.com/?q={0}"/>
+                                                            </StackPanel>
+                                                            <StackPanel Grid.Column="1" Width="260">
+                                                                <TextBox x:Name="TopBarSearchCustomUrlTextBox"
+                                                                         Width="260"
+                                                                         AutomationProperties.Name="自定义搜索网址模板"
+                                                                         ToolTip="例如：https://duckduckgo.com/?q={0}；按回车或离开输入框后生效"
+                                                                         LostFocus="TopBarSearchCustomUrl_Commit"
+                                                                         KeyDown="TopBarSearchCustomUrl_KeyDown"/>
+                                                                <TextBlock x:Name="TopBarSearchCustomUrlErrorText"
+                                                                           Margin="2,4,0,0"
+                                                                           FontSize="11.5"
+                                                                           Foreground="#C42B1C"
+                                                                           TextWrapping="Wrap"
+                                                                           Visibility="Collapsed"/>
+                                                            </StackPanel>
+                                                        </Grid>
+                                                    </StackPanel>
+
+                                                    <!-- 无额外样式时的简短说明（时钟/待办/消息提示） -->
+                                                    <TextBlock x:Name="TopBarSelectedModuleNote"
+                                                               Style="{StaticResource CaptionStyle}"
+                                                               Margin="0,2,0,0"
+                                                               Visibility="Collapsed"/>
+                                                </StackPanel>
+                                            </StackPanel>
+                                        </Border>
+                                    </StackPanel>
                                 </StackPanel>
                             </local:SettingsGroup>
 

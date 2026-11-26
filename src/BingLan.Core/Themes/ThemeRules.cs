@@ -27,6 +27,7 @@ public static class ThemeRules
         ArgumentNullException.ThrowIfNull(state);
         DesktopExperienceRules.Normalize(state.DesktopExperience);
 
+        var topBarSearchPlacement = TopBarRules.EffectiveSearchPlacement(state.TopBar);
         var (topBarLeftOrder, topBarRightOrder) = TopBarRules.ResolveOrder(state.TopBar);
         var package = new ThemePackage
         {
@@ -45,6 +46,13 @@ public static class ThemeRules
                 TopBarModules = CopyTopBarModules(state.TopBar.Modules),
                 TopBarLeftOrder = [.. topBarLeftOrder],
                 TopBarRightOrder = [.. topBarRightOrder],
+                TopBarSearchPlacement = topBarSearchPlacement,
+                TopBarVolumeStyle = TopBarRules.EffectiveVolumeStyle(state.TopBar),
+                TopBarBatteryStyle = TopBarRules.EffectiveBatteryStyle(state.TopBar),
+                TopBarInputMethodStyle = TopBarRules.EffectiveInputMethodStyle(state.TopBar),
+                TopBarWeatherStyle = TopBarRules.EffectiveWeatherStyle(state.TopBar),
+                TopBarPerformanceStyle = TopBarRules.EffectivePerformanceStyle(state.TopBar),
+                TopBarTrayIconOnly = TopBarRules.EffectiveTrayIconOnly(state.TopBar),
                 TopBarFollowCardLook = state.TopBar.FollowCardLook,
                 TopBarSurfaceColor = state.TopBar.SurfaceColor,
                 TopBarSurfaceOpacity = state.TopBar.SurfaceOpacity
@@ -315,11 +323,37 @@ public static class ThemeRules
         {
             package.Bindings.TopBarVisibility = TopBarVisibilityMode.ReserveTopEdge;
         }
+        if (package.Bindings.TopBarSearchPlacement is { } searchPlacement && !Enum.IsDefined(searchPlacement))
+        {
+            package.Bindings.TopBarSearchPlacement = null;
+        }
+        if (package.Bindings.TopBarVolumeStyle is { } volumeStyle && !Enum.IsDefined(volumeStyle))
+        {
+            package.Bindings.TopBarVolumeStyle = null;
+        }
+        if (package.Bindings.TopBarBatteryStyle is { } batteryStyle && !Enum.IsDefined(batteryStyle))
+        {
+            package.Bindings.TopBarBatteryStyle = null;
+        }
+        if (package.Bindings.TopBarInputMethodStyle is { } imeStyle && !Enum.IsDefined(imeStyle))
+        {
+            package.Bindings.TopBarInputMethodStyle = null;
+        }
+        if (package.Bindings.TopBarWeatherStyle is { } weatherStyle && !Enum.IsDefined(weatherStyle))
+        {
+            package.Bindings.TopBarWeatherStyle = null;
+        }
+        if (package.Bindings.TopBarPerformanceStyle is { } perfStyle && !Enum.IsDefined(perfStyle))
+        {
+            package.Bindings.TopBarPerformanceStyle = null;
+        }
         if (package.Bindings.TopBarLeftOrder is not null || package.Bindings.TopBarRightOrder is not null)
         {
+            var includeSearch = package.Bindings.TopBarSearchPlacement == TopBarSearchPlacement.SideIcon;
             var (left, right) = TopBarRules.NormalizeOrder(
                 package.Bindings.TopBarLeftOrder,
-                package.Bindings.TopBarRightOrder);
+                package.Bindings.TopBarRightOrder,
+                includeSearch);
             package.Bindings.TopBarLeftOrder = left;
             package.Bindings.TopBarRightOrder = right;
         }
@@ -379,10 +413,50 @@ public static class ThemeRules
         {
             topBar.Modules = CopyTopBarModules(modules);
         }
+        if (package.Bindings.TopBarSearchPlacement is { } searchPlacement && Enum.IsDefined(searchPlacement))
+        {
+            topBar.SearchPlacement = searchPlacement;
+        }
+        else if (package.Bindings.TopBarModules is not null
+            || package.Bindings.TopBarLeftOrder is not null
+            || package.Bindings.TopBarRightOrder is not null)
+        {
+            // Themes exported before SearchPlacement existed always displayed Search centered.
+            topBar.SearchPlacement = TopBarSearchPlacement.CenterBar;
+        }
+        if (package.Bindings.TopBarVolumeStyle is { } volumeStyle && Enum.IsDefined(volumeStyle))
+        {
+            topBar.VolumeStyle = volumeStyle;
+        }
+        if (package.Bindings.TopBarBatteryStyle is { } batteryStyle && Enum.IsDefined(batteryStyle))
+        {
+            topBar.BatteryStyle = batteryStyle;
+        }
+        if (package.Bindings.TopBarInputMethodStyle is { } imeStyle && Enum.IsDefined(imeStyle))
+        {
+            topBar.InputMethodStyle = imeStyle;
+        }
+        if (package.Bindings.TopBarWeatherStyle is { } weatherStyle && Enum.IsDefined(weatherStyle))
+        {
+            topBar.WeatherStyle = weatherStyle;
+        }
+        if (package.Bindings.TopBarPerformanceStyle is { } perfStyle && Enum.IsDefined(perfStyle))
+        {
+            topBar.PerformanceStyle = perfStyle;
+        }
+        if (package.Bindings.TopBarTrayIconOnly is { } trayIconOnly)
+        {
+            topBar.TrayIconOnly = trayIconOnly;
+        }
         if (package.Bindings.TopBarLeftOrder is not null || package.Bindings.TopBarRightOrder is not null)
         {
             topBar.LeftOrder = package.Bindings.TopBarLeftOrder is { } left ? [.. left] : null;
             topBar.RightOrder = package.Bindings.TopBarRightOrder is { } right ? [.. right] : null;
+            TopBarRules.Normalize(topBar);
+        }
+        else if (package.Bindings.TopBarSearchPlacement is not null
+            || package.Bindings.TopBarModules is not null)
+        {
             TopBarRules.Normalize(topBar);
         }
         topBar.FollowCardLook = package.Bindings.TopBarFollowCardLook;

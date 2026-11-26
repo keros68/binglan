@@ -325,6 +325,7 @@ public class WidgetWindowBase : Window
         {
             if (!_isApplyingMinimumFloor
                 && !_isApplyingTaskbarSafeBounds
+                && !_isApplyingReservedEdges
                 && !_isUpdatingNativeWindowShape
                 && !_isRecoveringPlacement)
             {
@@ -1312,7 +1313,11 @@ public class WidgetWindowBase : Window
         _isRecoveringPlacement = true;
         try
         {
-            moved = WindowScreenRecovery.RecoverOnShow(this, _placement);
+            moved = WindowScreenRecovery.RecoverOnShow(
+                this,
+                _placement,
+                anchorTop: PreferClampHeightAtBottomEdge,
+                isLocked: IsWidgetLocked);
             EnsureTaskbarSafeBounds();
         }
         finally
@@ -1429,6 +1434,13 @@ public class WidgetWindowBase : Window
     }
 
     protected virtual bool SuppressLayeredClip => false;
+
+    /// <summary>
+    /// When true (scrollable cards such as file boxes), hitting the bottom edge of the work area
+    /// or taskbar clamps height while keeping <see cref="Window.Top"/> anchored instead of pushing
+    /// the card upward.
+    /// </summary>
+    internal virtual bool PreferClampHeightAtBottomEdge => false;
 
     protected void RefreshLayeredClip() => UpdateLayeredClip();
 
@@ -1646,6 +1658,9 @@ public class WidgetWindowBase : Window
     /// measured from where the user put it: a card pushed aside goes back once the
     /// edge is free. <paramref name="targetFor"/> maps that spot to where it may sit now.
     /// </summary>
+    private static readonly System.Reflection.MethodInfo ReservedEdgeTargetMethod =
+        ((Func<BingLan.Core.Dock.PixelRect, BingLan.Core.Dock.PixelRect?>)WindowScreenRecovery.ReservedEdgeTarget).Method;
+
     internal void ApplyReservedEdges(
         Func<BingLan.Core.Dock.PixelRect, BingLan.Core.Dock.PixelRect?> targetFor,
         string? layout = null)
@@ -1666,7 +1681,15 @@ public class WidgetWindowBase : Window
 
         var current = new BingLan.Core.Dock.PixelRect(native.Left, native.Top, native.Right, native.Bottom);
         var wanted = _displacedFrom ?? current;
-        if (targetFor(wanted) is not { } target)
+        var resolvedTarget = PreferClampHeightAtBottomEdge
+            && targetFor.Target is null
+            && targetFor.Method == ReservedEdgeTargetMethod
+            ? WindowScreenRecovery.ReservedEdgeTargetClampingBottom(
+                wanted,
+                MinHeight > 0d ? (int)Math.Ceiling(MinHeight * VisualTreeHelper.GetDpi(this).DpiScaleY) : 1,
+                IsWidgetLocked)
+            : targetFor(wanted);
+        if (resolvedTarget is not { } target)
         {
             return;
         }
@@ -1676,14 +1699,17 @@ public class WidgetWindowBase : Window
             _isApplyingReservedEdges = true;
             try
             {
+                var sizeChanged = target.Width != current.Width || target.Height != current.Height;
+                var flags = NativeMethods.SwpNoZOrder | NativeMethods.SwpNoActivate
+                    | (sizeChanged ? 0u : NativeMethods.SwpNoSize);
                 NativeMethods.SetWindowPos(
                     handle,
                     0,
                     target.Left,
                     target.Top,
-                    0,
-                    0,
-                    NativeMethods.SwpNoSize | NativeMethods.SwpNoZOrder | NativeMethods.SwpNoActivate);
+                    sizeChanged ? target.Width : 0,
+                    sizeChanged ? target.Height : 0,
+                    flags);
             }
             finally
             {
@@ -1694,7 +1720,7 @@ public class WidgetWindowBase : Window
         _displacedLayout = _displacedFrom is null ? null : layout;
     }
 
-    private void EnsureTaskbarSafeBounds()
+    private void EnsureTaskbarSafeBounds(bool preferClampHeight = false, bool keepTopFixedOnBottom = false)
     {
         if (_source is null ||
             _source.IsDisposed ||
@@ -1707,7 +1733,20 @@ public class WidgetWindowBase : Window
         _isApplyingTaskbarSafeBounds = true;
         try
         {
-            TaskbarEdgeGuard.EnsureWindowBounds(_source.Handle);
+            if (preferClampHeight || PreferClampHeightAtBottomEdge)
+            {
+                var minHeightPx = MinHeight > 0d
+                    ? (int)Math.Ceiling(MinHeight * VisualTreeHelper.GetDpi(this).DpiScaleY)
+                    : 1;
+                TaskbarEdgeGuard.EnsureWindowBoundsClampingBottom(
+                    _source.Handle,
+                    minHeightPx,
+                    keepTopFixed: keepTopFixedOnBottom || IsWidgetLocked);
+            }
+            else
+            {
+                TaskbarEdgeGuard.EnsureWindowBounds(_source.Handle);
+            }
         }
         finally
         {
@@ -1771,23 +1810,35 @@ public class WidgetWindowBase : Window
                     && centerY >= candidate.Bounds.Top && centerY < candidate.Bounds.Bottom)
                 ?? monitors.FirstOrDefault(candidate => candidate.IsPrimary)
                 ?? monitors[0];
-            work = monitor.WorkingArea;
+            work = PreferClampHeightAtBottomEdge
+                ? TaskbarEdgeGuard.AvoidNativeTaskbar(monitor.WorkingArea, monitor.Bounds)
+                : monitor.WorkingArea;
         }
-        var left = Math.Clamp(current.Left, work.Left, Math.Max(work.Left, work.Right - current.Width));
-        var top = Math.Clamp(current.Top, work.Top, Math.Max(work.Top, work.Bottom - current.Height));
-        if (left == current.Left && top == current.Top)
+        var minHeightPx = MinHeight > 0d
+            ? (int)Math.Ceiling(MinHeight * VisualTreeHelper.GetDpi(this).DpiScaleY)
+            : 1;
+        var fitted = BingLan.Core.Dock.PlacementResolver.FitExpandedWithinWorkArea(
+            current,
+            work,
+            minHeightPx,
+            anchorTop: PreferClampHeightAtBottomEdge,
+            isLocked: IsWidgetLocked);
+        if (fitted == current)
         {
             return;
         }
 
+        var sizeChanged = fitted.Width != current.Width || fitted.Height != current.Height;
+        var flags = NativeMethods.SwpNoZOrder | NativeMethods.SwpNoActivate
+            | (sizeChanged ? 0u : NativeMethods.SwpNoSize);
         NativeMethods.SetWindowPos(
             _source.Handle,
             0,
-            left,
-            top,
-            0,
-            0,
-            NativeMethods.SwpNoSize | NativeMethods.SwpNoZOrder | NativeMethods.SwpNoActivate);
+            fitted.Left,
+            fitted.Top,
+            sizeChanged ? fitted.Width : 0,
+            sizeChanged ? fitted.Height : 0,
+            flags);
     }
 
     // Nothing but the dragged card moves during a drag, so the monitors, the other cards
@@ -2057,6 +2108,21 @@ public class WidgetWindowBase : Window
         if (drag.Edges.HasFlag(ResizeEdges.Bottom))
         {
             bottom = Math.Max(start.Bottom + dy, top + minimumHeight);
+            if (!drag.Edges.HasFlag(ResizeEdges.Top))
+            {
+                var anchor = new TaskbarEdgeGuard.PixelRect
+                {
+                    Left = start.Left,
+                    Top = start.Top,
+                    Right = start.Right,
+                    Bottom = start.Bottom
+                };
+                if (TaskbarEdgeGuard.GetBottomResizeLimit(anchor, includeReservedWorkArea: PreferClampHeightAtBottomEdge) is { } bottomLimit
+                    && bottom > bottomLimit)
+                {
+                    bottom = Math.Max(top + minimumHeight, bottomLimit);
+                }
+            }
         }
         NativeMethods.SetWindowPos(
             _source!.Handle,
@@ -2085,11 +2151,21 @@ public class WidgetWindowBase : Window
             TaskbarEdgeGuard.EndMove();
             SnapGuideOverlay.HideGuides();
             SnapGridOverlay.HideGrid();
-            EnsureTaskbarSafeBounds();
+            EnsureTaskbarSafeBounds(
+                preferClampHeight: drag.Edges != ResizeEdges.None,
+                keepTopFixedOnBottom: drag.Edges.HasFlag(ResizeEdges.Bottom) && !drag.Edges.HasFlag(ResizeEdges.Top));
+        }
+        if (drag.Moving && drag.Edges != ResizeEdges.None)
+        {
+            OnResizeEnded();
         }
         OnDragMoveEnded(wasMoving && committed, altHeld);
         ScheduleDragBitmapCacheRelease();
         OnDragEnded();
+    }
+
+    protected virtual void OnResizeEnded()
+    {
     }
 
     // Moving a transparent window under software rendering redraws it on every step; enabling

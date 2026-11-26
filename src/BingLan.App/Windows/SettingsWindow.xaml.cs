@@ -2174,10 +2174,17 @@ public partial class SettingsWindow : Window
         {
             SelectSearchScope(scope, entry.Target);
         }
-        if (entry.AccordionPart is { Length: > 0 } partKey
-            && AppearancePartLookRules.TryParsePartKey(partKey, out var part))
+        if (entry.AccordionPart is { Length: > 0 } partKey)
         {
-            ExpandAppearancePart(AppearancePartLookRules.ExpandAccordion(_expandedAppearancePart, part));
+            if (partKey.StartsWith("TopBarModule:", StringComparison.Ordinal)
+                && Enum.TryParse<TopBarModuleKind>(partKey["TopBarModule:".Length..], out var topBarModule))
+            {
+                SelectTopBarModule(topBarModule);
+            }
+            else if (AppearancePartLookRules.TryParsePartKey(partKey, out var part))
+            {
+                ExpandAppearancePart(AppearancePartLookRules.ExpandAccordion(_expandedAppearancePart, part));
+            }
         }
         foreach (var fold in entry.Folds)
         {
@@ -3540,28 +3547,6 @@ public partial class SettingsWindow : Window
                 double.IsFinite(state.Height) ? state.Height : TopBarState.DefaultHeightDip,
                 TopBarState.MinimumHeightDip,
                 TopBarState.MaximumHeightDip);
-            TopBarClockCheckBox.IsChecked = state.Modules.Clock;
-            TopBarTodoSummaryCheckBox.IsChecked = state.Modules.TodoSummary;
-            TopBarWeatherCheckBox.IsChecked = state.Modules.Weather;
-            TopBarPerformanceCheckBox.IsChecked = state.Modules.Performance;
-            TopBarAttentionCheckBox.IsChecked = state.Modules.Attention;
-            TopBarInputMethodCheckBox.IsChecked = state.Modules.InputMethod;
-            TopBarVolumeCheckBox.IsChecked = state.Modules.Volume;
-            TopBarNetworkCheckBox.IsChecked = state.Modules.Network;
-            TopBarNetworkIconOnlyCheckBox.IsChecked = state.NetworkIconOnly == true;
-            TopBarNetworkIconOnlyRow.IsEnabled = state.Modules.Network;
-            TopBarShowWifiNameCheckBox.IsChecked = state.ShowWifiName == true;
-            TopBarShowWifiNameRow.IsEnabled = state.Modules.Network && state.NetworkIconOnly != true;
-            TopBarBatteryCheckBox.IsChecked = state.Modules.Battery;
-            TopBarSearchCheckBox.IsChecked = state.Modules.Search;
-            TopBarSearchInlineCheckBox.IsChecked = state.SearchInline == true;
-            SelectTopBarSearchEngine(state.SearchEngine);
-            TopBarSearchCustomUrlTextBox.Text = state.SearchCustomUrl ?? string.Empty;
-            SetTopBarSearchCustomUrlError(null);
-            UpdateTopBarSearchEngineUi(state);
-            TopBarTrayOverflowCheckBox.IsChecked = state.Modules.TrayOverflow;
-            TopBarTrayOverflowCheckBox.Visibility = OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000)
-                ? Visibility.Visible : Visibility.Collapsed;
             LoadTopBarSearchHotkey();
 
             TopBarMonitorComboBox.Items.Clear();
@@ -3579,6 +3564,7 @@ public partial class SettingsWindow : Window
                 }
             }
 
+            LoadTopBarVisualEditor();
             LoadTopBarOrderList();
             LoadTopBarLook();
         }
@@ -3604,32 +3590,11 @@ public partial class SettingsWindow : Window
         state.VisibilityMode = TopBarSmartHideRadio.IsChecked == true
             ? TopBarVisibilityMode.SmartHide
             : TopBarVisibilityMode.ReserveTopEdge;
-        state.Modules.Clock = TopBarClockCheckBox.IsChecked == true;
-        state.Modules.TodoSummary = TopBarTodoSummaryCheckBox.IsChecked == true;
-        state.Modules.Weather = TopBarWeatherCheckBox.IsChecked == true;
-        state.Modules.Performance = TopBarPerformanceCheckBox.IsChecked == true;
-        state.Modules.Attention = TopBarAttentionCheckBox.IsChecked == true;
-        state.Modules.InputMethod = TopBarInputMethodCheckBox.IsChecked == true;
-        state.Modules.Volume = TopBarVolumeCheckBox.IsChecked == true;
-        state.Modules.Network = TopBarNetworkCheckBox.IsChecked == true;
-        state.NetworkIconOnly = TopBarNetworkIconOnlyCheckBox.IsChecked == true;
-        TopBarNetworkIconOnlyRow.IsEnabled = state.Modules.Network;
-        state.ShowWifiName = TopBarShowWifiNameCheckBox.IsChecked == true;
-        TopBarShowWifiNameRow.IsEnabled = state.Modules.Network && state.NetworkIconOnly != true;
-        state.Modules.Battery = TopBarBatteryCheckBox.IsChecked == true;
-        state.Modules.Search = TopBarSearchCheckBox.IsChecked == true;
-        state.SearchInline = TopBarSearchInlineCheckBox.IsChecked == true;
-        if (TopBarSearchEngineComboBox.SelectedItem is ComboBoxItem { Tag: string engineKey })
-        {
-            var normalizedEngine = TopBarSearchRowRules.NormalizeEngineKey(engineKey);
-            state.SearchEngine = normalizedEngine == TopBarSearchRowRules.EngineBing ? null : normalizedEngine;
-        }
-        UpdateTopBarSearchEngineUi(state);
-        state.Modules.TrayOverflow = TopBarTrayOverflowCheckBox.IsChecked == true;
         if (TopBarMonitorComboBox.SelectedItem is ComboBoxItem { Tag: string deviceName })
         {
             state.MonitorDeviceName = deviceName;
         }
+        LoadTopBarVisualEditor();
         LoadTopBarOrderList();
         ApplyTopBarChange(state.IsEnabled ? "已应用" : "顶部信息条已关闭");
         RefreshAppearanceOverrides();
@@ -3870,6 +3835,17 @@ public partial class SettingsWindow : Window
             AutomationProperties.SetName(moveRight, $"把{label}向右移");
             moveRight.Click += (_, _) => MoveTopBarModule(kind, 1);
 
+            var toggleVisibility = new Button
+            {
+                Content = enabled ? "隐藏" : "显示",
+                Height = 28,
+                Padding = new Thickness(10, 0, 10, 0),
+                Margin = new Thickness(0, 0, 6, 0),
+                Style = (Style)FindResource("GhostButtonStyle")
+            };
+            AutomationProperties.SetName(toggleVisibility, enabled ? $"隐藏{label}" : $"显示{label}");
+            toggleVisibility.Click += (_, _) => SetTopBarModuleEnabled(kind, !enabled);
+
             var targetSide = side == TopBarModuleSide.Left ? TopBarModuleSide.Right : TopBarModuleSide.Left;
             var switchLabel = targetSide == TopBarModuleSide.Right ? "移到右侧" : "移到左侧";
             var switchSide = new Button
@@ -3882,6 +3858,7 @@ public partial class SettingsWindow : Window
             AutomationProperties.SetName(switchSide, $"把{label}{switchLabel}");
             switchSide.Click += (_, _) => MoveTopBarModuleSide(kind, targetSide);
 
+            actions.Children.Add(toggleVisibility);
             actions.Children.Add(moveLeft);
             actions.Children.Add(moveRight);
             actions.Children.Add(switchSide);
@@ -3917,6 +3894,7 @@ public partial class SettingsWindow : Window
             return;
         }
 
+        LoadTopBarVisualEditor();
         LoadTopBarOrderList();
         ApplyTopBarChange($"已调整“{TopBarRules.ModuleLabel(kind)}”位置");
     }
@@ -3933,6 +3911,7 @@ public partial class SettingsWindow : Window
             return;
         }
 
+        LoadTopBarVisualEditor();
         LoadTopBarOrderList();
         var sideName = targetSide == TopBarModuleSide.Left ? "左侧" : "右侧";
         ApplyTopBarChange($"已将“{TopBarRules.ModuleLabel(kind)}”移到{sideName}");
@@ -3945,17 +3924,12 @@ public partial class SettingsWindow : Window
             return;
         }
 
+        LoadTopBarVisualEditor();
         LoadTopBarOrderList();
         ApplyTopBarChange("已恢复顶部信息条默认模块顺序");
     }
 
     // ---------------------------------------------------------------- 顶栏搜索热键
-
-    private void TopBarModules_SizeChanged(object sender, SizeChangedEventArgs e)
-    {
-        if (sender is System.Windows.Controls.Primitives.UniformGrid grid)
-            grid.Columns = Math.Clamp((int)(grid.ActualWidth / 150d), 2, 5);
-    }
 
     /// <summary>
     /// A click-to-record capture: the next modifier-plus-key press becomes the search

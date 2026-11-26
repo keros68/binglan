@@ -16,6 +16,7 @@ internal static class TaskbarEdgeGuard
     private const uint AbeTop = 1;
     private const uint AbeRight = 2;
     private const uint AbeBottom = 3;
+    private const uint MonitorDefaultToNull = 0;
     private const uint MonitorDefaultToNearest = 2;
 
     internal sealed record NativeTaskbarLayout(DockEdge Edge, CoreRect Bounds, bool AutoHidden);
@@ -147,6 +148,152 @@ internal static class TaskbarEdgeGuard
             NativeMethods.SwpNoSize |
             NativeMethods.SwpNoZOrder |
             NativeMethods.SwpNoActivate);
+    }
+
+    internal static bool EnsureWindowBoundsClampingBottom(nint window, int minimumHeight, bool keepTopFixed)
+    {
+        if (window == 0 || !GetWindowRect(window, out var rect))
+        {
+            return false;
+        }
+
+        var originalWidth = rect.Width;
+        var originalHeight = rect.Height;
+        var monitor = MonitorFromRect(ref rect, MonitorDefaultToNearest);
+        if (monitor == 0)
+        {
+            return false;
+        }
+
+        var monitorInfo = new MonitorInfo
+        {
+            Size = Marshal.SizeOf<MonitorInfo>()
+        };
+        if (!GetMonitorInfo(monitor, ref monitorInfo))
+        {
+            return false;
+        }
+
+        var edges = GetAutoHideEdges(monitorInfo.MonitorArea);
+        if (!ConstrainToAutoHideEdgesClampingBottom(ref rect, monitorInfo.MonitorArea, edges, minimumHeight, keepTopFixed))
+        {
+            return false;
+        }
+
+        var sizeChanged = rect.Width != originalWidth || rect.Height != originalHeight;
+        var flags = NativeMethods.SwpNoZOrder | NativeMethods.SwpNoActivate | (sizeChanged ? 0u : NativeMethods.SwpNoSize);
+        return NativeMethods.SetWindowPos(
+            window,
+            0,
+            rect.Left,
+            rect.Top,
+            sizeChanged ? rect.Width : 0,
+            sizeChanged ? rect.Height : 0,
+            flags);
+    }
+
+    internal static int? GetBottomResizeLimit(PixelRect anchorRect, bool includeReservedWorkArea)
+    {
+        var topAnchor = new NativePoint
+        {
+            X = anchorRect.Left + (anchorRect.Width / 2),
+            Y = anchorRect.Top
+        };
+        var monitor = MonitorFromPoint(topAnchor, MonitorDefaultToNull);
+        if (monitor == 0)
+        {
+            monitor = MonitorFromRect(ref anchorRect, MonitorDefaultToNearest);
+        }
+        if (monitor == 0)
+        {
+            return null;
+        }
+
+        var monitorInfo = new MonitorInfo
+        {
+            Size = Marshal.SizeOf<MonitorInfo>()
+        };
+        if (!GetMonitorInfo(monitor, ref monitorInfo))
+        {
+            return null;
+        }
+
+        int? limit = null;
+        if (includeReservedWorkArea && monitorInfo.WorkArea.Bottom < monitorInfo.MonitorArea.Bottom)
+        {
+            limit = monitorInfo.WorkArea.Bottom;
+        }
+        if (GetAutoHideEdges(monitorInfo.MonitorArea).HasFlag(AutoHideEdges.Bottom))
+        {
+            var safeBottom = monitorInfo.MonitorArea.Bottom - RevealInsetPixels;
+            limit = limit is { } existing ? Math.Min(existing, safeBottom) : safeBottom;
+        }
+        return limit;
+    }
+
+    internal static bool ConstrainToAutoHideEdgesClampingBottom(
+        ref PixelRect rect,
+        PixelRect monitorArea,
+        AutoHideEdges edges,
+        int minimumHeight,
+        bool keepTopFixed)
+    {
+        var original = rect;
+        var minHeight = Math.Max(1, minimumHeight);
+        var overlapsMonitorHorizontally =
+            rect.Right > monitorArea.Left && rect.Left < monitorArea.Right;
+        var overlapsMonitorVertically =
+            rect.Bottom > monitorArea.Top && rect.Top < monitorArea.Bottom;
+
+        if (overlapsMonitorVertically && edges.HasFlag(AutoHideEdges.Left))
+        {
+            var safeLeft = monitorArea.Left + RevealInsetPixels;
+            if (rect.Left < safeLeft && rect.Right > monitorArea.Left)
+            {
+                rect.Offset(safeLeft - rect.Left, 0);
+            }
+        }
+
+        if (overlapsMonitorVertically && edges.HasFlag(AutoHideEdges.Right))
+        {
+            var safeRight = monitorArea.Right - RevealInsetPixels;
+            if (rect.Right > safeRight && rect.Left < monitorArea.Right)
+            {
+                rect.Offset(safeRight - rect.Right, 0);
+            }
+        }
+
+        if (overlapsMonitorHorizontally && edges.HasFlag(AutoHideEdges.Top))
+        {
+            var safeTop = monitorArea.Top + RevealInsetPixels;
+            if (rect.Top < safeTop && rect.Bottom > monitorArea.Top)
+            {
+                rect.Offset(0, safeTop - rect.Top);
+            }
+        }
+
+        if (overlapsMonitorHorizontally && edges.HasFlag(AutoHideEdges.Bottom))
+        {
+            var safeBottom = monitorArea.Bottom - RevealInsetPixels;
+            if (rect.Bottom > safeBottom && rect.Top < monitorArea.Bottom)
+            {
+                var available = safeBottom - rect.Top;
+                if (available >= minHeight)
+                {
+                    rect.Bottom = safeBottom;
+                }
+                else if (keepTopFixed)
+                {
+                    rect.Bottom = Math.Min(rect.Bottom, rect.Top + minHeight);
+                }
+                else
+                {
+                    rect.Offset(0, safeBottom - rect.Bottom);
+                }
+            }
+        }
+
+        return !rect.Equals(original);
     }
 
     internal static bool ConstrainToAutoHideEdges(
@@ -329,6 +476,16 @@ internal static class TaskbarEdgeGuard
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetWindowRect(nint window, out PixelRect rect);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativePoint
+    {
+        internal int X;
+        internal int Y;
+    }
+
+    [DllImport("user32.dll")]
+    private static extern nint MonitorFromPoint(NativePoint pt, uint flags);
 
     [DllImport("user32.dll")]
     private static extern nint MonitorFromRect(

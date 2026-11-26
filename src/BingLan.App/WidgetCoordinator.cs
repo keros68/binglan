@@ -1585,6 +1585,15 @@ public sealed partial class WidgetCoordinator : IDisposable
         _settingsWindow?.ShowSettingsPage(page);
     }
 
+    private void OpenTopBarSettings(TopBarModuleKind? focusModule)
+    {
+        OpenSettings("TopBar");
+        if (focusModule is { } kind)
+        {
+            _settingsWindow?.SelectTopBarModule(kind);
+        }
+    }
+
     private void OpenSettings(DesktopComponentKind componentKind)
     {
         OpenSettings((WidgetWindowBase?)null);
@@ -3736,6 +3745,15 @@ public sealed partial class WidgetCoordinator : IDisposable
         public void ToggleLauncherPanel() => owner.ToggleLauncherPanel();
 
         public void OpenTopBarSettings() => owner.OpenSettings("TopBar");
+
+        public void OpenTopBarSettings(TopBarModuleKind? focusModule) => owner.OpenTopBarSettings(focusModule);
+
+        public void TopBarStateChanged()
+        {
+            owner.ApplyTopBar();
+            owner._settingsWindow?.RefreshTopBarSettings();
+            owner.ScheduleSave();
+        }
 
         public async void OpenTrayOverflow()
         {

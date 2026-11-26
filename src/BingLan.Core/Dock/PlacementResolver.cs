@@ -50,7 +50,9 @@ public static class PlacementResolver
         PixelRect fallback,
         int minimumWidth = 1,
         int minimumHeight = 1,
-        int minimumVisiblePixels = 64)
+        int minimumVisiblePixels = 64,
+        bool anchorTop = false,
+        bool isLocked = false)
     {
         ArgumentNullException.ThrowIfNull(workAreas);
         if (!currentBounds.HasArea)
@@ -83,7 +85,27 @@ public static class PlacementResolver
             return sized;
         }
 
-        var target = SelectTargetWorkArea(sized, validWorkAreas, fallback);
+        PixelRect target;
+        if (anchorTop)
+        {
+            var topCenterX = (sized.Left + sized.Right) / 2;
+            var topArea = validWorkAreas.FirstOrDefault(area =>
+                topCenterX >= area.Left && topCenterX < area.Right
+                && sized.Top >= area.Top && sized.Top < area.Bottom);
+            target = topArea.HasArea ? topArea : SelectTargetWorkArea(sized, validWorkAreas, fallback);
+            if (sized.Top >= target.Top
+                && sized.Top < target.Bottom
+                && sized.Right > target.Left
+                && sized.Left < target.Right)
+            {
+                return FitExpandedWithinWorkArea(sized, target, minHeight, anchorTop: true, isLocked: isLocked);
+            }
+        }
+        else
+        {
+            target = SelectTargetWorkArea(sized, validWorkAreas, fallback);
+        }
+
         return ClampInside(sized, target);
     }
 
@@ -149,6 +171,112 @@ public static class PlacementResolver
             left = workArea.Left;
         }
         return new PixelRect(left, top, left + bounds.Width, top + bounds.Height);
+    }
+
+    /// <summary>
+    /// Like <see cref="KeepOutOfReservedEdges"/>, but when the bottom edge is reserved and the
+    /// window extends past it, keeps <see cref="PixelRect.Top"/> anchored and shrinks height
+    /// instead of pushing the window upward (for scrollable cards such as file boxes).
+    /// </summary>
+    public static PixelRect KeepOutOfReservedEdgesClampingBottom(
+        PixelRect bounds,
+        PixelRect monitor,
+        PixelRect workArea,
+        int minimumHeight,
+        bool isLocked = false)
+    {
+        var minHeight = Math.Max(1, minimumHeight);
+        var left = bounds.Left;
+        var top = bounds.Top;
+        var width = bounds.Width;
+        var height = bounds.Height;
+
+        if (workArea.Top > monitor.Top && top < workArea.Top)
+        {
+            top = workArea.Top;
+        }
+        if (workArea.Bottom < monitor.Bottom && top + height > workArea.Bottom)
+        {
+            var availableHeight = workArea.Bottom - top;
+            if (availableHeight >= minHeight)
+            {
+                height = availableHeight;
+            }
+            else if (isLocked)
+            {
+                height = Math.Min(height, minHeight);
+            }
+            else
+            {
+                height = Math.Min(height, Math.Min(minHeight, workArea.Height));
+                top = Math.Max(workArea.Top, workArea.Bottom - height);
+            }
+        }
+        if (workArea.Right < monitor.Right && left + width > workArea.Right)
+        {
+            left = Math.Max(workArea.Left, workArea.Right - width);
+        }
+        if (workArea.Left > monitor.Left && left < workArea.Left)
+        {
+            left = workArea.Left;
+        }
+        return new PixelRect(left, top, left + width, top + height);
+    }
+
+    /// <summary>
+    /// Fits an expanded window inside <paramref name="workArea"/>. When <paramref name="anchorTop"/>
+    /// is true (scrollable cards such as file boxes), overflowing the bottom edge shrinks height
+    /// while keeping <see cref="PixelRect.Top"/> anchored instead of pushing the card upward.
+    /// </summary>
+    public static PixelRect FitExpandedWithinWorkArea(
+        PixelRect current,
+        PixelRect workArea,
+        int minimumHeight,
+        bool anchorTop,
+        bool isLocked)
+    {
+        if (!current.HasArea || !workArea.HasArea)
+        {
+            return current;
+        }
+
+        var minHeight = Math.Max(1, minimumHeight);
+        var left = isLocked && anchorTop
+            ? current.Left
+            : Math.Clamp(current.Left, workArea.Left, Math.Max(workArea.Left, workArea.Right - current.Width));
+        var top = current.Top;
+        var height = current.Height;
+
+        if (anchorTop)
+        {
+            if (!isLocked && top < workArea.Top)
+            {
+                top = workArea.Top;
+            }
+            if (top + height > workArea.Bottom)
+            {
+                var availableHeight = workArea.Bottom - top;
+                if (availableHeight >= minHeight)
+                {
+                    height = availableHeight;
+                }
+                else if (isLocked)
+                {
+                    height = Math.Min(height, minHeight);
+                }
+                else
+                {
+                    height = Math.Min(height, Math.Min(minHeight, workArea.Height));
+                    top = Math.Clamp(top, workArea.Top, Math.Max(workArea.Top, workArea.Bottom - height));
+                }
+            }
+        }
+        else
+        {
+            top = Math.Clamp(top, workArea.Top, Math.Max(workArea.Top, workArea.Bottom - height));
+        }
+
+        return new PixelRect(left, top, left + current.Width, top + height);
     }
 
     private static bool HasMinimumVisibility(

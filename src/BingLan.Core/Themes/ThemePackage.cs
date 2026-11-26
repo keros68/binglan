@@ -109,6 +109,13 @@ public sealed class ThemeBindings
     public TopBarModuleSwitches? TopBarModules { get; set; }
     public List<TopBarModuleKind>? TopBarLeftOrder { get; set; }
     public List<TopBarModuleKind>? TopBarRightOrder { get; set; }
+    public TopBarSearchPlacement? TopBarSearchPlacement { get; set; }
+    public TopBarVolumeStyle? TopBarVolumeStyle { get; set; }
+    public TopBarBatteryStyle? TopBarBatteryStyle { get; set; }
+    public TopBarInputMethodStyle? TopBarInputMethodStyle { get; set; }
+    public TopBarWeatherStyle? TopBarWeatherStyle { get; set; }
+    public TopBarPerformanceStyle? TopBarPerformanceStyle { get; set; }
+    public bool? TopBarTrayIconOnly { get; set; }
     public bool TopBarFollowCardLook { get; set; } = true;
     public string TopBarSurfaceColor { get; set; } = TopBarState.DefaultSurfaceColor;
     public double TopBarSurfaceOpacity { get; set; } = TopBarState.DefaultSurfaceOpacity;

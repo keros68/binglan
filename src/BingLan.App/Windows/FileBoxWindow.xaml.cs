@@ -44,6 +44,7 @@ public partial class FileBoxWindow : WidgetWindowBase
     private bool _externalDragOver;
     private bool _expandedForExternalDrag;
     private bool _pinnedOpenForSession;
+    private bool _expandedHeightTemporarilyClamped;
     private (int X, int Y)? _foldedTitlePressPoint;
 
     internal event Action? DragOutStarted;
@@ -257,6 +258,8 @@ public partial class FileBoxWindow : WidgetWindowBase
     }
 
     protected override bool SuppressLayeredClip => IsEdgeDocked && !IsEdgeDockExpanded;
+
+    internal override bool PreferClampHeightAtBottomEdge => true;
 
     protected override bool IsHitTestPointInside(System.Windows.Point point)
     {
@@ -506,6 +509,12 @@ public partial class FileBoxWindow : WidgetWindowBase
         RefreshHoverRevealState();
     }
 
+    protected override void OnResizeEnded()
+    {
+        _expandedHeightTemporarilyClamped = false;
+        base.OnResizeEnded();
+    }
+
     protected override void OnDragEnded()
     {
         RefreshAutoCollapseTimer();
@@ -651,7 +660,11 @@ public partial class FileBoxWindow : WidgetWindowBase
     {
         if (collapsed && !State.IsCollapsed)
         {
-            State.ExpandedHeight = Height;
+            if (!_expandedHeightTemporarilyClamped || State.ExpandedHeight <= 0)
+            {
+                State.ExpandedHeight = Height;
+            }
+            _expandedHeightTemporarilyClamped = false;
         }
         if (collapsed)
         {
@@ -701,8 +714,11 @@ public partial class FileBoxWindow : WidgetWindowBase
             }
             MaxHeight = double.PositiveInfinity;
             MinHeight = DefaultMinHeight;
-            Height = Math.Max(DefaultMinHeight, State.ExpandedHeight > 0 ? State.ExpandedHeight : 306d);
-            // 展开向下长高，等原生矩形反映新尺寸后把卡片整体收回屏幕内。
+            var desiredHeight = Math.Max(DefaultMinHeight, State.ExpandedHeight > 0 ? State.ExpandedHeight : 306d);
+            var clampedHeight = ClampExpandedHeightToWorkArea(desiredHeight);
+            _expandedHeightTemporarilyClamped = clampedHeight < desiredHeight - 0.5d;
+            Height = clampedHeight;
+            // 展开向下长高，等原生矩形反映新尺寸后确认不越界（优先收缩高度，不把顶边往上顶）。
             Dispatcher.BeginInvoke(
                 System.Windows.Threading.DispatcherPriority.Loaded, EnsureFullyOnScreen);
 
@@ -718,6 +734,43 @@ public partial class FileBoxWindow : WidgetWindowBase
         RefreshTabStripLayout();
         RefreshAutoCollapseTimer();
         RefreshHoverRevealState();
+    }
+
+    private double ClampExpandedHeightToWorkArea(double desiredHeight)
+    {
+        if (!IsLoaded || WindowHandle is var handle && handle == 0
+            || !DockNativeMethods.GetWindowRect(handle, out var native))
+        {
+            return desiredHeight;
+        }
+
+        var monitors = BingLan.App.Dock.MonitorCatalog.GetAll();
+        if (monitors.Count == 0)
+        {
+            return desiredHeight;
+        }
+
+        var centerX = (native.Left + native.Right) / 2;
+        var centerY = (native.Top + native.Bottom) / 2;
+        var monitor = monitors.FirstOrDefault(candidate =>
+                centerX >= candidate.Bounds.Left && centerX < candidate.Bounds.Right
+                && centerY >= candidate.Bounds.Top && centerY < candidate.Bounds.Bottom)
+            ?? monitors.FirstOrDefault(candidate => candidate.IsPrimary)
+            ?? monitors[0];
+        var scaleY = VisualTreeHelper.GetDpi(this).DpiScaleY;
+        if (scaleY <= 0d || !monitor.WorkingArea.HasArea)
+        {
+            return desiredHeight;
+        }
+
+        var safeWork = TaskbarEdgeGuard.AvoidNativeTaskbar(monitor.WorkingArea, monitor.Bounds);
+        var availableDip = (safeWork.Bottom - native.Top) / scaleY;
+        if (availableDip >= DefaultMinHeight && desiredHeight > availableDip)
+        {
+            return Math.Max(DefaultMinHeight, Math.Floor(availableDip));
+        }
+
+        return desiredHeight;
     }
 
     private async void FileBoxWindow_Loaded(object sender, RoutedEventArgs e)

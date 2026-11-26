@@ -365,18 +365,31 @@ internal static class SettingsWindowTests
             Assert(topBar.IsEnabled, "开关应写入顶栏状态");
             Assert(applies == 1, "开关后应通知宿主应用");
 
-            var volume = Require<CheckBox>(window, "TopBarVolumeCheckBox");
-            volume.IsChecked = false;
+            window.SelectTopBarModule(TopBarModuleKind.Volume);
             Pump();
-            Assert(!topBar.Modules.Volume, "模块开关应写入状态");
-            var tray = Require<CheckBox>(window, "TopBarTrayOverflowCheckBox");
+            var selectedToggle = Require<CheckBox>(window, "TopBarSelectedModuleEnabledCheckBox");
+            Assert(selectedToggle.IsChecked == true, "选中音量模块时开关应反映已启用");
+            selectedToggle.IsChecked = false;
+            Pump();
+            Assert(!topBar.Modules.Volume, "通过模块详情开关关闭音量应写入状态");
             if (OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000))
             {
-                Assert(tray.IsChecked == true && tray.IsVisible, "系统托盘入口默认开启且可设置");
-                tray.IsChecked = false;
+                window.SelectTopBarModule(TopBarModuleKind.TrayOverflow);
+                Pump();
+                Assert(selectedToggle.IsChecked == true && selectedToggle.IsVisible, "系统托盘入口默认开启且可设置");
+                selectedToggle.IsChecked = false;
                 Pump();
                 Assert(!topBar.Modules.TrayOverflow, "托盘入口开关应写入状态");
             }
+
+            Require<RadioButton>(window, "TopBarDensityMacRadio").IsChecked = true;
+            Pump();
+            Assert(TopBarRules.DetectDensityPreset(topBar) == TopBarDensityPreset.MacMinimal,
+                "点击 Mac 极简预设应批量切换顶栏为极简纯图标风格");
+            Require<RadioButton>(window, "TopBarDensityDetailedRadio").IsChecked = true;
+            Pump();
+            Assert(TopBarRules.DetectDensityPreset(topBar) == TopBarDensityPreset.Detailed,
+                "点击信息流预设应恢复详细文字与居中搜索条");
 
             var smartHide = Require<RadioButton>(window, "TopBarSmartHideRadio");
             smartHide.IsChecked = true;
@@ -435,20 +448,13 @@ internal static class SettingsWindowTests
                 .First(item => (item.Tag as string) == "TopBar");
             Pump();
 
-            var moduleGrid = Require<System.Windows.Controls.Primitives.UniformGrid>(window, "TopBarModulesPanel");
+            var visualGrid = Require<Grid>(window, "TopBarVisualBarGrid");
             foreach (var width in new[] { 900d, 1168d, 1600d })
             {
                 window.Width = width;
                 Pump();
-                var cells = moduleGrid.Children.OfType<CheckBox>().Where(cell => cell.Visibility != Visibility.Collapsed).ToArray();
-                var count = OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000) ? 11 : 10;
-                Assert(cells.Length == count && moduleGrid.Columns is >= 2 and <= 5 && cells.All(cell => cell.ActualWidth >= 110),
-                    "窄窗与宽窗中模块应按等宽列排布，保留文字空间");
-                Assert(moduleGrid.Parent is Border { Padding.Left: >= 16 }, "模块区应与分组边框保持内边距");
-                var first = cells[0].TranslatePoint(new Point(0, 0), moduleGrid);
-                var nextRow = cells[moduleGrid.Columns].TranslatePoint(new Point(0, 0), moduleGrid);
-                Assert(Math.Abs(first.X - nextRow.X) < 1 && nextRow.Y > first.Y,
-                    "模块换行后的列起点必须对齐");
+                Assert(visualGrid.IsVisible && visualGrid.ActualWidth > 300d,
+                    "窄窗与宽窗中模拟顶栏编辑器均应正常展示");
             }
 
             navigation.SelectedItem = navigation.Items

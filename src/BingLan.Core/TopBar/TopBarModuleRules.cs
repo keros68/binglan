@@ -395,6 +395,112 @@ public static class TopBarModuleRules
         double.IsNaN(scalar) || scalar < 0 ? 0 : Math.Clamp((int)Math.Round(scalar * 100d), 0, 100);
 
     /// <summary>
+    /// Formats the volume readout for the top bar. Muted state always stays icon-only (empty
+    /// text) because the muted glyph already conveys mute; IconOnly hides the percentage too.
+    /// </summary>
+    public static string FormatVolumeLabel(
+        int? percent,
+        bool muted,
+        TopBarVolumeStyle style = TopBarVolumeStyle.IconAndPercent)
+    {
+        if (muted || style == TopBarVolumeStyle.IconOnly)
+        {
+            return string.Empty;
+        }
+
+        return percent is { } value ? $"{value}%" : "—";
+    }
+
+    public static string FormatVolumeTooltip(int? percent, bool muted)
+    {
+        if (muted)
+        {
+            return percent is { } value ? $"音量：静音（{value}%）" : "音量：静音";
+        }
+
+        return percent is { } level ? $"音量：{level}%" : "音量";
+    }
+
+    public static string FormatBatteryLabel(
+        int percent,
+        TopBarBatteryStyle style = TopBarBatteryStyle.IconAndPercent)
+    {
+        if (style == TopBarBatteryStyle.IconOnly)
+        {
+            return string.Empty;
+        }
+
+        return percent < 0 ? "—" : $"{percent}%";
+    }
+
+    public static string FormatBatteryTooltip(int percent, TopBarBatteryStatus status)
+    {
+        if (percent < 0)
+        {
+            return "电量";
+        }
+
+        return status switch
+        {
+            TopBarBatteryStatus.Charging => $"电量：{percent}%（充电中）",
+            TopBarBatteryStatus.PluggedIn => $"电量：{percent}%（已接通电源）",
+            _ => $"电量：{percent}%"
+        };
+    }
+
+    public static string FormatPerformanceLabel(
+        PerformanceSnapshot? snapshot,
+        TopBarPerformanceStyle style = TopBarPerformanceStyle.Full)
+    {
+        if (snapshot is null)
+        {
+            return style == TopBarPerformanceStyle.Compact ? "…" : "性能 …";
+        }
+
+        return style == TopBarPerformanceStyle.Compact
+            ? $"CPU {PerformanceSamplingRules.FormatPercent(snapshot.CpuPercent)}  ↓{PerformanceSamplingRules.FormatRate(snapshot.DownloadBytesPerSecond)}"
+            : $"CPU {PerformanceSamplingRules.FormatPercent(snapshot.CpuPercent)}  "
+                + $"内存 {PerformanceSamplingRules.FormatPercent(snapshot.MemoryPercent)}  "
+                + $"↑{PerformanceSamplingRules.FormatRate(snapshot.UploadBytesPerSecond)} "
+                + $"↓{PerformanceSamplingRules.FormatRate(snapshot.DownloadBytesPerSecond)}";
+    }
+
+    public static string FormatPerformanceTooltip(PerformanceSnapshot? snapshot) =>
+        snapshot is null
+            ? "性能（点击打开任务管理器）"
+            : $"CPU：{PerformanceSamplingRules.FormatPercent(snapshot.CpuPercent)}\n"
+                + $"内存：{PerformanceSamplingRules.FormatPercent(snapshot.MemoryPercent)}\n"
+                + $"上传：{PerformanceSamplingRules.FormatRate(snapshot.UploadBytesPerSecond)}\n"
+                + $"下载：{PerformanceSamplingRules.FormatRate(snapshot.DownloadBytesPerSecond)}";
+
+    public static string FormatWeatherLabel(
+        WeatherSnapshot? snapshot,
+        TopBarWeatherStyle style = TopBarWeatherStyle.Full)
+    {
+        if (snapshot is null)
+        {
+            return style == TopBarWeatherStyle.Compact ? "—" : "天气 —";
+        }
+
+        if (snapshot.Status == WeatherStatus.NoCity)
+        {
+            return style == TopBarWeatherStyle.Compact ? "未设城市" : "天气 未设置";
+        }
+
+        if (style == TopBarWeatherStyle.Compact)
+        {
+            return snapshot.TemperatureCelsius is { } temp
+                ? $"{Math.Round(temp):0}°"
+                : snapshot.Condition;
+        }
+
+        var city = WeatherSnapshot.CompactLocation(snapshot.City);
+        return snapshot.TemperatureCelsius is { } temperature
+            ? $"{city} {Math.Round(temperature):0}° {snapshot.Condition}"
+            : $"{city} {snapshot.Condition}";
+    }
+
+    /// <summary>
     /// Formats the top bar clock readout, following the time/date widget's 12/24-hour,
     /// date visibility and lunar date preferences while prefixing weekdays with "周".
     /// </summary>

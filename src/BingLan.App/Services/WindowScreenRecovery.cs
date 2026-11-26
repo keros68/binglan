@@ -220,10 +220,36 @@ internal static class WindowScreenRecovery
         var minimumSizes = entries
             .Select(entry => MinimumOf(entry.Window, entry.Current))
             .ToList();
+        var workAreas = monitors.Select(monitor => monitor.WorkingArea).ToArray();
+        var gatheredCards = entries
+            .Select((entry, idx) =>
+            {
+                if (entry.Window is BingLan.App.Windows.WidgetWindowBase { PreferClampHeightAtBottomEdge: true } widget
+                    && minimumSizes[idx] is { } floor)
+                {
+                    var card = entry.Current;
+                    var topCenterX = (card.Left + card.Right) / 2;
+                    var hostArea = workAreas.FirstOrDefault(area =>
+                        area.HasArea
+                        && topCenterX >= area.Left && topCenterX < area.Right
+                        && card.Top >= area.Top && card.Top < area.Bottom);
+                    if (hostArea.HasArea && card.Bottom > hostArea.Bottom)
+                    {
+                        return PlacementResolver.FitExpandedWithinWorkArea(
+                            card,
+                            hostArea,
+                            floor.Height,
+                            anchorTop: true,
+                            isLocked: widget.IsWidgetLocked);
+                    }
+                }
+                return entry.Current;
+            })
+            .ToList();
 
         var targets = DisplayArrivalRules.Gather(
-            entries.Select(entry => entry.Current).ToList(),
-            monitors.Select(monitor => monitor.WorkingArea).ToArray(),
+            gatheredCards,
+            workAreas,
             primaryMonitor.WorkingArea,
             reserved,
             minimumSizes);
@@ -301,7 +327,11 @@ internal static class WindowScreenRecovery
     /// Recovers a card's position when it becomes visible: restores a remembered spot on the
     /// live monitor arrangement or gathers an out-of-bounds spot inside the nearest work area.
     /// </summary>
-    internal static bool RecoverOnShow(Window window, WindowPlacement? placement)
+    internal static bool RecoverOnShow(
+        Window window,
+        WindowPlacement? placement,
+        bool anchorTop = false,
+        bool isLocked = false)
     {
         if (IsShowRecoveryDeferred || window.WindowState != WindowState.Normal)
         {
@@ -342,7 +372,9 @@ internal static class WindowScreenRecovery
             primary.WorkingArea,
             minWidth,
             minHeight,
-            MinimumVisiblePixels);
+            MinimumVisiblePixels,
+            anchorTop,
+            isLocked);
         if (target == current)
         {
             return false;
@@ -456,5 +488,48 @@ internal static class WindowScreenRecovery
         return monitor is null || !bounds.HasArea
             ? null
             : PlacementResolver.KeepOutOfReservedEdges(bounds, monitor.Bounds, monitor.WorkingArea);
+    }
+
+    internal static PixelRect? ReservedEdgeTargetClampingBottom(
+        PixelRect bounds,
+        int minimumHeight,
+        bool isLocked)
+    {
+        if (!bounds.HasArea)
+        {
+            return null;
+        }
+
+        var monitors = MonitorCatalog.GetAll();
+        if (monitors.Count == 0)
+        {
+            return null;
+        }
+
+        var centerX = (bounds.Left + bounds.Right) / 2;
+        var centerY = (bounds.Top + bounds.Bottom) / 2;
+        var monitor = monitors.FirstOrDefault(candidate =>
+                centerX >= candidate.Bounds.Left && centerX < candidate.Bounds.Right &&
+                bounds.Top >= candidate.Bounds.Top && bounds.Top < candidate.Bounds.Bottom)
+            ?? monitors.FirstOrDefault(candidate =>
+                centerX >= candidate.Bounds.Left && centerX < candidate.Bounds.Right &&
+                centerY >= candidate.Bounds.Top && centerY < candidate.Bounds.Bottom)
+            ?? monitors
+                .Select(candidate => (
+                    Monitor: candidate,
+                    Area: (long)Math.Max(0, Math.Min(bounds.Right, candidate.Bounds.Right) - Math.Max(bounds.Left, candidate.Bounds.Left))
+                        * Math.Max(0, Math.Min(bounds.Bottom, candidate.Bounds.Bottom) - Math.Max(bounds.Top, candidate.Bounds.Top))))
+                .Where(item => item.Area > 0)
+                .OrderByDescending(item => item.Area)
+                .Select(item => item.Monitor)
+                .FirstOrDefault();
+        return monitor is null
+            ? null
+            : PlacementResolver.KeepOutOfReservedEdgesClampingBottom(
+                bounds,
+                monitor.Bounds,
+                monitor.WorkingArea,
+                minimumHeight,
+                isLocked);
     }
 }

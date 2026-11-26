@@ -22,6 +22,56 @@ public enum TopBarModuleSide
     Right
 }
 
+public enum TopBarDensityPreset
+{
+    MacMinimal,
+    Balanced,
+    Detailed
+}
+
+public enum TopBarVolumeStyle
+{
+    IconAndPercent,
+    IconOnly
+}
+
+public enum TopBarBatteryStyle
+{
+    IconAndPercent,
+    IconOnly
+}
+
+public enum TopBarInputMethodStyle
+{
+    BadgeAndName,
+    BadgeOnly
+}
+
+public enum TopBarWeatherStyle
+{
+    Full,
+    Compact
+}
+
+public enum TopBarPerformanceStyle
+{
+    Full,
+    Compact
+}
+
+public enum TopBarSearchPlacement
+{
+    CenterBar,
+    SideIcon
+}
+
+public enum TopBarNetworkDisplayMode
+{
+    IconOnly,
+    IconAndWlan,
+    IconAndWifiName
+}
+
 /// <summary>The top bar's read-only modules, in display order. The search box sits in
 /// the bar's centre regardless of this order; its kind is here so it shares the module
 /// switch machinery with the rest.</summary>
@@ -143,6 +193,27 @@ public sealed class TopBarState
     /// <see cref="SearchEngine"/> is <c>"custom"</c>. Machine-local; never exported with a theme.</summary>
     public string? SearchCustomUrl { get; set; }
 
+    /// <summary>Volume readout style; null preserves legacy IconAndPercent (mute still stays icon-only).</summary>
+    public TopBarVolumeStyle? VolumeStyle { get; set; }
+
+    /// <summary>Battery readout style; null preserves legacy IconAndPercent.</summary>
+    public TopBarBatteryStyle? BatteryStyle { get; set; }
+
+    /// <summary>Input method readout style; null preserves legacy BadgeAndName.</summary>
+    public TopBarInputMethodStyle? InputMethodStyle { get; set; }
+
+    /// <summary>Weather readout style; null preserves legacy Full (city + temp + condition).</summary>
+    public TopBarWeatherStyle? WeatherStyle { get; set; }
+
+    /// <summary>Performance readout style; null preserves legacy Full (CPU + RAM + up/down).</summary>
+    public TopBarPerformanceStyle? PerformanceStyle { get; set; }
+
+    /// <summary>Whether the tray overflow entry shows only the chevron icon without text; null preserves false.</summary>
+    public bool? TrayIconOnly { get; set; }
+
+    /// <summary>Whether the search entry sits centered as a pill bar or joins left/right modules as a compact icon.</summary>
+    public TopBarSearchPlacement? SearchPlacement { get; set; }
+
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? ExtensionData { get; set; }
 }
@@ -171,7 +242,199 @@ public static class TopBarRules
     ];
 
     public static bool IsOrderable(TopBarModuleKind kind) =>
-        Enum.IsDefined(kind) && kind != TopBarModuleKind.Search;
+        IsOrderable(kind, includeSearch: false);
+
+    public static bool IsOrderable(TopBarModuleKind kind, bool includeSearch) =>
+        Enum.IsDefined(kind) && (includeSearch || kind != TopBarModuleKind.Search);
+
+    public static TopBarVolumeStyle EffectiveVolumeStyle(TopBarState state)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        return state.VolumeStyle is { } style && Enum.IsDefined(style)
+            ? style
+            : TopBarVolumeStyle.IconAndPercent;
+    }
+
+    public static TopBarBatteryStyle EffectiveBatteryStyle(TopBarState state)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        return state.BatteryStyle is { } style && Enum.IsDefined(style)
+            ? style
+            : TopBarBatteryStyle.IconAndPercent;
+    }
+
+    public static TopBarInputMethodStyle EffectiveInputMethodStyle(TopBarState state)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        return state.InputMethodStyle is { } style && Enum.IsDefined(style)
+            ? style
+            : TopBarInputMethodStyle.BadgeAndName;
+    }
+
+    public static TopBarWeatherStyle EffectiveWeatherStyle(TopBarState state)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        return state.WeatherStyle is { } style && Enum.IsDefined(style)
+            ? style
+            : TopBarWeatherStyle.Full;
+    }
+
+    public static TopBarPerformanceStyle EffectivePerformanceStyle(TopBarState state)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        return state.PerformanceStyle is { } style && Enum.IsDefined(style)
+            ? style
+            : TopBarPerformanceStyle.Full;
+    }
+
+    public static bool EffectiveTrayIconOnly(TopBarState state)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        return state.TrayIconOnly == true;
+    }
+
+    public static TopBarSearchPlacement EffectiveSearchPlacement(TopBarState state)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        return state.SearchPlacement is { } placement && Enum.IsDefined(placement)
+            ? placement
+            : TopBarSearchPlacement.CenterBar;
+    }
+
+    public static TopBarNetworkDisplayMode EffectiveNetworkDisplayMode(TopBarState state)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        if (state.NetworkIconOnly == true)
+        {
+            return TopBarNetworkDisplayMode.IconOnly;
+        }
+        return state.ShowWifiName == true
+            ? TopBarNetworkDisplayMode.IconAndWifiName
+            : TopBarNetworkDisplayMode.IconAndWlan;
+    }
+
+    public static void SetNetworkDisplayMode(TopBarState state, TopBarNetworkDisplayMode mode)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        switch (mode)
+        {
+            case TopBarNetworkDisplayMode.IconOnly:
+                state.NetworkIconOnly = true;
+                state.ShowWifiName = false;
+                break;
+            case TopBarNetworkDisplayMode.IconAndWifiName:
+                state.NetworkIconOnly = false;
+                state.ShowWifiName = true;
+                break;
+            default:
+                state.NetworkIconOnly = false;
+                state.ShowWifiName = false;
+                break;
+        }
+    }
+
+    public static bool HasExplicitDisplayStyles(TopBarState state)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        return state.VolumeStyle is not null
+            || state.BatteryStyle is not null
+            || state.InputMethodStyle is not null
+            || state.WeatherStyle is not null
+            || state.PerformanceStyle is not null
+            || state.TrayIconOnly is not null
+            || state.SearchPlacement is not null
+            || state.NetworkIconOnly == true
+            || state.ShowWifiName == true;
+    }
+
+    public static void ApplyDensityPreset(TopBarState state, TopBarDensityPreset preset)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        switch (preset)
+        {
+            case TopBarDensityPreset.MacMinimal:
+                state.VolumeStyle = TopBarVolumeStyle.IconOnly;
+                SetNetworkDisplayMode(state, TopBarNetworkDisplayMode.IconOnly);
+                state.BatteryStyle = TopBarBatteryStyle.IconOnly;
+                state.InputMethodStyle = TopBarInputMethodStyle.BadgeOnly;
+                state.TrayIconOnly = true;
+                state.WeatherStyle = TopBarWeatherStyle.Compact;
+                state.PerformanceStyle = TopBarPerformanceStyle.Compact;
+                state.SearchPlacement = TopBarSearchPlacement.SideIcon;
+                break;
+            case TopBarDensityPreset.Balanced:
+                state.VolumeStyle = TopBarVolumeStyle.IconOnly;
+                SetNetworkDisplayMode(state, TopBarNetworkDisplayMode.IconOnly);
+                state.BatteryStyle = TopBarBatteryStyle.IconAndPercent;
+                state.InputMethodStyle = TopBarInputMethodStyle.BadgeOnly;
+                state.TrayIconOnly = true;
+                state.WeatherStyle = TopBarWeatherStyle.Full;
+                state.PerformanceStyle = TopBarPerformanceStyle.Compact;
+                state.SearchPlacement = TopBarSearchPlacement.CenterBar;
+                break;
+            default:
+                state.VolumeStyle = TopBarVolumeStyle.IconAndPercent;
+                state.NetworkIconOnly = false;
+                state.BatteryStyle = TopBarBatteryStyle.IconAndPercent;
+                state.InputMethodStyle = TopBarInputMethodStyle.BadgeAndName;
+                state.TrayIconOnly = false;
+                state.WeatherStyle = TopBarWeatherStyle.Full;
+                state.PerformanceStyle = TopBarPerformanceStyle.Full;
+                state.SearchPlacement = TopBarSearchPlacement.CenterBar;
+                break;
+        }
+    }
+
+    public static TopBarDensityPreset? DetectDensityPreset(TopBarState state)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        var vol = EffectiveVolumeStyle(state);
+        var net = EffectiveNetworkDisplayMode(state);
+        var bat = EffectiveBatteryStyle(state);
+        var ime = EffectiveInputMethodStyle(state);
+        var tray = EffectiveTrayIconOnly(state);
+        var weather = EffectiveWeatherStyle(state);
+        var perf = EffectivePerformanceStyle(state);
+        var search = EffectiveSearchPlacement(state);
+
+        if (vol == TopBarVolumeStyle.IconOnly
+            && net == TopBarNetworkDisplayMode.IconOnly
+            && bat == TopBarBatteryStyle.IconOnly
+            && ime == TopBarInputMethodStyle.BadgeOnly
+            && tray
+            && weather == TopBarWeatherStyle.Compact
+            && perf == TopBarPerformanceStyle.Compact
+            && search == TopBarSearchPlacement.SideIcon)
+        {
+            return TopBarDensityPreset.MacMinimal;
+        }
+
+        if (vol == TopBarVolumeStyle.IconOnly
+            && net == TopBarNetworkDisplayMode.IconOnly
+            && bat == TopBarBatteryStyle.IconAndPercent
+            && ime == TopBarInputMethodStyle.BadgeOnly
+            && tray
+            && weather == TopBarWeatherStyle.Full
+            && perf == TopBarPerformanceStyle.Compact
+            && search == TopBarSearchPlacement.CenterBar)
+        {
+            return TopBarDensityPreset.Balanced;
+        }
+
+        if (vol == TopBarVolumeStyle.IconAndPercent
+            && net != TopBarNetworkDisplayMode.IconOnly
+            && bat == TopBarBatteryStyle.IconAndPercent
+            && ime == TopBarInputMethodStyle.BadgeAndName
+            && !tray
+            && weather == TopBarWeatherStyle.Full
+            && perf == TopBarPerformanceStyle.Full
+            && search == TopBarSearchPlacement.CenterBar)
+        {
+            return TopBarDensityPreset.Detailed;
+        }
+
+        return null;
+    }
 
     public static string ModuleLabel(TopBarModuleKind kind) => kind switch
     {
@@ -191,11 +454,18 @@ public static class TopBarRules
 
     public static (List<TopBarModuleKind> Left, List<TopBarModuleKind> Right) NormalizeOrder(
         IEnumerable<TopBarModuleKind>? left,
-        IEnumerable<TopBarModuleKind>? right)
+        IEnumerable<TopBarModuleKind>? right,
+        bool includeSearch = false)
     {
         if (left is null && right is null)
         {
-            return ([.. DefaultLeftOrder], [.. DefaultRightOrder]);
+            var defaultLeft = new List<TopBarModuleKind>(DefaultLeftOrder);
+            var defaultRight = new List<TopBarModuleKind>(DefaultRightOrder);
+            if (includeSearch)
+            {
+                InsertDefaultSearch(defaultRight);
+            }
+            return (defaultLeft, defaultRight);
         }
 
         var normalizedLeft = new List<TopBarModuleKind>();
@@ -206,7 +476,7 @@ public static class TopBarRules
         {
             foreach (var kind in left)
             {
-                if (IsOrderable(kind) && seen.Add(kind))
+                if (IsOrderable(kind, includeSearch) && seen.Add(kind))
                 {
                     normalizedLeft.Add(kind);
                 }
@@ -217,7 +487,7 @@ public static class TopBarRules
         {
             foreach (var kind in right)
             {
-                if (IsOrderable(kind) && seen.Add(kind))
+                if (IsOrderable(kind, includeSearch) && seen.Add(kind))
                 {
                     normalizedRight.Add(kind);
                 }
@@ -240,31 +510,54 @@ public static class TopBarRules
             }
         }
 
+        if (includeSearch && seen.Add(TopBarModuleKind.Search))
+        {
+            InsertDefaultSearch(normalizedRight);
+        }
+
         return (normalizedLeft, normalizedRight);
+    }
+
+    private static void InsertDefaultSearch(List<TopBarModuleKind> right)
+    {
+        var clockIndex = right.IndexOf(TopBarModuleKind.Clock);
+        if (clockIndex >= 0)
+        {
+            right.Insert(clockIndex, TopBarModuleKind.Search);
+        }
+        else
+        {
+            right.Add(TopBarModuleKind.Search);
+        }
     }
 
     public static (IReadOnlyList<TopBarModuleKind> Left, IReadOnlyList<TopBarModuleKind> Right) ResolveOrder(
         TopBarState state)
     {
         ArgumentNullException.ThrowIfNull(state);
+        var includeSearch = EffectiveSearchPlacement(state) == TopBarSearchPlacement.SideIcon;
         if (state.LeftOrder is null && state.RightOrder is null)
         {
-            return (DefaultLeftOrder, DefaultRightOrder);
+            return includeSearch
+                ? NormalizeOrder(null, null, includeSearch: true)
+                : (DefaultLeftOrder, DefaultRightOrder);
         }
 
-        return NormalizeOrder(state.LeftOrder, state.RightOrder);
+        return NormalizeOrder(state.LeftOrder, state.RightOrder, includeSearch);
     }
 
     public static bool IsDefaultOrder(TopBarState state)
     {
         ArgumentNullException.ThrowIfNull(state);
+        var includeSearch = EffectiveSearchPlacement(state) == TopBarSearchPlacement.SideIcon;
         if (state.LeftOrder is null && state.RightOrder is null)
         {
             return true;
         }
 
-        var (left, right) = NormalizeOrder(state.LeftOrder, state.RightOrder);
-        return left.SequenceEqual(DefaultLeftOrder) && right.SequenceEqual(DefaultRightOrder);
+        var (left, right) = NormalizeOrder(state.LeftOrder, state.RightOrder, includeSearch);
+        var (defaultLeft, defaultRight) = NormalizeOrder(null, null, includeSearch);
+        return left.SequenceEqual(defaultLeft) && right.SequenceEqual(defaultRight);
     }
 
     public static string OrderSignature(TopBarState state)
@@ -274,6 +567,17 @@ public static class TopBarRules
         return $"{string.Join(',', left)}|{string.Join(',', right)}";
     }
 
+    public static string LayoutSignature(TopBarState state)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        return $"{OrderSignature(state)}|{EffectiveSearchPlacement(state)}|{EffectivePerformanceStyle(state)}|{EffectiveTrayIconOnly(state)}";
+    }
+
+    private static bool ShouldPreserveSearchInStoredOrder(TopBarState state) =>
+        EffectiveSearchPlacement(state) == TopBarSearchPlacement.SideIcon
+        || state.LeftOrder?.Contains(TopBarModuleKind.Search) == true
+        || state.RightOrder?.Contains(TopBarModuleKind.Search) == true;
+
     public static bool MoveModule(
         TopBarState state,
         TopBarModuleKind kind,
@@ -281,12 +585,14 @@ public static class TopBarRules
         Func<TopBarModuleKind, bool>? isAvailable = null)
     {
         ArgumentNullException.ThrowIfNull(state);
-        if (!IsOrderable(kind) || delta == 0)
+        var searchVisibleOnSides = EffectiveSearchPlacement(state) == TopBarSearchPlacement.SideIcon;
+        if (!IsOrderable(kind, searchVisibleOnSides) || delta == 0)
         {
             return false;
         }
 
-        var (left, right) = NormalizeOrder(state.LeftOrder, state.RightOrder);
+        var preserveSearch = ShouldPreserveSearchInStoredOrder(state);
+        var (left, right) = NormalizeOrder(state.LeftOrder, state.RightOrder, preserveSearch);
         var list = left.Contains(kind) ? left : right;
         var index = list.IndexOf(kind);
         if (index < 0)
@@ -294,10 +600,14 @@ public static class TopBarRules
             return false;
         }
 
+        Func<TopBarModuleKind, bool>? effectiveAvailable = searchVisibleOnSides
+            ? isAvailable
+            : k => k != TopBarModuleKind.Search && (isAvailable is null || isAvailable(k));
+
         var step = delta < 0 ? -1 : 1;
         var target = index + step;
         while (target >= 0 && target < list.Count
-               && isAvailable is not null && !isAvailable(list[target]))
+               && effectiveAvailable is not null && !effectiveAvailable(list[target]))
         {
             target += step;
         }
@@ -309,19 +619,21 @@ public static class TopBarRules
 
         list.RemoveAt(index);
         list.Insert(target, kind);
-        StoreOrder(state, left, right);
+        StoreOrder(state, left, right, preserveSearch);
         return true;
     }
 
     public static bool MoveModuleToSide(TopBarState state, TopBarModuleKind kind, TopBarModuleSide targetSide)
     {
         ArgumentNullException.ThrowIfNull(state);
-        if (!IsOrderable(kind))
+        var searchVisibleOnSides = EffectiveSearchPlacement(state) == TopBarSearchPlacement.SideIcon;
+        if (!IsOrderable(kind, searchVisibleOnSides))
         {
             return false;
         }
 
-        var (left, right) = NormalizeOrder(state.LeftOrder, state.RightOrder);
+        var preserveSearch = ShouldPreserveSearchInStoredOrder(state);
+        var (left, right) = NormalizeOrder(state.LeftOrder, state.RightOrder, preserveSearch);
         var source = targetSide == TopBarModuleSide.Left ? right : left;
         var destination = targetSide == TopBarModuleSide.Left ? left : right;
         if (!source.Remove(kind))
@@ -330,8 +642,58 @@ public static class TopBarRules
         }
 
         destination.Add(kind);
-        StoreOrder(state, left, right);
+        StoreOrder(state, left, right, preserveSearch);
         return true;
+    }
+
+    /// <summary>
+    /// Places <paramref name="kind"/> at <paramref name="targetIndex"/> on <paramref name="targetSide"/>.
+    /// Dropping <see cref="TopBarModuleKind.Search"/> onto a side switches its placement to
+    /// <see cref="TopBarSearchPlacement.SideIcon"/> automatically.
+    /// </summary>
+    public static bool PlaceModule(
+        TopBarState state,
+        TopBarModuleKind kind,
+        TopBarModuleSide targetSide,
+        int targetIndex)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        if (!Enum.IsDefined(kind))
+        {
+            return false;
+        }
+
+        var placementChanged = false;
+        if (kind == TopBarModuleKind.Search && EffectiveSearchPlacement(state) != TopBarSearchPlacement.SideIcon)
+        {
+            state.SearchPlacement = TopBarSearchPlacement.SideIcon;
+            placementChanged = true;
+        }
+
+        var searchVisibleOnSides = EffectiveSearchPlacement(state) == TopBarSearchPlacement.SideIcon;
+        var preserveSearch = ShouldPreserveSearchInStoredOrder(state);
+        var (left, right) = NormalizeOrder(state.LeftOrder, state.RightOrder, preserveSearch);
+        var destination = targetSide == TopBarModuleSide.Left ? left : right;
+        var currentSide = left.Contains(kind) ? TopBarModuleSide.Left : TopBarModuleSide.Right;
+        var currentIndex = destination.IndexOf(kind);
+
+        left.Remove(kind);
+        right.Remove(kind);
+
+        var resolvedIndex = targetIndex;
+        if (!searchVisibleOnSides && preserveSearch)
+        {
+            var searchIndex = destination.IndexOf(TopBarModuleKind.Search);
+            if (searchIndex >= 0 && resolvedIndex < int.MaxValue && searchIndex <= resolvedIndex)
+            {
+                resolvedIndex++;
+            }
+        }
+
+        var clampedIndex = Math.Clamp(resolvedIndex, 0, destination.Count);
+        destination.Insert(clampedIndex, kind);
+        StoreOrder(state, left, right, preserveSearch);
+        return placementChanged || currentSide != targetSide || currentIndex != clampedIndex;
     }
 
     public static bool ResetOrder(TopBarState state)
@@ -352,9 +714,11 @@ public static class TopBarRules
     private static void StoreOrder(
         TopBarState state,
         List<TopBarModuleKind> left,
-        List<TopBarModuleKind> right)
+        List<TopBarModuleKind> right,
+        bool includeSearch)
     {
-        if (left.SequenceEqual(DefaultLeftOrder) && right.SequenceEqual(DefaultRightOrder))
+        var (defaultLeft, defaultRight) = NormalizeOrder(null, null, includeSearch);
+        if (left.SequenceEqual(defaultLeft) && right.SequenceEqual(defaultRight))
         {
             state.LeftOrder = null;
             state.RightOrder = null;
@@ -419,6 +783,30 @@ public static class TopBarRules
         {
             state.DisplayMode = TopBarDisplayMode.FullWidth;
         }
+        if (state.VolumeStyle is { } volumeStyle && !Enum.IsDefined(volumeStyle))
+        {
+            state.VolumeStyle = null;
+        }
+        if (state.BatteryStyle is { } batteryStyle && !Enum.IsDefined(batteryStyle))
+        {
+            state.BatteryStyle = null;
+        }
+        if (state.InputMethodStyle is { } imeStyle && !Enum.IsDefined(imeStyle))
+        {
+            state.InputMethodStyle = null;
+        }
+        if (state.WeatherStyle is { } weatherStyle && !Enum.IsDefined(weatherStyle))
+        {
+            state.WeatherStyle = null;
+        }
+        if (state.PerformanceStyle is { } perfStyle && !Enum.IsDefined(perfStyle))
+        {
+            state.PerformanceStyle = null;
+        }
+        if (state.SearchPlacement is { } searchPlacement && !Enum.IsDefined(searchPlacement))
+        {
+            state.SearchPlacement = null;
+        }
         state.SurfaceColor = WidgetAppearanceRules.CoerceBackgroundColor(state.SurfaceColor);
         if (double.IsNaN(state.SurfaceOpacity) || double.IsInfinity(state.SurfaceOpacity))
         {
@@ -436,8 +824,9 @@ public static class TopBarRules
 
         if (state.LeftOrder is not null || state.RightOrder is not null)
         {
-            var (left, right) = NormalizeOrder(state.LeftOrder, state.RightOrder);
-            StoreOrder(state, left, right);
+            var preserveSearch = ShouldPreserveSearchInStoredOrder(state);
+            var (left, right) = NormalizeOrder(state.LeftOrder, state.RightOrder, preserveSearch);
+            StoreOrder(state, left, right, preserveSearch);
         }
     }
 }
