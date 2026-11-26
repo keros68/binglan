@@ -1,10 +1,10 @@
+using System.IO;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
-using System.Windows.Media.Effects;
 using System.Windows.Threading;
 using BingLan.App.Dock;
 using BingLan.App.Interop;
@@ -17,39 +17,59 @@ using BingLan.Core.TopBar;
 namespace BingLan.App.Windows;
 
 /// <summary>
-/// The top bar's inline search: a small activatable window dropped under the bar.
-/// The bar itself is <c>WS_EX_NOACTIVATE</c> and can never own a focused text box, so
-/// typing needs a real window. Queries are debounced, the previous one is cancelled and
-/// results come from the running Everything instance over its IPC (no index of our own).
-/// Closes on Escape, on losing activation and after opening a result.
+/// The top bar's inline search: a compact frosted-glass activatable window dropped under the bar.
+/// The bar itself is <c>WS_EX_NOACTIVATE</c> and can never own a focused text box, so typing needs
+/// a real window. Searches local apps, desktop/FileBox/recent entries, Everything IPC, and Windows
+/// Search index first; only when nothing local matches (or an explicit URL is entered) does it
+/// offer to open the default browser.
 /// </summary>
 internal sealed class TopBarSearchWindow : Window
 {
-    internal const double SurfaceWidth = 560d;
-    private const double SurfaceMaxHeight = 420d;
-    private const double SurfaceMinHeight = 96d;
-    private const double AnchorGap = 6d;
+    internal const double SurfaceWidth = 520d;
+    private const double SurfaceMaxHeight = 440d;
+    private const double ChromeHeightReserve = 104d;
+    private const double AnchorGap = 8d;
     private const double EdgeMargin = 8d;
-    private const string IdleStatus = "输入关键词搜索本机文件，无匹配时按 Enter 用浏览器搜索";
-    private static readonly TimeSpan DebounceInterval = TimeSpan.FromMilliseconds(160);
+    private static readonly TimeSpan DebounceInterval = TimeSpan.FromMilliseconds(140);
+    private static readonly TimeSpan SnapshotWaitBudget = TimeSpan.FromMilliseconds(350);
+    private static readonly FontFamily IconFont = new("Segoe Fluent Icons, Segoe MDL2 Assets");
 
-    private readonly Brush _ink;
-    private readonly Brush _muted;
-    private readonly Brush _surface;
-    private readonly Brush _border;
+    private readonly TopBarSearchLook _look;
+    private readonly TopBarSearchEngineInfo _engine;
     private readonly int _anchorX;
     private readonly int _anchorY;
     private readonly MonitorSnapshot? _monitor;
     private readonly bool _everythingEnabled;
+    private readonly Func<Task<LauncherPanelSnapshot?>>? _readSnapshot;
+    private readonly Action<LauncherPanelEntry>? _openEntry;
+    private readonly Border _card;
+    private readonly DockGlassSurface _glass;
     private readonly TextBox _input;
+    private readonly TextBlock _placeholder;
+    private readonly TextBlock _searchGlyph;
+    private readonly Border _escHint;
+    private readonly TextBlock _escHintText;
+    private readonly Border _divider;
     private readonly ListBox _list;
     private readonly TextBlock _status;
     private readonly DispatcherTimer _debounce;
     private readonly List<TopBarSearchRow> _rows = [];
+    private readonly Dictionary<TopBarSearchCandidate, LauncherPanelEntry> _entryLookup =
+        new(ReferenceEqualityComparer.Instance);
 
+    private Brush _ink = Brushes.Black;
+    private Brush _muted = Brushes.Gray;
+    private Brush _badgeBrush = Brushes.Transparent;
+    private Style? _rowItemStyle;
+    private Task<LauncherPanelSnapshot?>? _snapshotTask;
     private EverythingSearchClient? _everything;
     private CancellationTokenSource? _cancellation;
+    private string _renderedQuery = string.Empty;
+    private int _renderedVersion = -1;
+    private string? _inFlightQuery;
+    private bool _lastLocalAvailable;
     private int _version;
+    private bool _openFirstOnComplete;
     private bool _closing;
     private bool _closed;
     private bool _activated;
@@ -57,19 +77,22 @@ internal sealed class TopBarSearchWindow : Window
 
     internal TopBarSearchWindow(
         TopBarSearchLook look,
+        TopBarSearchEngineInfo engine,
         int anchorX,
         int anchorY,
         MonitorSnapshot? monitor,
-        bool everythingEnabled)
+        bool everythingEnabled,
+        Func<Task<LauncherPanelSnapshot?>>? readSnapshot = null,
+        Action<LauncherPanelEntry>? openEntry = null)
     {
-        _ink = FrozenBrush(look.Foreground);
-        _muted = FrozenBrush(look.MutedForeground);
-        _surface = FrozenBrush(look.Background);
-        _border = FrozenBrush(look.Border);
+        _look = look;
+        _engine = engine ?? TopBarSearchRowRules.BingEngine;
         _anchorX = anchorX;
         _anchorY = anchorY;
         _monitor = monitor;
         _everythingEnabled = everythingEnabled;
+        _readSnapshot = readSnapshot;
+        _openEntry = openEntry;
 
         WindowStyle = WindowStyle.None;
         AllowsTransparency = true;
@@ -81,26 +104,21 @@ internal sealed class TopBarSearchWindow : Window
         WindowStartupLocation = WindowStartupLocation.Manual;
         Width = SurfaceWidth;
         MaxHeight = SurfaceMaxHeight;
-        MinHeight = SurfaceMinHeight;
+        MinHeight = 0d;
         SizeToContent = SizeToContent.Height;
 
         var initialScale = monitor is { Dpi: > 0 } ? monitor.Dpi / 96d : 1d;
-        var (initialLeftPx, initialTopPx) = ComputePositionPixels(initialScale);
-        Left = initialLeftPx / initialScale;
-        Top = initialTopPx / initialScale;
-
-        var highContrast = AccessibilityThemeManager.IsHighContrastEnabled || SystemParameters.HighContrast;
-        var ink = highContrast ? SystemColors.WindowTextBrush : _ink;
-        var muted = highContrast ? SystemColors.WindowTextBrush : _muted;
+        var initialPlacement = ComputePlacement(initialScale);
+        Left = initialPlacement.LeftPx / initialScale;
+        Top = initialPlacement.TopPx / initialScale;
+        MaxHeight = initialPlacement.MaxHeightDip;
 
         _input = new TextBox
         {
             Text = string.Empty,
             BorderThickness = new Thickness(0),
             Background = Brushes.Transparent,
-            Foreground = ink,
-            CaretBrush = ink,
-            FontSize = 15,
+            FontSize = 14.5,
             Padding = new Thickness(0, 2, 0, 2),
             VerticalContentAlignment = VerticalAlignment.Center
         };
@@ -108,49 +126,72 @@ internal sealed class TopBarSearchWindow : Window
         _input.TextChanged += OnInputChanged;
         _input.PreviewKeyDown += OnInputKeyDown;
 
-        var placeholder = new TextBlock
+        _placeholder = new TextBlock
         {
-            Text = "搜索本机文件…",
-            Foreground = muted,
-            Opacity = 0.55,
-            FontSize = 15,
+            Text = "搜索本机应用、文件，或输入网址…",
+            FontSize = 14,
             IsHitTestVisible = false,
             VerticalAlignment = VerticalAlignment.Center,
+            TextTrimming = TextTrimming.CharacterEllipsis,
             Margin = new Thickness(2, 0, 0, 0),
             Visibility = Visibility.Visible
         };
         _input.TextChanged += (_, _) =>
-            placeholder.Visibility = _input.Text.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
+            _placeholder.Visibility = _input.Text.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
 
         var inputLayer = new Grid();
         inputLayer.Children.Add(_input);
-        inputLayer.Children.Add(placeholder);
+        inputLayer.Children.Add(_placeholder);
 
-        var glyph = new TextBlock
+        _searchGlyph = new TextBlock
         {
             Text = "\uE721",
-            FontFamily = new FontFamily("Segoe Fluent Icons, Segoe MDL2 Assets"),
-            FontSize = 13,
-            Foreground = muted,
-            Opacity = 0.7,
+            FontFamily = IconFont,
+            FontSize = 14,
             VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(0, 0, 10, 1)
+            Margin = new Thickness(2, 0, 10, 0)
         };
 
-        var header = new Grid { Margin = new Thickness(2, 0, 2, 8) };
+        _escHintText = new TextBlock
+        {
+            Text = "Esc",
+            FontSize = 10.5,
+            FontWeight = FontWeights.Medium
+        };
+        _escHint = new Border
+        {
+            CornerRadius = new CornerRadius(5),
+            Padding = new Thickness(6, 2, 6, 2),
+            Margin = new Thickness(8, 0, 0, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+            IsHitTestVisible = false,
+            Child = _escHintText
+        };
+
+        var header = new Grid();
         header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        Grid.SetColumn(glyph, 0);
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        Grid.SetColumn(_searchGlyph, 0);
         Grid.SetColumn(inputLayer, 1);
-        header.Children.Add(glyph);
+        Grid.SetColumn(_escHint, 2);
+        header.Children.Add(_searchGlyph);
         header.Children.Add(inputLayer);
+        header.Children.Add(_escHint);
+
+        _divider = new Border
+        {
+            Height = 1,
+            Margin = new Thickness(0, 10, 0, 6),
+            Visibility = Visibility.Collapsed
+        };
 
         _list = new ListBox
         {
             BorderThickness = new Thickness(0),
             Background = Brushes.Transparent,
-            Foreground = ink,
-            MaxHeight = 300,
+            MaxHeight = Math.Max(0d, initialPlacement.MaxHeightDip - ChromeHeightReserve),
+            Padding = new Thickness(0),
             Visibility = Visibility.Collapsed
         };
         ScrollViewer.SetHorizontalScrollBarVisibility(_list, ScrollBarVisibility.Disabled);
@@ -160,43 +201,96 @@ internal sealed class TopBarSearchWindow : Window
         _status = new TextBlock
         {
             Text = string.Empty,
-            Foreground = muted,
-            Opacity = 0.66,
-            FontSize = 12,
-            Margin = new Thickness(2, 4, 2, 0)
+            FontSize = 11.5,
+            Margin = new Thickness(4, 6, 4, 0),
+            Visibility = Visibility.Collapsed
         };
 
         var stack = new StackPanel();
         stack.Children.Add(header);
+        stack.Children.Add(_divider);
         stack.Children.Add(_list);
         stack.Children.Add(_status);
 
-        var shadow = new DropShadowEffect
+        _card = new Border
         {
-            BlurRadius = 22,
-            ShadowDepth = 4,
-            Direction = 270,
-            Opacity = 0.32,
-            Color = Colors.Black
-        };
-        shadow.Freeze();
-
-        var card = new Border
-        {
-            Background = highContrast ? SystemColors.WindowBrush : _surface,
-            BorderBrush = highContrast ? SystemColors.WindowTextBrush : _border,
             BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(12),
-            Padding = new Thickness(14, 12, 14, 10),
-            Child = stack,
-            Effect = shadow
+            CornerRadius = new CornerRadius(14),
+            Padding = new Thickness(14, 10, 14, 10),
+            Child = stack
         };
-        Content = card;
+        _card.SetResourceReference(Border.BackgroundProperty, "FloatingGlassSurfaceBrush");
+        _card.SetResourceReference(Border.BorderBrushProperty, "FloatingGlassBorderBrush");
+        Content = _card;
+
+        _glass = new DockGlassSurface(
+            this,
+            _card,
+            "FloatingGlassSurfaceBrush",
+            "FloatingGlassBorderBrush",
+            "FloatingGlassPanelBrush",
+            fullTintOpacity: true);
+
+        ApplyTheme();
+        AccessibilityThemeManager.HighContrastChanged += OnHighContrastChanged;
 
         _debounce = new DispatcherTimer(DebounceInterval, DispatcherPriority.Input, (_, _) => OnDebounceElapsed(), Dispatcher);
         Deactivated += (_, _) => CloseUnlessOpeningResult();
-        Loaded += (_, _) => FocusInput();
+        Loaded += (_, _) =>
+        {
+            StartSnapshotPreload();
+            FocusInput();
+        };
         Closed += OnClosed;
+    }
+
+    private void OnHighContrastChanged(object? sender, EventArgs e)
+    {
+        if (!_closed)
+        {
+            ApplyTheme();
+            if (_rows.Count > 0)
+            {
+                RenderRows(_lastLocalAvailable, _renderedQuery, preserveSelection: true);
+            }
+        }
+    }
+
+    private void ApplyTheme()
+    {
+        var highContrast = AccessibilityThemeManager.IsHighContrastEnabled || SystemParameters.HighContrast;
+        Resources["FloatingGlassSurfaceBrush"] = highContrast ? SystemColors.WindowBrush : FrozenBrush(_look.FallbackSurface);
+        Resources["FloatingGlassPanelBrush"] = highContrast ? SystemColors.WindowBrush : FrozenBrush(_look.GlassTint);
+        Resources["FloatingGlassBorderBrush"] = highContrast ? SystemColors.WindowTextBrush : FrozenBrush(_look.Border);
+
+        _ink = highContrast ? SystemColors.WindowTextBrush : FrozenBrush(_look.Foreground);
+        _muted = highContrast ? SystemColors.WindowTextBrush : FrozenBrush(_look.MutedForeground);
+        _badgeBrush = highContrast ? SystemColors.ControlBrush : FrozenBrush(_look.BadgeBackground);
+        var dividerBrush = highContrast ? SystemColors.WindowTextBrush : FrozenBrush(_look.Divider);
+        _rowItemStyle = highContrast
+            ? null
+            : BuildRowItemStyle(FrozenBrush(_look.HoverRowBackground), FrozenBrush(_look.ActiveRowBackground));
+
+        _input.Foreground = _ink;
+        _input.CaretBrush = _ink;
+        _placeholder.Foreground = _muted;
+        _placeholder.Opacity = highContrast ? 0.85 : 0.78;
+        _searchGlyph.Foreground = _muted;
+        _escHint.Background = _badgeBrush;
+        _escHintText.Foreground = _muted;
+        _divider.Background = dividerBrush;
+        _list.Foreground = _ink;
+        _status.Foreground = _muted;
+
+        _glass.SetClearMode(_look.UseClearGlass && !highContrast);
+    }
+
+    private void StartSnapshotPreload()
+    {
+        if (_snapshotTask is null && _readSnapshot is not null)
+        {
+            _snapshotTask = _readSnapshot();
+        }
     }
 
     /// <summary>Focuses the box once the window is up and asks for the foreground explicitly.</summary>
@@ -268,27 +362,25 @@ internal sealed class TopBarSearchWindow : Window
             {
                 var dpi = VisualTreeHelper.GetDpi(this);
                 var targetScale = _monitor is { Dpi: > 0 } ? _monitor.Dpi / 96d : dpi.DpiScaleX;
-                var (leftPx, topPx) = ComputePositionPixels(targetScale);
+                var placement = ComputePlacement(targetScale);
+                MaxHeight = placement.MaxHeightDip;
+                _list.MaxHeight = Math.Max(0d, placement.MaxHeightDip - ChromeHeightReserve);
                 NativeMethods.SetWindowPos(
                     source.Handle,
                     DockNativeMethods.HwndTopmost,
-                    leftPx,
-                    topPx,
+                    placement.LeftPx,
+                    placement.TopPx,
                     0,
                     0,
                     NativeMethods.SwpNoSize | NativeMethods.SwpNoActivate);
             }
         }
-        // No accent material here on purpose: the accented blur needs an opaque
-        // redirection surface and renders as a flat grey block on this transparent
-        // layered window, so the panel uses the bar's resolved flat colour instead.
-        SetStatus(IdleStatus);
     }
 
-    private (int Left, int Top) ComputePositionPixels(double scale)
+    private (int LeftPx, int TopPx, double MaxHeightDip) ComputePlacement(double scale)
     {
         var safeScale = double.IsFinite(scale) && scale > 0d ? scale : 1d;
-        var widthPx = (int)Math.Round(SurfaceWidth * safeScale);
+        var cardWidthPx = (int)Math.Round(SurfaceWidth * safeScale);
         var marginPx = (int)Math.Round(EdgeMargin * safeScale);
         var gapPx = (int)Math.Round(AnchorGap * safeScale);
 
@@ -311,33 +403,56 @@ internal sealed class TopBarSearchWindow : Window
                 (int)Math.Round(dipWork.Bottom * safeScale));
         }
 
-        var leftPx = TopBarSearchRowRules.ClampHorizontalPixels(_anchorX, widthPx, workArea.Left, workArea.Right, marginPx);
-        var topPx = _anchorY + gapPx;
-        return (leftPx, topPx);
+        var leftPx = TopBarSearchRowRules.ClampHorizontalPixels(_anchorX, cardWidthPx, workArea.Left, workArea.Right, marginPx);
+        var desiredTopPx = _anchorY + gapPx;
+        var minVisiblePx = (int)Math.Round((ChromeHeightReserve + 56d) * safeScale);
+        var maxTopPx = Math.Max(workArea.Top, workArea.Bottom - minVisiblePx - marginPx);
+        var topPx = Math.Clamp(desiredTopPx, workArea.Top, maxTopPx);
+        var availableHeightDip = (workArea.Bottom - topPx) / safeScale - EdgeMargin;
+        var maxHeightDip = double.IsFinite(availableHeightDip) && availableHeightDip > 0d
+            ? Math.Min(SurfaceMaxHeight, availableHeightDip)
+            : Math.Min(SurfaceMaxHeight, Math.Max(1d, (workArea.Bottom - workArea.Top) / safeScale));
+        return (leftPx, topPx, maxHeightDip);
     }
 
     private void OnInputChanged(object? sender, TextChangedEventArgs e)
     {
         _debounce.Stop();
-        if (_input.Text.Trim().Length == 0)
+        _openFirstOnComplete = false;
+        CancelSearch();
+        _version++;
+
+        var query = _input.Text.Trim();
+        if (query.Length == 0)
         {
-            CancelSearch();
+            _renderedQuery = string.Empty;
             _rows.Clear();
             _list.Items.Clear();
             _list.Visibility = Visibility.Collapsed;
-            SetStatus(IdleStatus);
+            _divider.Visibility = Visibility.Collapsed;
+            SetStatus(null);
             return;
         }
+
+        _divider.Visibility = Visibility.Visible;
+        if (!string.Equals(_renderedQuery, query, StringComparison.Ordinal))
+        {
+            _list.SelectedIndex = -1;
+        }
+        SetStatus(TopBarSearchRowRules.HasExplicitHttpScheme(query)
+            && TopBarSearchRowRules.TryNormalizeDirectUrl(query, out _, out var host)
+            ? $"按 Enter 直接打开 {host}"
+            : "正在检索本机应用与文件…");
         _debounce.Start();
     }
 
     private void OnDebounceElapsed()
     {
         _debounce.Stop();
-        _ = SearchAsync();
+        _ = SearchAsync(openFirstOnComplete: false);
     }
 
-    private async Task SearchAsync()
+    private async Task SearchAsync(bool openFirstOnComplete)
     {
         var query = _input.Text.Trim();
         if (query.Length == 0 || _closed)
@@ -348,14 +463,97 @@ internal sealed class TopBarSearchWindow : Window
         CancelSearch();
         var cancellation = new CancellationTokenSource();
         _cancellation = cancellation;
+        _inFlightQuery = query;
         var token = cancellation.Token;
         var version = ++_version;
-        SetStatus("正在搜索…");
+        _openFirstOnComplete = openFirstOnComplete;
+        _divider.Visibility = Visibility.Visible;
+        if (_rows.Count == 0)
+        {
+            SetStatus("正在检索本机应用与文件…");
+        }
+
+        var catalogCandidates = new List<TopBarSearchCandidate>();
+        var catalogAvailable = false;
+        var catalogTimedOut = false;
 
         try
         {
-            var localAvailable = false;
-            IReadOnlyList<TopBarSearchCandidate> rawCandidates = [];
+            // Phase 1: Cached local catalog (Start Menu apps, Dock pins, Desktop, FileBox, QuickPlaces, Recent),
+            // bounded so a slow redirected Desktop never blocks Everything or Windows Search.
+            StartSnapshotPreload();
+            var seenKeys = new HashSet<string>(StringComparer.Ordinal);
+            var seenPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            if (_snapshotTask is { } snapshotTask)
+            {
+                LauncherPanelSnapshot? snapshot = null;
+                try
+                {
+                    snapshot = snapshotTask.IsCompleted
+                        ? await snapshotTask
+                        : await snapshotTask.WaitAsync(SnapshotWaitBudget, token);
+                }
+                catch (TimeoutException)
+                {
+                    catalogTimedOut = true;
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
+                }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException)
+                {
+                }
+
+                if (_closed || token.IsCancellationRequested || version != _version)
+                {
+                    return;
+                }
+
+                if (snapshot is not null)
+                {
+                    catalogAvailable = true;
+                    _entryLookup.Clear();
+                    foreach (var entry in snapshot.Favorites
+                        .Concat(snapshot.Entries)
+                        .Concat(snapshot.RecentEntries ?? []))
+                    {
+                        var path = entry.Candidate.Path;
+                        if (string.IsNullOrWhiteSpace(path))
+                        {
+                            continue;
+                        }
+                        if (seenKeys.Add(entry.Key))
+                        {
+                            catalogCandidates.Add(entry.Candidate);
+                            _entryLookup[entry.Candidate] = entry;
+                            seenPaths.Add(path);
+                            if (!string.IsNullOrWhiteSpace(entry.IconSource))
+                            {
+                                seenPaths.Add(entry.IconSource);
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (catalogCandidates.Count > 0)
+            {
+                var fastLocal = TopBarSearchRules.Search(catalogCandidates, query, TopBarSearchRules.MaxResults);
+                if (fastLocal.Count > 0)
+                {
+                    _renderedQuery = query;
+                    _renderedVersion = version;
+                    _rows.Clear();
+                    _rows.AddRange(TopBarSearchRowRules.Compose(fastLocal, query, _engine));
+                    RenderRows(localAvailable: true, query, preserveSelection: false);
+                }
+            }
+
+            // Phase 2: Everything IPC and/or Windows Search index for files across disk.
+            var indexAvailable = false;
+            var indexedCandidates = new List<TopBarSearchCandidate>();
 
             if (_everything is not null)
             {
@@ -366,12 +564,12 @@ internal sealed class TopBarSearchWindow : Window
                 }
                 if (everything.Available)
                 {
-                    localAvailable = true;
-                    rawCandidates = everything.Candidates;
+                    indexAvailable = true;
+                    indexedCandidates.AddRange(everything.Candidates);
                 }
             }
 
-            if (!localAvailable)
+            if (!indexAvailable)
             {
                 var indexed = await WindowsIndexSearchClient.SearchAsync(query, token);
                 if (_closed || token.IsCancellationRequested || version != _version)
@@ -380,17 +578,45 @@ internal sealed class TopBarSearchWindow : Window
                 }
                 if (indexed.Available)
                 {
-                    localAvailable = true;
-                    rawCandidates = indexed.Candidates;
+                    indexAvailable = true;
+                    indexedCandidates.AddRange(indexed.Candidates);
                 }
             }
 
-            IReadOnlyList<TopBarSearchCandidate> local = localAvailable
-                ? TopBarSearchRules.Search(rawCandidates, query, TopBarSearchRules.MaxResults)
+            var merged = new List<TopBarSearchCandidate>(catalogCandidates.Count + indexedCandidates.Count);
+            merged.AddRange(catalogCandidates);
+            foreach (var candidate in indexedCandidates)
+            {
+                if (!string.IsNullOrWhiteSpace(candidate.Path) && seenPaths.Add(candidate.Path))
+                {
+                    merged.Add(candidate);
+                }
+            }
+
+            IReadOnlyList<TopBarSearchCandidate> local = merged.Count > 0
+                ? TopBarSearchRules.Search(merged, query, TopBarSearchRules.MaxResults)
                 : [];
+            var sameQueryRefresh = _renderedVersion == version && string.Equals(_renderedQuery, query, StringComparison.Ordinal);
+            var previouslySelected = sameQueryRefresh && _list.SelectedIndex >= 0 && _list.SelectedIndex < _rows.Count
+                ? _rows[_list.SelectedIndex]
+                : null;
+            _renderedQuery = query;
+            _renderedVersion = version;
             _rows.Clear();
-            _rows.AddRange(TopBarSearchRowRules.Compose(local, query));
-            RenderRows(localAvailable);
+            _rows.AddRange(TopBarSearchRowRules.Compose(local, query, _engine));
+            RenderRows(catalogAvailable || indexAvailable, query, preserveSelection: sameQueryRefresh, previouslySelected);
+            if (_openFirstOnComplete && version == _version && _rows.Count > 0)
+            {
+                _openFirstOnComplete = false;
+                if (catalogTimedOut && local.Count == 0)
+                {
+                    SetStatus($"本机应用列表仍在加载 · 再按 Enter 用{_engine.DisplayName}搜索");
+                }
+                else
+                {
+                    OpenIndex(_list.SelectedIndex >= 0 ? _list.SelectedIndex : 0);
+                }
+            }
         }
         catch (OperationCanceledException)
         {
@@ -399,89 +625,223 @@ internal sealed class TopBarSearchWindow : Window
         {
             if (!_closed && version == _version)
             {
-                SetStatus("搜索暂不可用");
+                IReadOnlyList<TopBarSearchCandidate> fallbackLocal = catalogCandidates.Count > 0
+                    ? TopBarSearchRules.Search(catalogCandidates, query, TopBarSearchRules.MaxResults)
+                    : [];
+                _renderedQuery = query;
+                _renderedVersion = version;
+                _rows.Clear();
+                _rows.AddRange(TopBarSearchRowRules.Compose(fallbackLocal, query, _engine));
+                RenderRows(localAvailable: catalogAvailable, query, preserveSelection: false);
+                if (_openFirstOnComplete && _rows.Count > 0 && (!catalogTimedOut || fallbackLocal.Count > 0))
+                {
+                    _openFirstOnComplete = false;
+                    OpenIndex(0);
+                }
+            }
+        }
+        finally
+        {
+            if (ReferenceEquals(_cancellation, cancellation))
+            {
+                _cancellation = null;
+                _inFlightQuery = null;
+                cancellation.Dispose();
             }
         }
     }
 
-    private void RenderRows(bool localAvailable)
+    private void RenderRows(
+        bool localAvailable,
+        string query,
+        bool preserveSelection,
+        TopBarSearchRow? previouslySelected = null)
     {
+        _lastLocalAvailable = localAvailable;
+        var currentSelected = preserveSelection
+            ? previouslySelected ?? (_list.SelectedIndex >= 0 && _list.SelectedIndex < _rows.Count ? _rows[_list.SelectedIndex] : null)
+            : null;
+
         _list.Items.Clear();
         foreach (var row in _rows)
         {
             _list.Items.Add(BuildRow(row));
         }
-        _list.Visibility = _rows.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
-        _list.SelectedIndex = _rows.Count == 0 ? -1 : 0;
-        if (_rows.Count == 0)
+
+        var hasRows = _rows.Count > 0;
+        _divider.Visibility = hasRows || query.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+        _list.Visibility = hasRows ? Visibility.Visible : Visibility.Collapsed;
+        var nextIndex = -1;
+        if (hasRows)
+        {
+            nextIndex = 0;
+            if (currentSelected is not null)
+            {
+                var foundIndex = currentSelected.Local is not null
+                    ? _rows.FindIndex(row => ReferenceEquals(row.Local, currentSelected.Local))
+                    : -1;
+                if (foundIndex < 0)
+                {
+                    foundIndex = _rows.FindIndex(row =>
+                        row.Kind == currentSelected.Kind
+                        && string.Equals(row.Title, currentSelected.Title, StringComparison.Ordinal)
+                        && string.Equals(row.Local?.Path, currentSelected.Local?.Path, StringComparison.OrdinalIgnoreCase)
+                        && string.Equals(row.BrowserUrl, currentSelected.BrowserUrl, StringComparison.Ordinal));
+                }
+                if (foundIndex >= 0)
+                {
+                    nextIndex = foundIndex;
+                }
+            }
+        }
+        _list.SelectedIndex = nextIndex;
+
+        if (!hasRows)
         {
             SetStatus(localAvailable ? "未找到匹配项" : "未找到匹配项，本机搜索暂不可用");
             return;
         }
+
         var localCount = _rows.Count(row => row.Kind == TopBarSearchRowKind.Local);
-        SetStatus(localCount == 0
-            ? (localAvailable
-                ? "本机无匹配结果 · Enter 用浏览器搜索"
-                : "本机索引暂不可用 · Enter 用浏览器搜索")
-            : $"{localCount} 个本机结果 · ↑↓ 选择，Enter 打开");
+        if (localCount > 0)
+        {
+            SetStatus($"{localCount} 个本机结果 · ↑↓ 选择 · Enter 打开");
+            return;
+        }
+
+        if (TopBarSearchRowRules.TryNormalizeDirectUrl(query, out _, out _))
+        {
+            SetStatus("Enter 在默认浏览器中打开网址");
+            return;
+        }
+
+        SetStatus(localAvailable
+            ? $"本机无匹配 · Enter 用{_engine.DisplayName}搜索"
+            : $"本机索引暂不可用 · Enter 用{_engine.DisplayName}搜索");
     }
 
     private ListBoxItem BuildRow(TopBarSearchRow row)
     {
         var highContrast = AccessibilityThemeManager.IsHighContrastEnabled || SystemParameters.HighContrast;
-        var ink = highContrast ? SystemColors.WindowTextBrush : _ink;
-        var muted = highContrast ? SystemColors.WindowTextBrush : _muted;
+
+        var glyphText = row.Kind == TopBarSearchRowKind.Browser
+            ? "\uE774"
+            : row.Local?.Kind switch
+            {
+                TopBarSearchItemKind.Folder => "\uE8B7",
+                TopBarSearchItemKind.App => "\uE737",
+                _ => "\uE8A5"
+            };
+
+        var iconBadge = new Border
+        {
+            Width = 28,
+            Height = 28,
+            CornerRadius = new CornerRadius(7),
+            Background = _badgeBrush,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 10, 0),
+            Child = new TextBlock
+            {
+                Text = glyphText,
+                FontFamily = IconFont,
+                FontSize = 13.5,
+                Foreground = _ink,
+                Opacity = highContrast ? 1.0 : 0.88,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center
+            }
+        };
+
+        var subtitleText = row.Subtitle;
+        if (row.Kind == TopBarSearchRowKind.Local
+            && row.Local is { } candidate
+            && _entryLookup.TryGetValue(candidate, out var entry)
+            && !string.IsNullOrWhiteSpace(entry.Source)
+            && candidate.Kind == TopBarSearchItemKind.App)
+        {
+            subtitleText = $"{entry.Source} · {subtitleText}";
+        }
 
         var name = new TextBlock
         {
             Text = row.Title,
-            Foreground = ink,
+            Foreground = _ink,
             FontSize = 13,
+            FontWeight = FontWeights.Medium,
             TextTrimming = TextTrimming.CharacterEllipsis
         };
         var location = new TextBlock
         {
-            Text = row.Subtitle,
-            Foreground = muted,
-            Opacity = 0.6,
+            Text = subtitleText,
+            Foreground = _muted,
             FontSize = 11,
+            Margin = new Thickness(0, 1, 0, 0),
             TextTrimming = TextTrimming.CharacterEllipsis
         };
-        var text = new StackPanel { Margin = new Thickness(2, 2, 2, 2) };
+        var text = new StackPanel
+        {
+            VerticalAlignment = VerticalAlignment.Center
+        };
         text.Children.Add(name);
         text.Children.Add(location);
 
-        FrameworkElement content = text;
-        if (row.Kind == TopBarSearchRowKind.Browser)
-        {
-            var glyph = new TextBlock
-            {
-                Text = "\uE774",
-                FontFamily = new FontFamily("Segoe Fluent Icons, Segoe MDL2 Assets"),
-                FontSize = 14,
-                Foreground = muted,
-                Opacity = 0.75,
-                VerticalAlignment = VerticalAlignment.Center,
-                Margin = new Thickness(0, 0, 10, 0)
-            };
-            var grid = new Grid();
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            Grid.SetColumn(glyph, 0);
-            Grid.SetColumn(text, 1);
-            grid.Children.Add(glyph);
-            grid.Children.Add(text);
-            content = grid;
-        }
+        var grid = new Grid();
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        Grid.SetColumn(iconBadge, 0);
+        Grid.SetColumn(text, 1);
+        grid.Children.Add(iconBadge);
+        grid.Children.Add(text);
 
-        return new ListBoxItem
+        var item = new ListBoxItem
         {
-            Content = content,
-            Padding = new Thickness(8, 5, 8, 5),
+            Content = grid,
+            Padding = new Thickness(8, 6, 8, 6),
+            Margin = new Thickness(0, 1, 0, 1),
             Background = Brushes.Transparent,
             HorizontalContentAlignment = HorizontalAlignment.Stretch,
             Focusable = false
         };
+        if (_rowItemStyle is not null)
+        {
+            item.Style = _rowItemStyle;
+        }
+        return item;
+    }
+
+    private static Style BuildRowItemStyle(Brush hoverBrush, Brush activeBrush)
+    {
+        var style = new Style(typeof(ListBoxItem));
+        style.Setters.Add(new Setter(Control.BorderThicknessProperty, new Thickness(0)));
+        style.Setters.Add(new Setter(FrameworkElement.FocusVisualStyleProperty, null));
+
+        var template = new ControlTemplate(typeof(ListBoxItem));
+        var borderFactory = new FrameworkElementFactory(typeof(Border), "Bd");
+        borderFactory.SetValue(Border.BackgroundProperty, Brushes.Transparent);
+        borderFactory.SetValue(Border.CornerRadiusProperty, new CornerRadius(8));
+        borderFactory.SetValue(Border.PaddingProperty, new TemplateBindingExtension(Control.PaddingProperty));
+        borderFactory.SetValue(UIElement.SnapsToDevicePixelsProperty, true);
+
+        var presenterFactory = new FrameworkElementFactory(typeof(ContentPresenter));
+        presenterFactory.SetValue(FrameworkElement.HorizontalAlignmentProperty,
+            new TemplateBindingExtension(Control.HorizontalContentAlignmentProperty));
+        presenterFactory.SetValue(FrameworkElement.VerticalAlignmentProperty,
+            new TemplateBindingExtension(Control.VerticalContentAlignmentProperty));
+        borderFactory.AppendChild(presenterFactory);
+        template.VisualTree = borderFactory;
+
+        var hoverTrigger = new Trigger { Property = UIElement.IsMouseOverProperty, Value = true };
+        hoverTrigger.Setters.Add(new Setter(Border.BackgroundProperty, hoverBrush, "Bd"));
+        template.Triggers.Add(hoverTrigger);
+
+        var selectedTrigger = new Trigger { Property = ListBoxItem.IsSelectedProperty, Value = true };
+        selectedTrigger.Setters.Add(new Setter(Border.BackgroundProperty, activeBrush, "Bd"));
+        template.Triggers.Add(selectedTrigger);
+
+        style.Setters.Add(new Setter(Control.TemplateProperty, template));
+        style.Seal();
+        return style;
     }
 
     private void OnInputKeyDown(object? sender, KeyEventArgs e)
@@ -520,7 +880,47 @@ internal sealed class TopBarSearchWindow : Window
         _list.ScrollIntoView(_list.Items[index]);
     }
 
-    private void OpenSelected() => OpenIndex(_list.SelectedIndex);
+    private void OpenSelected()
+    {
+        var currentQuery = _input.Text.Trim();
+        if (currentQuery.Length == 0)
+        {
+            return;
+        }
+
+        if (_rows.Count > 0
+            && _renderedVersion == _version
+            && string.Equals(_renderedQuery, currentQuery, StringComparison.Ordinal))
+        {
+            OpenIndex(_list.SelectedIndex >= 0 ? _list.SelectedIndex : 0);
+            return;
+        }
+
+        // Explicit http(s):// URLs cannot match Windows filenames, so they can open immediately.
+        // Bare domains (e.g. logo.ai) still wait for local lookup so Enter stays timing-consistent.
+        if (TopBarSearchRowRules.HasExplicitHttpScheme(currentQuery)
+            && TopBarSearchRowRules.TryNormalizeDirectUrl(currentQuery, out _, out _))
+        {
+            var immediate = TopBarSearchRowRules.Compose([], currentQuery, _engine);
+            if (immediate.Count > 0)
+            {
+                OpenRow(immediate[0]);
+            }
+            return;
+        }
+
+        // For non-URL queries, finish the local lookup first so pressing Enter quickly
+        // never leaks a local filename to a web search provider before local matches return.
+        if (_cancellation is not null && string.Equals(_inFlightQuery, currentQuery, StringComparison.Ordinal))
+        {
+            _debounce.Stop();
+            _openFirstOnComplete = true;
+            return;
+        }
+
+        _debounce.Stop();
+        _ = SearchAsync(openFirstOnComplete: true);
+    }
 
     /// <summary>
     /// Opens the row under the pointer. The container is hit-tested instead of reading
@@ -529,6 +929,11 @@ internal sealed class TopBarSearchWindow : Window
     /// </summary>
     private void OnListMouseUp(object sender, MouseButtonEventArgs e)
     {
+        var currentQuery = _input.Text.Trim();
+        if (_renderedVersion != _version || !string.Equals(_renderedQuery, currentQuery, StringComparison.Ordinal))
+        {
+            return;
+        }
         if (e.OriginalSource is not DependencyObject source
             || ItemsControl.ContainerFromElement(_list, source) is not ListBoxItem item)
         {
@@ -546,7 +951,22 @@ internal sealed class TopBarSearchWindow : Window
             return;
         }
 
-        var row = _rows[index];
+        OpenRow(_rows[index]);
+    }
+
+    private void OpenRow(TopBarSearchRow row)
+    {
+        if (row.Kind == TopBarSearchRowKind.Local
+            && row.Local is { } candidate
+            && _openEntry is not null
+            && _entryLookup.TryGetValue(candidate, out var entry))
+        {
+            _openingResult = true;
+            RequestClose();
+            _openEntry(entry);
+            return;
+        }
+
         System.Diagnostics.ProcessStartInfo? start = null;
         if (row.BrowserUrl is { Length: > 0 } url)
         {
@@ -560,12 +980,14 @@ internal sealed class TopBarSearchWindow : Window
         {
             start = new System.Diagnostics.ProcessStartInfo(path) { UseShellExecute = true };
         }
+        if (start is null)
+        {
+            SetStatus("无法打开该链接，请检查搜索引擎网址设置");
+            return;
+        }
         _openingResult = true;
         RequestClose();
-        if (start is not null)
-        {
-            _ = ShellLauncher.StartAsync(start);
-        }
+        _ = ShellLauncher.StartAsync(start);
     }
 
     /// <summary>
@@ -591,6 +1013,7 @@ internal sealed class TopBarSearchWindow : Window
 
     private void CancelSearch()
     {
+        _inFlightQuery = null;
         var cancellation = _cancellation;
         _cancellation = null;
         if (cancellation is null)
@@ -610,13 +1033,26 @@ internal sealed class TopBarSearchWindow : Window
     private void OnClosed(object? sender, EventArgs e)
     {
         _closed = true;
+        AccessibilityThemeManager.HighContrastChanged -= OnHighContrastChanged;
         _debounce.Stop();
         CancelSearch();
         _everything?.Dispose();
         _everything = null;
+        _glass.Dispose();
     }
 
-    private void SetStatus(string text) => _status.Text = text;
+    private void SetStatus(string? text)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            _status.Text = string.Empty;
+            _status.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        _status.Text = text;
+        _status.Visibility = Visibility.Visible;
+    }
 
     private static Brush FrozenBrush(Color color)
     {
@@ -627,34 +1063,71 @@ internal sealed class TopBarSearchWindow : Window
 }
 
 /// <summary>
-/// The bar's resolved surface, handed to the popup so both read as the same material.
-/// The bar can ride a nearly transparent acrylic tint; a floating panel needs more body
-/// to stay readable, so the alpha is lifted while the hue stays the bar's own.
+/// Resolved frosted-glass palette for the top bar's inline search popup, aligned with the
+/// desktop's global ice-blue/dark glass appearance and backed by Windows 11 Composition blur.
 /// </summary>
 internal sealed record TopBarSearchLook(
-    Color Background,
+    bool UseDarkInk,
+    bool UseClearGlass,
+    Color GlassTint,
+    Color FallbackSurface,
     Color Border,
     Color Foreground,
-    Color MutedForeground)
+    Color MutedForeground,
+    Color Divider,
+    Color BadgeBackground,
+    Color ActiveRowBackground,
+    Color HoverRowBackground)
 {
-    private const byte MinimumPanelAlpha = 0xA6;
-    private const byte MaximumPanelAlpha = 0xB3;
-
-    internal static TopBarSearchLook FromBar(Color surface, TopBarAdaptivePalette palette)
+    internal static TopBarSearchLook FromStyle(
+        DesktopStyleState? style,
+        LauncherAppearanceState? appearance = null)
     {
-        // The bar resolves its own colour and opacity from the appearance settings; the
-        // panel keeps that hue but pins the alpha into a narrow window. Opaque enough for
-        // the text to stay readable over any window, sheer enough to read as glass without
-        // the accent blur a transparent layered window cannot host.
-        var alpha = Math.Clamp(surface.A, MinimumPanelAlpha, MaximumPanelAlpha);
-        var body = Color.FromArgb(alpha, surface.R, surface.G, surface.B);
+        var effectiveStyle = style ?? new DesktopStyleState();
+        var effectiveAppearance = appearance ?? new LauncherAppearanceState();
+        var (readableGlass, readability) = effectiveAppearance.ResolveReadableGlass(effectiveStyle);
+        var baseColor = Parse(readableGlass.Surface, Color.FromArgb(0xB8, 0xD8, 0xF3, 0xFF));
+        var useClearGlass = effectiveAppearance.UseClearGlass;
+
+        if (readability.DarkInk)
+        {
+            var tintRgb = effectiveAppearance.FollowCardLook
+                && effectiveStyle.Palette == DesktopStyleRules.DefaultPalette
+                ? Color.FromRgb(0xEA, 0xF6, 0xFF)
+                : Color.FromRgb(baseColor.R, baseColor.G, baseColor.B);
+            // Respect the readability-verified surface opacity so dark ink stays >= 4.5:1
+            // even over dark wallpapers while keeping real Windows 11 frosted glass blur.
+            var readableAlpha = baseColor.A;
+            return new TopBarSearchLook(
+                UseDarkInk: true,
+                UseClearGlass: useClearGlass,
+                GlassTint: Color.FromArgb(readableAlpha, tintRgb.R, tintRgb.G, tintRgb.B),
+                FallbackSurface: Color.FromArgb(Math.Max((byte)0xEC, readableAlpha), tintRgb.R, tintRgb.G, tintRgb.B),
+                Border: Color.FromArgb(0xD9, 0xFF, 0xFF, 0xFF),
+                Foreground: Color.FromRgb(0x12, 0x2C, 0x44),
+                MutedForeground: Color.FromRgb(0x2B, 0x45, 0x5E),
+                Divider: Color.FromArgb(0x26, 0x12, 0x2C, 0x44),
+                BadgeBackground: Color.FromArgb(0x70, 0xFF, 0xFF, 0xFF),
+                ActiveRowBackground: Color.FromArgb(0x90, 0xB8, 0xE0, 0xFA),
+                HoverRowBackground: Color.FromArgb(0x70, 0xFF, 0xFF, 0xFF));
+        }
+
+        var darkRgb = Color.FromRgb(baseColor.R, baseColor.G, baseColor.B);
+        var darkAlpha = baseColor.A;
         return new TopBarSearchLook(
-            body,
-            Parse(palette.BarBorderColor),
-            Parse(palette.Foreground),
-            Parse(palette.MutedForeground));
+            UseDarkInk: false,
+            UseClearGlass: useClearGlass,
+            GlassTint: Color.FromArgb(darkAlpha, darkRgb.R, darkRgb.G, darkRgb.B),
+            FallbackSurface: Color.FromArgb(Math.Max((byte)0xEC, darkAlpha), darkRgb.R, darkRgb.G, darkRgb.B),
+            Border: Color.FromArgb(0x52, 0xFF, 0xFF, 0xFF),
+            Foreground: Color.FromRgb(0xF2, 0xF6, 0xFC),
+            MutedForeground: Color.FromRgb(0xC8, 0xD8, 0xE8),
+            Divider: Color.FromArgb(0x2A, 0xFF, 0xFF, 0xFF),
+            BadgeBackground: Color.FromArgb(0x26, 0xFF, 0xFF, 0xFF),
+            ActiveRowBackground: Color.FromArgb(0x48, 0x72, 0xBF, 0xEF),
+            HoverRowBackground: Color.FromArgb(0x28, 0xFF, 0xFF, 0xFF));
     }
 
-    private static Color Parse(string text) =>
-        ColorConverter.ConvertFromString(text) is Color color ? color : Colors.White;
+    private static Color Parse(string text, Color fallback) =>
+        ColorConverter.ConvertFromString(text) is Color color ? color : fallback;
 }

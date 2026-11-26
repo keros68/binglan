@@ -3725,6 +3725,14 @@ public sealed partial class WidgetCoordinator : IDisposable
 
         public bool IsEverythingSearchEnabled => owner._state.LauncherPreferences.UseEverything;
 
+        public LauncherAppearanceState LauncherAppearance => owner._state.LauncherAppearance;
+
+        public async Task<LauncherPanelSnapshot?> ReadSearchSnapshotAsync() =>
+            await owner.ReadLauncherSnapshotAsync();
+
+        public void OpenSearchEntry(LauncherPanelEntry entry) =>
+            owner.OpenLauncherTarget(entry, locate: false);
+
         public void ToggleLauncherPanel() => owner.ToggleLauncherPanel();
 
         public void OpenTopBarSettings() => owner.OpenSettings("TopBar");

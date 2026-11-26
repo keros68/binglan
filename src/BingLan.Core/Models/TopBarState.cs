@@ -135,6 +135,14 @@ public sealed class TopBarState
     /// the behaviour they had before the popup existed; never exported with a theme.</summary>
     public bool? SearchInline { get; set; }
 
+    /// <summary>Search engine key for the inline search popup ("bing", "google", "baidu", "custom").
+    /// Machine-local and null/unknown defaults to Bing; never exported with a theme.</summary>
+    public string? SearchEngine { get; set; }
+
+    /// <summary>Custom search URL template with a <c>{0}</c> query placeholder used when
+    /// <see cref="SearchEngine"/> is <c>"custom"</c>. Machine-local; never exported with a theme.</summary>
+    public string? SearchCustomUrl { get; set; }
+
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? ExtensionData { get; set; }
 }

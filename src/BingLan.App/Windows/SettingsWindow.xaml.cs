@@ -3555,7 +3555,10 @@ public partial class SettingsWindow : Window
             TopBarBatteryCheckBox.IsChecked = state.Modules.Battery;
             TopBarSearchCheckBox.IsChecked = state.Modules.Search;
             TopBarSearchInlineCheckBox.IsChecked = state.SearchInline == true;
-            TopBarSearchInlineRow.IsEnabled = state.Modules.Search;
+            SelectTopBarSearchEngine(state.SearchEngine);
+            TopBarSearchCustomUrlTextBox.Text = state.SearchCustomUrl ?? string.Empty;
+            SetTopBarSearchCustomUrlError(null);
+            UpdateTopBarSearchEngineUi(state);
             TopBarTrayOverflowCheckBox.IsChecked = state.Modules.TrayOverflow;
             TopBarTrayOverflowCheckBox.Visibility = OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000)
                 ? Visibility.Visible : Visibility.Collapsed;
@@ -3616,7 +3619,12 @@ public partial class SettingsWindow : Window
         state.Modules.Battery = TopBarBatteryCheckBox.IsChecked == true;
         state.Modules.Search = TopBarSearchCheckBox.IsChecked == true;
         state.SearchInline = TopBarSearchInlineCheckBox.IsChecked == true;
-        TopBarSearchInlineRow.IsEnabled = state.Modules.Search;
+        if (TopBarSearchEngineComboBox.SelectedItem is ComboBoxItem { Tag: string engineKey })
+        {
+            var normalizedEngine = TopBarSearchRowRules.NormalizeEngineKey(engineKey);
+            state.SearchEngine = normalizedEngine == TopBarSearchRowRules.EngineBing ? null : normalizedEngine;
+        }
+        UpdateTopBarSearchEngineUi(state);
         state.Modules.TrayOverflow = TopBarTrayOverflowCheckBox.IsChecked == true;
         if (TopBarMonitorComboBox.SelectedItem is ComboBoxItem { Tag: string deviceName })
         {
@@ -3625,6 +3633,112 @@ public partial class SettingsWindow : Window
         LoadTopBarOrderList();
         ApplyTopBarChange(state.IsEnabled ? "已应用" : "顶部信息条已关闭");
         RefreshAppearanceOverrides();
+    }
+
+    private void SelectTopBarSearchEngine(string? engineKey)
+    {
+        if (TopBarSearchEngineComboBox is null)
+        {
+            return;
+        }
+        var normalized = TopBarSearchRowRules.NormalizeEngineKey(engineKey);
+        foreach (var entry in TopBarSearchEngineComboBox.Items)
+        {
+            if (entry is ComboBoxItem { Tag: string tag } item
+                && string.Equals(tag, normalized, StringComparison.OrdinalIgnoreCase))
+            {
+                TopBarSearchEngineComboBox.SelectedItem = item;
+                return;
+            }
+        }
+        if (TopBarSearchEngineComboBox.Items.Count > 0)
+        {
+            TopBarSearchEngineComboBox.SelectedIndex = 0;
+        }
+    }
+
+    private void UpdateTopBarSearchEngineUi(TopBarState state)
+    {
+        var inlineOn = state.SearchInline == true;
+        var customSelected = TopBarSearchRowRules.NormalizeEngineKey(state.SearchEngine)
+            == TopBarSearchRowRules.EngineCustom;
+        TopBarSearchInlineRow.IsEnabled = state.Modules.Search;
+        TopBarSearchEngineRow.Visibility = inlineOn ? Visibility.Visible : Visibility.Collapsed;
+        TopBarSearchEngineRow.IsEnabled = state.Modules.Search && inlineOn;
+        TopBarSearchCustomUrlRow.Visibility = inlineOn && customSelected ? Visibility.Visible : Visibility.Collapsed;
+        TopBarSearchCustomUrlRow.IsEnabled = state.Modules.Search && inlineOn;
+    }
+
+    private void TopBarSearchCustomUrl_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter)
+        {
+            CommitTopBarSearchCustomUrl();
+            e.Handled = true;
+        }
+    }
+
+    private void TopBarSearchCustomUrl_Commit(object sender, RoutedEventArgs e) =>
+        CommitTopBarSearchCustomUrl();
+
+    private void CommitTopBarSearchCustomUrl()
+    {
+        if (_loadingTopBar || _topBarState is not { } state || TopBarSearchCustomUrlTextBox is null)
+        {
+            return;
+        }
+
+        var raw = TopBarSearchCustomUrlTextBox.Text.Trim();
+        if (raw.Length == 0)
+        {
+            SetTopBarSearchCustomUrlError(null);
+            if (state.SearchCustomUrl is null)
+            {
+                return;
+            }
+            state.SearchCustomUrl = null;
+            ApplyTopBarChange("已清空自定义网址，未填写时将回退到必应");
+            return;
+        }
+
+        if (!TopBarSearchRowRules.IsValidCustomTemplate(raw))
+        {
+            const string message = "格式无效：需包含 {0} 占位符且为有效的 http/https 网址，当前未保存";
+            SetTopBarSearchCustomUrlError(message);
+            if (TopBarStatusText is not null)
+            {
+                TopBarStatusText.Text = message;
+            }
+            return;
+        }
+
+        SetTopBarSearchCustomUrlError(null);
+        if (string.Equals(state.SearchCustomUrl, raw, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        state.SearchCustomUrl = raw;
+        TopBarSearchCustomUrlTextBox.Text = raw;
+        ApplyTopBarChange("已保存自定义搜索网址");
+    }
+
+    private void SetTopBarSearchCustomUrlError(string? message)
+    {
+        if (TopBarSearchCustomUrlErrorText is null)
+        {
+            return;
+        }
+
+        if (string.IsNullOrEmpty(message))
+        {
+            TopBarSearchCustomUrlErrorText.Text = string.Empty;
+            TopBarSearchCustomUrlErrorText.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        TopBarSearchCustomUrlErrorText.Text = message;
+        TopBarSearchCustomUrlErrorText.Visibility = Visibility.Visible;
     }
 
     private static bool IsTopBarOrderModuleAvailable(TopBarModuleKind kind) =>

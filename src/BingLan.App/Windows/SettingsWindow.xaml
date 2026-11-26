@@ -2942,13 +2942,48 @@
                                     </local:SettingsRow>
                                     <local:SettingsRow x:Name="TopBarSearchInlineRow"
                                                        Header="搜索入口直接弹出搜索框"
-                                                       Description="开启后点击顶栏搜索会直接在顶栏下方弹出搜索框（优先查本机文件，无匹配时按 Enter 用浏览器搜索）；关闭时打开冰蓝总览卡"
-                                                       local:SettingsSearch.Keywords="搜索 内联 浮窗 总览卡 Everything 百度 浏览器 顶部信息条 搜索框">
+                                                       Description="开启后点击顶栏搜索会在顶栏下方弹出搜索框（优先查本机文件，支持输入网址直达或按 Enter 调用默认浏览器搜索）；关闭时打开冰蓝总览卡"
+                                                       local:SettingsSearch.Keywords="搜索 内联 浮窗 总览卡 Everything 必应 Bing Google 谷歌 百度 搜索引擎 默认浏览器 顶部信息条 搜索框">
                                         <CheckBox x:Name="TopBarSearchInlineCheckBox"
                                                   AutomationProperties.Name="搜索入口直接弹出搜索框"
                                                   Style="{StaticResource ToggleSwitchStyle}"
                                                   Checked="TopBarSetting_Changed"
                                                   Unchecked="TopBarSetting_Changed"/>
+                                    </local:SettingsRow>
+                                    <local:SettingsRow x:Name="TopBarSearchEngineRow"
+                                                       Header="网页搜索引擎"
+                                                       Description="在顶栏搜索框按 Enter 进行网页搜索时通过默认浏览器打开；输入网址时会直接打开网页"
+                                                       Visibility="Collapsed"
+                                                       local:SettingsSearch.Keywords="搜索引擎 必应 Bing Google 谷歌 百度 自定义网址 默认浏览器 顶栏搜索">
+                                        <ComboBox x:Name="TopBarSearchEngineComboBox"
+                                                  Width="180"
+                                                  AutomationProperties.Name="顶栏网页搜索引擎"
+                                                  SelectionChanged="TopBarSetting_Changed">
+                                            <ComboBoxItem Content="必应（默认）" Tag="bing"/>
+                                            <ComboBoxItem Content="Google" Tag="google"/>
+                                            <ComboBoxItem Content="百度" Tag="baidu"/>
+                                            <ComboBoxItem Content="自定义网址" Tag="custom"/>
+                                        </ComboBox>
+                                    </local:SettingsRow>
+                                    <local:SettingsRow x:Name="TopBarSearchCustomUrlRow"
+                                                       Header="自定义搜索网址"
+                                                       Description="填写包含 {0} 关键词占位符的 http/https 网址，例如 https://duckduckgo.com/?q={0}"
+                                                       Visibility="Collapsed"
+                                                       local:SettingsSearch.Keywords="自定义搜索 搜索引擎 网址模板 占位符 顶栏搜索">
+                                        <StackPanel Width="280">
+                                            <TextBox x:Name="TopBarSearchCustomUrlTextBox"
+                                                     Width="280"
+                                                     AutomationProperties.Name="自定义搜索网址模板"
+                                                     ToolTip="例如：https://duckduckgo.com/?q={0}；按回车或离开输入框后生效"
+                                                     LostFocus="TopBarSearchCustomUrl_Commit"
+                                                     KeyDown="TopBarSearchCustomUrl_KeyDown"/>
+                                            <TextBlock x:Name="TopBarSearchCustomUrlErrorText"
+                                                       Margin="2,4,0,0"
+                                                       FontSize="11.5"
+                                                       Foreground="#C42B1C"
+                                                       TextWrapping="Wrap"
+                                                       Visibility="Collapsed"/>
+                                        </StackPanel>
                                     </local:SettingsRow>
                                 </StackPanel>
                             </local:SettingsGroup>

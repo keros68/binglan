@@ -88,6 +88,12 @@ internal interface ITopBarEnvironment
     /// <summary>Whether file results may come from the running Everything instance.</summary>
     bool IsEverythingSearchEnabled { get; }
 
+    LauncherAppearanceState LauncherAppearance => new();
+
+    Task<LauncherPanelSnapshot?> ReadSearchSnapshotAsync() => Task.FromResult<LauncherPanelSnapshot?>(null);
+
+    void OpenSearchEntry(LauncherPanelEntry entry) { }
+
     void ToggleLauncherPanel();
 
     void ExitApp();
@@ -2485,15 +2491,18 @@ public sealed partial class TopBarWindow : Window
             return;
         }
 
-        var flat = (Color)ColorConverter.ConvertFromString(DesktopStyleRules.TopBar(_style, _state).Surface);
-        var look = TopBarSearchLook.FromBar(flat, _palette);
+        var look = TopBarSearchLook.FromStyle(_style, _environment.LauncherAppearance);
+        var engine = TopBarSearchRowRules.ResolveEngine(_state.SearchEngine, _state.SearchCustomUrl);
         var monitor = _appBar?.Monitor ?? _monitor;
         var popup = new TopBarSearchWindow(
             look,
+            engine,
             (int)Math.Round(anchorPixels.X),
             (int)Math.Round(anchorPixels.Y),
             monitor,
-            _environment.IsEverythingSearchEnabled);
+            _environment.IsEverythingSearchEnabled,
+            _environment.ReadSearchSnapshotAsync,
+            _environment.OpenSearchEntry);
         popup.Closed += (_, _) =>
         {
             if (ReferenceEquals(_searchPopup, popup))
