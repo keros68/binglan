@@ -27,6 +27,8 @@ public static class QuickPlaceRules
     public const int MaximumNameLength = 20;
     public const string FolderIcon = "folder";
     public const string KnownPrefix = "known:";
+    public const string ComputerTarget = "shell:MyComputerFolder";
+    public const string RecycleBinTarget = "shell:RecycleBinFolder";
 
     public static IReadOnlyList<QuickPlaceIcon> Icons { get; } =
     [
@@ -54,12 +56,12 @@ public static class QuickPlaceRules
 
     public static List<QuickPlaceState> CreateDefaults() =>
     [
-        new() { Icon = "pc", Name = "此电脑", Target = "shell:MyComputerFolder" },
+        new() { Icon = "pc", Name = "此电脑", Target = ComputerTarget },
         new() { Icon = "desktop", Name = "桌面", Target = KnownPrefix + "desktop" },
         new() { Icon = "documents", Name = "文档", Target = KnownPrefix + "documents" },
         new() { Icon = "downloads", Name = "下载", Target = KnownPrefix + "downloads" },
         new() { Icon = "pictures", Name = "图片", Target = KnownPrefix + "pictures" },
-        new() { Icon = "recycle", Name = "回收站", Target = "shell:RecycleBinFolder" }
+        new() { Icon = "recycle", Name = "回收站", Target = RecycleBinTarget }
     ];
 
     public static QuickPlaceIcon GetIcon(string? key) =>

@@ -2,6 +2,7 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.ComTypes;
 using System.Text;
+using BingLan.App.Interop;
 using BingLan.Core.Dock;
 using BingLan.Core.Models;
 
@@ -18,6 +19,8 @@ internal static class DockShortcuts
     private const uint SlgpRawPath = 0x4;
     private const int PathBufferChars = 1024;
     private const int ArgumentsBufferChars = 2048;
+    private const string ShellIdListFormat = "Shell IDList Array";
+    private const uint DesktopAbsoluteParsingName = 0x80028000;
 
     private static string TaskbarPinFolder => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
@@ -184,6 +187,51 @@ internal static class DockShortcuts
             .Select(path => CreatePin(path) ?? CreatePathPin(path))
             .OfType<DockPinnedApp>()
             .ToArray());
+
+    internal static bool HasShellItemDrop(System.Windows.IDataObject data) =>
+        data is IDataObject && data.GetDataPresent(ShellIdListFormat, autoConvert: false);
+
+    internal static IReadOnlyList<DockPinnedApp> ReadSystemPlacePins(IDataObject data)
+    {
+        var pins = new List<DockPinnedApp>();
+        if (DockNativeMethods.SHCreateShellItemArrayFromDataObject(data, typeof(DockNativeMethods.IShellItemArray).GUID, out var items) != 0)
+        {
+            return pins;
+        }
+        try
+        {
+            if (items.GetCount(out var count) != 0)
+            {
+                return pins;
+            }
+            for (uint index = 0; index < count; index++)
+            {
+                if (items.GetItemAt(index, out var item) != 0)
+                {
+                    continue;
+                }
+                nint name = 0;
+                try
+                {
+                    if (item.GetDisplayName(DesktopAbsoluteParsingName, out name) == 0
+                        && DockPinRules.CreateFromSystemPlace(Marshal.PtrToStringUni(name)) is { } pin)
+                    {
+                        pins.Add(pin);
+                    }
+                }
+                finally
+                {
+                    Marshal.FreeCoTaskMem(name);
+                    Marshal.ReleaseComObject(item);
+                }
+            }
+        }
+        finally
+        {
+            Marshal.ReleaseComObject(items);
+        }
+        return pins;
+    }
 
     /// <summary>A pin for a program or a shortcut to one, or null for anything else.</summary>
     internal static DockPinnedApp? CreatePin(string path)

@@ -7063,6 +7063,16 @@ internal static class Program
             Pump();
             Assert(dock.RevealMode == DockRevealMode.EdgeOnly && dockApplied == 5, "切换唤出方式应保存并立即应用");
 
+            var taskView = Require<CheckBox>(window, "DockTaskViewButtonCheckBox");
+            Assert(taskView.IsChecked == false, "任务视图按钮应默认关闭");
+            taskView.IsChecked = true;
+            Pump();
+            Assert(dock.ShowTaskViewButton && dockApplied == 6 && dock.ShowDesktopButton,
+                "开启任务视图应立即应用，显示桌面按钮保持开启");
+            taskView.IsChecked = false;
+            Pump();
+            Assert(!dock.ShowTaskViewButton && dockApplied == 7, "关闭任务视图按钮应立即应用");
+
             Require<RadioButton>(window, "DockSmartHideRadio").IsChecked = true;
             Pump();
             Assert(!Require<FrameworkElement>(window, "DockMaximizeReleaseRow").IsEnabled,

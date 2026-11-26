@@ -3353,6 +3353,7 @@ public partial class SettingsWindow : Window
             DockStartMenuButtonCheckBox.IsChecked = _dockState.ShowStartMenuButton;
             DockLauncherButtonCheckBox.IsChecked = _dockState.ShowLauncherButton;
             DockShowDesktopButtonCheckBox.IsChecked = _dockState.ShowDesktopButton;
+            DockTaskViewButtonCheckBox.IsChecked = _dockState.ShowTaskViewButton;
             DockBottomGapSlider.Value = _dockState.BottomGapDip;
             DockBottomGapText.Text = $"{_dockState.BottomGapDip:0} DIP";
 
@@ -3466,6 +3467,7 @@ public partial class SettingsWindow : Window
         _dockState.ShowStartMenuButton = DockStartMenuButtonCheckBox.IsChecked == true;
         _dockState.ShowLauncherButton = DockLauncherButtonCheckBox.IsChecked == true;
         _dockState.ShowDesktopButton = DockShowDesktopButtonCheckBox.IsChecked == true;
+        _dockState.ShowTaskViewButton = DockTaskViewButtonCheckBox.IsChecked == true;
         if (DockMonitorComboBox.SelectedItem is ComboBoxItem { Tag: string deviceName })
         {
             _dockState.MonitorDeviceName = deviceName;

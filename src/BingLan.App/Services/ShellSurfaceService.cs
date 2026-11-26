@@ -21,7 +21,7 @@ internal static class ShellSurfaceService
     // treat that click as "close" instead of reopening the panel.
     private const long RecentCloseMs = 400;
     private static int _openingTray;
-    private static int _openingQuickLink;
+    private static int _openingKeyboardSurface;
     private static int _openingStart;
     private static int _watchingQuickSettings;
     private static long _quickSettingsClosedAt;
@@ -108,20 +108,25 @@ internal static class ShellSurfaceService
         }
     }
 
-    internal static async Task<ShellSurfaceResult> OpenQuickLinkMenuAsync()
+    internal static Task<ShellSurfaceResult> OpenQuickLinkMenuAsync() =>
+        OpenKeyboardSurfaceAsync(ShellSurfaceNativeMethods.OpenQuickLinkMenu);
+
+    internal static Task<ShellSurfaceResult> OpenTaskViewAsync() =>
+        OpenKeyboardSurfaceAsync(ShellSurfaceNativeMethods.OpenTaskView);
+
+    private static async Task<ShellSurfaceResult> OpenKeyboardSurfaceAsync(Func<bool> open)
     {
-        if (Interlocked.CompareExchange(ref _openingQuickLink, 1, 0) != 0) return ShellSurfaceResult.Opened;
+        if (Interlocked.CompareExchange(ref _openingKeyboardSurface, 1, 0) != 0) return ShellSurfaceResult.Opened;
         try
         {
-            // Win+X has no message equivalent; report the cause instead of a silent no-op.
             if (ShellSurfaceNativeMethods.IsForegroundElevated()) return ShellSurfaceResult.ElevatedForeground;
-            return await RunWhenModifiersReleasedAsync(ShellSurfaceNativeMethods.OpenQuickLinkMenu)
+            return await RunWhenModifiersReleasedAsync(open)
                 ? ShellSurfaceResult.Opened
                 : ShellSurfaceResult.Failed;
         }
         finally
         {
-            Volatile.Write(ref _openingQuickLink, 0);
+            Volatile.Write(ref _openingKeyboardSurface, 0);
         }
     }
 

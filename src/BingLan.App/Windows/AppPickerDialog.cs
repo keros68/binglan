@@ -9,6 +9,7 @@ using System.Windows.Data;
 using System.Windows.Media;
 using BingLan.App.Dock;
 using BingLan.App.Interop;
+using BingLan.Core.Dock;
 using BingLan.Core.Models;
 using Button = System.Windows.Controls.Button;
 using CheckBox = System.Windows.Controls.CheckBox;
@@ -67,7 +68,7 @@ internal sealed class AppPickerDialog : Window
     private AppPickerDialog(IEnumerable<DockPinnedApp> pinned, Action<IReadOnlyList<DockPinnedApp>> chosen)
     {
         _chosen = chosen;
-        Title = "添加应用到 Dock";
+        Title = "添加到 Dock";
         // The app-wide button style is meant for cards on the wallpaper (white text on a
         // clear background); this window uses the settings window's buttons instead.
         var buttonStyle = new Style(typeof(Button));
@@ -94,8 +95,7 @@ internal sealed class AppPickerDialog : Window
         SetResourceReference(ForegroundProperty, "IceInkBrush");
         FontFamily = (System.Windows.Media.FontFamily)FindResource("UiFont");
         _alreadyPinned = pinned
-            .Select(app => app.ExecutablePath)
-            .OfType<string>()
+            .Select(DockPinRules.IdentityKey)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         _view = CollectionViewSource.GetDefaultView(_apps);
@@ -103,7 +103,7 @@ internal sealed class AppPickerDialog : Window
             && (_search.Text.Trim().Length == 0
                 || app.Name.Contains(_search.Text.Trim(), StringComparison.CurrentCultureIgnoreCase));
         _search.TextChanged += (_, _) => _view.Refresh();
-        AutomationProperties.SetName(_search, "搜索应用");
+        AutomationProperties.SetName(_search, "搜索应用或系统位置");
         _status.SetResourceReference(TextBlock.ForegroundProperty, "IceMutedInkBrush");
 
         var list = new ListBox
@@ -113,7 +113,7 @@ internal sealed class AppPickerDialog : Window
             ItemTemplate = CreateRowTemplate()
         };
         list.SetResourceReference(BackgroundProperty, "SettingsInputBrush");
-        AutomationProperties.SetName(list, "开始菜单中的应用");
+        AutomationProperties.SetName(list, "应用和系统位置");
         list.MouseDoubleClick += (_, _) =>
         {
             if (list.SelectedItem is AppChoice app)
@@ -141,7 +141,7 @@ internal sealed class AppPickerDialog : Window
         buttons.Children.Add(confirm);
 
         var layout = new DockPanel { Margin = new Thickness(20) };
-        var heading = new TextBlock { Text = "搜索并勾选要固定的应用", FontSize = 16, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 0, 0, 10) };
+        var heading = new TextBlock { Text = "选择要固定的应用或系统位置", FontSize = 16, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 0, 0, 10) };
         DockPanel.SetDock(heading, System.Windows.Controls.Dock.Top);
         DockPanel.SetDock(_search, System.Windows.Controls.Dock.Top);
         DockPanel.SetDock(buttons, System.Windows.Controls.Dock.Bottom);
@@ -165,7 +165,7 @@ internal sealed class AppPickerDialog : Window
     {
         if (apps.Count == 0)
         {
-            _status.Text = "请先勾选要固定的应用";
+            _status.Text = "请先勾选要固定的项目";
             return;
         }
         _chosen(apps);
@@ -174,19 +174,19 @@ internal sealed class AppPickerDialog : Window
 
     private async Task LoadAsync()
     {
-        var apps = await Task.Run(DockShortcuts.ReadStartMenuApps);
-        foreach (var app in apps.Where(app => app.ExecutablePath is null || !_alreadyPinned.Contains(app.ExecutablePath)))
+        var apps = await Task.Run(() => ReadSystemPlaces().Concat(DockShortcuts.ReadStartMenuApps()).ToArray());
+        foreach (var app in apps.Where(app => !_alreadyPinned.Contains(DockPinRules.IdentityKey(app))))
         {
             _apps.Add(new AppChoice(app));
         }
         _status.Text = _apps.Count == 0
-            ? "开始菜单中没有可添加的应用，可点“浏览程序文件…”选择"
-            : $"共 {_apps.Count} 个应用；已在 Dock 中的不再列出";
+            ? "可点“浏览程序文件…”添加应用"
+            : $"共 {_apps.Count} 个可固定项目";
 
         // Icons come in afterwards so the list shows at once.
         foreach (var choice in _apps.ToList())
         {
-            var path = choice.App.ExecutablePath;
+            var path = choice.App.ExecutablePath ?? choice.App.TargetPath;
             if (path is null)
             {
                 continue;
@@ -197,6 +197,23 @@ internal sealed class AppPickerDialog : Window
                 icon?.Freeze();
                 return icon;
             });
+        }
+    }
+
+    private static IEnumerable<DockPinnedApp> ReadSystemPlaces()
+    {
+        foreach (var place in QuickPlaceRules.CreateDefaults())
+        {
+            if (DockPinRules.CreateFromSystemPlace(place.Target) is { } systemPin)
+            {
+                yield return systemPin;
+            }
+            else if (QuickPlacesWindow.Resolve(place.Target) is { Length: > 0 } folder
+                && Directory.Exists(folder)
+                && DockPinRules.CreateFromPath(folder, place.Name) is { } folderPin)
+            {
+                yield return folderPin;
+            }
         }
     }
 

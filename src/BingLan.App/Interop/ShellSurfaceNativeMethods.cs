@@ -9,6 +9,7 @@ internal static class ShellSurfaceNativeMethods
 {
     private const uint InputKeyboard = 1;
     private const uint KeyUp = 0x0002;
+    private const ushort TabKey = 0x09;
     private const ushort ControlKey = 0x11;
     private const ushort EscapeKey = 0x1B;
     private const ushort WindowsKey = 0x5B;
@@ -71,6 +72,8 @@ internal static class ShellSurfaceNativeMethods
     internal static bool OpenStartMenu() => SendChord(ControlKey, EscapeKey);
 
     internal static bool ShowDesktop() => SendChord(WindowsKey, 0x44);
+
+    internal static bool OpenTaskView() => SendChord(WindowsKey, TabKey);
 
     /// <summary>
     /// Asks Explorer itself to open Start (WM_SYSCOMMAND/SC_TASKLIST). Before posting,
