@@ -128,6 +128,28 @@ public static class TopBarReserveRules
             && (currentlyReserved || IsTopEdgeFree(monitorBounds, workingArea));
 
     /// <summary>
+    /// Resolves the monitor host area used by an unreserved / smart-hide top bar. Uses the
+    /// monitor bounds constrained only by a confirmed native top taskbar rather than the live
+    /// work area, so a stale or foreign top AppBar offset never floats the bar below the top
+    /// screen edge.
+    /// </summary>
+    public static PixelRect ResolveUnreservedHostArea(PixelRect monitorBounds, PixelRect nativeTaskbarSafeArea) =>
+        nativeTaskbarSafeArea.HasArea ? nativeTaskbarSafeArea : monitorBounds;
+
+    /// <summary>
+    /// Verifies that a top AppBar reservation actually anchored at the monitor's top edge
+    /// instead of being pushed downward by a stale or hidden foreign top AppBar.
+    /// </summary>
+    public static bool IsStripAnchoredAtTop(
+        PixelRect strip,
+        PixelRect monitorBounds,
+        int maxTopDriftPixels = 0) =>
+        strip.HasArea
+        && monitorBounds.HasArea
+        && strip.Top >= monitorBounds.Top
+        && strip.Top <= monitorBounds.Top + Math.Max(0, maxTopDriftPixels);
+
+    /// <summary>
     /// Confirms that Explorer actually pushed the monitor's working area top edge down to
     /// at least the bottom of the reserved strip. ABM_QUERYPOS / ABM_SETPOS often return
     /// TRUE even when a shared interior edge or shell state prevented shrinking the work area.

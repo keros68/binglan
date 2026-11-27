@@ -563,6 +563,18 @@ public static class TopBarTests
 
         // 预留模式工作区实效校验与异常贴顶窗口检测。
         var reservedStrip = new PixelRect(0, 0, 1920, 31);
+        Assert(TopBarReserveRules.IsStripAnchoredAtTop(reservedStrip, monitor),
+            "紧贴显示器顶边的预留条应通过贴顶校验");
+        Assert(!TopBarReserveRules.IsStripAnchoredAtTop(new PixelRect(0, 32, 1920, 63), monitor),
+            "被僵尸或外部顶边 AppBar 下推的预留条不得接受为贴顶预留");
+        Assert(TopBarReserveRules.IsStripAnchoredAtTop(new PixelRect(-1920, -1080, 0, -1049), new PixelRect(-1920, -1080, 0, 0)),
+            "负坐标副屏贴顶预留条应通过贴顶校验");
+        var unreservedHost = TopBarReserveRules.ResolveUnreservedHostArea(monitor, monitor);
+        Assert(unreservedHost == monitor && DockGeometry.Calculate(unreservedHost, DockEdge.Top, 31).Top == 0,
+            "无原生顶部任务栏时未预留顶栏应贴紧显示器顶边而非跟随残留工作区下移");
+        var topTaskbarSafe = new PixelRect(0, 48, 1920, 1080);
+        Assert(TopBarReserveRules.ResolveUnreservedHostArea(monitor, topTaskbarSafe).Top == 48,
+            "存在已确认原生顶部任务栏时未预留顶栏仍应避让其下方");
         Assert(TopBarReserveRules.IsWorkAreaReserved(new PixelRect(0, 31, 1920, 1040), reservedStrip),
             "工作区顶边下移到预留条下沿应判已生效");
         Assert(TopBarReserveRules.IsWorkAreaReserved(new PixelRect(0, 60, 1920, 1040), reservedStrip),

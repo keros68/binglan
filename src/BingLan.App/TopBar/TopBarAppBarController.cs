@@ -287,19 +287,20 @@ internal sealed class TopBarAppBarController : IDisposable
                         () => ReservationFallbackTriggered?.Invoke());
                 }
 
-                var workArea = TaskbarEdgeGuard.AvoidNativeTaskbar(
-                    DockAppBarController.GetLiveWorkingArea(_monitor), _monitor.Bounds);
+                var hostArea = TopBarReserveRules.ResolveUnreservedHostArea(
+                    _monitor.Bounds,
+                    TaskbarEdgeGuard.AvoidNativeTaskbar(_monitor.Bounds, _monitor.Bounds));
                 strip = DockGeometry.Calculate(
-                    workArea,
+                    hostArea,
                     Edge,
-                    Math.Min(reservePixels, workArea.Height));
+                    Math.Min(reservePixels, hostArea.Height));
                 if (_compactWidthDip is { } compactWidth)
                 {
-                    var width = Math.Clamp((int)Math.Round(compactWidth * scale), 1, workArea.Width);
-                    var top = Math.Min(workArea.Top + (int)Math.Round(6d * scale),
-                        Math.Max(workArea.Top, workArea.Bottom - thicknessPixels));
-                    var left = workArea.Left + (workArea.Width - width) / 2;
-                    strip = new PixelRect(left, top, left + width, Math.Min(top + thicknessPixels, workArea.Bottom));
+                    var width = Math.Clamp((int)Math.Round(compactWidth * scale), 1, hostArea.Width);
+                    var top = Math.Min(hostArea.Top + (int)Math.Round(6d * scale),
+                        Math.Max(hostArea.Top, hostArea.Bottom - thicknessPixels));
+                    var left = hostArea.Left + (hostArea.Width - width) / 2;
+                    strip = new PixelRect(left, top, left + width, Math.Min(top + thicknessPixels, hostArea.Bottom));
                 }
             }
 
@@ -358,7 +359,8 @@ internal sealed class TopBarAppBarController : IDisposable
         {
             Bottom = data.Rectangle.Top + requestedThickness
         };
-        if (!AppBarReservationState.IsValidStrip(adjusted, monitor.Bounds, requestedThickness, Edge))
+        if (!AppBarReservationState.IsValidStrip(adjusted, monitor.Bounds, requestedThickness, Edge)
+            || !TopBarReserveRules.IsStripAnchoredAtTop(adjusted, monitor.Bounds))
         {
             return null;
         }
@@ -380,7 +382,8 @@ internal sealed class TopBarAppBarController : IDisposable
             }
 
             var actual = ToPixel(data.Rectangle);
-            if (!AppBarReservationState.IsValidStrip(actual, monitor.Bounds, requestedThickness, Edge))
+            if (!AppBarReservationState.IsValidStrip(actual, monitor.Bounds, requestedThickness, Edge)
+                || !TopBarReserveRules.IsStripAnchoredAtTop(actual, monitor.Bounds))
             {
                 _setPositionApplied = false;
                 return null;
