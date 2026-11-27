@@ -5236,7 +5236,7 @@ internal static class Program
         }
     }
 
-    // “信息密度”只对天气、性能生效，“字体”对只有图标的快捷入口无效；其余组件不显示这些选项。
+    // “信息密度”只对天气、性能生效，快捷入口和音频频谱不绘制文字；其余组件不显示这些选项。
     private static void TestComponentEditorHidesUnusedOptions()
     {
         var window = new SettingsWindow(
@@ -5267,12 +5267,13 @@ internal static class Program
                 var usesDensity = kind is DesktopComponentKind.Weather or DesktopComponentKind.Performance;
                 Assert(densityRow.Visibility == (usesDensity ? Visibility.Visible : Visibility.Collapsed),
                     $"{kind} 的信息密度选项可见性不对");
-                Assert(fontRow.Visibility == (kind == DesktopComponentKind.QuickLaunch ? Visibility.Collapsed : Visibility.Visible),
+                var hasText = kind is not (DesktopComponentKind.QuickLaunch or DesktopComponentKind.AudioVisualizer);
+                Assert(fontRow.Visibility == (hasText ? Visibility.Visible : Visibility.Collapsed),
                     $"{kind} 的字体选项可见性不对");
             }
             Assert(seen.Contains(DesktopComponentKind.Performance) && seen.Contains(DesktopComponentKind.QuickLaunch)
-                    && seen.Contains(DesktopComponentKind.Todo),
-                "应覆盖性能、快捷入口与今日待办");
+                    && seen.Contains(DesktopComponentKind.AudioVisualizer) && seen.Contains(DesktopComponentKind.Todo),
+                "应覆盖性能、快捷入口、音频频谱与今日待办");
         }
         finally
         {
