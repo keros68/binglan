@@ -357,14 +357,6 @@ internal static class DockNativeMethods
 
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
-    internal static extern bool BringWindowToTop(nint hwnd);
-
-    [DllImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    internal static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, [MarshalAs(UnmanagedType.Bool)] bool attach);
-
-    [DllImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool FlashWindowEx(ref FlashWindowInfo info);
 
     [DllImport("user32.dll")]
@@ -438,9 +430,6 @@ internal static class DockNativeMethods
         uint desiredAccess,
         [MarshalAs(UnmanagedType.Bool)] bool inheritHandle,
         uint processId);
-
-    [DllImport("kernel32.dll")]
-    internal static extern uint GetCurrentThreadId();
 
     internal const uint Th32csSnapProcess = 0x00000002;
     internal static readonly nint InvalidHandleValue = new(-1);

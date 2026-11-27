@@ -401,8 +401,6 @@ public sealed partial class TopBarWindow : Window
                     ? "搜索应用、文件"
                     : $"搜索应用、文件（{_state.SearchHotkey}）");
         }
-        RefreshPopupAppearance();
-        ApplySurface();
         var wasReserved = _appBar?.IsReserved == true;
         _nativeTaskbar = TaskbarEdgeGuard.GetNativeTaskbarLayout(_monitor.Bounds);
         // The top edge is taken (a taskbar moved to the top on Windows 10): behave as
@@ -418,7 +416,13 @@ public sealed partial class TopBarWindow : Window
         if (reserve || wasReserved)
         {
             _autoHide = new DockAutoHideState();
+            _smartHideOverlappingWindow = false;
+            _revealZoneEnteredTick = null;
+            _sampledBackdrop = null;
+            _lastAdaptiveDarkInk = null;
         }
+        RefreshPopupAppearance();
+        ApplySurface();
         var previousBounds = _appBar?.Bounds;
         _appBar?.Apply(_monitor, reserve,
             IsCapsule ? (_capsuleExpanded ? _capsuleExpandedHeight : CapsuleHeight) : BarHeight,

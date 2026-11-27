@@ -109,7 +109,7 @@ internal static class DesktopSurfaceTests
                 isDisabled: true, hasTitle: false, width: 400, height: 300),
             "无标题的禁用辅助窗不应阻断卡片提升");
 
-        // 前台可见非置顶的外部软件窗口（含工具样式启动器/登录窗）必须让卡片回落，而置顶系统面板与自身表面不误回落。
+        // 前台应用让卡片回落，系统浮层和卡片自身保留显示桌面状态。
         Check(DesktopSurfaceRules.CountsAsForegroundBlocker(
                 hasWindow: true, isOwnProcess: false, isMonitoredDesktopSurface: false,
                 shellProcess: false, "LauncherToolWindow",
@@ -132,6 +132,13 @@ internal static class DesktopSurfaceTests
                 isVisible: true, isMinimized: false, isCloaked: false,
                 isTopmost: true, isLayeredClickThrough: false, width: 640, height: 720),
             "开始菜单或快速设置等置顶面板不应在显示桌面期间误把卡片压回置顶 WorkerW 下方");
+        Check(DesktopSurfaceRules.CountsAsForegroundBlocker(
+                hasWindow: true, isOwnProcess: false, isMonitoredDesktopSurface: false,
+                shellProcess: false, "Chrome_WidgetWin_1",
+                isVisible: true, isMinimized: false, isCloaked: false,
+                isTopmost: true, isLayeredClickThrough: false, width: 1200, height: 800,
+                isTopmostApplication: true),
+            "开启置顶的浏览器回到前台时也应让冰蓝卡片回落");
         Check(!DesktopSurfaceRules.CountsAsForegroundBlocker(
                 hasWindow: true, isOwnProcess: true, isMonitoredDesktopSurface: false,
                 shellProcess: false, "HwndWrapper[BingLan;;popup]",

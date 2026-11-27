@@ -54,11 +54,21 @@ internal static class ShellSurfaceNativeMethods
         internal nuint ExtraInfo;
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    private struct LastInputInfo
+    {
+        internal uint Size, Tick;
+    }
+
     [DllImport("user32.dll", SetLastError = true)]
     private static extern uint SendInput(uint count, Input[] inputs, int size);
 
     [DllImport("user32.dll")]
     private static extern short GetAsyncKeyState(int key);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetLastInputInfo(ref LastInputInfo info);
 
     [DllImport("advapi32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
@@ -74,6 +84,12 @@ internal static class ShellSurfaceNativeMethods
     internal static bool ShowDesktop() => SendChord(WindowsKey, 0x44);
 
     internal static bool OpenTaskView() => SendChord(WindowsKey, TabKey);
+
+    internal static uint? GetLastInputTick()
+    {
+        var info = new LastInputInfo { Size = (uint)Marshal.SizeOf<LastInputInfo>() };
+        return GetLastInputInfo(ref info) ? info.Tick : null;
+    }
 
     /// <summary>
     /// Asks Explorer itself to open Start (WM_SYSCOMMAND/SC_TASKLIST). Before posting,

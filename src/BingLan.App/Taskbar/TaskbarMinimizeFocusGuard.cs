@@ -25,8 +25,9 @@ internal sealed class TaskbarMinimizeFocusGuard : IDisposable
     private readonly BackgroundWinEventPump _pump;
     private readonly List<BackgroundWinEventPump.WinEventSubscription> _subscriptions = [];
     private readonly DispatcherTimer _settleTimer;
-    private long _lastMinimizeTick = long.MinValue;
-    private bool _restoredForCurrentMinimize;
+    private nint _minimizingWindow;
+    private long _lastMinimizeTick;
+    private uint? _inputTickAtMinimize;
     private int _disposed;
 
     internal TaskbarMinimizeFocusGuard(
@@ -106,6 +107,10 @@ internal sealed class TaskbarMinimizeFocusGuard : IDisposable
             return;
         }
 
+        var receivedAt = Environment.TickCount64;
+        var inputTick = message.EventType == DockNativeMethods.EventSystemMinimizeStart
+            ? ShellSurfaceNativeMethods.GetLastInputTick()
+            : null;
         _dispatcher.BeginInvoke(DispatcherPriority.Input, () =>
         {
             if (Volatile.Read(ref _disposed) != 0)
@@ -113,41 +118,77 @@ internal sealed class TaskbarMinimizeFocusGuard : IDisposable
                 return;
             }
 
-            if (message.EventType is DockNativeMethods.EventSystemMinimizeStart
-                or DockNativeMethods.EventSystemMinimizeEnd)
+            if (message.EventType == DockNativeMethods.EventSystemMinimizeStart)
             {
-                OnWindowMinimized(message.Window);
+                OnMinimizeStarted(message.Window, receivedAt, inputTick);
                 return;
             }
 
-            if (message.EventType == DockNativeMethods.EventSystemForeground)
+            if (message.EventType == DockNativeMethods.EventSystemMinimizeEnd)
             {
-                TryRecoverPassiveTaskbarFocus();
+                // The window is about to be restored.
+                CancelPendingMinimize();
+                return;
+            }
+
+            if (_minimizingWindow != 0 && message.EventType == DockNativeMethods.EventSystemForeground)
+            {
+                if (TaskbarCornerReveal.IsTaskbarClass(ClassNameOf(message.Window)))
+                {
+                    if (!_settleTimer.IsEnabled)
+                    {
+                        _settleTimer.Start();
+                    }
+                }
+                else if (message.Window != _minimizingWindow)
+                {
+                    CancelPendingMinimize();
+                }
             }
         });
     }
 
-    private void OnWindowMinimized(nint window)
+    private void OnMinimizeStarted(nint window, long receivedAt, uint? inputTick)
     {
-        var className = ClassNameOf(window);
-        var isShellOrTaskbar = ShellSurfaceWindows.IsShellSurface(className)
-            || TaskbarCornerReveal.IsTaskbarClass(className);
-        var pointerInTaskbar = IsPointerInAnyTaskbar();
-        if (!TaskbarPassiveFocusRules.ShouldRecordMinimize(isShellOrTaskbar, pointerInTaskbar))
+        if (!inputTick.HasValue || Environment.TickCount64 - receivedAt > TaskbarPassiveFocusRules.MinimizeGraceWindowMs)
         {
             return;
         }
 
-        _lastMinimizeTick = Environment.TickCount64;
-        _restoredForCurrentMinimize = false;
+        var className = ClassNameOf(window);
+        var isShellOrTaskbar = ShellSurfaceWindows.IsShellSurface(className)
+            || TaskbarCornerReveal.IsTaskbarClass(className);
+        var pointerInTaskbar = IsPointerInAnyTaskbar();
+        if (!TaskbarPassiveFocusRules.ShouldRecordMinimize(isShellOrTaskbar, pointerInTaskbar)
+            || !WindowCatalog.ShouldInclude(window, DockNativeMethods.GetShellWindow()))
+        {
+            return;
+        }
+
+        _minimizingWindow = window;
+        _lastMinimizeTick = receivedAt;
+        _inputTickAtMinimize = inputTick;
         _settleTimer.Stop();
         _settleTimer.Start();
     }
 
+    private void CancelPendingMinimize()
+    {
+        _minimizingWindow = 0;
+        _settleTimer.Stop();
+    }
+
     private void TryRecoverPassiveTaskbarFocus()
     {
-        if (_lastMinimizeTick == long.MinValue || _restoredForCurrentMinimize)
+        if (_minimizingWindow == 0)
         {
+            return;
+        }
+
+        var elapsedMs = Environment.TickCount64 - _lastMinimizeTick;
+        if (elapsedMs > TaskbarPassiveFocusRules.MinimizeGraceWindowMs)
+        {
+            CancelPendingMinimize();
             return;
         }
 
@@ -157,7 +198,6 @@ internal sealed class TaskbarMinimizeFocusGuard : IDisposable
             return;
         }
 
-        var elapsedMs = Environment.TickCount64 - _lastMinimizeTick;
         var autoHideOn = TaskbarAdapter.IsWindowsAutoHideOn();
         if (!autoHideOn)
         {
@@ -180,72 +220,65 @@ internal sealed class TaskbarMinimizeFocusGuard : IDisposable
             taskbarBounds,
             monitorBounds,
             taskbarEdge);
-        var systemPopupOpen = ShellSurfaceNativeMethods.IsStartMenuForeground()
-            || ShellSurfaceNativeMethods.IsQuickSettingsVisible();
+        var shellWindow = DockNativeMethods.GetShellWindow();
+        var hasNewInput = !_inputTickAtMinimize.HasValue
+            || _inputTickAtMinimize != ShellSurfaceNativeMethods.GetLastInputTick();
+        var isIconic = DockNativeMethods.IsIconic(_minimizingWindow);
+        if (!isIconic && !hasNewInput)
+        {
+            _settleTimer.Start();
+        }
         var input = new TaskbarPassiveFocusInput(
             IsTaskbarForeground: true,
             AutoHideEnabled: autoHideOn,
             ElapsedSinceMinimizeMs: elapsedMs,
-            AlreadyRestoredForMinimize: _restoredForCurrentMinimize,
+            MinimizedWindowStillIconic: isIconic,
+            HasNewUserInput: hasNewInput,
+            HasVisibleApplicationWindow: isIconic && !hasNewInput && HasVisibleApplicationWindow(shellWindow),
             PointerInTaskbarOrEdge: pointerNear,
             AnyModifierHeld: ShellSurfaceNativeMethods.HasHeldModifier(),
             AnyMouseButtonDown: ShellSurfaceNativeMethods.IsAnyMouseButtonPressed(),
             HasAttentionFlash: _hasAttentionFlash(),
-            SystemPopupOpen: systemPopupOpen);
+            SystemPopupOpen: ShellSurfaceNativeMethods.IsStartMenuForeground()
+                || ShellSurfaceNativeMethods.IsQuickSettingsVisible());
         if (!TaskbarPassiveFocusRules.ShouldRestoreDesktopFocus(input))
         {
+            if (hasNewInput)
+            {
+                CancelPendingMinimize();
+            }
             return;
         }
 
-        _restoredForCurrentMinimize = true;
-        TryReturnFocusToDesktop(foreground);
+        CancelPendingMinimize();
+        TryReturnFocusToDesktop(foreground, shellWindow);
     }
 
-    private static void TryReturnFocusToDesktop(nint taskbarWindow)
+    private static bool HasVisibleApplicationWindow(nint shellWindow)
     {
-        if (ShellSurfaceNativeMethods.IsWindowElevated(taskbarWindow)
-            || !IsWindowResponsive(taskbarWindow))
+        var found = false;
+        DockNativeMethods.EnumWindows((window, _) =>
         {
-            return;
-        }
+            found = !DockNativeMethods.IsIconic(window)
+                && WindowCatalog.ShouldInclude(window, shellWindow)
+                && !ShellSurfaceWindows.IsShellSurface(ClassNameOf(window));
+            return !found;
+        }, 0);
+        return found;
+    }
 
-        var shellWindow = DockNativeMethods.GetShellWindow();
+    private void TryReturnFocusToDesktop(nint taskbarWindow, nint shellWindow)
+    {
         if (shellWindow == 0)
         {
             shellWindow = NativeMethods.FindWindowW("Progman", null);
         }
-        if (shellWindow == 0 || shellWindow == taskbarWindow || !IsWindowResponsive(shellWindow))
+        if (shellWindow != 0 && shellWindow != taskbarWindow
+            && !ShellSurfaceNativeMethods.IsWindowElevated(taskbarWindow)
+            && DockNativeMethods.GetForegroundWindow() == taskbarWindow
+            && _inputTickAtMinimize == ShellSurfaceNativeMethods.GetLastInputTick())
         {
-            return;
-        }
-
-        if (DockNativeMethods.SetForegroundWindow(shellWindow)
-            && DockNativeMethods.GetForegroundWindow() != taskbarWindow)
-        {
-            return;
-        }
-
-        var taskbarThread = DockNativeMethods.GetWindowThreadProcessId(taskbarWindow, out _);
-        var currentThread = DockNativeMethods.GetCurrentThreadId();
-        var attached = false;
-        try
-        {
-            if (taskbarThread != 0 && taskbarThread != currentThread)
-            {
-                attached = DockNativeMethods.AttachThreadInput(currentThread, taskbarThread, true);
-                if (!attached)
-                {
-                    return;
-                }
-            }
             _ = DockNativeMethods.SetForegroundWindow(shellWindow);
-        }
-        finally
-        {
-            if (attached)
-            {
-                DockNativeMethods.AttachThreadInput(currentThread, taskbarThread, false);
-            }
         }
     }
 
@@ -277,17 +310,6 @@ internal sealed class TaskbarMinimizeFocusGuard : IDisposable
         }
         return default;
     }
-
-    private static bool IsWindowResponsive(nint window) =>
-        window != 0
-        && DockNativeMethods.SendMessageTimeoutW(
-            window,
-            DockNativeMethods.WmNull,
-            0,
-            0,
-            DockNativeMethods.SmtoAbortIfHung,
-            50,
-            out _) != 0;
 
     private static string ClassNameOf(nint window)
     {

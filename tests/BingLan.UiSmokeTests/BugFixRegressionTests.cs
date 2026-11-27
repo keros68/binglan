@@ -98,9 +98,16 @@ internal static class BugFixRegressionTests
             watcher.Start();
             pump();
 
-            // Core P0-1 regression: in normal mode (!IsDesktopShown), no global EVENT_OBJECT_SHOW
-            // hook is installed; Explorer events are process-scoped.
-            Check(!watcher.HasGlobalShowHook, "常态（未显示桌面）不得安装全局 EVENT_OBJECT_SHOW 钩子");
+            // Normal mode listens for Explorer object events through its process-scoped hook.
+            Check(!watcher.HasRaisedGlobalObjectHook, "常态不得安装显示桌面专用的全局窗口钩子");
+
+            var desktopReorder = new WinEventMessage(
+                DockNativeMethods.EventObjectReorder, DockNativeMethods.GetDesktopWindow(), -4, 0, 0, 0);
+            var childReorder = new WinEventMessage(DockNativeMethods.EventObjectReorder, hwnd, -4, 0, 0, 0);
+            Check(DesktopSurfaceWatcher.ShouldForwardRaisedObjectEvent(desktopReorder, 0),
+                "卡片提升期间应检查桌面根窗口的 Z 序变化，即使外部应用未激活");
+            Check(!DesktopSurfaceWatcher.ShouldForwardRaisedObjectEvent(childReorder, 0),
+                "应用内部控件的排序事件不应触发桌面层检查");
 
             // Simulate 5,000 high-frequency Taskmgr-style child/UIA EVENT_OBJECT_SHOW notifications:
             // every single one must be dropped on the background filter before touching UI.
@@ -114,9 +121,9 @@ internal static class BugFixRegressionTests
                 var childControl = new WinEventMessage(
                     DockNativeMethods.EventObjectShow, child.Handle, 0, 0, 0, (uint)i);
 
-                if (DesktopSurfaceWatcher.ShouldForwardGlobalShowEvent(nonWindowObj, 0)
-                    || DesktopSurfaceWatcher.ShouldForwardGlobalShowEvent(childItem, 0)
-                    || DesktopSurfaceWatcher.ShouldForwardGlobalShowEvent(childControl, 0)
+                if (DesktopSurfaceWatcher.ShouldForwardRaisedObjectEvent(nonWindowObj, 0)
+                    || DesktopSurfaceWatcher.ShouldForwardRaisedObjectEvent(childItem, 0)
+                    || DesktopSurfaceWatcher.ShouldForwardRaisedObjectEvent(childControl, 0)
                     || DesktopSurfaceWatcher.ShouldForwardShellObjectEvent(nonWindowObj)
                     || DesktopSurfaceWatcher.ShouldForwardShellObjectEvent(childItem)
                     || DesktopSurfaceWatcher.ShouldForwardShellObjectEvent(childControl))

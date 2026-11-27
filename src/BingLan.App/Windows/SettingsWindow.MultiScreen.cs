@@ -131,19 +131,14 @@ public partial class SettingsWindow
 
     private WidgetWindowBase? AddWidgetOnActiveScreen(NewWidgetKind kind)
     {
-        if (_maintenance.MultiScreen is { } bridge && bridge.IsEnabled() && _activeScreenKey is not null)
+        if (_maintenance.MultiScreen is { } bridge && bridge.IsEnabled())
         {
             var created = bridge.AddWidgetOnScreen(_activeScreenKey, kind);
             RefreshMultiScreenTopologyBarsOnly();
             return created;
         }
 
-        var result = _maintenance.AddWidget(kind);
-        if (IsMultiScreenActive)
-        {
-            RefreshMultiScreenTopologyBarsOnly();
-        }
-        return result;
+        return _maintenance.AddWidget(kind);
     }
 
     private bool ResetActiveWidgetPlacement(WidgetWindowBase? window, DesktopComponentKind? kind)

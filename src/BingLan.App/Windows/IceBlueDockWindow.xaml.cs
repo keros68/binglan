@@ -2553,7 +2553,7 @@ public partial class IceBlueDockWindow : Window
 
     private void Report(WindowCommandResult result)
     {
-        if (!result.Succeeded)
+        if (!result.Succeeded && !string.IsNullOrWhiteSpace(result.Message))
         {
             CommandFailed?.Invoke(result.Message);
         }

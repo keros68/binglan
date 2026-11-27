@@ -371,6 +371,8 @@ internal sealed class TopBarSearchWindow : Window
     /// <summary>Focuses the box once the window is up and asks for the foreground explicitly.</summary>
     private void FocusInput()
     {
+        var foregroundAtOpen = DockNativeMethods.GetForegroundWindow();
+        var inputTickAtOpen = ShellSurfaceNativeMethods.GetLastInputTick();
         Activate();
         var handle = new WindowInteropHelper(this).Handle;
         if (handle != 0 && DockNativeMethods.GetForegroundWindow() != handle)
@@ -394,7 +396,10 @@ internal sealed class TopBarSearchWindow : Window
             {
                 return;
             }
-            if (handle != 0 && !IsActive && DockNativeMethods.GetForegroundWindow() != handle)
+            var foreground = DockNativeMethods.GetForegroundWindow();
+            if (handle != 0 && !IsActive && foreground != handle
+                && WindowActivationRules.CanRetryForegroundRequest(foregroundAtOpen, foreground,
+                    inputTickAtOpen, ShellSurfaceNativeMethods.GetLastInputTick()))
             {
                 _ = WindowCommandService.TryActivateOwnWindow(handle);
                 Activate();
@@ -402,9 +407,9 @@ internal sealed class TopBarSearchWindow : Window
             if (IsActive || (handle != 0 && DockNativeMethods.GetForegroundWindow() == handle))
             {
                 _activated = true;
+                _input.Focus();
+                Keyboard.Focus(_input);
             }
-            _input.Focus();
-            Keyboard.Focus(_input);
         });
     }
 

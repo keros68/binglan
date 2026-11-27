@@ -397,6 +397,33 @@ public static class TopBarTests
         Assert(TopBarModuleRules.SelectActiveNetworkAdapterIndex(wiredAndWifiAdapters) == 1,
             "同时存在带网关的物理有线与无线连接时优先识别为有线连接");
 
+        var routedHyperV = new TopBarModuleRules.NetworkAdapterCandidate(
+            true, false, false, false, "vEthernet (External)", "Hyper-V Virtual Ethernet Adapter",
+            1_000_000_000, true, true);
+        TopBarModuleRules.NetworkAdapterCandidate[] externalSwitchAdapters =
+        [
+            new(true, false, false, false, "以太网", "Realtek PCIe GbE", 1_000_000_000, false, false),
+            routedHyperV,
+        ];
+        Assert(TopBarModuleRules.SelectActiveNetworkAdapterIndex(externalSwitchAdapters) == 1,
+            "Hyper-V 外部交换机承载宿主 IP 与默认网关时应保留联网状态");
+        Assert(TopBarModuleRules.SelectActiveNetworkAdapterIndex([routedHyperV, wifiOnlyAdapters[1]]) == 1,
+            "带网关的无线连接应优先于 Hyper-V 宿主网卡回退");
+        Assert(TopBarModuleRules.SelectActiveNetworkAdapterIndex([routedHyperV, wiredAndWifiAdapters[1]]) == 1,
+            "物理有线连接应优先于 Hyper-V 宿主网卡回退");
+        Assert(!TopBarModuleRules.IsUsableNetworkAdapter(routedHyperV with { HasDefaultGateway = false })
+            && !TopBarModuleRules.IsUsableNetworkAdapter(routedHyperV with { HasUsableUnicastIp = false })
+            && !TopBarModuleRules.IsUsableNetworkAdapter(routedHyperV with { Speed = 0 })
+            && !TopBarModuleRules.IsUsableNetworkAdapter(routedHyperV with { IsUp = false }),
+            "Hyper-V 宿主网卡回退须有活动链路、有效 IP 与默认网关");
+        Assert(!TopBarModuleRules.IsUsableNetworkAdapter(routedHyperV with
+            { Description = "Hyper-V Virtual Ethernet Adapter-QoS Packet Scheduler-0000" })
+            && !TopBarModuleRules.IsUsableNetworkAdapter(routedHyperV with
+            { Description = "Hyper-V Virtual Ethernet Adapter-WFP Filter Driver" })
+            && !TopBarModuleRules.IsUsableNetworkAdapter(routedHyperV with
+            { Name = "VMnet8", Description = "VMware Virtual Ethernet Adapter" }),
+            "即使带 IP 与网关，过滤驱动与其他虚拟网卡也不得进入 Hyper-V 宿主回退");
+
         TopBarModuleRules.NetworkAdapterCandidate[] pppoeDialupAdapters =
         [
             new(IsUp: true, IsWireless: false, IsLoopbackOrTunnel: false, IsPpp: true, "宽带连接", "WAN Miniport (PPPOE)", 1_000_000_000, true, true),

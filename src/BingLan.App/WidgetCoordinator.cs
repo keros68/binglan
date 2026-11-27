@@ -1164,7 +1164,7 @@ public sealed partial class WidgetCoordinator : IDisposable
             {
                 if (_desktopSurfaceWatcher.IsDesktopShown)
                 {
-                    window.RaiseAboveDesktop(FindCardRaiseSlot(), _desktopSurfaceWatcher.IsTopmostLayerRequired);
+                    PlaceCardAboveShellDesktop(window);
                 }
                 else
                 {
@@ -1176,14 +1176,14 @@ public sealed partial class WidgetCoordinator : IDisposable
         {
             if (_desktopSurfaceWatcher.IsDesktopShown && window.IsVisible)
             {
-                window.RaiseAboveDesktop(FindCardRaiseSlot(), _desktopSurfaceWatcher.IsTopmostLayerRequired);
+                PlaceCardAboveShellDesktop(window);
             }
         };
         window.ShellRecovered += recovered =>
         {
             if (_desktopSurfaceWatcher.IsDesktopShown && recovered.IsVisible)
             {
-                recovered.RaiseAboveDesktop(FindCardRaiseSlot(), _desktopSurfaceWatcher.IsTopmostLayerRequired);
+                PlaceCardAboveShellDesktop(recovered);
             }
             _desktopSurfaceWatcher.ScheduleCheck();
         };
@@ -1250,14 +1250,13 @@ public sealed partial class WidgetCoordinator : IDisposable
 
     private nint RaiseCardsAboveDesktop()
     {
-        // Under the taskbar when the taskbar itself sits above the raised desktop
-        // surface; each following card goes below the previous one to keep stacking.
+        // Start directly above the wallpaper, then stack the cards in their layout order.
         var slot = FindCardRaiseSlot();
         foreach (var window in _windows.Where(window => window.IsVisible))
         {
-            window.RaiseAboveDesktop(slot, _desktopSurfaceWatcher.IsTopmostLayerRequired);
+            window.RaiseAboveDesktop(slot, _desktopSurfaceWatcher.IsTopmostLayerRequired, keepDesktopOrder: true);
             var handle = window.WindowHandle;
-            if (handle != 0)
+            if (slot != DockNativeMethods.HwndBottom && handle != 0)
             {
                 slot = handle;
             }
@@ -1265,36 +1264,13 @@ public sealed partial class WidgetCoordinator : IDisposable
         return slot;
     }
 
+    private void PlaceCardAboveShellDesktop(WidgetWindowBase window) =>
+        window.RaiseAboveDesktop(FindCardRaiseSlot(), _desktopSurfaceWatcher.IsTopmostLayerRequired, keepDesktopOrder: true);
+
     private nint FindCardRaiseSlot()
     {
         var desktopSurface = DesktopSurfaceWatcher.FindDesktopSurfaceWindow(out _);
-        if (!_desktopSurfaceWatcher.IsTopmostLayerRequired)
-        {
-            return NativeMethods.GetNormalWindowAbove(desktopSurface);
-        }
-        nint lowestTaskbarAboveDesktop = 0;
-        var className = new System.Text.StringBuilder(32);
-        NativeMethods.EnumWindows((window, _) =>
-        {
-            if (desktopSurface != 0 && window == desktopSurface)
-            {
-                return false;
-            }
-            if ((NativeMethods.GetExStyleOf(window) & NativeMethods.WsExTopmost) == 0)
-            {
-                return true;
-            }
-            className.Clear();
-            if (DockNativeMethods.GetClassNameW(window, className, className.Capacity) > 0
-                && TaskbarCornerReveal.IsTaskbarClass(className.ToString()))
-            {
-                lowestTaskbarAboveDesktop = window;
-            }
-            return true;
-        }, 0);
-        return lowestTaskbarAboveDesktop != 0
-            ? lowestTaskbarAboveDesktop
-            : DockNativeMethods.HwndTopmost;
+        return NativeMethods.GetWindowAboveInBand(desktopSurface, _desktopSurfaceWatcher.IsTopmostLayerRequired);
     }
 
     private void OnWindowDragCompleted(WidgetWindowBase window)
@@ -2272,7 +2248,7 @@ public sealed partial class WidgetCoordinator : IDisposable
     {
         if (_desktopSurfaceWatcher.IsDesktopShown)
         {
-            box.RaiseAboveDesktop(FindCardRaiseSlot(), _desktopSurfaceWatcher.IsTopmostLayerRequired);
+            PlaceCardAboveShellDesktop(box);
             return;
         }
         WidgetWindowBase.ReturnBelowOrdinaryWindows([box]);

@@ -18,6 +18,10 @@ internal sealed record WindowCommandResult(
 
 internal static class WindowCommandService
 {
+    private const int ForegroundConfirmationPasses = 3;
+    private const int ForegroundConfirmationDelayMs = 40;
+    private const int ForegroundRequestLifetimeMs = 200;
+
     internal static async Task<WindowCommandResult> ToggleAsync(
         WindowGroup group,
         DockToggleCooldown cooldown,
@@ -111,47 +115,68 @@ internal static class WindowCommandService
         return await FocusAsync(target, action == DockClickAction.RestoreAndActivate, name);
     }
 
-    internal static WindowCommandResult Focus(TrackedWindow window) =>
-        FocusCore(window, DockNativeMethods.IsIconic(window.Handle), window.Title);
-
     internal static async Task<WindowCommandResult> FocusAsync(
         TrackedWindow target,
         bool restore,
         string? displayName = null)
     {
         var name = string.IsNullOrWhiteSpace(displayName) ? target.Title : displayName;
-        if (target.Handle == 0
-            || !DockNativeMethods.IsWindow(target.Handle)
-            || !DockNativeMethods.IsWindowVisible(target.Handle))
+        var handle = target.Handle;
+        if (!IsLiveFocusWindow(handle))
         {
             return new WindowCommandResult(false, "窗口已关闭", NoLiveWindows: true);
         }
 
-        if (TryBringToForeground(target.Handle, restore))
+        var originalForeground = GetRootOwnerOrSelf(DockNativeMethods.GetForegroundWindow());
+        var inputTick = ShellSurfaceNativeMethods.GetLastInputTick();
+        var deadline = Environment.TickCount64 + ForegroundRequestLifetimeMs;
+        if (restore)
         {
-            return new WindowCommandResult(true, $"已切换到 {name}");
+            DockNativeMethods.ShowWindowAsync(handle, DockNativeMethods.SwRestore);
         }
 
-        if (restore
-            && !ShellSurfaceNativeMethods.IsWindowElevated(ResolvePopupOrSelf(target.Handle))
-            && !ShellSurfaceNativeMethods.IsForegroundElevated())
+        var activationTarget = ResolvePopupOrSelf(handle);
+        var requestAccepted = DockNativeMethods.SetForegroundWindow(activationTarget);
+        for (var pass = 0; pass <= ForegroundConfirmationPasses; pass++)
         {
-            for (var attempt = 0; attempt < 3; attempt++)
+            if (!IsLiveFocusWindow(handle))
             {
-                await Task.Delay(40);
-                if (!DockNativeMethods.IsWindow(target.Handle)
-                    || !DockNativeMethods.IsWindowVisible(target.Handle))
-                {
-                    return new WindowCommandResult(false, "窗口已关闭", NoLiveWindows: true);
-                }
-                if (TryBringToForeground(target.Handle, restore: false))
-                {
-                    return new WindowCommandResult(true, $"已切换到 {name}");
-                }
+                return new WindowCommandResult(false, "窗口已关闭", NoLiveWindows: true);
+            }
+
+            var foreground = DockNativeMethods.GetForegroundWindow();
+            var foregroundRoot = GetRootOwnerOrSelf(foreground);
+            var minimized = DockNativeMethods.IsIconic(handle);
+            if (!minimized && foreground != 0
+                && (foreground == activationTarget || foregroundRoot == GetRootOwnerOrSelf(handle)))
+            {
+                return new WindowCommandResult(true, $"已切换到 {name}");
+            }
+
+            if (pass > 0 && (Environment.TickCount64 > deadline
+                || !WindowActivationRules.CanRetryForegroundRequest(
+                    originalForeground, foregroundRoot, inputTick, ShellSurfaceNativeMethods.GetLastInputTick())))
+            {
+                return new WindowCommandResult(false, string.Empty);
+            }
+            if (!requestAccepted && (ShellSurfaceNativeMethods.IsWindowElevated(activationTarget)
+                    || ShellSurfaceNativeMethods.IsForegroundElevated()))
+            {
+                break;
+            }
+            if (pass is > 0 and < ForegroundConfirmationPasses && !minimized)
+            {
+                activationTarget = ResolvePopupOrSelf(handle);
+                requestAccepted = DockNativeMethods.SetForegroundWindow(activationTarget);
+            }
+            if (pass < ForegroundConfirmationPasses)
+            {
+                // A cross-thread foreground request completes when the target processes it.
+                await Task.Delay(ForegroundConfirmationDelayMs);
             }
         }
 
-        return BuildFocusFailureResult(target.Handle, name);
+        return BuildFocusFailureResult(handle, name);
     }
 
     /// <summary>
@@ -738,22 +763,9 @@ internal static class WindowCommandService
         }
     }
 
-    private static WindowCommandResult FocusCore(TrackedWindow target, bool restore, string name)
-    {
-        if (target.Handle == 0
-            || !DockNativeMethods.IsWindow(target.Handle)
-            || !DockNativeMethods.IsWindowVisible(target.Handle))
-        {
-            return new WindowCommandResult(false, "窗口已关闭", NoLiveWindows: true);
-        }
-
-        if (TryBringToForeground(target.Handle, restore))
-        {
-            return new WindowCommandResult(true, $"已切换到 {name}");
-        }
-
-        return BuildFocusFailureResult(target.Handle, name);
-    }
+    private static bool IsLiveFocusWindow(nint window) =>
+        window != 0 && DockNativeMethods.IsWindow(window) && DockNativeMethods.IsWindowVisible(window)
+        && !NativeMethods.IsWindowCloaked(window);
 
     private static WindowCommandResult BuildFocusFailureResult(nint targetHandle, string name)
     {
@@ -779,8 +791,7 @@ internal static class WindowCommandService
     /// <summary>
     /// Brings one of BingLan's own activatable windows (such as the TopBar inline search popup)
     /// to the foreground when triggered from a <c>WS_EX_NOACTIVATE</c> surface like the TopBar.
-    /// Uses the same responsive, same-integrity <c>AttachThreadInput</c> handoff as Dock focus
-    /// and returns whether the target actually became the foreground window.
+    /// Requests activation without connecting the foreground application's input queue.
     /// </summary>
     internal static bool TryActivateOwnWindow(nint handle)
     {
@@ -788,66 +799,7 @@ internal static class WindowCommandService
         {
             return false;
         }
-        return TryBringToForeground(handle, restore: false);
-    }
-
-    private static bool TryBringToForeground(nint targetWindow, bool restore)
-    {
-        if (restore)
-        {
-            DockNativeMethods.ShowWindowAsync(targetWindow, DockNativeMethods.SwRestore);
-        }
-
-        var activationTarget = ResolvePopupOrSelf(targetWindow);
-        if (DockNativeMethods.SetForegroundWindow(activationTarget))
-        {
-            return true;
-        }
-
-        if (ShellSurfaceNativeMethods.IsWindowElevated(activationTarget)
-            || ShellSurfaceNativeMethods.IsForegroundElevated())
-        {
-            return false;
-        }
-
-        var foreground = DockNativeMethods.GetForegroundWindow();
-        if (!IsWindowResponsive(activationTarget)
-            || (foreground != 0 && !IsWindowResponsive(foreground)))
-        {
-            return false;
-        }
-
-        var foregroundThread = foreground != 0
-            ? DockNativeMethods.GetWindowThreadProcessId(foreground, out _)
-            : 0;
-        var currentThread = DockNativeMethods.GetCurrentThreadId();
-        var attached = false;
-        try
-        {
-            if (foregroundThread != 0 && foregroundThread != currentThread)
-            {
-                attached = DockNativeMethods.AttachThreadInput(currentThread, foregroundThread, true);
-                if (!attached)
-                {
-                    return false;
-                }
-            }
-            DockNativeMethods.BringWindowToTop(activationTarget);
-            _ = DockNativeMethods.SetForegroundWindow(activationTarget);
-        }
-        finally
-        {
-            if (attached)
-            {
-                DockNativeMethods.AttachThreadInput(currentThread, foregroundThread, false);
-            }
-        }
-
-        var currentForeground = DockNativeMethods.GetForegroundWindow();
-        return currentForeground != 0
-            && (currentForeground == activationTarget
-                || currentForeground == targetWindow
-                || GetRootOwnerOrSelf(currentForeground) == GetRootOwnerOrSelf(targetWindow));
+        return DockNativeMethods.SetForegroundWindow(handle);
     }
 
     private static List<(TrackedWindow Window, WindowCandidateInfo Candidate)> FilterLiveCandidates(
@@ -908,17 +860,6 @@ internal static class WindowCommandService
         var rootOwner = DockNativeMethods.GetAncestor(window, DockNativeMethods.GaRootOwner);
         return rootOwner != 0 ? rootOwner : window;
     }
-
-    private static bool IsWindowResponsive(nint window) =>
-        window != 0
-        && DockNativeMethods.SendMessageTimeoutW(
-            window,
-            DockNativeMethods.WmNull,
-            0,
-            0,
-            DockNativeMethods.SmtoAbortIfHung,
-            50,
-            out _) != 0;
 
     internal static TrackedWindow SelectBestWindow(IReadOnlyList<TrackedWindow> windows)
     {
