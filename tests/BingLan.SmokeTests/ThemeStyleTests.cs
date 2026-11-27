@@ -18,8 +18,9 @@ internal static class ThemeStyleTests
         foreach (var (width, height) in new[] { (720d, 1280d), (864d, 1536d), (1080d, 1920d) })
         foreach (var (left, top) in new[] { (0d, 0d), (-1080d, -240d) })
         {
-            var cards = DesktopExperienceRules.PresetPlacements(preset, left, top, left + width, top + height);
-            Check(cards.Count == 5, "竖屏预设应保留五张卡片");
+            var cards = DesktopExperienceRules.PresetPlacements(preset, left, top, left + width, top + height,
+                audioSpectrumVisible: true);
+            Check(cards.Count == 6 && cards.ContainsKey(DesktopComponentKind.AudioVisualizer), "竖屏预设应包含音频频谱的位置");
             foreach (var (kind, card) in cards)
             {
                 var minimum = kind == DesktopComponentKind.Todo ? (226d, 166d) : (180d, 72d);
@@ -40,6 +41,16 @@ internal static class ThemeStyleTests
                     || a.Top + a.Height <= b.Top + 0.001 || b.Top + b.Height <= a.Top + 0.001,
                     $"{preset} 竖屏卡片不应重叠");
             }
+        }
+
+        foreach (var preset in Enum.GetValues<DesktopLayoutPreset>())
+        {
+            var cards = DesktopExperienceRules.PresetPlacements(preset, 0d, 0d, 720d, 1280d);
+            var todo = cards[DesktopComponentKind.Todo];
+            var greeting = cards[DesktopComponentKind.Greeting];
+            Check(cards.ContainsKey(DesktopComponentKind.AudioVisualizer), "隐藏的音频频谱应保留恢复用的位置");
+            Check(Math.Abs(greeting.Top - (todo.Top + todo.Height) - DesktopExperienceRules.PresetColumnGap) < 0.001d,
+                "隐藏音频频谱时，竖屏预设的待办和问候之间只保留正常卡片间距");
         }
 
         // Representative coordinates lock the existing landscape compositions.

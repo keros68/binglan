@@ -5,6 +5,7 @@
     <UseWPF>true</UseWPF>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <AssemblyName>BingLan</AssemblyName>
     <RootNamespace>BingLan.App</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>

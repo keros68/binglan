@@ -330,6 +330,7 @@ internal static class Program
         Run("待办勾选后各行仍可被辅助技术访问", TestTodoRowsStayAccessible, failures);
         Run("托盘隐藏与显示桌面组件", TestTrayToggleDesktop, failures);
         Run("只开顶栏时共享采样保持运行并保留隐藏组件", TestTopBarOnlyKeepsSamplerAlive, failures);
+        Run("音频频谱独立透明表面与宿主生命周期", () => AudioSpectrumHostTests.Run(ShowAndPump, Pump), failures);
         Run("Shell 隐藏或最小化组件后自动恢复显示", TestShellHideAndMinimizeRecovery, failures);
         Run("显示桌面时组件提升到任务栏下方、恢复后回落", TestDesktopSurfaceRaiseAndLower, failures);
         Run("显示桌面判定每次事件突发只执行一次，不遗留计时器", TestDesktopSurfaceWatcherChecksOncePerBurst, failures);

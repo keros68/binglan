@@ -169,6 +169,22 @@ internal static class SettingsWindowTests
                 "统一设置没有显示当前卡片名称");
             Require<CheckBox>(window, "SelectedComponentLockedCheckBox").IsChecked = true;
             AssertEqual(true, todoLocked, "勾选锁定应立即通知宿主");
+
+            window.ShowComponentSettings(DesktopComponentKind.AudioVisualizer);
+            Pump();
+            var spectrum = experience.GetComponent(DesktopComponentKind.AudioVisualizer);
+            var showSpectrum = Require<CheckBox>(window, "SelectedComponentVisibleCheckBox");
+            Assert(!spectrum.IsVisible && showSpectrum.IsChecked == false, "频谱应在桌面卡片列表中默认关闭");
+            showSpectrum.IsChecked = true;
+            Assert(spectrum.IsVisible, "显示开关应启用音频频谱");
+            AssertEqual("频谱颜色", Require<SettingsRow>(window, "ComponentTextColorRow").Header, "频谱颜色设置");
+            AssertEqual(Visibility.Collapsed, Require<SettingsRow>(window, "ComponentMaterialRow").Visibility,
+                "无底板频谱应隐藏材质设置");
+            Require<TextBox>(window, "SelectedComponentTextColorEditor").Text = "#5689AB";
+            window.CommitPendingChanges();
+            AssertEqual("#5689AB", spectrum.Appearance.TextColor, "频谱柱颜色应写入组件");
+            showSpectrum.IsChecked = false;
+            Assert(!spectrum.IsVisible, "关闭显示应停用音频频谱");
         }
         finally
         {

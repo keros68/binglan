@@ -267,6 +267,12 @@
                 </Grid>
             </Border>
         </Grid>
+        <ContentControl x:Name="SpectrumHost"
+                        Margin="12,8"
+                        Visibility="Collapsed"
+                        HorizontalContentAlignment="Stretch"
+                        VerticalContentAlignment="Stretch"
+                        IsHitTestVisible="False"/>
         <Border x:Name="Surface"
                 Background="Transparent"
                 BorderBrush="Transparent"

@@ -10,6 +10,7 @@ using System.Text;
 using System.Text.Json;
 
 var failures = new List<string>();
+Run("音频频谱 FFT 分频、静音退落与播放采样率切换", AudioSpectrumTests.Run);
 Run("待办编辑、勾选、排序", TestTodo);
 Run("空白待办在结束输入后删除", TestRemoveBlank);
 Run("待办日期字段、完成时间与周历规则", TestTodoDates);

@@ -609,6 +609,10 @@ public static class DesktopStyleRules
         ArgumentNullException.ThrowIfNull(component);
         var look = ComponentLook(component.Kind, style, clearBarOpacity);
         var appearance = component.Appearance;
+        if (component.Kind == DesktopComponentKind.AudioVisualizer)
+        {
+            return string.Equals(appearance.TextColor, look.TextColor, StringComparison.OrdinalIgnoreCase);
+        }
         var bodyMatches = string.Equals(appearance.BackgroundColor, look.BackgroundColor, StringComparison.OrdinalIgnoreCase)
             && string.Equals(appearance.TextColor, look.TextColor, StringComparison.OrdinalIgnoreCase)
             && Math.Abs(appearance.BackgroundOpacity - look.BackgroundOpacity) < 0.005d;

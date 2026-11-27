@@ -597,6 +597,7 @@ internal static class MultiScreenUiTests
         var state = LocalStateStore.CreateDefault();
         state.DesktopExperience.GetComponent(DesktopComponentKind.TimeDate).IsVisible = true;
         state.DesktopExperience.GetComponent(DesktopComponentKind.Todo).IsVisible = true;
+        state.DesktopExperience.GetComponent(DesktopComponentKind.AudioVisualizer).IsVisible = true;
 
         var windows = new List<WidgetWindowBase>();
         var hiddenFromTray = new List<WidgetWindowBase>();
@@ -616,6 +617,7 @@ internal static class MultiScreenUiTests
                     {
                         ShowInTaskbar = false
                     };
+                    win.SetAudioSpectrumSuspended(true);
                     windows.Add(win);
                     return win;
                 },
@@ -694,6 +696,12 @@ internal static class MultiScreenUiTests
                 Check(rect.Left >= 2048 && rect.Top >= -50 && rect.Right <= 3755 && rect.Bottom <= 1017,
                     $"副屏窗口物理坐标应落在 DISPLAY1 显示区 (2048,-50)-(3755,1017) 内，实际 ({rect.Left},{rect.Top})-({rect.Right},{rect.Bottom})");
             }
+
+            var secondarySpectrum = secondaryLive.OfType<InformationWidgetWindow>()
+                .Single(window => window.ComponentKind == DesktopComponentKind.AudioVisualizer);
+            Check(secondarySpectrum.IsVisible, "复制启用频谱的档案后副屏应显示频谱");
+            Check(host.ResetPlacementForScreen(SecondaryHardwareKey, secondarySpectrum, DesktopComponentKind.AudioVisualizer),
+                "副屏频谱应可恢复默认位置");
 
             // 3. QuickPlaces button-move & drag-reconcile preserve custom list and reset source screen.
             state.QuickPlaces =
@@ -776,6 +784,10 @@ internal static class MultiScreenUiTests
             pump();
             Check(host.SecondaryWindowCount >= 2,
                 $"副屏改号重连（DISPLAY9 但硬件 MonitorKey 不变）后应自动恢复副屏窗口，实际 {host.SecondaryWindowCount}");
+
+            Check(host.GetWindowsForSecondaryScreen(SecondaryHardwareKey).OfType<InformationWidgetWindow>()
+                .Any(window => window.ComponentKind == DesktopComponentKind.AudioVisualizer && window.IsVisible),
+                "重连后应依据副屏档案恢复频谱");
 
             // 8. Disabling / Disposing MultiScreenHost destroys every secondary window cleanly.
             var beforeDisposeWindows = host.GetWindowsForSecondaryScreen(SecondaryHardwareKey).ToList();

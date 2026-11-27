@@ -312,6 +312,7 @@ public sealed partial class WidgetCoordinator
         {
             ShowInTaskbar = false
         };
+        window.SetAudioSpectrumSuspended(_fullScreenWatcher.IsFullScreenInFront || _gameModeActive);
         Wire(window);
         _windows.Add(window);
         return window;

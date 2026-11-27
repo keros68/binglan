@@ -1964,7 +1964,7 @@
                                                     AutomationProperties.Name="这张卡片恢复跟随全局外观"
                                                     Click="ComponentFollowSharedLook_Click"/>
                                         </local:SettingsRow>
-                                        <local:SettingsRow Header="这张卡片的外观"
+                                        <local:SettingsRow x:Name="ComponentMaterialRow" Header="这张卡片的外观"
                                                            Description="选“纯透明（无底板）”去掉背景板，文字直接浮在壁纸上"
                                                            local:SettingsSearch.Keywords="无底板 裸文字 透明 玻璃">
                                             <Border Style="{StaticResource SegmentHostStyle}">
@@ -2002,7 +2002,7 @@
                                                       VirtualizingPanel.IsVirtualizing="True"
                                                       SelectionChanged="ComponentFont_SelectionChanged"/>
                                         </local:SettingsRow>
-                                        <local:SettingsRow Header="字号缩放" local:SettingsSearch.Keywords="字号 大小">
+                                        <local:SettingsRow x:Name="ComponentFontScaleRow" Header="字号缩放" local:SettingsSearch.Keywords="字号 大小">
                                             <StackPanel Orientation="Horizontal">
                                                 <Slider x:Name="SelectedComponentFontScaleSlider"
                                                         Width="190"
@@ -2014,10 +2014,10 @@
                                                 <TextBlock x:Name="SelectedComponentFontScaleValueText" Style="{StaticResource ValueTextStyle}"/>
                                             </StackPanel>
                                         </local:SettingsRow>
-                                        <local:SettingsRow Header="快速配色">
+                                        <local:SettingsRow x:Name="ComponentPaletteRow" Header="快速配色">
                                             <WrapPanel x:Name="ComponentPaletteSwatches"/>
                                         </local:SettingsRow>
-                                        <local:SettingsRow Header="文字颜色">
+                                        <local:SettingsRow x:Name="ComponentTextColorRow" Header="文字颜色">
                                             <StackPanel Orientation="Horizontal">
                                                 <Border x:Name="SelectedComponentTextColorChip"
                                                         Width="30"
@@ -2040,7 +2040,7 @@
                                                 <Button Margin="6,0,0,0" Content="黑" Tag="#000000" AutomationProperties.Name="文字颜色设为黑色" Click="QuickTextColor_Click"/>
                                             </StackPanel>
                                         </local:SettingsRow>
-                                        <local:SettingsRow Header="玻璃颜色">
+                                        <local:SettingsRow x:Name="ComponentBackgroundColorRow" Header="玻璃颜色">
                                             <StackPanel Orientation="Horizontal">
                                                 <Border x:Name="SelectedComponentBackgroundChip"
                                                         Width="30"
@@ -2105,7 +2105,7 @@
                                                 </StackPanel>
                                             </local:SettingsRow>
                                         </StackPanel>
-                                        <local:SettingsRow Header="玻璃浓度" local:SettingsSearch.Keywords="透明度 不透明">
+                                        <local:SettingsRow x:Name="ComponentOpacityRow" Header="玻璃浓度" local:SettingsSearch.Keywords="透明度 不透明">
                                             <StackPanel Orientation="Horizontal">
                                                 <Slider x:Name="SelectedComponentOpacitySlider"
                                                         Width="190"
@@ -2117,7 +2117,7 @@
                                                 <TextBlock x:Name="SelectedComponentOpacityValueText" Style="{StaticResource ValueTextStyle}"/>
                                             </StackPanel>
                                         </local:SettingsRow>
-                                        <local:SettingsRow Header="圆角" local:SettingsSearch.Keywords="形状 卡片圆角">
+                                        <local:SettingsRow x:Name="ComponentCornerRadiusRow" Header="圆角" local:SettingsSearch.Keywords="形状 卡片圆角">
                                             <StackPanel Orientation="Horizontal">
                                                 <Slider x:Name="SelectedComponentCornerRadiusSlider"
                                                         Width="190"

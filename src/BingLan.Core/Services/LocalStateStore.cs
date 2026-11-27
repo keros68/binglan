@@ -403,7 +403,7 @@ public sealed class LocalStateStore
         }
         var informationCards = DesktopExperienceRules.ComponentOrder
             .Where(kind => kind is DesktopComponentKind.TimeDate or DesktopComponentKind.Greeting
-                or DesktopComponentKind.Weather or DesktopComponentKind.Performance)
+                or DesktopComponentKind.Weather or DesktopComponentKind.Performance or DesktopComponentKind.AudioVisualizer)
             .Count(kind => state.DesktopExperience.GetComponent(kind).IsVisible);
         var cards = informationCards + state.TodoWidgets.Count + state.NoteWidgets.Count + state.FileBoxes.Count;
         return new BackupSummary(

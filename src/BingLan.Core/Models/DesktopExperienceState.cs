@@ -128,7 +128,7 @@ public static class DesktopExperienceRules
                 DesktopComponentKind.Weather => Placement(92, 270, 328, DefaultWeatherCardHeight),
                 DesktopComponentKind.Performance => Placement(92, 419, 328, DefaultPerformanceCardHeight),
                 DesktopComponentKind.Todo => Placement(92, 517, 328, 300),
-                DesktopComponentKind.AudioVisualizer => Placement(536, 620, 850, 220),
+                DesktopComponentKind.AudioVisualizer => Placement(536, 720, 520, 96),
                 DesktopComponentKind.QuickLaunch => Placement(92, 829, 328, 72),
                 _ => new WindowPlacement()
             }
@@ -328,7 +328,7 @@ public static class DesktopExperienceRules
         DesktopComponentKind.Weather => "天气",
         DesktopComponentKind.Performance => "性能",
         DesktopComponentKind.Todo => "待办",
-        DesktopComponentKind.AudioVisualizer => "音频可视化",
+        DesktopComponentKind.AudioVisualizer => "音频频谱",
         DesktopComponentKind.QuickLaunch => "快捷入口",
         _ => kind.ToString()
     };
@@ -342,13 +342,16 @@ public static class DesktopExperienceRules
         double left,
         double top,
         double right,
-        double bottom)
+        double bottom,
+        bool audioSpectrumVisible = false)
     {
         var area = (Left: left, Top: top, Right: right, Bottom: bottom);
         if (bottom - top > right - left)
         {
-            return PortraitPlacements(preset, left, top, right - left, bottom - top);
+            return PortraitPlacements(preset, left, top, right - left, bottom - top, audioSpectrumVisible);
         }
+        var spectrumWidth = Math.Clamp(right - left - 32, 1, 520);
+        var spectrum = Placement((left + right - spectrumWidth) / 2, Math.Max(top, bottom - 258), spectrumWidth, 96);
         if (preset == DesktopLayoutPreset.CenterClock)
         {
             // A large clock centred at the top, the greeting centred near the bottom, and
@@ -359,6 +362,7 @@ public static class DesktopExperienceRules
             {
                 [DesktopComponentKind.TimeDate] = Placement(center - 280, area.Top + 56, 560, 200),
                 [DesktopComponentKind.Greeting] = Placement(center - 320, area.Bottom - 150, 640, 84),
+                [DesktopComponentKind.AudioVisualizer] = spectrum,
                 [DesktopComponentKind.Performance] = Placement(column, area.Top + 30, 370, DefaultPerformanceCardHeight),
                 [DesktopComponentKind.Weather] = Placement(column, area.Top + 116 + PresetColumnGap, 370, DefaultWeatherCardHeight),
                 [DesktopComponentKind.Todo] = Placement(column, area.Top + 253 + PresetColumnGap * 2d, 370, 300)
@@ -399,6 +403,7 @@ public static class DesktopExperienceRules
         {
             [DesktopComponentKind.TimeDate] = timeDate,
             [DesktopComponentKind.Greeting] = greeting,
+            [DesktopComponentKind.AudioVisualizer] = spectrum,
             [DesktopComponentKind.Weather] = weather,
             [DesktopComponentKind.Performance] = performance,
             [DesktopComponentKind.Todo] = todo
@@ -406,26 +411,34 @@ public static class DesktopExperienceRules
     }
 
     private static IReadOnlyDictionary<DesktopComponentKind, WindowPlacement> PortraitPlacements(
-        DesktopLayoutPreset preset, double left, double top, double width, double height)
+        DesktopLayoutPreset preset, double left, double top, double width, double height, bool audioSpectrumVisible)
     {
         var margin = Math.Min(32d, Math.Max(0d, width / 12d));
         var availableWidth = Math.Max(1d, width - margin * 2d);
         var availableHeight = Math.Max(1d, height - margin * 2d);
         var kinds = preset == DesktopLayoutPreset.CenterClock
             ? new[] { DesktopComponentKind.TimeDate, DesktopComponentKind.Performance,
-                DesktopComponentKind.Weather, DesktopComponentKind.Todo, DesktopComponentKind.Greeting }
+                DesktopComponentKind.Weather, DesktopComponentKind.Todo, DesktopComponentKind.AudioVisualizer, DesktopComponentKind.Greeting }
             : new[] { DesktopComponentKind.TimeDate, DesktopComponentKind.Weather,
-                DesktopComponentKind.Performance, DesktopComponentKind.Todo, DesktopComponentKind.Greeting };
+                DesktopComponentKind.Performance, DesktopComponentKind.Todo, DesktopComponentKind.AudioVisualizer, DesktopComponentKind.Greeting };
         var heights = preset switch
         {
-            DesktopLayoutPreset.GlacierWorkbench => new[] { 170d, DefaultWeatherCardHeight, DefaultPerformanceCardHeight, 420d, 100d },
-            DesktopLayoutPreset.TransparentApple => new[] { 170d, DefaultWeatherCardHeight, DefaultPerformanceCardHeight, 360d, 96d },
-            DesktopLayoutPreset.CenterClock => new[] { 200d, DefaultPerformanceCardHeight, DefaultWeatherCardHeight, 300d, 84d },
-            _ => new[] { 176d, DefaultWeatherCardHeight, DefaultPerformanceCardHeight, 410d, 96d }
+            DesktopLayoutPreset.GlacierWorkbench => new[] { 170d, DefaultWeatherCardHeight, DefaultPerformanceCardHeight, 420d, 96d, 100d },
+            DesktopLayoutPreset.TransparentApple => new[] { 170d, DefaultWeatherCardHeight, DefaultPerformanceCardHeight, 360d, 96d, 96d },
+            DesktopLayoutPreset.CenterClock => new[] { 200d, DefaultPerformanceCardHeight, DefaultWeatherCardHeight, 300d, 96d, 84d },
+            _ => new[] { 176d, DefaultWeatherCardHeight, DefaultPerformanceCardHeight, 410d, 96d, 96d }
         };
+        const DesktopComponentKind spectrum = DesktopComponentKind.AudioVisualizer;
+        if (!audioSpectrumVisible)
+        {
+            var spectrumIndex = Array.IndexOf(kinds, spectrum);
+            kinds = kinds.Where(kind => kind != spectrum).ToArray();
+            heights = heights.Where((_, index) => index != spectrumIndex).ToArray();
+        }
         var minimums = kinds.Select(kind => kind == DesktopComponentKind.Todo ? 166d : 72d).ToArray();
-        var gap = Math.Min(PresetColumnGap, Math.Max(0d, (availableHeight - minimums.Sum()) / 4d));
-        var cardBudget = Math.Max(1d, availableHeight - gap * 4d);
+        var gapCount = kinds.Length - 1;
+        var gap = Math.Min(PresetColumnGap, Math.Max(0d, (availableHeight - minimums.Sum()) / gapCount));
+        var cardBudget = Math.Max(1d, availableHeight - gap * gapCount);
         if (heights.Sum() > cardBudget)
         {
             var reduction = Math.Clamp((cardBudget - minimums.Sum()) / (heights.Sum() - minimums.Sum()), 0d, 1d);
@@ -443,6 +456,7 @@ public static class DesktopExperienceRules
             {
                 DesktopComponentKind.TimeDate => preset == DesktopLayoutPreset.CenterClock ? 560d : 380d,
                 DesktopComponentKind.Greeting => 640d,
+                DesktopComponentKind.AudioVisualizer => 520d,
                 _ => 380d
             };
             var cardWidth = Math.Min(availableWidth, desiredWidth);
@@ -450,6 +464,14 @@ public static class DesktopExperienceRules
             result[kind] = Placement(left + (width - cardWidth) / 2d,
                 Math.Min(y, top + height - margin - cardHeight), cardWidth, cardHeight);
             y += cardHeight + gap;
+        }
+        if (!audioSpectrumVisible)
+        {
+            // Keep a restorable position for the hidden spectrum without reserving a row.
+            var spectrumWidth = Math.Min(availableWidth, 520d);
+            var spectrumHeight = Math.Min(availableHeight, 96d);
+            var spectrumTop = Math.Min(y, top + height - margin - spectrumHeight);
+            result[spectrum] = Placement(left + (width - spectrumWidth) / 2d, spectrumTop, spectrumWidth, spectrumHeight);
         }
         return result;
     }

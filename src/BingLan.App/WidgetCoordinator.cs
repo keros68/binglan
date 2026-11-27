@@ -25,7 +25,8 @@ public sealed partial class WidgetCoordinator : IDisposable
         DesktopComponentKind.TimeDate,
         DesktopComponentKind.Greeting,
         DesktopComponentKind.Weather,
-        DesktopComponentKind.Performance
+        DesktopComponentKind.Performance,
+        DesktopComponentKind.AudioVisualizer
     ];
 
     private readonly LocalStateStore _store;
@@ -718,6 +719,11 @@ public sealed partial class WidgetCoordinator : IDisposable
 
     private void UpdateSamplingMode()
     {
+        foreach (var window in _windows.OfType<InformationWidgetWindow>())
+        {
+            window.SetAudioSpectrumSuspended(_fullScreenWatcher.IsFullScreenInFront || _gameModeActive);
+        }
+
         var hasVisiblePerformanceCard = !_desktopHidden
             && _windows.OfType<InformationWidgetWindow>().Any(window =>
                 window.IsVisible
@@ -1136,6 +1142,7 @@ public sealed partial class WidgetCoordinator : IDisposable
         {
             ShowInTaskbar = false
         };
+        window.SetAudioSpectrumSuspended(_fullScreenWatcher.IsFullScreenInFront || _gameModeActive);
         Wire(window);
         _windows.Add(window);
         return window;
@@ -1643,7 +1650,7 @@ public sealed partial class WidgetCoordinator : IDisposable
 
     private void AddInformation()
     {
-        foreach (var kind in InformationComponentKinds)
+        foreach (var kind in InformationComponentKinds.Where(kind => kind != DesktopComponentKind.AudioVisualizer))
         {
             _state.DesktopExperience.GetComponent(kind).IsVisible = true;
         }
@@ -1656,7 +1663,7 @@ public sealed partial class WidgetCoordinator : IDisposable
         }
 
         InformationWidgetWindow? first = null;
-        foreach (var kind in InformationComponentKinds)
+        foreach (var kind in InformationComponentKinds.Where(kind => kind != DesktopComponentKind.AudioVisualizer))
         {
             var existing = _windows.OfType<InformationWidgetWindow>()
                 .FirstOrDefault(window =>
@@ -2804,10 +2811,11 @@ public sealed partial class WidgetCoordinator : IDisposable
         }
     }
 
-    private static IReadOnlyDictionary<DesktopComponentKind, WindowPlacement> PresetPlacements(DesktopLayoutPreset preset)
+    private IReadOnlyDictionary<DesktopComponentKind, WindowPlacement> PresetPlacements(DesktopLayoutPreset preset)
     {
         var area = SystemParameters.WorkArea;
-        return DesktopExperienceRules.PresetPlacements(preset, area.Left, area.Top, area.Right, area.Bottom);
+        return DesktopExperienceRules.PresetPlacements(preset, area.Left, area.Top, area.Right, area.Bottom,
+            _state.DesktopExperience.GetComponent(DesktopComponentKind.AudioVisualizer).IsVisible);
     }
 
     /// <summary>Moves one card back to where the current layout preset puts it.</summary>
@@ -2818,7 +2826,8 @@ public sealed partial class WidgetCoordinator : IDisposable
         var rootMonitor = _rootMonitor;
         var layoutKey = _multiScreen is { } host ? MultiScreenHost.CurrentLayoutKey(host.ConnectedMonitors) : null;
         var presets = rootMonitor is { } monitor
-            ? ScreenProfileAccessor.ComputePresetPlacementsForMonitor(activePreset, monitor.WorkingArea, monitor.Dpi, layoutKey)
+            ? ScreenProfileAccessor.ComputePresetPlacementsForMonitor(activePreset, monitor.WorkingArea, monitor.Dpi, layoutKey,
+                    _state.DesktopExperience.GetComponent(DesktopComponentKind.AudioVisualizer).IsVisible)
                 .ToDictionary(entry => entry.Key, entry => entry.Value.Placement)
             : PresetPlacements(activePreset);
         if (kind is { } componentKind && presets.TryGetValue(componentKind, out var preset))
