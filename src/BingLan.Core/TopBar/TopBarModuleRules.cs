@@ -579,6 +579,57 @@ public static class TopBarModuleRules
         };
     }
 
+    // ---- 外设电量 ----
+
+    /// <summary>显示已连接的外设，未上报的百分比保留为未知。</summary>
+    public static IReadOnlyList<PeripheralDevice> ShownPeripherals(PeripheralBatterySnapshot? snapshot)
+    {
+        if (snapshot is null ||
+            snapshot.Status is PeripheralBatteryStatus.NoData or PeripheralBatteryStatus.SourceUnavailable or PeripheralBatteryStatus.NotConfigured)
+        {
+            return Array.Empty<PeripheralDevice>();
+        }
+
+        return snapshot.Devices.Where(d => d.Connected).ToList();
+    }
+
+    public static string FormatPeripheralPercent(int percent) => percent is >= 0 and <= 100 ? $"{percent}%" : "—";
+
+    public static string PeripheralConnectionLabel(PeripheralDevice device) => !device.Connected
+        ? "已断开"
+        : device.Asleep ? "休眠" : device.Charging ? "充电中" : "已连接";
+
+    public static string FormatPeripheralBatteryTooltip(PeripheralBatterySnapshot? snapshot)
+    {
+        if (snapshot is null || snapshot.Status == PeripheralBatteryStatus.NoData)
+        {
+            return "外设电量：暂无设备数据";
+        }
+
+        if (snapshot.Status == PeripheralBatteryStatus.NotConfigured)
+        {
+            return "外设电量：尚未配置 BatteryHub";
+        }
+
+        if (snapshot.Status == PeripheralBatteryStatus.SourceUnavailable)
+        {
+            return "外设电量：BatteryHub 暂不可用";
+        }
+
+        var lines = new List<string>
+        {
+            snapshot.Status == PeripheralBatteryStatus.Stale
+                ? "外设电量（更新失败，显示上次数据）"
+                : "外设电量"
+        };
+        foreach (var d in snapshot.Devices)
+        {
+            lines.Add($"{d.Name}：{FormatPeripheralPercent(d.Percent)}（{PeripheralConnectionLabel(d)}）");
+        }
+
+        return string.Join("\n", lines);
+    }
+
     public static string FormatPerformanceLabel(
         PerformanceSnapshot? snapshot,
         TopBarPerformanceStyle style = TopBarPerformanceStyle.Full)

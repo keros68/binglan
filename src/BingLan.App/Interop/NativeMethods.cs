@@ -1,9 +1,14 @@
 using System.Runtime.InteropServices;
+using System.Text;
+using Microsoft.Win32.SafeHandles;
 
 namespace BingLan.App.Interop;
 
 internal static class NativeMethods
 {
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
+    internal static extern uint GetFinalPathNameByHandleW(SafeFileHandle file, StringBuilder path, uint length, uint flags);
+
     internal const long WsExNoRedirectionBitmap = 0x00200000L;
     internal const int DwmwaUseHostBackdropBrush = 17;
     internal delegate nint WindowProcedure(nint hwnd, uint message, nint wParam, nint lParam);

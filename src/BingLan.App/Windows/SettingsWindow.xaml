@@ -3272,6 +3272,23 @@
                                                                    Text="点击后的弹出方式（内联搜索框 / 冰蓝总览卡）与网页搜索引擎可在下方「搜索入口行为」直接切换"/>
                                                     </StackPanel>
 
+                                                    <StackPanel x:Name="TopBarPeripheralBatteryPanel"
+                                                                Visibility="Collapsed"
+                                                                Margin="0,4,0,0">
+                                                        <local:SettingsRow Header="BatteryHub 程序"
+                                                                           Description="选择本机 BatteryHub.exe 后可读取外设电量。路径仅保存在本机。">
+                                                            <WrapPanel>
+                                                                <Button Content="选择程序…" Click="TopBarBatteryHubChoose_Click"/>
+                                                                <Button x:Name="TopBarBatteryHubClearButton" Margin="8,0,0,0"
+                                                                        Content="清除" Click="TopBarBatteryHubClear_Click"/>
+                                                            </WrapPanel>
+                                                        </local:SettingsRow>
+                                                        <TextBlock x:Name="TopBarBatteryHubPathText"
+                                                                   Margin="0,4,0,0"
+                                                                   Style="{StaticResource CaptionStyle}"
+                                                                   TextWrapping="Wrap"/>
+                                                    </StackPanel>
+
                                                     <!-- 无额外样式时的简短说明（时钟/待办/消息提示） -->
                                                     <TextBlock x:Name="TopBarSelectedModuleNote"
                                                                Style="{StaticResource CaptionStyle}"

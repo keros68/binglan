@@ -363,6 +363,7 @@ internal static class Program
         Run("界面卡顿写入本地日志：卡住时的任务与恢复时长", () => UiDiagnosticsTests.Run(Pump, PumpUntil), failures);
         Run("Dock 最大化状态钩子的过滤与即时通知", () => MaximizeStateWatcherTests.Run(ShowAndPump, Pump, PumpUntil), failures);
         Run("顶端信息条的窗口样式、模块与点击深链", () => TopBarWindowTests.Run(Pump), failures);
+        Run("BatteryHub 本机可执行路径验证", TopBarWindowTests.PeripheralBatteryLocalPath, failures);
         Run("启动面板浏览、搜索、启动参数与失效文件", () => LauncherPanelWindowTests.Run(ShowAndPump, Pump, PumpUntil), failures);
         Run("主题导入对话框显示名称与预览图", TestThemeImportDialogShowsNameAndPreview, failures);
         Run("三种材质与 0/12/32 圆角真实窗口无白边或锯齿", TestMaterialCornerEdgesNoWhiteHalo, failures);

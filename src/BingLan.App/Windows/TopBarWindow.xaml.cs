@@ -52,6 +52,18 @@ internal interface ITopBarEnvironment
     /// <summary>Kicks off a network refresh when the service's own cadence says it is due.</summary>
     void RefreshWeatherIfDue();
 
+    /// <summary>The latest cached peripheral battery snapshot from the host.</summary>
+    PeripheralBatterySnapshot ReadPeripheralBattery() => PeripheralBatterySnapshot.Empty;
+
+    /// <summary>Starts a refresh when the peripheral service's cadence says it is due.</summary>
+    void RefreshPeripheralBatteryIfDue() { }
+
+    /// <summary>Requests an immediate peripheral refresh.</summary>
+    void ForceRefreshPeripheralBattery() { }
+
+    /// <summary>Cancels pending reads when no information bar is running.</summary>
+    void StopPeripheralBattery() { }
+
     int CountIncompleteTodos();
 
     /// <summary>The first to-do card's live items, for the to-do flyout.</summary>
@@ -215,6 +227,10 @@ public sealed partial class TopBarWindow : Window
     private Popup? _inputMethodFlyout;
     private long? _flyoutPointerLeftSinceTick;
     private nint _flyoutOpenedForegroundWindow;
+    private Popup? _peripheralFlyout;
+    private PeripheralBatterySnapshot? _peripheralFlyoutSnapshot;
+    private StackPanel? _peripheralRoot;
+    private string? _peripheralSignature;
     private DateTime _clockMonth;
     private MonitorSnapshot? _monitor;
     private TaskbarEdgeGuard.NativeTaskbarLayout? _nativeTaskbar;
@@ -430,9 +446,7 @@ public sealed partial class TopBarWindow : Window
         }
         // While a flyout is open the fast interval keeps its outside-click watch
         // prompt even in reserve mode.
-        _foregroundTimer.Interval = reserve && _todoFlyout is null && _clockFlyout is null && _inputMethodFlyout is null && !HasAnySystemFlyoutRef
-            ? FullScreenCheckInterval
-            : SmartHideCheckInterval;
+        UpdateForegroundTimerInterval();
         _foregroundTimer.Start();
         _ambientTimer.Start();
         ArmMinuteTimer();
@@ -774,10 +788,8 @@ public sealed partial class TopBarWindow : Window
         }
         _environment.CloseTrayOverflow();
         UnregisterSearchHotkey();
-        CloseTodoFlyout(animate: false);
-        CloseClockFlyout();
-        CloseInputMethodFlyout();
-        CloseSystemFlyouts();
+        CloseAllOpenFlyouts(animateTodo: false);
+
         if (_searchPopup is { } searchPopup)
         {
             _searchPopup = null;
@@ -838,7 +850,16 @@ public sealed partial class TopBarWindow : Window
 
     private void OnAmbientTick()
     {
-        if (_closing || _sampler.IsRunning || !IsLoaded)
+        if (_closing || !IsLoaded)
+        {
+            return;
+        }
+
+        if (IsVisible && _peripheralRoot is not null)
+        {
+            _environment.RefreshPeripheralBatteryIfDue();
+        }
+        if (_sampler.IsRunning)
         {
             return;
         }
@@ -979,6 +1000,8 @@ public sealed partial class TopBarWindow : Window
         }
         LeftModules.Children.Clear();
         RightModules.Children.Clear();
+        _peripheralRoot = null;
+        _peripheralSignature = null;
         CenterHost.Children.Clear();
         _modules.Clear();
         _searchButton = null;
@@ -986,6 +1009,8 @@ public sealed partial class TopBarWindow : Window
         CloseClockFlyout();
         CloseInputMethodFlyout();
         CloseSystemFlyouts();
+        ClosePeripheralBatteryFlyout();
+
         CapsuleHeader.Children.Clear();
         CapsuleHeader.Visibility = IsCapsule ? Visibility.Visible : Visibility.Collapsed;
         ModuleHeader.Visibility = IsCapsule ? Visibility.Collapsed : Visibility.Visible;
@@ -1098,6 +1123,30 @@ public sealed partial class TopBarWindow : Window
                         ToggleBatteryFlyout(batteryBtn);
                     }
                 }, GlyphBatteryUnknown);
+                break;
+            case TopBarModuleKind.PeripheralBattery:
+                // 点击显示外设电量明细。
+                AddModule(TopBarModuleKind.PeripheralBattery, panel, "外设电量", () =>
+                {
+                    if (_modules.TryGetValue(TopBarModuleKind.PeripheralBattery, out var element)
+                        && element is Button button)
+                    {
+                        TogglePeripheralBatteryFlyout(button);
+                    }
+                }, GlyphBatteryUnknown);
+                // 每台设备各一个图标（各画各的电量格），不用通用模块的单图标结构：
+                // 把按钮内容换成专属容器，由 RenderPeripheralModule 按设备集填充。
+                if (_modules.TryGetValue(TopBarModuleKind.PeripheralBattery, out var peripheralElement)
+                    && peripheralElement is Button peripheralButton)
+                {
+                    _peripheralRoot = new StackPanel
+                    {
+                        Orientation = System.Windows.Controls.Orientation.Horizontal,
+                        VerticalAlignment = VerticalAlignment.Center
+                    };
+                    peripheralButton.Content = _peripheralRoot;
+                    _peripheralSignature = null;
+                }
                 break;
             case TopBarModuleKind.Network:
                 AddModule(TopBarModuleKind.Network, panel, "网络", () =>
@@ -1766,6 +1815,301 @@ public sealed partial class TopBarWindow : Window
         UpdateForegroundTimerInterval();
     }
 
+    // ---------------------------------------------------------------- 外设电量浮层
+
+    internal Popup? PeripheralBatteryFlyout => _peripheralFlyout;
+
+    /// <summary>外设电量显示设备图标和百分比，数据不变时复用现有内容。</summary>
+    internal void RenderPeripheralModule()
+    {
+        if (_peripheralRoot is null)
+        {
+            return;
+        }
+
+        var snapshot = _environment.ReadPeripheralBattery();
+        if (_peripheralFlyout is { IsOpen: true, Child: Border flyoutCard }
+            && !ReferenceEquals(_peripheralFlyoutSnapshot, snapshot))
+        {
+            var highContrast = AccessibilityThemeManager.IsHighContrastEnabled || SystemParameters.HighContrast;
+            flyoutCard.Child = BuildPeripheralBatteryCard(highContrast, ResolveSystemFlyoutLook(highContrast).Palette, snapshot);
+        }
+        var shown = TopBarModuleRules.ShownPeripherals(snapshot);
+        if (_modules.TryGetValue(TopBarModuleKind.PeripheralBattery, out var element))
+        {
+            SetModuleGlassToolTip(element, TopBarModuleRules.FormatPeripheralBatteryTooltip(snapshot));
+        }
+
+        var signature = shown.Count == 0
+            ? "empty"
+            : string.Join(";", shown.Select(d => $"{d.Key}:{d.Kind}:{d.Percent}:{d.Charging}:{d.Asleep}"));
+        if (signature == _peripheralSignature)
+        {
+            return;
+        }
+        _peripheralSignature = signature;
+
+        _peripheralRoot.Children.Clear();
+        if (shown.Count == 0)
+        {
+            _peripheralRoot.Children.Add(new TextBlock
+            {
+                Text = GlyphBatteryUnknown,
+                FontFamily = StatusIconFont,
+                FontSize = 16,
+                Opacity = 0.92,
+                VerticalAlignment = VerticalAlignment.Center
+            });
+            return;
+        }
+
+        var first = true;
+        foreach (var device in shown)
+        {
+            var group = new StackPanel
+            {
+                Orientation = System.Windows.Controls.Orientation.Horizontal,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = first ? new Thickness(0) : new Thickness(10, 0, 0, 0),
+                Opacity = device.Asleep ? 0.55 : 1.0
+            };
+            first = false;
+            var kindIcon = new TextBlock
+            {
+                Text = PeripheralKindGlyph(device.Kind),
+                FontFamily = StatusIconFont,
+                FontSize = 14,
+                Opacity = 0.92,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 0, 4, 1)
+            };
+            kindIcon.SetResourceReference(TextBlock.ForegroundProperty, "TopBarInkBrush");
+            group.Children.Add(kindIcon);
+            var value = CreateValueText();
+            value.Text = TopBarModuleRules.FormatPeripheralPercent(device.Percent);
+            value.Margin = new Thickness(0, 0, 0, 1);
+            group.Children.Add(value);
+            _peripheralRoot.Children.Add(group);
+        }
+    }
+
+    private void TogglePeripheralBatteryFlyout(Button button)
+    {
+        if (_peripheralFlyout?.IsOpen == true)
+        {
+            ClosePeripheralBatteryFlyout();
+            return;
+        }
+
+        CloseFlyoutsBeforeOpening();
+
+        var highContrast = AccessibilityThemeManager.IsHighContrastEnabled || SystemParameters.HighContrast;
+        var look = ResolveSystemFlyoutLook(highContrast);
+        const double width = 286;
+        var card = CreateSystemFlyoutCard(highContrast, look, width);
+        card.Child = BuildPeripheralBatteryCard(highContrast, look.Palette, _environment.ReadPeripheralBattery());
+        var flyout = CreateSystemFlyoutPopup(button, card, look, width, closed =>
+        {
+            if (ReferenceEquals(_peripheralFlyout, closed))
+            {
+                _peripheralFlyout = null;
+                _peripheralFlyoutSnapshot = null;
+            }
+        });
+        _peripheralFlyout = flyout;
+        flyout.IsOpen = true;
+        OnFlyoutOpened();
+    }
+
+    private FrameworkElement BuildPeripheralBatteryCard(
+        bool highContrast, TopBarFlyoutPalette flyoutPalette, PeripheralBatterySnapshot snapshot)
+    {
+        var inkBrush = highContrast ? SystemColors.WindowTextBrush : FrozenBrush(flyoutPalette.Foreground);
+        var mutedOpacity = highContrast ? 1.0 : 0.68;
+        var panel = new StackPanel();
+
+        _peripheralFlyoutSnapshot = snapshot;
+        var header = new DockPanel { Margin = new Thickness(6, 0, 6, 8) };
+        var title = new TextBlock
+        {
+            Text = "外设电量",
+            Foreground = inkBrush,
+            FontWeight = FontWeights.SemiBold,
+            FontSize = 13,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        var hint = new TextBlock
+        {
+            Text = snapshot.Status switch
+            {
+                PeripheralBatteryStatus.SourceUnavailable => "暂不可用",
+                PeripheralBatteryStatus.NotConfigured => "尚未配置",
+                PeripheralBatteryStatus.Stale => "显示上次数据",
+                _ => snapshot.UpdatedAt is { } updated ? $"{updated.LocalDateTime:HH:mm} 更新" : string.Empty
+            },
+            Foreground = inkBrush,
+            Opacity = mutedOpacity,
+            FontSize = 11,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        DockPanel.SetDock(hint, System.Windows.Controls.Dock.Right);
+        header.Children.Add(hint);
+        header.Children.Add(title);
+        panel.Children.Add(header);
+
+        if (snapshot.Status is PeripheralBatteryStatus.SourceUnavailable or PeripheralBatteryStatus.NotConfigured)
+        {
+            panel.Children.Add(new TextBlock
+            {
+                Text = snapshot.Status == PeripheralBatteryStatus.NotConfigured
+                    ? "在外设电量设置中选择 BatteryHub.exe 后可读取电量。"
+                    : "BatteryHub 暂不可用，可检查程序路径后重试。",
+                Foreground = inkBrush,
+                Opacity = mutedOpacity,
+                FontSize = 12,
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(6, 0, 6, 6)
+            });
+        }
+        else if (snapshot.Devices.Count == 0)
+        {
+            panel.Children.Add(new TextBlock
+            {
+                Text = snapshot.Status == PeripheralBatteryStatus.NoData
+                    ? "正在读取外设电量…"
+                    : "暂未检测到带电量上报的外设",
+                Foreground = inkBrush,
+                Opacity = mutedOpacity,
+                FontSize = 12,
+                Margin = new Thickness(6, 0, 6, 6)
+            });
+        }
+        else
+        {
+            foreach (var device in snapshot.Devices)
+            {
+                panel.Children.Add(BuildPeripheralBatteryRow(device, inkBrush, mutedOpacity));
+            }
+        }
+
+        panel.Children.Add(new Border
+        {
+            Height = 1,
+            Margin = new Thickness(4, 6, 4, 6),
+            Background = highContrast ? SystemColors.WindowTextBrush : FrozenBrush(flyoutPalette.Divider)
+        });
+
+        var refreshButton = CreateInputMethodActionButton(
+            highContrast,
+            isActive: false,
+            flyoutPalette,
+            content: new TextBlock
+            {
+                Text = "立即刷新",
+                Foreground = inkBrush,
+                Opacity = highContrast ? 1.0 : 0.85,
+                FontSize = 12,
+                VerticalAlignment = VerticalAlignment.Center
+            },
+            automationName: "立即刷新外设电量");
+        refreshButton.Click += (_, _) =>
+        {
+            _environment.ForceRefreshPeripheralBattery();
+            RenderPeripheralModule();
+        };
+        panel.Children.Add(refreshButton);
+
+        var settingsButton = CreateInputMethodActionButton(
+            highContrast,
+            isActive: false,
+            flyoutPalette,
+            content: new TextBlock
+            {
+                Text = "外设电量设置…",
+                Foreground = inkBrush,
+                Opacity = highContrast ? 1.0 : 0.85,
+                FontSize = 12,
+                VerticalAlignment = VerticalAlignment.Center
+            },
+            automationName: "打开外设电量设置");
+        settingsButton.Click += (_, _) =>
+        {
+            ClosePeripheralBatteryFlyout();
+            _environment.OpenTopBarSettings(TopBarModuleKind.PeripheralBattery);
+        };
+        panel.Children.Add(settingsButton);
+        return panel;
+    }
+
+    private FrameworkElement BuildPeripheralBatteryRow(
+        PeripheralDevice device, Brush inkBrush, double mutedOpacity)
+    {
+        var grid = new Grid { Margin = new Thickness(6, 3, 6, 3), Opacity = device.Asleep ? 0.55 : 1.0 };
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        grid.Children.Add(new TextBlock
+        {
+            Text = PeripheralKindGlyph(device.Kind),
+            FontFamily = StatusIconFont,
+            Foreground = inkBrush,
+            FontSize = 16,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 8, 0)
+        });
+
+        var left = new StackPanel();
+        left.Children.Add(new TextBlock
+        {
+            Text = device.Name,
+            Foreground = inkBrush,
+            FontSize = 12.5,
+            TextTrimming = TextTrimming.CharacterEllipsis
+        });
+        left.Children.Add(new TextBlock
+        {
+            Text = string.IsNullOrWhiteSpace(device.Via)
+                ? TopBarModuleRules.PeripheralConnectionLabel(device)
+                : $"{device.Via} · {TopBarModuleRules.PeripheralConnectionLabel(device)}",
+            Foreground = inkBrush,
+            Opacity = mutedOpacity,
+            FontSize = 11,
+            TextTrimming = TextTrimming.CharacterEllipsis
+        });
+        Grid.SetColumn(left, 1);
+        grid.Children.Add(left);
+
+        var right = new TextBlock
+        {
+            Text = TopBarModuleRules.FormatPeripheralPercent(device.Percent),
+            Foreground = inkBrush,
+            FontSize = 12.5,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(10, 0, 0, 0)
+        };
+        Grid.SetColumn(right, 2);
+        grid.Children.Add(right);
+        return grid;
+    }
+
+    private static string PeripheralKindGlyph(PeripheralDeviceKind kind) => kind switch
+    {
+        PeripheralDeviceKind.Mouse => "\uE962",
+        PeripheralDeviceKind.Headset => "\uE95B",
+        PeripheralDeviceKind.Keyboard => "\uE765",
+        PeripheralDeviceKind.Gamepad => "\uE7FC",
+        PeripheralDeviceKind.Phone => "\uE694",
+        _ => GlyphBatteryUnknown
+    };
+
+    private void ClosePeripheralBatteryFlyout()
+    {
+        _peripheralFlyout?.SetCurrentValue(Popup.IsOpenProperty, false);
+        _peripheralFlyout = null;
+        _peripheralFlyoutSnapshot = null;
+        UpdateForegroundTimerInterval();
+    }
+
     private void UpdateForegroundTimerInterval()
     {
         if (_appBar is null || _closing)
@@ -1777,6 +2121,7 @@ public sealed partial class TopBarWindow : Window
             && _clockFlyout is null
             && _inputMethodFlyout is null
             && _searchPopup is null
+            && _peripheralFlyout is null
             && !HasAnySystemFlyoutRef
             ? FullScreenCheckInterval
             : SmartHideCheckInterval;
@@ -2606,6 +2951,7 @@ public sealed partial class TopBarWindow : Window
         if (_clockFlyout?.IsOpen == true) CloseClockFlyout();
         if (_inputMethodFlyout?.IsOpen == true) CloseInputMethodFlyout();
         if (HasOpenSystemFlyout) CloseSystemFlyouts();
+        if (_peripheralFlyout?.IsOpen == true) ClosePeripheralBatteryFlyout();
         _flyoutPointerLeftSinceTick = null;
         _flyoutOpenedForegroundWindow = 0;
     }
@@ -2615,6 +2961,7 @@ public sealed partial class TopBarWindow : Window
         : _batteryFlyout is { IsOpen: true } b ? b
         : _networkFlyout is { IsOpen: true } n ? n
         : _inputMethodFlyout is { IsOpen: true } im ? im
+        : _peripheralFlyout is { IsOpen: true } peripheral ? peripheral
         : _clockFlyout is { IsOpen: true } c ? c
         : _todoFlyout is { IsOpen: true } t ? t
         : null;
@@ -2675,6 +3022,7 @@ public sealed partial class TopBarWindow : Window
             TryCloseOnOutsideClick(_todoFlyout, cursor);
             TryCloseOnOutsideClick(_clockFlyout, cursor);
             TryCloseOnOutsideClick(_inputMethodFlyout, cursor);
+            TryCloseOnOutsideClick(_peripheralFlyout, cursor);
             TryCloseSystemFlyoutsOnOutsideClick(cursor);
             return;
         }
@@ -2724,6 +3072,7 @@ public sealed partial class TopBarWindow : Window
             ? TopBarModuleKind.TodoSummary
             : flyout == _clockFlyout ? TopBarModuleKind.Clock
             : flyout == _inputMethodFlyout ? TopBarModuleKind.InputMethod
+            : flyout == _peripheralFlyout ? TopBarModuleKind.PeripheralBattery
             : ResolveSystemFlyoutOwner(flyout);
         if (owner is { } kind
             && _modules.TryGetValue(kind, out var element)
@@ -2732,9 +3081,10 @@ public sealed partial class TopBarWindow : Window
         {
             var topLeft = button.PointToScreen(new System.Windows.Point(0, 0));
             var bottomRight = button.PointToScreen(new System.Windows.Point(button.ActualWidth, button.ActualHeight));
+            var bridgeTop = Math.Min(topLeft.Y, rect.Bottom);
             var bridgeBottom = Math.Max(bottomRight.Y, rect.Top);
             if (cursor.X >= topLeft.X - margin && cursor.X < bottomRight.X + margin
-                && cursor.Y >= topLeft.Y && cursor.Y <= bridgeBottom + margin)
+                && cursor.Y >= bridgeTop - margin && cursor.Y <= bridgeBottom + margin)
             {
                 return true;
             }
@@ -3260,6 +3610,7 @@ public sealed partial class TopBarWindow : Window
         {
             RenderWeather(weather);
         }
+        RenderPeripheralModule();
         if (ModuleText(TopBarModuleKind.Performance) is { } performance)
         {
             var perfStyle = TopBarRules.EffectivePerformanceStyle(_state);
@@ -4073,10 +4424,7 @@ public sealed partial class TopBarWindow : Window
             // A partially covered bar can still receive clicks on its exposed modules.
             if (trueFullScreen || taskbarOverlaps)
             {
-                CloseTodoFlyout(animate: false);
-                CloseClockFlyout();
-                CloseInputMethodFlyout();
-                CloseSystemFlyouts();
+                CloseAllOpenFlyouts(animateTodo: false);
             }
             if (!IsVisible && !coveredByForeground)
             {
@@ -4155,9 +4503,7 @@ public sealed partial class TopBarWindow : Window
             ForegroundIsFullScreen: trueFullScreen || taskbarOverlaps,
             PointerInRevealZone: pointerInRevealZone,
             PointerOverDock: pointerOverBar,
-            InteractionActive: _menuOpen || _capsuleExpanded
-                || _todoFlyout?.IsOpen == true || _clockFlyout?.IsOpen == true
-                || _inputMethodFlyout?.IsOpen == true || HasOpenSystemFlyout || _searchPopup is not null,
+            InteractionActive: _menuOpen || _capsuleExpanded || HasAnyOpenFlyout || _searchPopup is not null,
             OverlapIsMaximizedWindow: effectiveZoomed);
         _autoHide.Update(input, DateTimeOffset.UtcNow);
         var overlappingWhileShown = (overlaps || effectiveZoomed) && _autoHide.IsShown;
@@ -4196,10 +4542,7 @@ public sealed partial class TopBarWindow : Window
                 {
                     openBarMenu.IsOpen = false;
                 }
-                CloseTodoFlyout();
-                CloseClockFlyout();
-                CloseInputMethodFlyout();
-                CloseSystemFlyouts();
+                CloseAllOpenFlyouts();
                 HideFromApp();
                 if (overlapStateChanged)
                 {
