@@ -96,6 +96,13 @@ internal static class Program
     [STAThread]
     private static int Main()
     {
+        if (Environment.GetCommandLineArgs().Contains("--dock-picker-icon-tests"))
+        {
+            DockFileSystemTests.PickerPrefersShortcutIcon();
+            Console.WriteLine("通过：添加到 Dock 的快捷方式图标与程序图标回退");
+            return 0;
+        }
+
         // Async UI handlers (e.g. file-box background icon loads) rely on the Dispatcher
         // synchronization context to resume on this thread; the harness drives the message
         // loop manually via Pump() instead of Application.Run(), so it must be installed here.
@@ -236,6 +243,7 @@ internal static class Program
         Run("新建卡片不会重置 Dock 与卡片颜色", TestNewCardKeepsAppBrushes, failures);
         Run("卡片显示后与切换窗口后位于普通窗口下方", TestCardsStayBehindWindows, failures);
         Run("开始菜单应用列表可直接固定到 Dock", TestStartMenuApps, failures);
+        Run("添加到 Dock 的快捷方式图标与程序图标回退", DockFileSystemTests.PickerPrefersShortcutIcon, failures);
         Run("固定项保留快捷方式的启动参数与工作目录", TestPinKeepsShortcutArguments, failures);
         Run("Dock 拖入路径在后台解析且保留真实类型与快捷方式参数", DockFileSystemTests.PrepareDroppedPaths, failures);
         Run("总览卡补充索引结果归一快捷方式并过滤卸载与开始菜单目录", DockFileSystemTests.NormalizeSupplementalEntries, failures);

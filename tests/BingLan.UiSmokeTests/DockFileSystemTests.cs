@@ -1,6 +1,10 @@
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Windows;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using BingLan.App.Dock;
+using BingLan.App.Interop;
 using BingLan.App.Services;
 using BingLan.App.Windows;
 using BingLan.Core.Dock;
@@ -68,7 +72,82 @@ internal static class DockFileSystemTests
         }
     }
 
-    private static void CreateShortcut(string path, string target, string arguments, string workingDirectory)
+    internal static void PickerPrefersShortcutIcon()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "BingLanDockIcons", Path.GetRandomFileName());
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var executable = Path.Combine(Environment.SystemDirectory, "cmd.exe");
+            var shortcutPath = Path.Combine(directory, "Program.lnk");
+            var iconPath = Path.Combine(directory, "Program.ico");
+            byte[] expectedColor = [40, 180, 240, 255];
+            const int iconSize = 32;
+            var pixels = new byte[iconSize * iconSize * 4];
+            for (var offset = 0; offset < pixels.Length; offset += 4)
+            {
+                expectedColor.CopyTo(pixels, offset);
+            }
+
+            var encoder = new PngBitmapEncoder();
+            encoder.Frames.Add(BitmapFrame.Create(
+                BitmapSource.Create(iconSize, iconSize, 96, 96, PixelFormats.Bgra32, null, pixels, iconSize * 4)));
+            using (var png = new MemoryStream())
+            {
+                encoder.Save(png);
+                using var ico = new BinaryWriter(File.Create(iconPath));
+                ico.Write((ushort)0);
+                ico.Write((ushort)1);
+                ico.Write((ushort)1);
+                ico.Write((byte)iconSize);
+                ico.Write((byte)iconSize);
+                ico.Write((ushort)0);
+                ico.Write((ushort)1);
+                ico.Write((ushort)32);
+                ico.Write((uint)png.Length);
+                ico.Write(22u);
+                png.WriteTo(ico.BaseStream);
+            }
+            CreateShortcut(shortcutPath, executable, "/c exit 0", directory, $"{iconPath},0");
+
+            Task.Run(() =>
+            {
+                var icons = new Dictionary<DockPinnedApp, (string Path, int Index)>();
+                var pin = DockShortcuts.ReadStartMenuApps(preserveLaunchVariants: false,
+                        startMenuRoots: [directory], shortcutIcons: icons)
+                    .Single(app => string.Equals(app.ExecutablePath, executable, StringComparison.OrdinalIgnoreCase));
+                Assert(icons.TryGetValue(pin, out var location)
+                    && string.Equals(location.Path, iconPath, StringComparison.OrdinalIgnoreCase) && location.Index == 0,
+                    "开始菜单应为对应的程序保留快捷方式的图标路径与索引");
+                Assert(AppPickerDialog.LoadChoiceIcon(pin, location) is BitmapSource { IsFrozen: true } icon
+                    && CenterPixel(icon).SequenceEqual(expectedColor),
+                    "添加到 Dock 应显示快捷方式中指定的图标像素");
+
+                File.Delete(iconPath);
+                var expected = ShellIconProvider.GetLocalIconResource(executable, 0) as BitmapSource;
+                Assert(expected is not null, "测试程序应有可直接提取的图标资源");
+                Assert(AppPickerDialog.LoadChoiceIcon(pin, location) is BitmapSource { IsFrozen: true } fallback
+                    && fallback.PixelWidth == expected!.PixelWidth && fallback.PixelHeight == expected.PixelHeight
+                    && CenterPixel(fallback).SequenceEqual(CenterPixel(expected)),
+                    "快捷方式图标失效时应使用目标程序的图标资源");
+            }).GetAwaiter().GetResult();
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+
+        static byte[] CenterPixel(BitmapSource source)
+        {
+            var bitmap = new FormatConvertedBitmap(source, PixelFormats.Bgra32, null, 0);
+            var sample = new byte[4];
+            bitmap.CopyPixels(new Int32Rect(bitmap.PixelWidth / 2, bitmap.PixelHeight / 2, 1, 1), sample, 4, 0);
+            return sample;
+        }
+    }
+
+    private static void CreateShortcut(string path, string target, string arguments, string workingDirectory,
+        string? iconLocation = null)
     {
         object shell = Activator.CreateInstance(Type.GetTypeFromProgID("WScript.Shell")!)!;
         object? shortcut = null;
@@ -78,6 +157,10 @@ internal static class DockFileSystemTests
             link.TargetPath = target;
             link.Arguments = arguments;
             link.WorkingDirectory = workingDirectory;
+            if (iconLocation is not null)
+            {
+                link.IconLocation = iconLocation;
+            }
             link.Save();
         }
         finally

@@ -64,7 +64,8 @@ internal static class DockShortcuts
     internal static IReadOnlyList<DockPinnedApp> ReadStartMenuApps(bool preserveLaunchVariants,
         IDictionary<DockPinnedApp, string>? startMenuFolders = null,
         IEnumerable<string>? startMenuRoots = null,
-        IDictionary<DockPinnedApp, string>? shortcutPaths = null)
+        IDictionary<DockPinnedApp, string>? shortcutPaths = null,
+        IDictionary<DockPinnedApp, (string Path, int Index)>? shortcutIcons = null)
     {
         var options = new EnumerationOptions
         {
@@ -91,7 +92,8 @@ internal static class DockShortcuts
                 {
                     continue;
                 }
-                if (CreatePin(shortcut) is { ExecutablePath: { } path } app)
+                var resolved = ResolveShortcut(shortcut, readIcon: shortcutIcons is not null);
+                if (CreateProgramPin(shortcut, resolved) is { ExecutablePath: { } path } app)
                 {
                     if (apps.TryAdd(Key(path, app), app))
                     {
@@ -101,6 +103,10 @@ internal static class DockShortcuts
                             startMenuFolders.Add(app, group);
                         }
                         shortcutPaths?.Add(app, shortcut);
+                        if (resolved?.IconLocation is { } icon)
+                        {
+                            shortcutIcons?.Add(app, icon);
+                        }
                     }
                 }
             }
@@ -113,7 +119,12 @@ internal static class DockShortcuts
         if (CreatePin(explorer) is { ExecutablePath: { } explorerPath } fileExplorer)
         {
             fileExplorer.DisplayName = "文件资源管理器";
-            apps[Key(explorerPath, fileExplorer)] = fileExplorer;
+            var key = Key(explorerPath, fileExplorer);
+            if (apps.TryGetValue(key, out var replaced))
+            {
+                shortcutIcons?.Remove(replaced);
+            }
+            apps[key] = fileExplorer;
         }
         // The Start menu's Control Panel entry also points at a shell object with an empty
         // TargetPath, so add control.exe directly and deduplicate bare control.exe entries.
@@ -128,6 +139,7 @@ internal static class DockShortcuts
                 apps.Remove(duplicate.Key);
                 startMenuFolders?.Remove(duplicate.Value);
                 shortcutPaths?.Remove(duplicate.Value);
+                shortcutIcons?.Remove(duplicate.Value);
             }
             apps[Key(controlPath, controlPanel)] = controlPanel;
         }
@@ -294,12 +306,11 @@ internal static class DockShortcuts
     }
 
     /// <summary>A pin for a program or a shortcut to one, or null for anything else.</summary>
-    internal static DockPinnedApp? CreatePin(string path)
+    internal static DockPinnedApp? CreatePin(string path) => CreateProgramPin(path,
+        Path.GetExtension(path).Equals(".lnk", StringComparison.OrdinalIgnoreCase) ? ResolveShortcut(path) : null);
+
+    private static DockPinnedApp? CreateProgramPin(string path, ResolvedShortcut? resolved)
     {
-        var extension = Path.GetExtension(path);
-        var resolved = extension.Equals(".lnk", StringComparison.OrdinalIgnoreCase)
-            ? ResolveShortcut(path)
-            : null;
         var target = resolved?.TargetPath ?? path;
         if (!Path.GetExtension(target).Equals(".exe", StringComparison.OrdinalIgnoreCase)
             || !File.Exists(target))
@@ -324,7 +335,7 @@ internal static class DockShortcuts
 
         // A shortcut's own name ("微信") reads better than the program's ("Weixin"),
         // while known raw English/pinyin shortcut names normalize to readable Chinese names.
-        if (extension.Equals(".lnk", StringComparison.OrdinalIgnoreCase))
+        if (resolved is not null)
         {
             var shortcutName = Path.GetFileNameWithoutExtension(path);
             app.DisplayName = AppDisplayNameRules.Normalize(shortcutName, target) ?? shortcutName;
@@ -358,9 +369,10 @@ internal static class DockShortcuts
     internal static string? TryResolveShortcutTarget(string shortcut) =>
         ResolveShortcut(shortcut)?.TargetPath;
 
-    private sealed record ResolvedShortcut(string TargetPath, string Arguments, string WorkingDirectory);
+    private sealed record ResolvedShortcut(string TargetPath, string Arguments, string WorkingDirectory,
+        (string Path, int Index)? IconLocation);
 
-    private static ResolvedShortcut? ResolveShortcut(string shortcut)
+    private static ResolvedShortcut? ResolveShortcut(string shortcut, bool readIcon = false)
     {
         object? comObject = null;
         try
@@ -396,7 +408,8 @@ internal static class DockShortcuts
                 // Arguments stay verbatim: they belong to the target program and may
                 // contain text that looks like a variable (cmd's %CD%, format strings).
                 argsBuilder.ToString().Trim(),
-                Environment.ExpandEnvironmentVariables(workDirBuilder.ToString()).Trim());
+                Environment.ExpandEnvironmentVariables(workDirBuilder.ToString()).Trim(),
+                readIcon ? ReadShortcutIconLocation(link) : null);
         }
         catch (Exception exception) when (exception is COMException or IOException or UnauthorizedAccessException or InvalidCastException)
         {
@@ -408,6 +421,21 @@ internal static class DockShortcuts
             {
                 Marshal.FinalReleaseComObject(comObject);
             }
+        }
+    }
+
+    private static (string Path, int Index)? ReadShortcutIconLocation(IShellLinkW link)
+    {
+        try
+        {
+            var path = new StringBuilder(PathBufferChars);
+            link.GetIconLocation(path, path.Capacity, out var index);
+            var expanded = Environment.ExpandEnvironmentVariables(path.ToString()).Trim().Trim('"');
+            return expanded.Length > 0 ? (expanded, index) : null;
+        }
+        catch (COMException)
+        {
+            return null;
         }
     }
 

@@ -174,7 +174,9 @@ internal sealed class AppPickerDialog : Window
 
     private async Task LoadAsync()
     {
-        var apps = await Task.Run(() => ReadSystemPlaces().Concat(DockShortcuts.ReadStartMenuApps()).ToArray());
+        var shortcutIcons = new Dictionary<DockPinnedApp, (string Path, int Index)>();
+        var apps = await Task.Run(() => ReadSystemPlaces().Concat(
+            DockShortcuts.ReadStartMenuApps(preserveLaunchVariants: false, shortcutIcons: shortcutIcons)).ToArray());
         foreach (var app in apps.Where(app => !_alreadyPinned.Contains(DockPinRules.IdentityKey(app))))
         {
             _apps.Add(new AppChoice(app));
@@ -186,18 +188,25 @@ internal sealed class AppPickerDialog : Window
         // Icons come in afterwards so the list shows at once.
         foreach (var choice in _apps.ToList())
         {
-            var path = choice.App.ExecutablePath ?? choice.App.TargetPath;
-            if (path is null)
-            {
-                continue;
-            }
-            choice.Icon = await Task.Run(() =>
-            {
-                var icon = ShellIconProvider.GetIcon(path);
-                icon?.Freeze();
-                return icon;
-            });
+            (string Path, int Index)? shortcutIcon = shortcutIcons.TryGetValue(choice.App, out var location)
+                ? location : null;
+            choice.Icon = await Task.Run(() => LoadChoiceIcon(choice.App, shortcutIcon));
         }
+    }
+
+    internal static ImageSource? LoadChoiceIcon(DockPinnedApp app, (string Path, int Index)? shortcutIcon)
+    {
+        if (app.ExecutablePath is { } executable)
+        {
+            var declared = shortcutIcon is { } location
+                ? ShellIconProvider.GetLocalIconResource(location.Path, location.Index)
+                : null;
+            return declared
+                ?? ShellIconProvider.GetLocalIconResource(executable, 0)
+                ?? ShellIconProvider.GetIcon(executable);
+        }
+
+        return app.TargetPath is { } path ? ShellIconProvider.GetIcon(path) : null;
     }
 
     private static IEnumerable<DockPinnedApp> ReadSystemPlaces()

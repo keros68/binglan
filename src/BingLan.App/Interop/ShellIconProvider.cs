@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.ComponentModel;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -240,17 +241,12 @@ internal static class ShellIconProvider
             var bytes = File.ReadAllBytes(urlPath);
             var text = DecodeShortcutText(bytes);
             var parsed = InternetShortcutRules.ParseIconLocation(text, Path.GetDirectoryName(urlPath));
-            if (parsed is not { } target || !File.Exists(target.FilePath))
+            if (parsed is not { } target)
             {
                 return null;
             }
 
             var ext = Path.GetExtension(target.FilePath);
-            if (ext.Equals(".ico", StringComparison.OrdinalIgnoreCase))
-            {
-                return TryLoadIconFile(target.FilePath);
-            }
-
             if (ext.Equals(".png", StringComparison.OrdinalIgnoreCase)
                 || ext.Equals(".jpg", StringComparison.OrdinalIgnoreCase)
                 || ext.Equals(".jpeg", StringComparison.OrdinalIgnoreCase)
@@ -259,9 +255,32 @@ internal static class ShellIconProvider
                 return TryLoadRasterImage(target.FilePath);
             }
 
-            return TryExtractIndexedIcon(target.FilePath, target.Index);
+            return GetLocalIconResource(target.FilePath, target.Index);
         }
         catch
+        {
+            return null;
+        }
+    }
+
+    internal static ImageSource? GetLocalIconResource(string path, int index)
+    {
+        if (!Path.IsPathFullyQualified(path)
+            || path.StartsWith(@"\\", StringComparison.Ordinal)
+            || path.StartsWith("//", StringComparison.Ordinal)
+            || !File.Exists(path))
+        {
+            return null;
+        }
+
+        try
+        {
+            return Path.GetExtension(path).Equals(".ico", StringComparison.OrdinalIgnoreCase)
+                ? TryLoadIconFile(path)
+                : TryExtractIndexedIcon(path, index);
+        }
+        catch (Exception exception) when (exception is ArgumentException or InvalidOperationException
+            or NotSupportedException or COMException or Win32Exception)
         {
             return null;
         }
