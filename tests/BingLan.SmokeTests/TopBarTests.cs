@@ -355,6 +355,43 @@ public static class TopBarTests
         Assert(network is { Connected: true, Label: "以太网" }, "仅有线为以太网");
         network = TopBarModuleRules.ClassifyNetwork([(false, true)]);
 
+        // 未连 Wi-Fi 时，Windows 自带常驻 Up 的 WAN Miniport、WFP/QoS 过滤驱动与 WSL/VMware 虚拟网卡不得误报为有线连接。
+        TopBarModuleRules.NetworkAdapterCandidate[] offlineWithPseudoAdapters =
+        [
+            new(IsUp: false, IsWireless: true, IsLoopbackOrTunnel: false, IsPpp: false, "WLAN", "Realtek WiFi 7", 0, false, false),
+            new(IsUp: false, IsWireless: false, IsLoopbackOrTunnel: false, IsPpp: false, "以太网", "Realtek PCIe GbE", 0, false, false),
+            new(IsUp: true, IsWireless: false, IsLoopbackOrTunnel: false, IsPpp: false, "本地连接* 6", "WAN Miniport (IP)", -1, false, false),
+            new(IsUp: true, IsWireless: false, IsLoopbackOrTunnel: false, IsPpp: false, "本地连接* 6-QoS Packet Scheduler-0000", "WAN Miniport (IP)-QoS Packet Scheduler-0000", -1, false, false),
+            new(IsUp: true, IsWireless: false, IsLoopbackOrTunnel: false, IsPpp: false, "vEthernet (WSL)", "Hyper-V Virtual Ethernet Adapter", 10_000_000_000, false, true),
+            new(IsUp: true, IsWireless: false, IsLoopbackOrTunnel: false, IsPpp: false, "VMnet8", "VMware Virtual Ethernet Adapter for VMnet8", 100_000_000, false, true),
+        ];
+        Assert(TopBarModuleRules.SelectActiveNetworkAdapterIndex(offlineWithPseudoAdapters) == -1,
+            "Wi-Fi 断开且无物理有线连接时，WAN Miniport/过滤驱动/虚拟网卡不得误判为有线连接");
+
+        TopBarModuleRules.NetworkAdapterCandidate[] wifiOnlyAdapters =
+        [
+            new(IsUp: true, IsWireless: false, IsLoopbackOrTunnel: false, IsPpp: false, "本地连接* 6", "WAN Miniport (IP)", -1, false, false),
+            new(IsUp: true, IsWireless: true, IsLoopbackOrTunnel: false, IsPpp: false, "WLAN", "Realtek WiFi 7", 1_200_000_000, true, true),
+            new(IsUp: true, IsWireless: true, IsLoopbackOrTunnel: false, IsPpp: false, "WLAN-QoS Packet Scheduler-0000", "Realtek WiFi 7-QoS Packet Scheduler-0000", 1_200_000_000, false, false),
+        ];
+        Assert(TopBarModuleRules.SelectActiveNetworkAdapterIndex(wifiOnlyAdapters) == 1,
+            "仅连接无线网络时应准确选中真实 WLAN 网卡");
+
+        TopBarModuleRules.NetworkAdapterCandidate[] wiredAndWifiAdapters =
+        [
+            new(IsUp: true, IsWireless: true, IsLoopbackOrTunnel: false, IsPpp: false, "WLAN", "Realtek WiFi 7", 1_200_000_000, true, true),
+            new(IsUp: true, IsWireless: false, IsLoopbackOrTunnel: false, IsPpp: false, "以太网", "Realtek PCIe GbE", 1_000_000_000, true, true),
+        ];
+        Assert(TopBarModuleRules.SelectActiveNetworkAdapterIndex(wiredAndWifiAdapters) == 1,
+            "同时存在带网关的物理有线与无线连接时优先识别为有线连接");
+
+        TopBarModuleRules.NetworkAdapterCandidate[] pppoeDialupAdapters =
+        [
+            new(IsUp: true, IsWireless: false, IsLoopbackOrTunnel: false, IsPpp: true, "宽带连接", "WAN Miniport (PPPOE)", 1_000_000_000, true, true),
+        ];
+        Assert(TopBarModuleRules.SelectActiveNetworkAdapterIndex(pppoeDialupAdapters) == 0,
+            "真实接通带网关与 IP 的 PPPoE 宽带拨号应识别为已连接");
+
         var wifiDefault = TopBarModuleRules.DescribeNetwork(true, true, "Office-5G", 82);
         Assert(wifiDefault is { Connected: true, IsWireless: true, Label: "WLAN", Ssid: "Office-5G", SignalQuality: 82 }
             && wifiDefault.Tooltip == "WLAN：Office-5G（信号 82%）",

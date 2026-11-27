@@ -81,21 +81,12 @@ internal static class TopBarSystemInfo
     {
         try
         {
-            var interfaces = NetworkInterface.GetAllNetworkInterfaces()
-                .Where(candidate => candidate.NetworkInterfaceType != NetworkInterfaceType.Loopback
-                    && candidate.NetworkInterfaceType != NetworkInterfaceType.Tunnel)
-                .Select(candidate => (candidate.OperationalStatus == OperationalStatus.Up,
-                    candidate.NetworkInterfaceType
-                        is NetworkInterfaceType.Wireless80211
-                        or NetworkInterfaceType.Wman))
-                .ToList();
-            var (connected, label) = TopBarModuleRules.ClassifyNetwork(interfaces);
+            var (connected, isWireless) = TopBarWifiInterop.ReadActiveAdapterKind();
             if (!connected)
             {
                 return TopBarModuleRules.DescribeNetwork(false, false);
             }
 
-            var isWireless = string.Equals(label, "WLAN", StringComparison.Ordinal);
             if (!isWireless)
             {
                 return TopBarModuleRules.DescribeNetwork(true, false);

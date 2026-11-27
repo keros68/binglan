@@ -95,6 +95,137 @@ public static class TopBarModuleRules
         return (true, usable.Any(candidate => candidate.IsWireless) ? "WLAN" : "以太网");
     }
 
+    /// <summary>
+    /// Normalized snapshot of one OS network interface used by both the TopBar status icon
+    /// and the Network flyout so virtual switches, WAN Miniport pseudo-adapters, and NDIS/WFP
+    /// filter drivers never masquerade as a wired Ethernet connection when Wi-Fi is off.
+    /// </summary>
+    public sealed record NetworkAdapterCandidate(
+        bool IsUp,
+        bool IsWireless,
+        bool IsLoopbackOrTunnel,
+        bool IsPpp,
+        string Name,
+        string Description,
+        long Speed,
+        bool HasDefaultGateway,
+        bool HasUsableUnicastIp);
+
+    public static bool IsVirtualOrFilterAdapter(string? name, string? description)
+    {
+        var text = $"{name} {description}";
+        return text.Contains("WFP ", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("LightWeight Filter", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("QoS Packet Scheduler", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("Filter Driver", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("WAN Miniport (IP)", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("WAN Miniport (IPv6)", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("WAN Miniport (Network Monitor)", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("Kernel Debug", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("Loopback", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("Npcap", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("KM-TEST", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("Wi-Fi Direct", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("Hyper-V", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("vEthernet", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("WSL", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("VMware", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("VirtualBox", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("Virtual", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("Docker", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("Bluetooth", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("Tailscale", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("ZeroTier", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("WireGuard", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("TAP-Windows", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("Wintun", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("OpenVPN", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("Hamachi", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("Radmin", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("SoftEther", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("Sangfor", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("VNIC", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("VPN", StringComparison.OrdinalIgnoreCase);
+    }
+
+    public static bool IsUsableNetworkAdapter(NetworkAdapterCandidate adapter)
+    {
+        ArgumentNullException.ThrowIfNull(adapter);
+        if (!adapter.IsUp || adapter.IsLoopbackOrTunnel)
+        {
+            return false;
+        }
+
+        if (IsVirtualOrFilterAdapter(adapter.Name, adapter.Description))
+        {
+            return false;
+        }
+
+        if (adapter.IsPpp)
+        {
+            return adapter.HasDefaultGateway && adapter.HasUsableUnicastIp;
+        }
+
+        if (adapter.Speed <= 0)
+        {
+            return false;
+        }
+
+        return adapter.HasDefaultGateway || adapter.HasUsableUnicastIp;
+    }
+
+    /// <summary>
+    /// Selects the index of the primary active adapter from <paramref name="adapters"/>, or
+    /// <c>-1</c> when no real wired/wireless/PPPoE connection is active.
+    /// Priority: physical wired with default gateway → wireless with default gateway →
+    /// any usable wireless → any usable physical wired (e.g. static LAN without gateway).
+    /// </summary>
+    public static int SelectActiveNetworkAdapterIndex(IReadOnlyList<NetworkAdapterCandidate> adapters)
+    {
+        ArgumentNullException.ThrowIfNull(adapters);
+        var wiredWithGateway = -1;
+        var wirelessWithGateway = -1;
+        var wirelessFallback = -1;
+        var wiredFallback = -1;
+
+        for (var i = 0; i < adapters.Count; i++)
+        {
+            var adapter = adapters[i];
+            if (!IsUsableNetworkAdapter(adapter))
+            {
+                continue;
+            }
+
+            if (!adapter.IsWireless)
+            {
+                if (adapter.HasDefaultGateway && wiredWithGateway < 0)
+                {
+                    wiredWithGateway = i;
+                }
+                else if (wiredFallback < 0)
+                {
+                    wiredFallback = i;
+                }
+            }
+            else
+            {
+                if (adapter.HasDefaultGateway && wirelessWithGateway < 0)
+                {
+                    wirelessWithGateway = i;
+                }
+                else if (wirelessFallback < 0)
+                {
+                    wirelessFallback = i;
+                }
+            }
+        }
+
+        if (wiredWithGateway >= 0) return wiredWithGateway;
+        if (wirelessWithGateway >= 0) return wirelessWithGateway;
+        if (wirelessFallback >= 0) return wirelessFallback;
+        return wiredFallback;
+    }
+
     public const int MaxNetworkSsidDisplayLength = 14;
 
     private static readonly UTF8Encoding StrictUtf8 = new(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);

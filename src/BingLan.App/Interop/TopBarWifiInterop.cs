@@ -352,47 +352,63 @@ internal static class TopBarWifiInterop
 
     private sealed record ActiveAdapterInfo(bool IsWireless, long? LinkSpeed, string? Ipv4Address, string? Name);
 
+    internal static (bool Connected, bool IsWireless) ReadActiveAdapterKind() =>
+        FindActiveNetworkAdapter(Guid.Empty) is { } active
+            ? (true, active.IsWireless)
+            : (false, false);
+
     private static ActiveAdapterInfo? FindActiveNetworkAdapter(Guid connectedWlanGuid)
     {
         try
         {
-            var candidates = NetworkInterface.GetAllNetworkInterfaces()
-                .Where(adapter => adapter.OperationalStatus == OperationalStatus.Up
-                    && adapter.NetworkInterfaceType != NetworkInterfaceType.Loopback
-                    && adapter.NetworkInterfaceType != NetworkInterfaceType.Tunnel)
-                .ToList();
-            if (candidates.Count == 0)
+            var allAdapters = NetworkInterface.GetAllNetworkInterfaces();
+            if (allAdapters.Length == 0)
             {
                 return null;
             }
 
-            // Prefer a physical Ethernet adapter with a real default gateway over virtual switches
-            // (Hyper-V / WSL / VMware / VPN adapters) so an active Wi-Fi link is not mislabeled.
-            var physicalWired = candidates.FirstOrDefault(adapter =>
-                adapter.NetworkInterfaceType is not (NetworkInterfaceType.Wireless80211 or NetworkInterfaceType.Wman)
-                && !IsLikelyVirtualAdapter(adapter)
-                && HasDefaultGateway(adapter));
-            NetworkInterface? connectedWlanAdapter = null;
-            if (connectedWlanGuid != Guid.Empty)
+            var candidates = new List<TopBarModuleRules.NetworkAdapterCandidate>(allAdapters.Length);
+            var matchedAdapters = new List<NetworkInterface>(allAdapters.Length);
+            foreach (var adapter in allAdapters)
             {
-                connectedWlanAdapter = candidates.FirstOrDefault(adapter =>
-                    Guid.TryParse(adapter.Id, out var id) && id == connectedWlanGuid);
+                var isConnectedWlan = connectedWlanGuid != Guid.Empty
+                    && Guid.TryParse(adapter.Id, out var id)
+                    && id == connectedWlanGuid;
+                var isWireless = isConnectedWlan
+                    || adapter.NetworkInterfaceType is NetworkInterfaceType.Wireless80211 or NetworkInterfaceType.Wman;
+                var isLoopbackOrTunnel = adapter.NetworkInterfaceType is NetworkInterfaceType.Loopback
+                    or NetworkInterfaceType.Tunnel;
+                var isPpp = adapter.NetworkInterfaceType == NetworkInterfaceType.Ppp;
+                var isUp = adapter.OperationalStatus == OperationalStatus.Up;
+                var hasGateway = isUp && !isLoopbackOrTunnel && HasDefaultGateway(adapter);
+                var hasUsableIp = isUp && !isLoopbackOrTunnel && HasUsableUnicastAddress(adapter);
+                candidates.Add(new TopBarModuleRules.NetworkAdapterCandidate(
+                    IsUp: isUp,
+                    IsWireless: isWireless,
+                    IsLoopbackOrTunnel: isLoopbackOrTunnel,
+                    IsPpp: isPpp,
+                    Name: adapter.Name ?? string.Empty,
+                    Description: adapter.Description ?? string.Empty,
+                    Speed: adapter.Speed,
+                    HasDefaultGateway: hasGateway,
+                    HasUsableUnicastIp: hasUsableIp));
+                matchedAdapters.Add(adapter);
             }
-            var anyWireless = connectedWlanAdapter
-                ?? candidates.FirstOrDefault(adapter =>
-                    adapter.NetworkInterfaceType is NetworkInterfaceType.Wireless80211 or NetworkInterfaceType.Wman);
-            var picked = physicalWired
-                ?? anyWireless
-                ?? candidates.FirstOrDefault(adapter => !IsLikelyVirtualAdapter(adapter))
-                ?? candidates[0];
 
-            var isWireless = picked.NetworkInterfaceType is NetworkInterfaceType.Wireless80211 or NetworkInterfaceType.Wman
-                || (connectedWlanGuid != Guid.Empty && ReferenceEquals(picked, connectedWlanAdapter));
+            var pickedIndex = TopBarModuleRules.SelectActiveNetworkAdapterIndex(candidates);
+            if (pickedIndex < 0)
+            {
+                return null;
+            }
+
+            var picked = matchedAdapters[pickedIndex];
+            var isWirelessPicked = candidates[pickedIndex].IsWireless;
             string? ipv4 = null;
             try
             {
                 ipv4 = picked.GetIPProperties().UnicastAddresses
-                    .FirstOrDefault(addr => addr.Address.AddressFamily == AddressFamily.InterNetwork)?
+                    .FirstOrDefault(addr => addr.Address.AddressFamily == AddressFamily.InterNetwork
+                        && !IsLoopbackOrApipa(addr.Address))?
                     .Address.ToString();
             }
             catch (NetworkInformationException)
@@ -401,7 +417,7 @@ internal static class TopBarWifiInterop
             }
 
             return new ActiveAdapterInfo(
-                IsWireless: isWireless,
+                IsWireless: isWirelessPicked,
                 LinkSpeed: picked.Speed > 0 ? picked.Speed : null,
                 Ipv4Address: ipv4,
                 Name: string.IsNullOrWhiteSpace(picked.Description) ? picked.Name : picked.Description);
@@ -416,7 +432,10 @@ internal static class TopBarWifiInterop
     {
         try
         {
-            return adapter.GetIPProperties().GatewayAddresses.Count > 0;
+            return adapter.GetIPProperties().GatewayAddresses
+                .Any(gw => gw.Address is not null
+                    && !gw.Address.Equals(System.Net.IPAddress.Any)
+                    && !gw.Address.Equals(System.Net.IPAddress.IPv6Any));
         }
         catch (NetworkInformationException)
         {
@@ -424,21 +443,46 @@ internal static class TopBarWifiInterop
         }
     }
 
-    private static bool IsLikelyVirtualAdapter(NetworkInterface adapter)
+    private static bool HasUsableUnicastAddress(NetworkInterface adapter)
     {
-        var text = $"{adapter.Name} {adapter.Description}";
-        return text.Contains("Hyper-V", StringComparison.OrdinalIgnoreCase)
-            || text.Contains("vEthernet", StringComparison.OrdinalIgnoreCase)
-            || text.Contains("WSL", StringComparison.OrdinalIgnoreCase)
-            || text.Contains("VMware", StringComparison.OrdinalIgnoreCase)
-            || text.Contains("VirtualBox", StringComparison.OrdinalIgnoreCase)
-            || text.Contains("Virtual", StringComparison.OrdinalIgnoreCase)
-            || text.Contains("Bluetooth", StringComparison.OrdinalIgnoreCase)
-            || text.Contains("Tailscale", StringComparison.OrdinalIgnoreCase)
-            || text.Contains("ZeroTier", StringComparison.OrdinalIgnoreCase)
-            || text.Contains("WireGuard", StringComparison.OrdinalIgnoreCase)
-            || text.Contains("TAP-Windows", StringComparison.OrdinalIgnoreCase)
-            || text.Contains("Wintun", StringComparison.OrdinalIgnoreCase);
+        try
+        {
+            foreach (var unicast in adapter.GetIPProperties().UnicastAddresses)
+            {
+                var address = unicast.Address;
+                if (address is null)
+                {
+                    continue;
+                }
+                if (address.AddressFamily == AddressFamily.InterNetwork
+                    && !IsLoopbackOrApipa(address))
+                {
+                    return true;
+                }
+                if (address.AddressFamily == AddressFamily.InterNetworkV6
+                    && !System.Net.IPAddress.IsLoopback(address)
+                    && !address.IsIPv6LinkLocal
+                    && !address.Equals(System.Net.IPAddress.IPv6Any))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+        catch (NetworkInformationException)
+        {
+            return false;
+        }
+    }
+
+    private static bool IsLoopbackOrApipa(System.Net.IPAddress address)
+    {
+        if (System.Net.IPAddress.IsLoopback(address) || address.Equals(System.Net.IPAddress.Any))
+        {
+            return true;
+        }
+        var bytes = address.GetAddressBytes();
+        return bytes.Length == 4 && bytes[0] == 169 && bytes[1] == 254;
     }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
