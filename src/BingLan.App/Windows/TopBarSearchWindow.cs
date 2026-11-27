@@ -330,8 +330,8 @@ internal sealed class TopBarSearchWindow : Window
             textShadow = new System.Windows.Media.Effects.DropShadowEffect
             {
                 Color = Colors.Black,
-                Opacity = 0.45d,
-                BlurRadius = 5d,
+                Opacity = 0.65d,
+                BlurRadius = 8d,
                 ShadowDepth = 1d,
                 Direction = 270d
             };
@@ -341,6 +341,8 @@ internal sealed class TopBarSearchWindow : Window
         _placeholder.Effect = textShadow;
         _searchGlyph.Effect = textShadow;
         _escHintText.Effect = textShadow;
+        _list.Effect = textShadow;
+        _status.Effect = textShadow;
 
         _glass.SetClearMode(false);
         _glass.SetFrostedGlass(_look.AllowBackdropBlur && !highContrast);

@@ -33,17 +33,17 @@ public static class TopBarSearchLookRules
     public const double TransparentTopBarOpacityThreshold = 0.12d;
     public const string DefaultLightSurfaceRgb = "#ECF6FF";
     public const string DefaultDarkSurfaceRgb = "#162230";
-    public const string ClearGlassDarkTintRgb = "#1E2D3D";
+    public const string ClearGlassIceTintRgb = "#D8F3FF";
 
     public const string ClearGlassWhiteForeground = "#FFFFFF";
-    public const string ClearGlassMutedForeground = "#E4F1FC";
-    public const string ClearGlassPlaceholderForeground = "#D8EAFA";
-    public const string ClearGlassBorder = "#5CFFFFFF";
-    public const string ClearGlassDivider = "#30FFFFFF";
-    public const string ClearGlassBadgeBackground = "#26FFFFFF";
-    public const string ClearGlassBadgeBorder = "#48FFFFFF";
-    public const string ClearGlassHoverRow = "#2CFFFFFF";
-    public const string ClearGlassDefaultActiveRow = "#583BA7F0";
+    public const string ClearGlassMutedForeground = "#F0F8FF";
+    public const string ClearGlassPlaceholderForeground = "#E8F4FF";
+    public const string ClearGlassBorder = "#66FFFFFF";
+    public const string ClearGlassDivider = "#34FFFFFF";
+    public const string ClearGlassBadgeBackground = "#2CFFFFFF";
+    public const string ClearGlassBadgeBorder = "#54FFFFFF";
+    public const string ClearGlassHoverRow = "#34FFFFFF";
+    public const string ClearGlassDefaultActiveRow = "#5C1EA9FF";
 
     public const string DarkSurfaceForeground = "#F2F6FC";
     public const string DarkSurfaceMutedForeground = "#C4D5E6";
@@ -112,9 +112,21 @@ public static class TopBarSearchLookRules
             if (wantsLightInk)
             {
                 darkSurface = true;
-                sheerClearGlass = effectiveStyle.Glass == GlassMode.Clear;
-                baseRgb = sheerClearGlass ? ClearGlassDarkTintRgb : DefaultDarkSurfaceRgb;
-                density = sheerClearGlass ? 0.26d : effectiveStyle.GlassDensity;
+                sheerClearGlass = effectiveStyle.Glass == GlassMode.Clear
+                    || (effectiveStyle.Glass == GlassMode.Light && effectiveStyle.GlassDensity < 0.20d);
+                if (sheerClearGlass)
+                {
+                    var palette = DesktopStyleRules.GetPalette(effectiveStyle.Palette);
+                    baseRgb = palette.Key == DesktopStyleRules.DefaultPalette
+                        ? ClearGlassIceTintRgb
+                        : WidgetAppearanceRules.CoerceColorOrDefault(palette.Body, ClearGlassIceTintRgb);
+                    density = 0.22d;
+                }
+                else
+                {
+                    baseRgb = DefaultDarkSurfaceRgb;
+                    density = effectiveStyle.GlassDensity;
+                }
             }
             else
             {
@@ -129,35 +141,51 @@ public static class TopBarSearchLookRules
             }
         }
 
+        if (sheerClearGlass)
+        {
+            var foreground = customForeground ?? ClearGlassWhiteForeground;
+            var activeRow = IsDefaultAccent(accentRgb)
+                ? ClearGlassDefaultActiveRow
+                : WithAlphaByte(accentRgb, 0x5C);
+            var selection = IsDefaultAccent(accentRgb)
+                ? DarkSurfaceDefaultSelection
+                : WithAlphaByte(accentRgb, 0x66);
+            return new TopBarSearchPalette(
+                UseDarkInk: false,
+                AllowBackdropBlur: allowBackdropBlur,
+                UseTextShadow: true,
+                GlassTint: WithAlphaByte(baseRgb, 0x38),
+                FallbackSurface: WithAlphaByte(baseRgb, 0x52),
+                Border: ClearGlassBorder,
+                Foreground: foreground,
+                MutedForeground: ClearGlassMutedForeground,
+                PlaceholderForeground: ClearGlassPlaceholderForeground,
+                Divider: ClearGlassDivider,
+                BadgeBackground: ClearGlassBadgeBackground,
+                BadgeBorder: ClearGlassBadgeBorder,
+                ActiveRowBackground: activeRow,
+                HoverRowBackground: ClearGlassHoverRow,
+                SelectionBrush: selection);
+        }
+
         if (darkSurface)
         {
-            var blurAlpha = sheerClearGlass
-                ? (byte)0x42
-                : guaranteedFallbackOpacity is not null
-                    ? (byte)Math.Clamp((int)Math.Ceiling(Math.Max(density, 0.72d) * 255d - 1e-9), 0xB8, 0xFF)
-                    : (byte)Math.Clamp((int)Math.Round((0.64d + (density - 0.25d) * 0.24d) * 255d), 0x9C, 0xD6);
+            var blurAlpha = guaranteedFallbackOpacity is not null
+                ? (byte)Math.Clamp((int)Math.Ceiling(Math.Max(density, 0.72d) * 255d - 1e-9), 0xB8, 0xFF)
+                : (byte)Math.Clamp((int)Math.Round((0.64d + (density - 0.25d) * 0.24d) * 255d), 0x9C, 0xD6);
             var fallbackAlpha = guaranteedFallbackOpacity is { } minPlate
                 ? (byte)Math.Clamp((int)Math.Ceiling(Math.Max(minPlate, 0.88d) * 255d - 1e-9), 0xE0, 0xFF)
-                : sheerClearGlass
-                    ? (byte)0xDC
-                    : (byte)Math.Clamp((int)Math.Round((0.88d + (density - 0.25d) * 0.10d) * 255d), 0xE0, 0xF2);
+                : (byte)Math.Clamp((int)Math.Round((0.88d + (density - 0.25d) * 0.10d) * 255d), 0xE0, 0xF2);
 
             var glassTint = WithAlphaByte(baseRgb, blurAlpha);
             var fallbackSurface = WithAlphaByte(baseRgb, fallbackAlpha);
-            var foreground = customForeground
-                ?? (sheerClearGlass ? ClearGlassWhiteForeground : DarkSurfaceForeground);
-            var muted = EnsureReadableSecondaryInk(
-                sheerClearGlass ? ClearGlassMutedForeground : DarkSurfaceMutedForeground,
-                foreground,
-                fallbackSurface);
-            var placeholder = EnsureReadableSecondaryInk(
-                sheerClearGlass ? ClearGlassPlaceholderForeground : DarkSurfacePlaceholderForeground,
-                muted,
-                fallbackSurface);
+            var foreground = customForeground ?? DarkSurfaceForeground;
+            var muted = EnsureReadableSecondaryInk(DarkSurfaceMutedForeground, foreground, fallbackSurface);
+            var placeholder = EnsureReadableSecondaryInk(DarkSurfacePlaceholderForeground, muted, fallbackSurface);
             var activeRow = ResolveActiveRowBackground(
                 accentRgb,
                 darkSurface: true,
-                sheerClearGlass,
+                sheerClearGlass: false,
                 fallbackSurface,
                 foreground);
             var selection = IsDefaultAccent(accentRgb)
@@ -167,18 +195,18 @@ public static class TopBarSearchLookRules
             return new TopBarSearchPalette(
                 UseDarkInk: false,
                 AllowBackdropBlur: allowBackdropBlur,
-                UseTextShadow: sheerClearGlass,
+                UseTextShadow: false,
                 GlassTint: glassTint,
                 FallbackSurface: fallbackSurface,
-                Border: sheerClearGlass ? ClearGlassBorder : DarkSurfaceBorder,
+                Border: DarkSurfaceBorder,
                 Foreground: foreground,
                 MutedForeground: muted,
                 PlaceholderForeground: placeholder,
-                Divider: sheerClearGlass ? ClearGlassDivider : DarkSurfaceDivider,
-                BadgeBackground: sheerClearGlass ? ClearGlassBadgeBackground : DarkSurfaceBadgeBackground,
-                BadgeBorder: sheerClearGlass ? ClearGlassBadgeBorder : DarkSurfaceBadgeBorder,
+                Divider: DarkSurfaceDivider,
+                BadgeBackground: DarkSurfaceBadgeBackground,
+                BadgeBorder: DarkSurfaceBadgeBorder,
                 ActiveRowBackground: activeRow,
-                HoverRowBackground: sheerClearGlass ? ClearGlassHoverRow : DarkSurfaceHoverRow,
+                HoverRowBackground: DarkSurfaceHoverRow,
                 SelectionBrush: selection);
         }
         else
