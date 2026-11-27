@@ -1598,6 +1598,17 @@
                                                      AutomationProperties.Name="问候称呼"
                                                      TextChanged="DisplaySettings_Changed"/>
                                         </local:SettingsRow>
+                                        <local:SettingsRow x:Name="ShowTimeOfDayGreetingRow"
+                                                           Header="显示时段问候"
+                                                           Description="关闭后仅显示称呼"
+                                                           local:SettingsSearch.Scope="Kind:Greeting"
+                                                           local:SettingsSearch.Keywords="早上好 上午好 中午好 下午好 晚上好 夜深了">
+                                            <CheckBox x:Name="ShowTimeOfDayGreetingCheckBox"
+                                                      AutomationProperties.Name="显示时段问候"
+                                                      Style="{StaticResource ToggleSwitchStyle}"
+                                                      Checked="DisplaySettings_Changed"
+                                                      Unchecked="DisplaySettings_Changed"/>
+                                        </local:SettingsRow>
                                         <local:SettingsRow Header="使用 24 小时制" local:SettingsSearch.Keywords="时间 时钟 12 小时">
                                             <CheckBox x:Name="Use24HourClockCheckBox"
                                                       Style="{StaticResource ToggleSwitchStyle}"

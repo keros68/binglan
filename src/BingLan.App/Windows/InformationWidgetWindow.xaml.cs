@@ -753,7 +753,7 @@ public partial class InformationWidgetWindow : WidgetWindowBase
             ? Visibility.Visible
             : Visibility.Collapsed;
 
-        GreetingText.Text = GreetingService.BuildGreeting(now, State.GreetingName);
+        GreetingText.Text = GreetingService.BuildGreeting(now, State.GreetingName, State.ShowTimeOfDayGreeting);
     }
 
     // 数值直接更新，不使用任何动画，天然遵守系统“减少动画”偏好；

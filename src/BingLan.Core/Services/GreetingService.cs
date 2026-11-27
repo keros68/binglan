@@ -37,10 +37,15 @@ public static class GreetingService
             _ => "夜深了"
         };
 
-    public static string BuildGreeting(DateTime localTime, string? displayName)
+    public static string BuildGreeting(DateTime localTime, string? displayName, bool showTimeOfDayGreeting = true)
     {
+        var name = displayName?.Trim() ?? string.Empty;
+        if (!showTimeOfDayGreeting)
+        {
+            return name;
+        }
+
         var greeting = GetTimeOfDayGreeting(localTime);
-        var name = displayName?.Trim();
-        return string.IsNullOrEmpty(name) ? greeting : $"{greeting}，{name}";
+        return name.Length == 0 ? greeting : $"{greeting}，{name}";
     }
 }

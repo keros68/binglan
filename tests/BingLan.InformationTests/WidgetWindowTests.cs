@@ -85,6 +85,12 @@ internal static class WidgetWindowTests
             Assert(time.Text.Length > 0 && time.Text.Contains(':'), "时间文本非空");
             Assert(date.Text.Contains('年') && date.Text.Contains("星期"), "日期文本非空");
             Assert(greeting.Text.Contains("小明"), "问候包含称呼");
+            state.ShowTimeOfDayGreeting = false;
+            window.RefreshConfiguredValues(refreshWeather: false);
+            AssertEqual("小明", greeting.Text, "关闭后卡片立即只显示称呼");
+            state.ShowTimeOfDayGreeting = true;
+            window.RefreshConfiguredValues(refreshWeather: false);
+            Assert(greeting.Text.EndsWith("，小明", StringComparison.Ordinal), "重新开启后立即恢复时段问候");
 
             var city = Require<TextBlock>(window, "WeatherCityText");
             var status = Require<TextBlock>(window, "WeatherStatusText");

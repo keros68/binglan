@@ -12,6 +12,7 @@ public sealed class InformationWidgetState
     public Guid Id { get; set; } = Guid.NewGuid();
     public string Title { get; set; } = "桌面信息";
     public string GreetingName { get; set; } = "";
+    public bool ShowTimeOfDayGreeting { get; set; } = true;
     public bool Use24HourClock { get; set; } = true;
     public bool ShowDate { get; set; } = true;
     public bool ShowLunarDate { get; set; } = true;

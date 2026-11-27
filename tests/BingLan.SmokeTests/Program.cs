@@ -2235,10 +2235,13 @@ static void TestInformationPersistenceAndMigration()
             "v7 状态未迁移到当前 Schema");
         Assert(migrated.InformationWidgets.Count == 0, "v7 状态不应凭空显示桌面信息");
 
+        var existing = JsonSerializer.Deserialize<InformationWidgetState>("""{"GreetingName":"小明"}""")!;
+        Assert(existing.ShowTimeOfDayGreeting, "旧配置缺少开关时应继续显示时段问候");
         var information = new InformationWidgetState
         {
             Title = "  主屏信息  ",
             GreetingName = "  小明  ",
+            ShowTimeOfDayGreeting = false,
             Use24HourClock = false,
             WeatherCity = "  北京  ",
             WeatherLatitude = 39.9,
@@ -2251,6 +2254,15 @@ static void TestInformationPersistenceAndMigration()
         var restored = store.Load().InformationWidgets.Single();
         Assert(restored.Title == "主屏信息", "桌面信息标题未规范化或持久化");
         Assert(restored.GreetingName == "小明", "问候称呼未规范化或持久化");
+        Assert(!restored.ShowTimeOfDayGreeting, "时段问候关闭状态未持久化");
+        var noon = new DateTime(2026, 11, 27, 12, 0, 0);
+        Assert(GreetingService.BuildGreeting(noon, existing.GreetingName, existing.ShowTimeOfDayGreeting) == "中午好，小明",
+            "开启时应保留时段问候和称呼");
+        Assert(Enumerable.Range(0, 24).All(hour =>
+            GreetingService.BuildGreeting(noon.Date.AddHours(hour), "  小明  ", restored.ShowTimeOfDayGreeting) == "小明"),
+            "关闭时全天只显示称呼");
+        Assert(GreetingService.BuildGreeting(noon, "  ", restored.ShowTimeOfDayGreeting) == string.Empty,
+            "关闭开关且未设置称呼时应显示空文本");
         Assert(!restored.Use24HourClock, "12/24 小时设置未持久化");
         Assert(
             restored.WeatherCity == "北京" &&

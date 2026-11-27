@@ -185,6 +185,7 @@ public partial class SettingsWindow : Window
 
         _loadingDisplaySettings = true;
         GreetingNameEditor.Text = state.GreetingName;
+        ShowTimeOfDayGreetingCheckBox.IsChecked = state.ShowTimeOfDayGreeting;
         Use24HourClockCheckBox.IsChecked = state.Use24HourClock;
         ShowClockDateCheckBox.IsChecked = state.ShowDate;
         ShowClockLunarDateCheckBox.IsChecked = state.ShowLunarDate;
@@ -589,6 +590,7 @@ public partial class SettingsWindow : Window
                 ? Visibility.Visible
                 : Visibility.Collapsed;
             var isTimeDate = kind == DesktopComponentKind.TimeDate;
+            ShowTimeOfDayGreetingRow.Visibility = kind == DesktopComponentKind.Greeting ? Visibility.Visible : Visibility.Collapsed;
             ShowClockDateRow.Visibility = isTimeDate ? Visibility.Visible : Visibility.Collapsed;
             ShowClockLunarDateRow.Visibility = isTimeDate ? Visibility.Visible : Visibility.Collapsed;
             ClockLayoutRow.Visibility = isTimeDate ? Visibility.Visible : Visibility.Collapsed;
@@ -1195,6 +1197,7 @@ public partial class SettingsWindow : Window
         var greetingName = GreetingNameEditor.Text.Trim();
         var use24HourClock = Use24HourClockCheckBox.IsChecked == true;
         _informationState.GreetingName = greetingName;
+        _informationState.ShowTimeOfDayGreeting = ShowTimeOfDayGreetingCheckBox.IsChecked == true;
         _informationState.Use24HourClock = use24HourClock;
         _informationState.ShowDate = ShowClockDateCheckBox.IsChecked == true;
         _informationState.ShowLunarDate = ShowClockLunarDateCheckBox.IsChecked == true;

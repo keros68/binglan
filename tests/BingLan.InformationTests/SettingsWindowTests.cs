@@ -74,6 +74,10 @@ internal static class SettingsWindowTests
             Assert(currentCity.Text.Contains("北京"), "当前城市立即更新");
 
             Require<TextBox>(window, "GreetingNameEditor").Text = "  小明  ";
+            var showGreeting = Require<CheckBox>(window, "ShowTimeOfDayGreetingCheckBox");
+            Assert(showGreeting.IsChecked == true, "时段问候默认开启");
+            showGreeting.IsChecked = false;
+            Assert(!state.ShowTimeOfDayGreeting && savedGreeting == "小明", "切换时段问候应立即保存并保留称呼");
             Require<CheckBox>(window, "Use24HourClockCheckBox").IsChecked = false;
             AssertEqual(false, savedClock, "切换 24 小时制应立即保存");
             window.CommitPendingChanges();
