@@ -163,14 +163,13 @@ jobs:
             Write-Host "发行版 $tag 已发布。"
             exit 0
           }
+          gh api --silent "$repoApi/git/ref/tags/$tag"
+          if ($LASTEXITCODE -ne 0) { throw "无法核实远程标签 $tag。" }
           if (-not $release) {
-            gh release create $tag --repo $env:GITHUB_REPOSITORY --verify-tag --draft `
-              --title "冰蓝桌面 $version" --notes "发布说明待补写。"
+            $created = gh api --method POST "$repoApi/releases" -f "tag_name=$tag" `
+              -f "name=冰蓝桌面 $tag" -f 'body=发布说明待补写。' -F 'draft=true'
             if ($LASTEXITCODE -ne 0) { throw "无法创建 $tag 的草稿。" }
-            $release = Find-TargetRelease
-          } else {
-            gh api --silent "$repoApi/git/ref/tags/$tag"
-            if ($LASTEXITCODE -ne 0) { throw "无法核实远程标签 $tag。" }
+            $release = ConvertFrom-Json -InputObject ($created -join "`n")
           }
           $draftId = $release.id
           $draftApi = "$repoApi/releases/$draftId"
