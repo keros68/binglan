@@ -250,6 +250,8 @@ public sealed partial class TopBarWindow : Window
     private long? _searchPopupPointerLeftSinceTick;
     private nint _searchPopupOpenedForegroundWindow;
     private bool _searchPopupObservedForeground;
+    private long? _revealZoneEnteredTick;
+    private bool _smartHideOverlappingWindow;
     private int _moduleMask = -1;
     private string _orderSignature = string.Empty;
     private bool? _appliedAcrylic;
@@ -598,6 +600,7 @@ public sealed partial class TopBarWindow : Window
 
     private void HideFromApp()
     {
+        _backdropTimer.Stop();
         _isChangingVisibilityByApp = true;
         try
         {
@@ -3733,8 +3736,31 @@ public sealed partial class TopBarWindow : Window
     {
         var highContrast = AccessibilityThemeManager.IsHighContrastEnabled || SystemParameters.HighContrast;
         var glass = DesktopStyleRules.TopBar(_style, _state);
+        var needsTemporaryOverlapBacking = !IsCapsule
+            && !highContrast
+            && _smartHideOverlappingWindow
+            && BarAdaptiveInkRules.NeedsBackdropSampling(glass.Surface, hasDarkAcrylicScrim: false);
+        var effectiveGlass = glass;
         var acrylic = !IsCapsule && !highContrast && _acrylicAvailable
             && DesktopStyleRules.TopBarFrostedScrim(_state, glass.Surface);
+        if (needsTemporaryOverlapBacking)
+        {
+            // When a transparent/low-opacity smart-hidden bar temporarily pops out over a
+            // maximized/overlapping app (e.g. browser tabs), give it a clean frosted backing
+            // matching the user's global light/dark style so text never collides with tabs
+            // and bright app chrome never poisons wallpaper adaptive-ink hysteresis.
+            var unified = ResolveTopBarPopupPalette();
+            if (!unified.UseDarkInk)
+            {
+                effectiveGlass = glass with { Surface = "#D8162230", Border = "#38FFFFFF" };
+                acrylic = _acrylicAvailable && _state.FrostedGlass;
+            }
+            else
+            {
+                effectiveGlass = glass with { Surface = unified.FallbackSurface, Border = unified.Border };
+                acrylic = false;
+            }
+        }
         _acrylicBackdrop = acrylic;
         // The first call must also clear the startup probe on a light surface.
         if (_appliedAcrylic != acrylic && TaskbarNativeMethods.TrySetAccent(
@@ -3771,16 +3797,19 @@ public sealed partial class TopBarWindow : Window
         }
         _capsuleGlass?.Dispose();
         _capsuleGlass = null;
-        if (highContrast || !BarAdaptiveInkRules.NeedsBackdropSampling(glass.Surface, acrylic))
+        if (highContrast || needsTemporaryOverlapBacking || !BarAdaptiveInkRules.NeedsBackdropSampling(effectiveGlass.Surface, acrylic))
         {
-            _sampledBackdrop = null;
-            _lastAdaptiveDarkInk = null;
+            if (!needsTemporaryOverlapBacking)
+            {
+                _sampledBackdrop = null;
+                _lastAdaptiveDarkInk = null;
+            }
             _backdropTimer.Stop();
         }
-        ApplyAdaptivePalette(glass, acrylic, highContrast);
+        ApplyAdaptivePalette(effectiveGlass, acrylic, highContrast);
         Surface.Background = highContrast
             ? SystemColors.WindowBrush
-            : FrozenBrush(acrylic ? AcrylicSurfaceTint : glass.Surface);
+            : FrozenBrush(acrylic ? AcrylicSurfaceTint : effectiveGlass.Surface);
         Surface.BorderBrush = highContrast
             ? SystemColors.WindowTextBrush
             : FrozenBrush(_palette.BarBorderColor);
@@ -3826,7 +3855,7 @@ public sealed partial class TopBarWindow : Window
 
     private void UpdateBackdropSampling(bool immediate)
     {
-        if (_closing || IsCapsule || !IsVisible || _trueFullScreenForeground
+        if (_closing || IsCapsule || !IsVisible || _trueFullScreenForeground || _smartHideOverlappingWindow
             || AccessibilityThemeManager.IsHighContrastEnabled || SystemParameters.HighContrast)
         {
             _backdropTimer.Stop();
@@ -3852,7 +3881,7 @@ public sealed partial class TopBarWindow : Window
 
     private void ScheduleBackdropSample()
     {
-        if (_closing || IsCapsule || !IsVisible || _trueFullScreenForeground
+        if (_closing || IsCapsule || !IsVisible || _trueFullScreenForeground || _smartHideOverlappingWindow
             || AccessibilityThemeManager.IsHighContrastEnabled || SystemParameters.HighContrast)
         {
             return;
@@ -3886,7 +3915,7 @@ public sealed partial class TopBarWindow : Window
                 if (_closing || sampled is null) return;
                 Dispatcher.BeginInvoke(() =>
                 {
-                    if (_closing || IsCapsule || !IsVisible) return;
+                    if (_closing || IsCapsule || !IsVisible || _smartHideOverlappingWindow) return;
                     _sampledBackdrop = sampled;
                     var currentGlass = DesktopStyleRules.TopBar(_style, _state);
                     var highContrast = AccessibilityThemeManager.IsHighContrastEnabled || SystemParameters.HighContrast;
@@ -4084,29 +4113,66 @@ public sealed partial class TopBarWindow : Window
             IsVisible,
             bounds,
             excludedCaptionSpan);
+        var inRawRevealZone = TopBarRevealRules.IsInRevealZone(
+            cursor.X,
+            cursor.Y,
+            revealBounds,
+            IsCapsule ? bounds.Top - revealBounds.Top + revealDepth : revealDepth,
+            excludedCaptionSpan);
+        var nowTick = Environment.TickCount64;
+        if (inRawRevealZone)
+        {
+            _revealZoneEnteredTick ??= nowTick;
+        }
+        else
+        {
+            _revealZoneEnteredTick = null;
+        }
+        var pointerInRevealZone = TopBarRevealRules.ShouldTriggerRevealAfterDwell(
+            inRawRevealZone,
+            overlaps || effectiveZoomed,
+            IsVisible,
+            _revealZoneEnteredTick,
+            nowTick);
         var input = new DockAutoHideInput(
             WindowOverlapsDock: overlaps || effectiveZoomed,
             ForegroundIsFullScreen: trueFullScreen,
-            PointerInRevealZone: TopBarRevealRules.IsInRevealZone(
-                cursor.X,
-                cursor.Y,
-                revealBounds,
-                IsCapsule ? bounds.Top - revealBounds.Top + revealDepth : revealDepth,
-                excludedCaptionSpan),
+            PointerInRevealZone: pointerInRevealZone,
             PointerOverDock: pointerOverBar,
             InteractionActive: _menuOpen || _capsuleExpanded
                 || _todoFlyout?.IsOpen == true || _clockFlyout?.IsOpen == true
                 || _inputMethodFlyout?.IsOpen == true || HasOpenSystemFlyout || _searchPopup is not null,
             OverlapIsMaximizedWindow: effectiveZoomed);
         _autoHide.Update(input, DateTimeOffset.UtcNow);
-        if (_autoHide.IsShown != IsVisible)
+        var overlappingWhileShown = (overlaps || effectiveZoomed) && _autoHide.IsShown;
+        var overlapStateChanged = overlappingWhileShown != _smartHideOverlappingWindow;
+        var visibilityChanged = _autoHide.IsShown != IsVisible;
+        if (overlapStateChanged)
+        {
+            _smartHideOverlappingWindow = overlappingWhileShown;
+            if (!overlappingWhileShown)
+            {
+                // Returning from an overlapping/maximized window back to the desktop wallpaper:
+                // drop any stale adaptive-ink state so bright app tabs never leave the bar stuck dark.
+                _sampledBackdrop = null;
+                _lastAdaptiveDarkInk = null;
+            }
+        }
+        if (visibilityChanged)
         {
             if (_autoHide.IsShown)
             {
+                if (!_smartHideOverlappingWindow)
+                {
+                    _sampledBackdrop = null;
+                    _lastAdaptiveDarkInk = null;
+                }
+                ApplySurface();
                 Show();
                 _appBar.EnsureLayer();
                 RenderModules();
                 RenderSystemModules();
+                UpdateBackdropSampling(immediate: true);
             }
             else
             {
@@ -4119,7 +4185,16 @@ public sealed partial class TopBarWindow : Window
                 CloseInputMethodFlyout();
                 CloseSystemFlyouts();
                 HideFromApp();
+                if (overlapStateChanged)
+                {
+                    ApplySurface();
+                }
             }
+        }
+        else if (overlapStateChanged && IsVisible)
+        {
+            ApplySurface();
+            UpdateBackdropSampling(immediate: !overlappingWhileShown);
         }
     }
 

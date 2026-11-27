@@ -598,6 +598,36 @@ public static class TopBarTests
         Assert(TopBarRevealRules.ComputeCaptionButtonExclusion(new PixelRect(0, 40, 1920, 1040), fullBar, 160) is null,
             "未与顶栏重叠的窗口不产生排除区");
 
+        // 最大化/重叠窗口下顶边唤出需要短暂停留，避免快速切换浏览器标签时误触发顶栏；离开重叠窗口后无延迟。
+        Assert(!TopBarRevealRules.ShouldTriggerRevealAfterDwell(
+                inRevealZone: true,
+                overlapIsMaximizedOrCovering: true,
+                isCurrentlyShown: false,
+                enteredRevealZoneSinceTickMs: 1000,
+                nowTickMs: 1200),
+            "重叠最大化窗口下在顶边停留不足阈值不应误唤出顶栏");
+        Assert(TopBarRevealRules.ShouldTriggerRevealAfterDwell(
+                inRevealZone: true,
+                overlapIsMaximizedOrCovering: true,
+                isCurrentlyShown: false,
+                enteredRevealZoneSinceTickMs: 1000,
+                nowTickMs: 1000 + TopBarRevealRules.MaximizedOverlapRevealDelayMs),
+            "重叠最大化窗口下在顶边有意停留达到阈值后应正常唤出顶栏");
+        Assert(TopBarRevealRules.ShouldTriggerRevealAfterDwell(
+                inRevealZone: true,
+                overlapIsMaximizedOrCovering: false,
+                isCurrentlyShown: false,
+                enteredRevealZoneSinceTickMs: 1000,
+                nowTickMs: 1000),
+            "桌面无重叠窗口时应即时响应唤出");
+        Assert(TopBarRevealRules.ShouldTriggerRevealAfterDwell(
+                inRevealZone: true,
+                overlapIsMaximizedOrCovering: true,
+                isCurrentlyShown: true,
+                enteredRevealZoneSinceTickMs: 1000,
+                nowTickMs: 1000),
+            "顶栏已显示时应持续保持显示");
+
         // 预留模式工作区实效校验与异常贴顶窗口检测。
         var reservedStrip = new PixelRect(0, 0, 1920, 31);
         Assert(TopBarReserveRules.IsStripAnchoredAtTop(reservedStrip, monitor),

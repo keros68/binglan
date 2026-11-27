@@ -15,6 +15,32 @@ public static class TopBarRevealRules
     /// </summary>
     public const double CaptionButtonsExclusionDip = 160d;
 
+    /// <summary>
+    /// Short top-edge dwell required before revealing a smart-hidden top bar over an
+    /// overlapping/maximized window, so quick browser-tab clicks at y=0 do not pull the
+    /// bar down accidentally while intentional hovering still reveals it reliably.
+    /// </summary>
+    public const long MaximizedOverlapRevealDelayMs = 350;
+
+    public static bool ShouldTriggerRevealAfterDwell(
+        bool inRevealZone,
+        bool overlapIsMaximizedOrCovering,
+        bool isCurrentlyShown,
+        long? enteredRevealZoneSinceTickMs,
+        long nowTickMs)
+    {
+        if (!inRevealZone)
+        {
+            return false;
+        }
+        if (isCurrentlyShown || !overlapIsMaximizedOrCovering)
+        {
+            return true;
+        }
+        return enteredRevealZoneSinceTickMs is { } since
+            && nowTickMs - since >= MaximizedOverlapRevealDelayMs;
+    }
+
     public static bool IsInRevealZone(
         int cursorX,
         int cursorY,
