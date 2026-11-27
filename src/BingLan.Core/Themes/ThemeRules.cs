@@ -586,7 +586,8 @@ public static class ThemeRules
         Battery = source.Battery,
         Search = source.Search,
         TrayOverflow = source.TrayOverflow,
-        Clock = source.Clock
+        Clock = source.Clock,
+        PeripheralBattery = source.PeripheralBattery
     };
 
     private static string CleanName(string? name) =>

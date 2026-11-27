@@ -102,7 +102,9 @@ public enum TopBarModuleKind
     Battery,
     Clock,
     Search,
-    TrayOverflow
+    TrayOverflow,
+    // 外设电量追加在末尾以免既有枚举值漂移。
+    PeripheralBattery
 }
 
 public sealed class TopBarModuleSwitches
@@ -118,6 +120,8 @@ public sealed class TopBarModuleSwitches
     public bool Clock { get; set; } = true;
     public bool Search { get; set; } = true;
     public bool TrayOverflow { get; set; } = true;
+    // 外设电量需要配置本机 BatteryHub，默认关闭。
+    public bool PeripheralBattery { get; set; }
 
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? ExtensionData { get; set; }
@@ -210,6 +214,9 @@ public sealed class TopBarState
     /// Machine-local and null/unknown defaults to Bing; never exported with a theme.</summary>
     public string? SearchEngine { get; set; }
 
+    /// <summary>Path to the local BatteryHub executable. Theme packages omit this setting.</summary>
+    public string? BatteryHubExecutablePath { get; set; }
+
     /// <summary>Custom search URL template with a <c>{0}</c> query placeholder used when
     /// <see cref="SearchEngine"/> is <c>"custom"</c>. Machine-local; never exported with a theme.</summary>
     public string? SearchCustomUrl { get; set; }
@@ -260,6 +267,7 @@ public static class TopBarRules
     public static IReadOnlyList<TopBarModuleKind> DefaultRightOrder { get; } =
     [
         TopBarModuleKind.Battery,
+        TopBarModuleKind.PeripheralBattery,
         TopBarModuleKind.Network,
         TopBarModuleKind.Volume,
         TopBarModuleKind.TrayOverflow,
@@ -508,6 +516,7 @@ public static class TopBarRules
         TopBarModuleKind.Clock => "时钟与日期",
         TopBarModuleKind.Search => "搜索",
         TopBarModuleKind.TrayOverflow => "系统托盘",
+        TopBarModuleKind.PeripheralBattery => "外设电量",
         _ => kind.ToString()
     };
 
@@ -801,6 +810,7 @@ public static class TopBarRules
         TopBarModuleKind.Clock => switches.Clock,
         TopBarModuleKind.Search => switches.Search,
         TopBarModuleKind.TrayOverflow => switches.TrayOverflow,
+        TopBarModuleKind.PeripheralBattery => switches.PeripheralBattery,
         _ => false
     };
 
@@ -819,6 +829,7 @@ public static class TopBarRules
             case TopBarModuleKind.Clock: switches.Clock = on; break;
             case TopBarModuleKind.Search: switches.Search = on; break;
             case TopBarModuleKind.TrayOverflow: switches.TrayOverflow = on; break;
+            case TopBarModuleKind.PeripheralBattery: switches.PeripheralBattery = on; break;
         }
     }
 

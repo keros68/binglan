@@ -52,6 +52,11 @@ internal sealed class TopBarHost : IDisposable
 
     internal Func<MonitorSnapshot, int?>? ResolveBottomDockTop { get; set; }
 
+    internal void RefreshPeripheralBattery()
+    {
+        foreach (var window in _windows.Values.ToArray()) window.RenderPeripheralModule();
+    }
+
     internal bool HasWindow => _windows.Count > 0;
 
     internal bool IsRunningOnMonitor(string monitorKey) => _windows.ContainsKey(monitorKey);
@@ -170,6 +175,7 @@ internal sealed class TopBarHost : IDisposable
         finally
         {
             _applying = false;
+            if (_windows.Count == 0) _environment.StopPeripheralBattery();
         }
     }
 
@@ -245,6 +251,7 @@ internal sealed class TopBarHost : IDisposable
         var windows = _windows.Values.ToArray();
         _windows.Clear();
         _window = null;
+        _environment.StopPeripheralBattery();
         foreach (var window in windows) window.Close();
     }
 }

@@ -50,6 +50,13 @@ public static class TopBarTests
         Assert(state.FrostedGlass, "默认开启磨砂");
         foreach (var kind in TopBarRules.ModuleOrder)
         {
+            // Fusion extension: the peripheral-battery module is opt-in (it needs the
+            // optional engine DLL), so it is the one module that defaults to off.
+            if (kind == TopBarModuleKind.PeripheralBattery)
+            {
+                Assert(!TopBarRules.IsModuleOn(state.Modules, kind), "外设电量模块默认关闭（融合扩展，需手动开启）");
+                continue;
+            }
             Assert(TopBarRules.IsModuleOn(state.Modules, kind), $"模块 {kind} 默认开启");
         }
 
@@ -93,12 +100,14 @@ public static class TopBarTests
             var state = store.Load();
             Assert(state.SchemaVersion == AppState.CurrentSchemaVersion, "新状态为当前版本");
             Assert(state.TopBar is { IsEnabled: false }, "新状态顶栏默认关闭");
+            Assert(state.TopBar.BatteryHubExecutablePath is null, "旧配置缺少外设电量程序路径时保持未配置");
 
             state.TopBar.IsEnabled = true;
             state.TopBar.MonitorDeviceName = "\\\\.\\DISPLAY2";
             state.TopBar.VisibilityMode = TopBarVisibilityMode.SmartHide;
             state.TopBar.ShowAtBottom = true;
             state.TopBar.DisplayMode = TopBarDisplayMode.Capsule;
+            state.TopBar.BatteryHubExecutablePath = @"C:\Tools\BatteryHub\BatteryHub.exe";
             TopBarRules.SetModule(state.TopBar.Modules, TopBarModuleKind.Network, false);
             state.TodoWidgets.Add(new TodoWidgetState
             {
@@ -116,6 +125,8 @@ public static class TopBarTests
             Assert(reloaded.TopBar.VisibilityMode == TopBarVisibilityMode.SmartHide, "显示方式持久化");
             Assert(reloaded.TopBar.ShowAtBottom, "底部信息条位置持久化");
             Assert(reloaded.TopBar.DisplayMode == TopBarDisplayMode.Capsule, "胶囊布局持久化");
+            Assert(reloaded.TopBar.BatteryHubExecutablePath == state.TopBar.BatteryHubExecutablePath,
+                "外设电量程序路径可从本机配置恢复");
             Assert(!TopBarRules.IsModuleOn(reloaded.TopBar.Modules, TopBarModuleKind.Network), "模块开关持久化");
 
             var v67 = JsonSerializer.SerializeToNode(state)!;
@@ -810,11 +821,13 @@ public static class TopBarTests
         state.TopBar.VisibilityMode = TopBarVisibilityMode.SmartHide;
         TopBarRules.SetModule(state.TopBar.Modules, TopBarModuleKind.InputMethod, false);
         TopBarRules.SetModule(state.TopBar.Modules, TopBarModuleKind.TrayOverflow, false);
+        TopBarRules.SetModule(state.TopBar.Modules, TopBarModuleKind.PeripheralBattery, true);
         state.TopBar.FollowCardLook = false;
         state.TopBar.SurfaceColor = "#112233";
         state.TopBar.SurfaceOpacity = 0.5d;
         state.TopBar.ShowWifiName = true;
         state.TopBar.NetworkIconOnly = true;
+        state.TopBar.BatteryHubExecutablePath = @"C:\Tools\BatteryHub\BatteryHub.exe";
         state.Dock.PinnedApps.Clear();
 
         var area = new ThemeArea(0, 0, 1920, 1040);
@@ -823,6 +836,7 @@ public static class TopBarTests
         Assert(package.Bindings.TopBarVisibility == TopBarVisibilityMode.SmartHide, "导出显示方式");
         Assert(!package.Bindings.TopBarModules!.InputMethod, "导出模块开关");
         Assert(!package.Bindings.TopBarModules.TrayOverflow, "导出托盘入口开关");
+        Assert(package.Bindings.TopBarModules.PeripheralBattery, "导出外设电量模块开关");
         Assert(!package.Bindings.TopBarFollowCardLook, "导出自定义外观");
         Assert(package.Bindings.TopBarSurfaceColor == "#112233", "导出自定义颜色");
 
@@ -832,19 +846,25 @@ public static class TopBarTests
         Assert(!json.Contains(state.TopBar.MonitorDeviceName ?? "null-marker"), "无显示器名");
         Assert(!json.Contains("ShowWifiName", StringComparison.OrdinalIgnoreCase), "主题不携带 ShowWifiName 本机设置");
         Assert(!json.Contains("NetworkIconOnly", StringComparison.OrdinalIgnoreCase), "主题不携带 NetworkIconOnly 本机设置");
+        Assert(!json.Contains("BatteryHub.exe", StringComparison.OrdinalIgnoreCase)
+            && !json.Contains(nameof(TopBarState.BatteryHubExecutablePath), StringComparison.Ordinal),
+            "主题不携带本机外设电量程序路径");
 
         var target = new TopBarState();
         target.MonitorDeviceName = "\\\\.\\DISPLAY7";
         target.ShowWifiName = false;
         target.NetworkIconOnly = false;
+        target.BatteryHubExecutablePath = @"D:\Tools\BatteryHub\BatteryHub.exe";
         ThemeRules.ApplyTopBar(package, target);
         Assert(target.IsEnabled, "导入顶栏开关");
         Assert(target.VisibilityMode == TopBarVisibilityMode.SmartHide, "导入显示方式");
         Assert(!TopBarRules.IsModuleOn(target.Modules, TopBarModuleKind.InputMethod), "导入模块开关");
         Assert(!target.Modules.TrayOverflow, "导入保留托盘入口开关");
+        Assert(target.Modules.PeripheralBattery, "导入外设电量模块开关");
         Assert(target.MonitorDeviceName == "\\\\.\\DISPLAY7", "导入不动显示器");
         Assert(target.ShowWifiName == false, "导入不动本机 ShowWifiName 设置");
         Assert(target.NetworkIconOnly == false, "导入不动本机 NetworkIconOnly 设置");
+        Assert(target.BatteryHubExecutablePath == @"D:\Tools\BatteryHub\BatteryHub.exe", "导入主题保留本机外设电量程序路径");
 
         // 旧主题（无顶栏字段）导入：关闭顶栏、保留本机模块开关。
         var legacy = JsonSerializer.SerializeToNode(package)!;
@@ -925,7 +945,8 @@ public static class TopBarTests
             Assert(TopBarRules.MoveModuleToSide(allRight, kind, TopBarModuleSide.Right), $"应允许将 {kind} 移到右侧");
         }
         var (emptyLeft, fullRight) = TopBarRules.ResolveOrder(allRight);
-        Assert(emptyLeft.Count == 0 && fullRight.Count == 10, "应允许左侧全部移到右侧");
+        Assert(emptyLeft.Count == 0 && fullRight.Count == defaultLeft.Count + defaultRight.Count,
+            "应允许左侧全部移到右侧");
 
         // 恢复默认顺序
         Assert(TopBarRules.ResetOrder(state), "自定义顺序应可恢复默认");

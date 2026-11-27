@@ -3,6 +3,7 @@ using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using BingLan.App.TopBar;
 using BingLan.Core.Models;
 using BingLan.Core.TopBar;
 
@@ -17,6 +18,7 @@ public partial class SettingsWindow
     private bool _updatingTopBarVisualEditor;
     private Point _topBarDragStartPoint;
     private TopBarModuleKind? _topBarDragCandidate;
+    private int _batteryHubChoiceVersion;
 
     public void SelectTopBarModule(TopBarModuleKind kind)
     {
@@ -565,6 +567,7 @@ public partial class SettingsWindow
 
         TopBarSelectedStyleRow.Visibility = Visibility.Collapsed;
         TopBarSelectedSearchPanel.Visibility = Visibility.Collapsed;
+        TopBarPeripheralBatteryPanel.Visibility = Visibility.Collapsed;
         TopBarSelectedModuleNote.Visibility = Visibility.Collapsed;
         TopBarSelectedModuleStylePanel.IsEnabled = enabled;
 
@@ -600,6 +603,11 @@ public partial class SettingsWindow
                         ("图标 + 百分比", "IconAndPercent")
                     ],
                     TopBarRules.EffectiveBatteryStyle(state).ToString());
+                break;
+            case TopBarModuleKind.PeripheralBattery:
+                TopBarPeripheralBatteryPanel.Visibility = Visibility.Visible;
+                TopBarBatteryHubPathText.Text = state.BatteryHubExecutablePath ?? "尚未配置";
+                TopBarBatteryHubClearButton.IsEnabled = !string.IsNullOrWhiteSpace(state.BatteryHubExecutablePath);
                 break;
             case TopBarModuleKind.InputMethod:
                 PopulateStyleCombo(
@@ -826,6 +834,56 @@ public partial class SettingsWindow
         ApplyTopBarChange($"已更新“{TopBarRules.ModuleLabel(_selectedTopBarModule)}”显示样式");
     }
 
+    private async void TopBarBatteryHubChoose_Click(object sender, RoutedEventArgs e)
+    {
+        if (_topBarState is not { } state)
+        {
+            return;
+        }
+
+        var dialog = new Microsoft.Win32.OpenFileDialog
+        {
+            Title = "选择 BatteryHub 程序",
+            Filter = "BatteryHub.exe|BatteryHub.exe",
+            FileName = "BatteryHub.exe",
+            CheckFileExists = true
+        };
+        if (dialog.ShowDialog(this) != true)
+        {
+            return;
+        }
+
+        var version = ++_batteryHubChoiceVersion;
+        var selectedPath = dialog.FileName;
+        var path = await Task.Run(() => BatteryHubCli.ResolveLocalExecutable(selectedPath));
+        if (!IsLoaded || version != _batteryHubChoiceVersion || !ReferenceEquals(state, _topBarState))
+        {
+            return;
+        }
+        if (path is null)
+        {
+            TopBarStatusText.Text = "请选择本机可读取的 BatteryHub.exe";
+            return;
+        }
+
+        state.BatteryHubExecutablePath = path;
+        ApplyTopBarChange("BatteryHub 程序已配置");
+        LoadTopBarVisualEditor();
+    }
+
+    private void TopBarBatteryHubClear_Click(object sender, RoutedEventArgs e)
+    {
+        _batteryHubChoiceVersion++;
+        if (_topBarState is not { } state || string.IsNullOrWhiteSpace(state.BatteryHubExecutablePath))
+        {
+            return;
+        }
+
+        state.BatteryHubExecutablePath = null;
+        ApplyTopBarChange("BatteryHub 程序路径已清除");
+        LoadTopBarVisualEditor();
+    }
+
     private void TopBarSearchOptions_Changed(object sender, RoutedEventArgs e)
     {
         if (_loadingTopBar || _updatingTopBarVisualEditor || _topBarState is not { } state)
@@ -869,6 +927,7 @@ public partial class SettingsWindow
         TopBarModuleKind.Clock => "时钟",
         TopBarModuleKind.Search => "搜索",
         TopBarModuleKind.TrayOverflow => "托盘",
+        TopBarModuleKind.PeripheralBattery => "外设",
         _ => kind.ToString()
     };
 
@@ -885,6 +944,7 @@ public partial class SettingsWindow
         TopBarModuleKind.Clock => "\uE823",
         TopBarModuleKind.Search => "\uE721",
         TopBarModuleKind.TrayOverflow => "\uE70E",
+        TopBarModuleKind.PeripheralBattery => "\uE83F",
         _ => "\uE713"
     };
 

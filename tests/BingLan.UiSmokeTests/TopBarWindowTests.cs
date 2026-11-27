@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Reflection;
 using System.Windows;
@@ -384,6 +385,8 @@ internal static class TopBarWindowTests
             RateDigitsDoNotShiftSearchEntry(ShowForInteraction, pump);
             SearchEntrySitsAtBarCentre(ShowForInteraction, pump);
             CustomModuleOrderUpdatesLayout(ShowForInteraction, pump);
+            PeripheralBatteryReadoutAndRefresh(ShowForInteraction, pump);
+            PeripheralBatterySettingsPath(pump);
             EverythingProtocolAndFallback(pump);
             WindowsIndexQueryRules();
         }
@@ -441,6 +444,130 @@ internal static class TopBarWindowTests
         {
             bar.Close();
             pump();
+        }
+    }
+
+    private static void PeripheralBatteryReadoutAndRefresh(Action<Window> show, Action pump)
+    {
+        var state = BarState();
+        state.VisibilityMode = TopBarVisibilityMode.SmartHide;
+        state.Modules.PeripheralBattery = true;
+        state.ShowAtBottom = true;
+        state.Modules.Performance = false;
+        state.BatteryStyle = TopBarBatteryStyle.IconOnly;
+        var environment = new FakeEnvironment
+        {
+            PeripheralSnapshot = new(PeripheralBatteryStatus.Fresh,
+                [new("mouse", "鼠标", PeripheralDeviceKind.Mouse, "Bluetooth", -1, false, false, true)],
+                DateTimeOffset.Now)
+        };
+        using var sampler = new WindowsPerformanceSamplingService();
+        var bar = new TopBarWindow(state, new DesktopStyleState(), environment, sampler);
+        var foreground = new Window
+        {
+            Width = 320,
+            Height = 180,
+            WindowStartupLocation = WindowStartupLocation.CenterScreen,
+            ShowInTaskbar = false
+        };
+        try
+        {
+            show(foreground);
+            ForceForeground(new WindowInteropHelper(foreground).Handle);
+            show(bar);
+            var deadline = Stopwatch.StartNew();
+            while (environment.PeripheralAutomaticRefreshes == 0 && deadline.Elapsed < TimeSpan.FromSeconds(7))
+            {
+                Thread.Sleep(20);
+                pump();
+            }
+            Assert(!sampler.IsRunning && environment.PeripheralAutomaticRefreshes > 0,
+                "关闭性能采样时，可见顶栏仍应自动刷新外设电量");
+
+            var button = ButtonByName(bar, "外设电量模块");
+            Assert(DescendantElements(button).OfType<TextBlock>().Any(text => text.Text == "—"),
+                "未知外设电量应显示 —，本机电量的仅图标选项不影响外设百分比");
+            button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            pump();
+            var flyout = bar.PeripheralBatteryFlyout;
+            Assert(flyout is { IsOpen: true, Placement: PlacementMode.Top }
+                && DescendantTextBlocks(flyout.Child).Any(text => text.Text.Contains("已连接")),
+                "底部外设浮层应向上打开并显示连接状态");
+            var refresh = AllButtons(flyout!.Child).Single(item => AutomationProperties.GetName(item) == "立即刷新外设电量");
+            refresh.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Assert(environment.PeripheralRefreshes == 1 && bar.PeripheralBatteryFlyout == flyout && flyout.IsOpen,
+                "手动刷新应调用宿主并保持当前浮层打开");
+
+            environment.PeripheralSnapshot = new(PeripheralBatteryStatus.Fresh,
+                [new("mouse", "鼠标", PeripheralDeviceKind.Mouse, "Bluetooth", 42, false, true, true)],
+                DateTimeOffset.Now);
+            bar.RenderPeripheralModule();
+            Assert(flyout.IsOpen && DescendantTextBlocks(flyout.Child).Any(text => text.Text == "42%")
+                && DescendantTextBlocks(flyout.Child).Any(text => text.Text.Contains("休眠")),
+                "后台刷新完成后，打开的浮层应显示新的电量与连接状态");
+            Assert(DescendantElements(button).OfType<TextBlock>().Any(text => text.Text == "42%"),
+                "刷新后的电量应同步到顶栏");
+
+            environment.PeripheralSnapshot = PeripheralBatterySnapshot.NotConfigured;
+            bar.RefreshTodoSummary();
+            Assert(DescendantTextBlocks(flyout.Child).Any(text => text.Text.Contains("选择 BatteryHub.exe")),
+                "清除程序配置后，打开的浮层应显示配置入口说明");
+        }
+        finally
+        {
+            bar.Close();
+            foreground.Close();
+            pump();
+        }
+    }
+
+    internal static void PeripheralBatteryLocalPath()
+    {
+        var directory = Directory.CreateTempSubdirectory("BingLan-BatteryHub-");
+        try
+        {
+            var localFile = Path.Combine(directory.FullName, "BatteryHub.exe");
+            Assert(BatteryHubCli.ResolveLocalExecutable(localFile) is null, "缺失的程序应当不可用");
+            Assert(BatteryHubCli.ResolveLocalExecutable("BatteryHub.exe") is null, "不得执行相对路径");
+            Assert(BatteryHubCli.ResolveLocalExecutable(@"\\server\share\BatteryHub.exe") is null, "不得执行网络共享路径");
+            Assert(BatteryHubCli.ResolveLocalExecutable(@"\\?\C:\Tools\BatteryHub.exe") is null, "不得接受设备路径");
+            File.Copy(Environment.ProcessPath!, localFile);
+            Assert(string.Equals(BatteryHubCli.ResolveLocalExecutable(localFile), localFile, StringComparison.OrdinalIgnoreCase),
+                "允许本机存在的 BatteryHub.exe");
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
+    }
+
+    private static void PeripheralBatterySettingsPath(Action pump)
+    {
+        var state = new TopBarState { BatteryHubExecutablePath = @"C:\Tools\BatteryHub.exe" };
+        state.Modules.PeripheralBattery = true;
+        var applies = 0;
+        var settings = new SettingsWindow(new CityLookupService(), new InformationWidgetState(),
+            DesktopExperienceRules.CreateDefault(), (_, _) => { }, _ => { }, _ => { },
+            topBarState: state, applyTopBar: () => applies++);
+        try
+        {
+            pump();
+            applies = 0;
+            settings.SelectTopBarModule(TopBarModuleKind.PeripheralBattery);
+            Assert(((FrameworkElement)settings.FindName("TopBarPeripheralBatteryPanel")).Visibility == Visibility.Visible
+                && ((FrameworkElement)settings.FindName("TopBarSelectedStyleRow")).Visibility == Visibility.Collapsed,
+                "外设电量设置应显示程序路径，不显示刷新间隔选项");
+            Assert(((TextBlock)settings.FindName("TopBarBatteryHubPathText")).Text == state.BatteryHubExecutablePath,
+                "设置页应显示本机配置的 BatteryHub 程序路径");
+            ((Button)settings.FindName("TopBarBatteryHubClearButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            pump();
+            Assert(state.BatteryHubExecutablePath is null && applies == 1
+                && !((Button)settings.FindName("TopBarBatteryHubClearButton")).IsEnabled,
+                "清除路径应通过顶栏变更回调保存，并更新按钮状态");
+        }
+        finally
+        {
+            settings.Close();
         }
     }
 
@@ -1574,6 +1701,15 @@ internal static class TopBarWindowTests
         internal int TopBarPageRequested { get; private set; }
         internal bool LauncherEnabled { get; set; } = true;
         internal int LauncherToggles { get; private set; }
+        internal PeripheralBatterySnapshot PeripheralSnapshot { get; set; } = PeripheralBatterySnapshot.Empty;
+        internal int PeripheralRefreshes { get; private set; }
+        internal int PeripheralAutomaticRefreshes { get; private set; }
+
+        public PeripheralBatterySnapshot ReadPeripheralBattery() => PeripheralSnapshot;
+
+        public void RefreshPeripheralBatteryIfDue() => PeripheralAutomaticRefreshes++;
+
+        public void ForceRefreshPeripheralBattery() => PeripheralRefreshes++;
 
         public bool Use24HourClock => true;
 

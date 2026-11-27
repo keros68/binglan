@@ -35,6 +35,7 @@ public sealed partial class WidgetCoordinator : IDisposable
     private readonly TrayIconHost _trayIcon;
     private readonly WindowsPerformanceSamplingService _performanceSampler;
     private readonly WeatherService _weatherService;
+    private readonly TopBarEnvironment _topBarEnvironment;
     private readonly CityLookupService _citySearchService;
     private readonly DockHost _dock;
     private readonly TopBarHost _topBar;
@@ -160,10 +161,11 @@ public sealed partial class WidgetCoordinator : IDisposable
             ScheduleSave();
             _settingsWindow?.RefreshTaskbarSettings();
         };
+        _topBarEnvironment = new TopBarEnvironment(this);
         _topBar = new TopBarHost(
             _state.TopBar,
             _state.Style,
-            new TopBarEnvironment(this),
+            _topBarEnvironment,
             _performanceSampler,
             message => _trayIcon.ShowBalloonTip(
                 3000,
@@ -877,6 +879,7 @@ public sealed partial class WidgetCoordinator : IDisposable
         }
 
         _gameModeActive = active;
+        _topBarEnvironment.UpdatePeripheralBatterySource();
         if (active)
         {
             _launcherPanel?.Dismiss(restoreForeground: false);
@@ -2126,6 +2129,7 @@ public sealed partial class WidgetCoordinator : IDisposable
     private void ApplyTopBar()
     {
         _topBar.Apply();
+        _topBarEnvironment.UpdatePeripheralBatterySource();
         _dock.Apply();
         RefreshInformationCardVisibility();
         NotifyMultiScreenUiChanged();
@@ -3886,6 +3890,10 @@ public sealed partial class WidgetCoordinator : IDisposable
     private sealed class TopBarEnvironment(WidgetCoordinator owner) : ITopBarEnvironment
     {
         private volatile bool _weatherInFlight;
+        private string? _batteryHubPath;
+        private PeripheralBatteryService? _peripheralBattery;
+        private Task? _peripheralRefresh;
+        private CancellationTokenSource? _peripheralCancellation;
 
         public bool Use24HourClock => owner.InformationState().Use24HourClock;
 
@@ -3937,6 +3945,81 @@ public sealed partial class WidgetCoordinator : IDisposable
                     _weatherInFlight = false;
                 }
             });
+        }
+
+        public PeripheralBatterySnapshot ReadPeripheralBattery()
+        {
+            UpdatePeripheralBatterySource();
+            return _peripheralBattery?.GetSnapshot() ?? PeripheralBatterySnapshot.NotConfigured;
+        }
+
+        public void RefreshPeripheralBatteryIfDue() => RefreshPeripheralBattery(force: false);
+
+        public void ForceRefreshPeripheralBattery() => RefreshPeripheralBattery(force: true);
+
+        public void UpdatePeripheralBatterySource()
+        {
+            var settings = owner._state.TopBar;
+            var path = !owner._isExiting && !owner._sessionEndedHandled && !owner._gameModeActive
+                && owner._topBar.HasWindow && TopBarRules.IsModuleOn(settings.Modules, TopBarModuleKind.PeripheralBattery)
+                ? BatteryHubCli.GetConfiguredPath(settings.BatteryHubExecutablePath)
+                : null;
+            if (string.Equals(path, _batteryHubPath, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            StopPeripheralBattery();
+            if (path is not null)
+            {
+                _batteryHubPath = path;
+                _peripheralBattery = new PeripheralBatteryService(token => BatteryHubCli.ReadAsync(path, token));
+            }
+        }
+
+        public void StopPeripheralBattery()
+        {
+            _batteryHubPath = null;
+            _peripheralBattery = null;
+            _peripheralCancellation?.Cancel();
+        }
+
+        private void RefreshPeripheralBattery(bool force)
+        {
+            UpdatePeripheralBatterySource();
+            if (_peripheralBattery is not { } service || _peripheralRefresh is { IsCompleted: false }
+                || (!force && !service.IsAutomaticRefreshDue()))
+            {
+                return;
+            }
+
+            var cancellation = new CancellationTokenSource();
+            _peripheralCancellation = cancellation;
+            _peripheralRefresh = RunPeripheralRefreshAsync(service, force, cancellation);
+        }
+
+        private async Task RunPeripheralRefreshAsync(
+            PeripheralBatteryService service, bool force, CancellationTokenSource cancellation)
+        {
+            using (cancellation)
+            {
+                try
+                {
+                    await service.RefreshAsync(force, cancellation.Token);
+                    if (!cancellation.IsCancellationRequested)
+                    {
+                        owner._topBar.RefreshPeripheralBattery();
+                    }
+                }
+                catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+                {
+                    // The selected source changed or the top bar shut down.
+                }
+                finally
+                {
+                    _peripheralCancellation = null;
+                }
+            }
         }
 
         public int CountIncompleteTodos() =>
