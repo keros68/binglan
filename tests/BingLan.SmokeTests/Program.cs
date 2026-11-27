@@ -146,6 +146,7 @@ Run("Rainmeter 皮肤变量与空皮肤", RainmeterLookTests.TestVariablesAndEmp
 Run("显示桌面受控窗口遮挡判定与回落边界", TestDesktopSurfaceRegression);
 Run("清空待办与隐藏快捷入口在重启和迁移后不复活", TestEmptyTodoAndHiddenQuickLaunchDoNotResurrect);
 Run("多屏独立桌面卡片模型、Schema v65、组合收纳盒同步、负Y混合DPI坐标、跨屏移动与离线恢复", MultiScreenTests.RunAll);
+Run("外设电量服务：引擎 JSON 解析、失败退避与陈旧快照保留", PeripheralBatteryTests.RunAll);
 
 if (failures.Count > 0)
 {

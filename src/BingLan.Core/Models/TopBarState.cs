@@ -102,7 +102,10 @@ public enum TopBarModuleKind
     Battery,
     Clock,
     Search,
-    TrayOverflow
+    TrayOverflow,
+    // 融合版新增：外设电量（BatteryEngine.dll 读数）。追加在末尾以免既有枚举值漂移；
+    // 不进默认左右顺序，老配置归一化结果不变，需要的用户在顶栏编辑器里自行拖入并开启。
+    PeripheralBattery
 }
 
 public sealed class TopBarModuleSwitches
@@ -118,6 +121,8 @@ public sealed class TopBarModuleSwitches
     public bool Clock { get; set; } = true;
     public bool Search { get; set; } = true;
     public bool TrayOverflow { get; set; } = true;
+    // 外设电量依赖随包的 BatteryEngine.dll，缺省关闭，由用户在顶栏设置里开启。
+    public bool PeripheralBattery { get; set; }
 
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? ExtensionData { get; set; }
@@ -204,6 +209,10 @@ public sealed class TopBarState
     /// Machine-local and null/unknown defaults to Bing; never exported with a theme.</summary>
     public string? SearchEngine { get; set; }
 
+    /// <summary>外设电量（融合版）的轮询间隔秒数；可空新增字段，Schema 不变，
+    /// 缺省或非法值按 15 秒（见 TopBarRules.EffectivePeripheralPollSeconds）。</summary>
+    public int? PeripheralPollSeconds { get; set; }
+
     /// <summary>Custom search URL template with a <c>{0}</c> query placeholder used when
     /// <see cref="SearchEngine"/> is <c>"custom"</c>. Machine-local; never exported with a theme.</summary>
     public string? SearchCustomUrl { get; set; }
@@ -282,6 +291,16 @@ public static class TopBarRules
         return state.BatteryStyle is { } style && Enum.IsDefined(style)
             ? style
             : TopBarBatteryStyle.IconAndPercent;
+    }
+
+    /// <summary>外设电量轮询间隔：缺省 15 秒，钳制在 10 秒到 1 小时之间
+    /// （BatteryHub 原版是 60 秒、可调 30 秒–1 小时；融合版默认更勤以跟上插拔）。</summary>
+    public static int EffectivePeripheralPollSeconds(TopBarState state)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        return state.PeripheralPollSeconds is { } seconds
+            ? Math.Clamp(seconds, 10, 3600)
+            : 15;
     }
 
     public static TopBarInputMethodStyle EffectiveInputMethodStyle(TopBarState state)
@@ -502,6 +521,7 @@ public static class TopBarRules
         TopBarModuleKind.Clock => "时钟与日期",
         TopBarModuleKind.Search => "搜索",
         TopBarModuleKind.TrayOverflow => "系统托盘",
+        TopBarModuleKind.PeripheralBattery => "外设电量",
         _ => kind.ToString()
     };
 
@@ -795,6 +815,7 @@ public static class TopBarRules
         TopBarModuleKind.Clock => switches.Clock,
         TopBarModuleKind.Search => switches.Search,
         TopBarModuleKind.TrayOverflow => switches.TrayOverflow,
+        TopBarModuleKind.PeripheralBattery => switches.PeripheralBattery,
         _ => false
     };
 
@@ -813,6 +834,7 @@ public static class TopBarRules
             case TopBarModuleKind.Clock: switches.Clock = on; break;
             case TopBarModuleKind.Search: switches.Search = on; break;
             case TopBarModuleKind.TrayOverflow: switches.TrayOverflow = on; break;
+            case TopBarModuleKind.PeripheralBattery: switches.PeripheralBattery = on; break;
         }
     }
 

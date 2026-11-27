@@ -27,6 +27,11 @@
              Link="BingLan.Taskbar.Xaml.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="..\BingLan.Composition\bin\Release\BingLan.Composition.dll"
              Link="BingLan.Composition.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <!-- 融合版可选组件：BatteryEngine.dll 由融合构建放进 Native\ 后随包复制；
+         文件不存在时跳过，运行时按「引擎不可用」安静降级。 -->
+    <Content Include="Native\BatteryEngine.dll"
+             Link="BatteryEngine.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest"
+             Condition="Exists('Native\BatteryEngine.dll')" />
   </ItemGroup>
   <Target Name="BuildTaskbarXaml" BeforeTargets="PrepareForBuild"
           Inputs="..\BingLan.Taskbar.Xaml\TaskbarXaml.cpp;..\BingLan.Taskbar.Xaml\build.ps1"

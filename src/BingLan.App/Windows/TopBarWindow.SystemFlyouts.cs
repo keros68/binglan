@@ -66,7 +66,8 @@ public partial class TopBarWindow
         HasOpenSystemFlyout
         || _todoFlyout?.IsOpen == true
         || _clockFlyout?.IsOpen == true
-        || _inputMethodFlyout?.IsOpen == true;
+        || _inputMethodFlyout?.IsOpen == true
+        || _peripheralFlyout?.IsOpen == true;
 
     private void CloseAllHoverToolTips()
     {
