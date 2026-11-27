@@ -63,45 +63,35 @@ public static class TopBarSearchLookRules
 
     public static TopBarSearchPalette Resolve(
         DesktopStyleState? style,
-        TopBarState? topBar,
-        bool? barUseDarkInk = null,
-        bool useClearGlass = false)
+        LauncherAppearanceState? launcherAppearance = null,
+        TopBarState? topBar = null)
     {
         var effectiveStyle = style ?? new DesktopStyleState();
+        var effectiveLauncher = launcherAppearance ?? new LauncherAppearanceState();
         var effectiveTopBar = topBar ?? new TopBarState();
         var accentRgb = WidgetAppearanceRules.CoerceColorOrDefault(
             effectiveStyle.AccentColor,
             DesktopStyleRules.DefaultAccentColor);
-        var allowBackdropBlur = effectiveTopBar.FrostedGlass && !useClearGlass;
+        var allowBackdropBlur = effectiveTopBar.FrostedGlass && !effectiveLauncher.UseClearGlass;
 
         bool darkSurface;
         string baseRgb;
         double density;
         double? guaranteedFallbackOpacity = null;
-        var isTransparentBar = false;
 
-        // Match TopBar system flyouts: when the top bar has its own visible tint, follow
-        // the bar's own colour and opacity instead of drifting to the launcher's look.
-        // Nearly/fully transparent bars must not bleed a hidden/stale SurfaceColor.
-        if (!effectiveTopBar.FollowCardLook && effectiveTopBar.SurfaceOpacity >= TransparentTopBarOpacityThreshold)
+        // Follow the user's global card style (or explicit launcher appearance override) so
+        // inline search matches the desktop's IceBlue/palette/dark theme instead of turning
+        // dark grey under a transparent or default-dark top bar.
+        if (!effectiveLauncher.FollowCardLook)
         {
             var customRgb = WidgetAppearanceRules.CoerceColorOrDefault(
-                effectiveTopBar.SurfaceColor,
-                TopBarState.DefaultSurfaceColor);
-            var readability = LauncherReadabilityRules.Resolve(customRgb, effectiveTopBar.SurfaceOpacity);
+                effectiveLauncher.SurfaceColor,
+                LauncherAppearanceState.DefaultSurfaceColor);
+            var readability = LauncherReadabilityRules.Resolve(customRgb, effectiveLauncher.SurfaceOpacity);
             baseRgb = customRgb;
             darkSurface = !readability.DarkInk;
             density = readability.SurfaceOpacity;
             guaranteedFallbackOpacity = readability.PlateOpacity;
-        }
-        else if (!effectiveTopBar.FollowCardLook || effectiveStyle.Glass == GlassMode.Clear)
-        {
-            isTransparentBar = true;
-            darkSurface = barUseDarkInk.HasValue
-                ? !barUseDarkInk.Value
-                : effectiveStyle.Glass == GlassMode.Dark;
-            baseRgb = darkSurface ? DefaultDarkSurfaceRgb : DefaultLightSurfaceRgb;
-            density = 0.25d;
         }
         else if (effectiveStyle.Glass == GlassMode.Dark)
         {
@@ -111,12 +101,16 @@ public static class TopBarSearchLookRules
         }
         else
         {
+            // Both Light glass and Clear (borderless) follow the active card palette (IceBlue
+            // by default) with luminous frosted glass so the search box stays crisp and on-theme.
             darkSurface = false;
             var palette = DesktopStyleRules.GetPalette(effectiveStyle.Palette);
             baseRgb = palette.Key == DesktopStyleRules.DefaultPalette
                 ? DefaultLightSurfaceRgb
                 : WidgetAppearanceRules.CoerceColorOrDefault(palette.Body, DefaultLightSurfaceRgb);
-            density = effectiveStyle.GlassDensity;
+            density = effectiveStyle.Glass == GlassMode.Clear
+                ? DesktopStyleRules.DefaultGlassDensity
+                : effectiveStyle.GlassDensity;
         }
 
         if (darkSurface)
@@ -161,14 +155,10 @@ public static class TopBarSearchLookRules
         {
             var blurAlpha = guaranteedFallbackOpacity is not null
                 ? (byte)Math.Clamp((int)Math.Ceiling(Math.Max(density, 0.74d) * 255d - 1e-9), 0xBD, 0xFF)
-                : isTransparentBar
-                    ? (byte)0xBE
-                    : (byte)Math.Clamp((int)Math.Round((0.74d + (density - 0.25d) * 0.20d) * 255d), 0xBD, 0xDF);
+                : (byte)Math.Clamp((int)Math.Round((0.74d + (density - 0.25d) * 0.20d) * 255d), 0xBD, 0xDF);
             var fallbackAlpha = guaranteedFallbackOpacity is { } minPlate
                 ? (byte)Math.Clamp((int)Math.Ceiling(Math.Max(minPlate, 0.90d) * 255d - 1e-9), 0xE6, 0xFF)
-                : isTransparentBar
-                    ? (byte)0xEC
-                    : (byte)Math.Clamp((int)Math.Round((0.90d + (density - 0.25d) * 0.08d) * 255d), 0xE6, 0xF4);
+                : (byte)Math.Clamp((int)Math.Round((0.90d + (density - 0.25d) * 0.08d) * 255d), 0xE6, 0xF4);
 
             var glassTint = WithAlphaByte(baseRgb, blurAlpha);
             var fallbackSurface = WithAlphaByte(baseRgb, fallbackAlpha);

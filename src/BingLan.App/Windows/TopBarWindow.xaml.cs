@@ -246,6 +246,8 @@ public sealed partial class TopBarWindow : Window
 
     private Button? _searchButton;
     private TopBarSearchWindow? _searchPopup;
+    private long _searchPopupOpenedTick;
+    private long? _searchPopupPointerLeftSinceTick;
     private int _moduleMask = -1;
     private string _orderSignature = string.Empty;
     private bool? _appliedAcrylic;
@@ -1757,6 +1759,7 @@ public sealed partial class TopBarWindow : Window
             && _todoFlyout is null
             && _clockFlyout is null
             && _inputMethodFlyout is null
+            && _searchPopup is null
             && !HasAnySystemFlyoutRef
             ? FullScreenCheckInterval
             : SmartHideCheckInterval;
@@ -2607,6 +2610,7 @@ public sealed partial class TopBarWindow : Window
     /// </summary>
     private void CloseFlyoutOnOutsideClick()
     {
+        CheckSearchPopupAutoDismiss();
         if (!HasAnyOpenFlyout && !_capsuleExpanded)
         {
             _flyoutPointerLeftSinceTick = null;
@@ -2975,9 +2979,17 @@ public sealed partial class TopBarWindow : Window
             if (ReferenceEquals(_searchPopup, popup))
             {
                 _searchPopup = null;
+                _searchPopupPointerLeftSinceTick = null;
+                UpdateForegroundTimerInterval();
             }
         };
         _searchPopup = popup;
+        _searchPopupOpenedTick = Environment.TickCount64;
+        _searchPopupPointerLeftSinceTick = null;
+        TopBarNativeMethods.ConsumeMouseButtonDown(TopBarNativeMethods.LeftMouseButton);
+        TopBarNativeMethods.ConsumeMouseButtonDown(TopBarNativeMethods.RightMouseButton);
+        TopBarNativeMethods.ConsumeMouseButtonDown(TopBarNativeMethods.EscapeKey);
+        UpdateForegroundTimerInterval();
         popup.Show();
     }
 
@@ -2985,15 +2997,99 @@ public sealed partial class TopBarWindow : Window
     {
         if (_searchPopup is not { } popup) return;
         _searchPopup = null;
+        _searchPopupPointerLeftSinceTick = null;
+        UpdateForegroundTimerInterval();
         popup.RequestClose();
     }
 
+    private void CheckSearchPopupAutoDismiss()
+    {
+        if (_searchPopup is not { IsLoaded: true } popup || popup.IsOpeningResult)
+        {
+            _searchPopupPointerLeftSinceTick = null;
+            return;
+        }
+
+        if (TopBarNativeMethods.IsMouseButtonDown(TopBarNativeMethods.EscapeKey))
+        {
+            CloseSearchPopup();
+            return;
+        }
+
+        var now = Environment.TickCount64;
+        var fg = DockNativeMethods.GetForegroundWindow();
+        if (now - _searchPopupOpenedTick >= 450
+            && fg != 0
+            && popup.WindowHandle != 0
+            && fg != popup.WindowHandle
+            && fg != _handle)
+        {
+            CloseSearchPopup();
+            return;
+        }
+
+        DockNativeMethods.GetCursorPos(out var cursor);
+        var inside = IsPointerInsideSearchPopupOrAnchor(popup, cursor);
+        if (TopBarNativeMethods.IsMouseButtonDown(TopBarNativeMethods.LeftMouseButton)
+            || TopBarNativeMethods.IsMouseButtonDown(TopBarNativeMethods.RightMouseButton))
+        {
+            if (!inside)
+            {
+                CloseSearchPopup();
+            }
+            return;
+        }
+
+        if (inside || popup.HasUserInput)
+        {
+            _searchPopupPointerLeftSinceTick = null;
+            return;
+        }
+
+        _searchPopupPointerLeftSinceTick ??= now;
+        if (TopBarControlRules.ShouldAutoCloseFlyoutOnLeave(
+            _searchPopupPointerLeftSinceTick,
+            now,
+            pointerInsideFlyoutOrAnchor: false,
+            interactionBusy: false))
+        {
+            CloseSearchPopup();
+        }
+    }
+
+    private bool IsPointerInsideSearchPopupOrAnchor(TopBarSearchWindow popup, DockNativeMethods.NativePoint cursor)
+    {
+        var popupHandle = popup.WindowHandle;
+        if (popupHandle == 0)
+        {
+            return true;
+        }
+
+        DockNativeMethods.GetWindowRect(popupHandle, out var rect);
+        const int margin = 6;
+        if (cursor.X >= rect.Left - margin && cursor.X < rect.Right + margin
+            && cursor.Y >= rect.Top - margin && cursor.Y < rect.Bottom + margin)
+        {
+            return true;
+        }
+
+        if (_searchButton is { IsLoaded: true, ActualWidth: > 0d, ActualHeight: > 0d } button)
+        {
+            var topLeft = button.PointToScreen(new System.Windows.Point(0, 0));
+            var bottomRight = button.PointToScreen(new System.Windows.Point(button.ActualWidth, button.ActualHeight));
+            var bridgeBottom = Math.Max(bottomRight.Y, rect.Top);
+            if (cursor.X >= topLeft.X - margin && cursor.X < bottomRight.X + margin
+                && cursor.Y >= topLeft.Y && cursor.Y <= bridgeBottom + margin)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private TopBarSearchLook ResolveSearchLook() =>
-        TopBarSearchLook.Resolve(
-            _style,
-            _state,
-            barUseDarkInk: IsCapsule ? null : _palette.UseDarkInk,
-            useClearGlass: _environment.LauncherAppearance.UseClearGlass);
+        TopBarSearchLook.Resolve(_style, _environment.LauncherAppearance, _state);
 
 
 

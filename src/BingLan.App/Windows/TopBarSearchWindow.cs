@@ -77,6 +77,7 @@ internal sealed class TopBarSearchWindow : Window
     private bool _closed;
     private bool _activated;
     private bool _openingResult;
+    private nint _handle;
 
     internal TopBarSearchWindow(
         TopBarSearchLook look,
@@ -255,6 +256,12 @@ internal sealed class TopBarSearchWindow : Window
 
     internal TopBarSearchLook CurrentLook => _look;
 
+    internal nint WindowHandle => _handle;
+
+    internal bool HasUserInput => !string.IsNullOrWhiteSpace(_input.Text);
+
+    internal bool IsOpeningResult => _openingResult;
+
     internal void ApplyLook(TopBarSearchLook look)
     {
         ArgumentNullException.ThrowIfNull(look);
@@ -338,8 +345,9 @@ internal sealed class TopBarSearchWindow : Window
         {
             DockNativeMethods.SetForegroundWindow(handle);
         }
-        if (IsActive)
+        if (IsActive || (handle != 0 && DockNativeMethods.GetForegroundWindow() == handle))
         {
+            _activated = true;
             _input.Focus();
             Keyboard.Focus(_input);
             return;
@@ -353,8 +361,13 @@ internal sealed class TopBarSearchWindow : Window
             {
                 return;
             }
-            if (IsActive || (handle != 0 && DockNativeMethods.SetForegroundWindow(handle)))
+            if (handle != 0 && !IsActive)
             {
+                DockNativeMethods.SetForegroundWindow(handle);
+            }
+            if (IsActive || (handle != 0 && DockNativeMethods.GetForegroundWindow() == handle))
+            {
+                _activated = true;
                 _input.Focus();
                 Keyboard.Focus(_input);
                 return;
@@ -396,6 +409,7 @@ internal sealed class TopBarSearchWindow : Window
             }
             if (source.Handle != 0)
             {
+                _handle = source.Handle;
                 var dpi = VisualTreeHelper.GetDpi(this);
                 var targetScale = _monitor is { Dpi: > 0 } ? _monitor.Dpi / 96d : dpi.DpiScaleX;
                 var placement = ComputePlacement(targetScale);
@@ -1122,10 +1136,9 @@ internal sealed record TopBarSearchLook(
 {
     internal static TopBarSearchLook Resolve(
         DesktopStyleState? style,
-        TopBarState? topBar,
-        bool? barUseDarkInk = null,
-        bool useClearGlass = false) =>
-        FromPalette(TopBarSearchLookRules.Resolve(style, topBar, barUseDarkInk, useClearGlass));
+        LauncherAppearanceState? launcherAppearance = null,
+        TopBarState? topBar = null) =>
+        FromPalette(TopBarSearchLookRules.Resolve(style, launcherAppearance, topBar));
 
     internal static TopBarSearchLook FromPalette(TopBarSearchPalette palette)
     {
