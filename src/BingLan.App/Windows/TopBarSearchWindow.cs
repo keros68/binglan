@@ -2,6 +2,7 @@ using System.IO;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
@@ -34,7 +35,7 @@ internal sealed class TopBarSearchWindow : Window
     private static readonly TimeSpan SnapshotWaitBudget = TimeSpan.FromMilliseconds(350);
     private static readonly FontFamily IconFont = new("Segoe Fluent Icons, Segoe MDL2 Assets");
 
-    private readonly TopBarSearchLook _look;
+    private TopBarSearchLook _look;
     private readonly TopBarSearchEngineInfo _engine;
     private readonly int _anchorX;
     private readonly int _anchorY;
@@ -59,7 +60,9 @@ internal sealed class TopBarSearchWindow : Window
 
     private Brush _ink = Brushes.Black;
     private Brush _muted = Brushes.Gray;
+    private Brush _placeholderBrush = Brushes.Gray;
     private Brush _badgeBrush = Brushes.Transparent;
+    private Brush _badgeBorderBrush = Brushes.Transparent;
     private Style? _rowItemStyle;
     private Task<LauncherPanelSnapshot?>? _snapshotTask;
     private EverythingSearchClient? _everything;
@@ -160,6 +163,7 @@ internal sealed class TopBarSearchWindow : Window
         };
         _escHint = new Border
         {
+            BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(5),
             Padding = new Thickness(6, 2, 6, 2),
             Margin = new Thickness(8, 0, 0, 0),
@@ -231,6 +235,11 @@ internal sealed class TopBarSearchWindow : Window
             "FloatingGlassPanelBrush",
             fullTintOpacity: true);
 
+        if (TryFindResource("CardScrollBarStyle") is Style scrollBarStyle)
+        {
+            Resources[typeof(ScrollBar)] = scrollBarStyle;
+        }
+
         ApplyTheme();
         AccessibilityThemeManager.HighContrastChanged += OnHighContrastChanged;
 
@@ -242,6 +251,24 @@ internal sealed class TopBarSearchWindow : Window
             FocusInput();
         };
         Closed += OnClosed;
+    }
+
+    internal TopBarSearchLook CurrentLook => _look;
+
+    internal void ApplyLook(TopBarSearchLook look)
+    {
+        ArgumentNullException.ThrowIfNull(look);
+        if (_closed || _look == look)
+        {
+            return;
+        }
+
+        _look = look;
+        ApplyTheme();
+        if (_rows.Count > 0)
+        {
+            RenderRows(_lastLocalAvailable, _renderedQuery, preserveSelection: true);
+        }
     }
 
     private void OnHighContrastChanged(object? sender, EventArgs e)
@@ -265,24 +292,33 @@ internal sealed class TopBarSearchWindow : Window
 
         _ink = highContrast ? SystemColors.WindowTextBrush : FrozenBrush(_look.Foreground);
         _muted = highContrast ? SystemColors.WindowTextBrush : FrozenBrush(_look.MutedForeground);
+        _placeholderBrush = highContrast ? SystemColors.GrayTextBrush : FrozenBrush(_look.PlaceholderForeground);
         _badgeBrush = highContrast ? SystemColors.ControlBrush : FrozenBrush(_look.BadgeBackground);
+        _badgeBorderBrush = highContrast ? SystemColors.WindowTextBrush : FrozenBrush(_look.BadgeBorder);
         var dividerBrush = highContrast ? SystemColors.WindowTextBrush : FrozenBrush(_look.Divider);
+        var selectionBrush = highContrast ? SystemColors.HighlightBrush : FrozenBrush(_look.SelectionBrush);
+        Resources["PrimaryTextBrush"] = _ink;
+        Resources["WidgetCaretBrush"] = _ink;
         _rowItemStyle = highContrast
             ? null
             : BuildRowItemStyle(FrozenBrush(_look.HoverRowBackground), FrozenBrush(_look.ActiveRowBackground));
 
         _input.Foreground = _ink;
         _input.CaretBrush = _ink;
-        _placeholder.Foreground = _muted;
-        _placeholder.Opacity = highContrast ? 0.85 : 0.78;
+        _input.SelectionBrush = selectionBrush;
+        _input.SelectionOpacity = highContrast ? 0.6d : 0.45d;
+        _placeholder.Foreground = _placeholderBrush;
+        _placeholder.Opacity = 1d;
         _searchGlyph.Foreground = _muted;
         _escHint.Background = _badgeBrush;
-        _escHintText.Foreground = _muted;
+        _escHint.BorderBrush = _badgeBorderBrush;
+        _escHintText.Foreground = highContrast ? SystemColors.ControlTextBrush : _muted;
         _divider.Background = dividerBrush;
         _list.Foreground = _ink;
         _status.Foreground = _muted;
 
-        _glass.SetClearMode(_look.UseClearGlass && !highContrast);
+        _glass.SetClearMode(false);
+        _glass.SetFrostedGlass(_look.AllowBackdropBlur && !highContrast);
     }
 
     private void StartSnapshotPreload()
@@ -739,6 +775,8 @@ internal sealed class TopBarSearchWindow : Window
             Height = 28,
             CornerRadius = new CornerRadius(7),
             Background = _badgeBrush,
+            BorderBrush = _badgeBorderBrush,
+            BorderThickness = new Thickness(highContrast ? 1 : 0),
             VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(0, 0, 10, 0),
             Child = new TextBlock
@@ -746,7 +784,7 @@ internal sealed class TopBarSearchWindow : Window
                 Text = glyphText,
                 FontFamily = IconFont,
                 FontSize = 13.5,
-                Foreground = _ink,
+                Foreground = highContrast ? SystemColors.ControlTextBrush : _ink,
                 Opacity = highContrast ? 1.0 : 0.88,
                 HorizontalAlignment = HorizontalAlignment.Center,
                 VerticalAlignment = VerticalAlignment.Center
@@ -1064,68 +1102,49 @@ internal sealed class TopBarSearchWindow : Window
 
 /// <summary>
 /// Resolved frosted-glass palette for the top bar's inline search popup, aligned with the
-/// desktop's global ice-blue/dark glass appearance and backed by Windows 11 Composition blur.
+/// top bar's own surface, adaptive wallpaper ink, and Windows 11 Composition blur.
 /// </summary>
 internal sealed record TopBarSearchLook(
     bool UseDarkInk,
-    bool UseClearGlass,
+    bool AllowBackdropBlur,
     Color GlassTint,
     Color FallbackSurface,
     Color Border,
     Color Foreground,
     Color MutedForeground,
+    Color PlaceholderForeground,
     Color Divider,
     Color BadgeBackground,
+    Color BadgeBorder,
     Color ActiveRowBackground,
-    Color HoverRowBackground)
+    Color HoverRowBackground,
+    Color SelectionBrush)
 {
-    internal static TopBarSearchLook FromStyle(
+    internal static TopBarSearchLook Resolve(
         DesktopStyleState? style,
-        LauncherAppearanceState? appearance = null)
+        TopBarState? topBar,
+        bool? barUseDarkInk = null,
+        bool useClearGlass = false) =>
+        FromPalette(TopBarSearchLookRules.Resolve(style, topBar, barUseDarkInk, useClearGlass));
+
+    internal static TopBarSearchLook FromPalette(TopBarSearchPalette palette)
     {
-        var effectiveStyle = style ?? new DesktopStyleState();
-        var effectiveAppearance = appearance ?? new LauncherAppearanceState();
-        var (readableGlass, readability) = effectiveAppearance.ResolveReadableGlass(effectiveStyle);
-        var baseColor = Parse(readableGlass.Surface, Color.FromArgb(0xB8, 0xD8, 0xF3, 0xFF));
-        var useClearGlass = effectiveAppearance.UseClearGlass;
-
-        if (readability.DarkInk)
-        {
-            var tintRgb = effectiveAppearance.FollowCardLook
-                && effectiveStyle.Palette == DesktopStyleRules.DefaultPalette
-                ? Color.FromRgb(0xEA, 0xF6, 0xFF)
-                : Color.FromRgb(baseColor.R, baseColor.G, baseColor.B);
-            // Respect the readability-verified surface opacity so dark ink stays >= 4.5:1
-            // even over dark wallpapers while keeping real Windows 11 frosted glass blur.
-            var readableAlpha = baseColor.A;
-            return new TopBarSearchLook(
-                UseDarkInk: true,
-                UseClearGlass: useClearGlass,
-                GlassTint: Color.FromArgb(readableAlpha, tintRgb.R, tintRgb.G, tintRgb.B),
-                FallbackSurface: Color.FromArgb(Math.Max((byte)0xEC, readableAlpha), tintRgb.R, tintRgb.G, tintRgb.B),
-                Border: Color.FromArgb(0xD9, 0xFF, 0xFF, 0xFF),
-                Foreground: Color.FromRgb(0x12, 0x2C, 0x44),
-                MutedForeground: Color.FromRgb(0x2B, 0x45, 0x5E),
-                Divider: Color.FromArgb(0x26, 0x12, 0x2C, 0x44),
-                BadgeBackground: Color.FromArgb(0x70, 0xFF, 0xFF, 0xFF),
-                ActiveRowBackground: Color.FromArgb(0x90, 0xB8, 0xE0, 0xFA),
-                HoverRowBackground: Color.FromArgb(0x70, 0xFF, 0xFF, 0xFF));
-        }
-
-        var darkRgb = Color.FromRgb(baseColor.R, baseColor.G, baseColor.B);
-        var darkAlpha = baseColor.A;
+        ArgumentNullException.ThrowIfNull(palette);
         return new TopBarSearchLook(
-            UseDarkInk: false,
-            UseClearGlass: useClearGlass,
-            GlassTint: Color.FromArgb(darkAlpha, darkRgb.R, darkRgb.G, darkRgb.B),
-            FallbackSurface: Color.FromArgb(Math.Max((byte)0xEC, darkAlpha), darkRgb.R, darkRgb.G, darkRgb.B),
-            Border: Color.FromArgb(0x52, 0xFF, 0xFF, 0xFF),
-            Foreground: Color.FromRgb(0xF2, 0xF6, 0xFC),
-            MutedForeground: Color.FromRgb(0xC8, 0xD8, 0xE8),
-            Divider: Color.FromArgb(0x2A, 0xFF, 0xFF, 0xFF),
-            BadgeBackground: Color.FromArgb(0x26, 0xFF, 0xFF, 0xFF),
-            ActiveRowBackground: Color.FromArgb(0x48, 0x72, 0xBF, 0xEF),
-            HoverRowBackground: Color.FromArgb(0x28, 0xFF, 0xFF, 0xFF));
+            UseDarkInk: palette.UseDarkInk,
+            AllowBackdropBlur: palette.AllowBackdropBlur,
+            GlassTint: Parse(palette.GlassTint, Color.FromArgb(0xD2, 0xEC, 0xF6, 0xFF)),
+            FallbackSurface: Parse(palette.FallbackSurface, Color.FromArgb(0xEE, 0xEC, 0xF6, 0xFF)),
+            Border: Parse(palette.Border, Color.FromArgb(0x36, 0x12, 0x2C, 0x44)),
+            Foreground: Parse(palette.Foreground, Color.FromRgb(0x12, 0x2C, 0x44)),
+            MutedForeground: Parse(palette.MutedForeground, Color.FromRgb(0x35, 0x51, 0x6B)),
+            PlaceholderForeground: Parse(palette.PlaceholderForeground, Color.FromRgb(0x3E, 0x59, 0x73)),
+            Divider: Parse(palette.Divider, Color.FromArgb(0x22, 0x12, 0x2C, 0x44)),
+            BadgeBackground: Parse(palette.BadgeBackground, Color.FromArgb(0x14, 0x12, 0x2C, 0x44)),
+            BadgeBorder: Parse(palette.BadgeBorder, Color.FromArgb(0x24, 0x12, 0x2C, 0x44)),
+            ActiveRowBackground: Parse(palette.ActiveRowBackground, Color.FromArgb(0x82, 0xB9, 0xE1, 0xFA)),
+            HoverRowBackground: Parse(palette.HoverRowBackground, Color.FromArgb(0x14, 0x12, 0x2C, 0x44)),
+            SelectionBrush: Parse(palette.SelectionBrush, Color.FromArgb(0x5C, 0x1E, 0xA9, 0xFF)));
     }
 
     private static Color Parse(string text, Color fallback) =>

@@ -33,6 +33,8 @@ public static class TrayAppRevealRules
         TopBarSearchRules.ModifierControl | TopBarSearchRules.ModifierAlt,
         'W');
 
+    private static readonly string[] WeChatProcessNames = ["Weixin", "WeChat"];
+
     public static TrayRevealHotkey? HotkeyFor(string? executablePath)
     {
         if (Path.GetFileName(executablePath) is not { Length: > 0 } name)
@@ -48,6 +50,27 @@ public static class TrayAppRevealRules
 
         return null;
     }
+
+    /// <summary>
+    /// Process image names (without extension) that compete for the same global reveal hotkey.
+    /// WeChat 3.x (<c>WeChat.exe</c>) and 4.x (<c>Weixin.exe</c>) both claim Ctrl+Alt+W, as do
+    /// dual-opened copies installed in different folders.
+    /// </summary>
+    public static IReadOnlyList<string> HotkeySharingProcessNames(string? executablePath)
+    {
+        var hotkey = HotkeyFor(executablePath);
+        if (hotkey == WeChat)
+        {
+            return WeChatProcessNames;
+        }
+
+        var name = Path.GetFileNameWithoutExtension(executablePath);
+        return string.IsNullOrWhiteSpace(name) ? [] : [name];
+    }
+
+    public static bool SharesHotkey(string? firstExecutablePath, string? secondExecutablePath) =>
+        HotkeyFor(firstExecutablePath) is { } first
+        && Equals(first, HotkeyFor(secondExecutablePath));
 
     /// <summary>
     /// Returns true for tray-resident chat apps (WeChat, QQ) whose re-launch while already
@@ -154,6 +177,48 @@ public static class TrayAppRevealRules
         }
 
         return instancePids;
+    }
+
+    /// <summary>
+    /// Walks up <paramref name="sameExecutableProcesses"/> to locate the root process ID of
+    /// the instance containing <paramref name="processId"/>, or returns <paramref name="processId"/>
+    /// when it is not present in the hierarchy.
+    /// </summary>
+    public static uint ResolveRootProcessId(
+        IReadOnlyList<ProcessHierarchyEntry> sameExecutableProcesses,
+        uint processId)
+    {
+        ArgumentNullException.ThrowIfNull(sameExecutableProcesses);
+        if (processId == 0)
+        {
+            return 0;
+        }
+
+        var parentByPid = new Dictionary<uint, uint>(sameExecutableProcesses.Count);
+        foreach (var entry in sameExecutableProcesses)
+        {
+            if (entry.ProcessId != 0)
+            {
+                parentByPid[entry.ProcessId] = entry.ParentProcessId;
+            }
+        }
+
+        if (!parentByPid.ContainsKey(processId))
+        {
+            return processId;
+        }
+
+        var current = processId;
+        var visited = new HashSet<uint> { current };
+        while (parentByPid.TryGetValue(current, out var parent)
+            && parent != 0
+            && parentByPid.ContainsKey(parent)
+            && visited.Add(parent))
+        {
+            current = parent;
+        }
+
+        return current;
     }
 
     /// <summary>

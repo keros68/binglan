@@ -241,6 +241,14 @@
                             <TextBlock VerticalAlignment="Center" Text="桌面方案"/>
                         </StackPanel>
                     </ListBoxItem>
+                    <ListBoxItem Tag="Displays" AutomationProperties.Name="显示器">
+                        <StackPanel Orientation="Horizontal">
+                            <Border Style="{StaticResource NavigationTileStyle}">
+                                <Path Style="{StaticResource NavigationIconStyle}" Data="{StaticResource NavIcon.Displays}"/>
+                            </Border>
+                            <TextBlock VerticalAlignment="Center" Text="显示器"/>
+                        </StackPanel>
+                    </ListBoxItem>
                     <ListBoxItem Tag="Components" AutomationProperties.Name="桌面卡片">
                         <StackPanel Orientation="Horizontal">
                             <Border Style="{StaticResource NavigationTileStyle}">
@@ -1212,6 +1220,28 @@
                 </StackPanel>
             </ScrollViewer>
 
+            <ScrollViewer x:Name="DisplaysPage" Style="{StaticResource PageScrollStyle}" Visibility="Collapsed"
+                          local:SettingsSearch.Keywords="多屏 双屏 主屏 副屏 屏幕 显示器 档案">
+                <StackPanel Style="{StaticResource PageStackStyle}">
+                    <TextBlock Style="{StaticResource PageTitleStyle}" Text="显示器"/>
+                    <TextBlock Style="{StaticResource PageSubtitleStyle}" Text="选择屏幕，调整此屏的 Dock 和顶部信息条，或恢复离线档案。"/>
+                    <Border x:Name="DisplaysMultiScreenHost" Margin="0,12,0,0" local:SettingsSearch.Exclude="True"/>
+                    <TextBlock x:Name="DisplaysEmptyText" Margin="0,12,0,0" TextWrapping="Wrap"
+                               Foreground="{DynamicResource IceMutedInkBrush}" Text="连接副屏后可分别设置各屏。"/>
+                    <TextBlock x:Name="MonitorProfileStatusText" Margin="0,10,0,0" Visibility="Collapsed" TextWrapping="Wrap"
+                               Foreground="{DynamicResource IceMutedInkBrush}" AutomationProperties.LiveSetting="Polite"/>
+                    <local:SettingsGroup x:Name="DisplaysModeGroup" Margin="0,16,0,0" Visibility="Collapsed">
+                        <local:SettingsRow Header="每屏独立桌面"
+                                           Description="各屏分别保存桌面布局。"
+                                           local:SettingsSearch.Keywords="复制主屏设置 逐屏 Dock 顶栏 离线档案">
+                            <CheckBox x:Name="DisplaysIndependentSwitch" Style="{StaticResource ToggleSwitchStyle}"
+                                      AutomationProperties.Name="每屏独立桌面"
+                                      Checked="DisplaysIndependentSwitch_Changed" Unchecked="DisplaysIndependentSwitch_Changed"/>
+                        </local:SettingsRow>
+                    </local:SettingsGroup>
+                </StackPanel>
+            </ScrollViewer>
+
             <!-- 桌面卡片 -->
             <Grid x:Name="ComponentsPage"
                   Margin="36,28,36,24"
@@ -1229,9 +1259,9 @@
                     </Grid.ColumnDefinitions>
                     <StackPanel>
                         <TextBlock Style="{StaticResource PageTitleStyle}" Text="桌面卡片"/>
-                        <TextBlock Style="{StaticResource PageSubtitleStyle}" Text="选择一张卡片，在右侧调整显示、内容和外观；修改立即生效。"/>
+                        <TextBlock x:Name="ComponentsPageSubtitle" Style="{StaticResource PageSubtitleStyle}" Text="选择一张卡片，在右侧调整显示、内容和外观；修改立即生效。"/>
                     </StackPanel>
-                    <StackPanel Grid.Column="1" VerticalAlignment="Bottom" Margin="16,0,0,6" Orientation="Horizontal">
+                    <StackPanel x:Name="ComponentCreationButtons" Grid.Column="1" VerticalAlignment="Bottom" Margin="16,0,0,6" Orientation="Horizontal">
                         <Button x:Name="AddTodoButton" AutomationProperties.Name="新建待办便签" Click="AddTodo_Click">
                             <StackPanel Orientation="Horizontal">
                                 <TextBlock Style="{StaticResource ButtonGlyphStyle}" Text="&#xE710;"/>
@@ -1259,7 +1289,7 @@
                         Visibility="Collapsed"
                         local:SettingsSearch.Exclude="True"/>
 
-                <Grid Grid.Row="2" Margin="0,16,0,0">
+                <Grid x:Name="ComponentEditorHost" Grid.Row="2" Margin="0,16,0,0">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="230"/>
                         <ColumnDefinition Width="20"/>

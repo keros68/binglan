@@ -17,6 +17,7 @@ internal static class ScreenSurfaceSettingsTests
         var writes = new List<string>();
         var archiveQueries = 0;
         var associations = new List<(string Source, string Destination)>();
+        var copiedTo = new List<string>();
         var canBind = true;
         var bridge = new MultiScreenSettingsBridge
         {
@@ -36,7 +37,12 @@ internal static class ScreenSurfaceSettingsTests
                 preferences[key] = value;
                 writes.Add(key);
             },
-            GetSurfaceStatus = _ => new("已显示", "未启用"),
+            GetSurfaceStatus = key => new("已显示", "未启用", DockEnabled: key == rootMonitor),
+            CopyPrimaryProfileToScreen = key =>
+            {
+                copiedTo.Add(key);
+                return "已复制主屏设置。";
+            },
             GetOfflineProfiles = _ =>
             {
                 archiveQueries++;
@@ -55,14 +61,34 @@ internal static class ScreenSurfaceSettingsTests
         {
             Check(!settings.IsVisible, "范围测试不得显示设置窗口");
             Check(archiveQueries == 0, "展开离线区域前不得查询或创建档案条目");
-            var topology = Topology(settings);
-            Check(topology.Children.OfType<TextBlock>().Single().Text == "Dock：已显示　顶栏：未启用",
-                "选中屏应同时显示两种表面的当前状态");
+            settings.ShowSettingsPage("Displays");
+            Check(DisplaySections(settings).Children.OfType<SettingsGroup>().Single().Items.OfType<SettingsRow>()
+                .Select(row => row.Content).OfType<CheckBox>()
+                .Select(toggle => toggle.IsChecked).SequenceEqual(new bool?[] { true, false }),
+                "显示器页应显示两条栏的独立开关");
 
             Choose(settings, "Dock", "开启");
             Check(writes.Last() == rootMonitor && preferences[rootMonitor].DockEnabled == true,
                 "根布局的空 ScreenKey 必须转换为选中屏的物理 MonitorKey");
+            settings.ShowSettingsPage("Components");
             settings.SelectActiveScreen(otherMonitor);
+            var compactSelector = Topology(settings);
+            Check(compactSelector.Children.Count == 1 && compactSelector.Children[0] is Grid,
+                "桌面卡片页应只显示选屏、复制与前往显示器的入口");
+            var actions = compactSelector.Children.OfType<Grid>().Single().Children.OfType<Button>().ToArray();
+            var copy = actions
+                .Single(button => Equals(button.Content, "复制主屏设置"));
+            copy.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Check(copiedTo.SequenceEqual([otherMonitor]), "复制应传入选定目标的物理屏身份");
+            Topology(settings).Children.OfType<Grid>().Single().Children.OfType<Button>()
+                .Single(button => Equals(button.Content, "显示器设置")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Check(settings.FindName("DisplaysPage") is ScrollViewer { Visibility: Visibility.Visible }
+                && settings.ActiveScreenKey == otherMonitor, "前往显示器设置应保留当前选中的副屏");
+            var dockSwitch = (CheckBox)DisplaySections(settings).Children.OfType<SettingsGroup>().Single().Items.OfType<SettingsRow>()
+                .Single(row => row.Header == "冰蓝 Dock").Content;
+            dockSwitch.IsChecked = true;
+            Check(preferences[otherMonitor].DockEnableMode == ScreenSurfaceEnableMode.Enabled,
+                "快速开关只为当前屏写入显式状态");
             Choose(settings, "Dock", "关闭");
             Choose(settings, "Dock 位置", "左侧");
             Choose(settings, "Dock 显示方式", "智能隐藏");
@@ -76,14 +102,21 @@ internal static class ScreenSurfaceSettingsTests
                 "各个本屏控件应只改变对应字段并保留之前的单独设置");
             Check(preferences[rootMonitor].DockEnabled == true && archiveQueries == 0,
                 "修改第二屏不得改动根屏设置或展开离线档案");
-            Choose(settings, "Dock", "跟随全局");
-            Check(preferences[otherMonitor].DockEnabled is null && preferences[otherMonitor].TopBarEnabled == true,
-                "单项跟随全局只清除该项覆盖");
-            var reset = (Button)SurfaceRows(settings).Single(row => row.Header == "恢复跟随全局").Content;
+            Choose(settings, "Dock", "此屏跟随全局");
+            Check(preferences[otherMonitor].DockEnableMode == ScreenSurfaceEnableMode.FollowGlobal
+                && preferences[otherMonitor].TopBarEnabled == true,
+                "此屏跟随全局应记录逐屏继承意图并保留其他栏选择");
+            Choose(settings, "顶端信息条", "此屏跟随全局");
+            Check(preferences[otherMonitor].TopBarEnableMode == ScreenSurfaceEnableMode.FollowGlobal,
+                "顶栏也可独立跟随全局开关");
+            Choose(settings, "Dock", "按全局目标显示");
+            Check(preferences[otherMonitor].DockEnableMode == ScreenSurfaceEnableMode.GlobalTarget,
+                "按全局目标显示应移除此屏跟随开关的行为");
+            var reset = (Button)SurfaceRows(settings).Single(row => row.Header == "恢复默认设置").Content;
             reset.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             Check(preferences[otherMonitor].IsEmpty, "恢复跟随应清除本屏全部表面设置");
 
-            var offline = Topology(settings).Children.OfType<Expander>().Single(item => Equals(item.Header, "未连接的桌面档案"));
+            var offline = OfflineSection(settings);
             Check(offline.Content is null && archiveQueries == 0, "未展开的离线区域应保持惰性创建");
             offline.IsExpanded = true;
             var list = offline.Content as StackPanel ?? throw new InvalidOperationException("离线面板未创建");
@@ -96,7 +129,7 @@ internal static class ScreenSurfaceSettingsTests
 
             canBind = false;
             settings.RefreshMultiScreenUi();
-            offline = Topology(settings).Children.OfType<Expander>().Single(item => Equals(item.Header, "未连接的桌面档案"));
+            offline = OfflineSection(settings);
             row = ((StackPanel)offline.Content).Children.OfType<SettingsGroup>().Single().Items.OfType<SettingsRow>().Single();
             Check(!((Button)row.Content).IsEnabled && associations.Count == 1,
                 "已有内容的屏幕应禁用关联，刷新不得自动迁移或合并档案");
@@ -110,9 +143,17 @@ internal static class ScreenSurfaceSettingsTests
     private static StackPanel Topology(SettingsWindow settings) =>
         (StackPanel)((Border)((Border)settings.FindName("ComponentsMultiScreenBarHost")).Child).Child;
 
+    private static StackPanel DisplaySections(SettingsWindow settings) =>
+        (StackPanel)((Border)settings.FindName("DisplaysMultiScreenHost")).Child;
+
+    private static Expander OfflineSection(SettingsWindow settings) => DisplaySections(settings).Children.OfType<Border>()
+        .Select(card => card.Child).OfType<StackPanel>().SelectMany(panel => panel.Children.OfType<Expander>())
+        .Single(item => Equals(item.Header, "未连接的桌面档案"));
+
     private static IEnumerable<SettingsRow> SurfaceRows(SettingsWindow settings)
     {
-        var options = Topology(settings).Children.OfType<Expander>().Single(item => Equals(item.Header, "此屏 Dock 与顶栏"));
+        var options = DisplaySections(settings).Children.OfType<Expander>()
+            .Single(item => Equals(item.Header, "位置、显示方式与高度"));
         options.IsExpanded = true;
         return ((SettingsGroup)options.Content).Items.OfType<SettingsRow>();
     }

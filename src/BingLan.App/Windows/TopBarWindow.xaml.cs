@@ -448,7 +448,7 @@ public sealed partial class TopBarWindow : Window
     private MonitorSnapshot? ResolveMonitor() => _screenTarget is { } target
         ? MonitorCatalog.GetAll().FirstOrDefault(monitor => monitor.MonitorHandle == target.Monitor.MonitorHandle
             && string.Equals(monitor.DeviceName, target.Monitor.DeviceName, StringComparison.OrdinalIgnoreCase))
-        : SurfaceMonitorTargetResolver.Resolve(_state.MonitorKey, _state.MonitorDeviceName);
+        : SurfaceMonitorTargetResolver.Resolve(_state.MonitorKey);
 
     private void OnEnvironmentChanged()
     {
@@ -2958,7 +2958,7 @@ public sealed partial class TopBarWindow : Window
             return;
         }
 
-        var look = TopBarSearchLook.FromStyle(_style, _environment.LauncherAppearance);
+        var look = ResolveSearchLook();
         var engine = TopBarSearchRowRules.ResolveEngine(_state.SearchEngine, _state.SearchCustomUrl);
         var monitor = _appBar?.Monitor ?? _monitor;
         var popup = new TopBarSearchWindow(
@@ -2987,6 +2987,13 @@ public sealed partial class TopBarWindow : Window
         _searchPopup = null;
         popup.RequestClose();
     }
+
+    private TopBarSearchLook ResolveSearchLook() =>
+        TopBarSearchLook.Resolve(
+            _style,
+            _state,
+            barUseDarkInk: IsCapsule ? null : _palette.UseDarkInk,
+            useClearGlass: _environment.LauncherAppearance.UseClearGlass);
 
 
 
@@ -3645,6 +3652,7 @@ public sealed partial class TopBarWindow : Window
                     _capsuleGlass = new DockGlassSurface(this, Surface, "FloatingGlassSurfaceBrush",
                         "FloatingGlassBorderBrush", "FloatingGlassCapsuleBrush");
             }
+            _searchPopup?.ApplyLook(ResolveSearchLook());
             return;
         }
         _capsuleGlass?.Dispose();
@@ -3662,6 +3670,7 @@ public sealed partial class TopBarWindow : Window
         Surface.BorderBrush = highContrast
             ? SystemColors.WindowTextBrush
             : FrozenBrush(_palette.BarBorderColor);
+        _searchPopup?.ApplyLook(ResolveSearchLook());
     }
 
     private void ApplyAdaptivePalette(DockGlass glass, bool acrylic, bool highContrast)
@@ -3772,6 +3781,7 @@ public sealed partial class TopBarWindow : Window
                     if (!highContrast && previousDark != _palette.UseDarkInk)
                     {
                         Surface.BorderBrush = FrozenBrush(_palette.BarBorderColor);
+                        _searchPopup?.ApplyLook(ResolveSearchLook());
                     }
                 });
             }

@@ -533,12 +533,6 @@ public static class ScreenProfileAccessor
         return pixelMap;
     }
 
-    /// <summary>
-    /// Deep-copies the primary display's built-in card configuration and quick places to
-    /// <paramref name="targetScreenKey"/>, re-laying out cards in the target monitor's local DIP
-    /// space and creating an empty secondary to-do card if the primary to-do component is visible
-    /// and the target screen has none yet.
-    /// </summary>
     public static CopyPrimaryProfileResult CopyPrimaryProfileToScreen(
         AppState state,
         string targetScreenKey,
@@ -548,74 +542,136 @@ public static class ScreenProfileAccessor
         string? displayLabel = null,
         string? currentLayoutKey = null)
     {
+        var profile = EnsureScreenProfile(state, targetScreenKey, deviceName, displayLabel);
+        var (bounds, created) = CopyScreenCardSettings(state,
+            (null, default, 96), (targetScreenKey, targetWorkAreaPx, targetDpi), currentLayoutKey);
+        return new CopyPrimaryProfileResult(profile, bounds, created,
+            created is not null && bounds.TryGetValue(DesktopComponentKind.Todo, out var todoBounds) ? todoBounds : null);
+    }
+
+    /// <summary>Copies card settings between physical displays while keeping each screen's personal content.</summary>
+    public static (IReadOnlyDictionary<DesktopComponentKind, PixelRect> Bounds, TodoWidgetState? CreatedTodo)
+        CopyScreenCardSettings(
+            AppState state,
+            (string? Key, PixelRect WorkArea, uint Dpi) source,
+            (string? Key, PixelRect WorkArea, uint Dpi) target,
+            string? layoutKey = null)
+    {
         ArgumentNullException.ThrowIfNull(state);
-        var normalizedKey = MultiScreenRules.NormalizeScreenKey(targetScreenKey)
-            ?? throw new ArgumentException("Target screen key must identify a secondary monitor.", nameof(targetScreenKey));
+        if (MatchesScreen(source.Key, target.Key))
+        {
+            throw new ArgumentException("Source and target must be different screens.", nameof(target));
+        }
 
-        DesktopExperienceRules.Normalize(state.DesktopExperience);
-        var profile = EnsureScreenProfile(state, normalizedKey, deviceName, displayLabel);
-
+        var sourceExperience = GetExperience(state, source.Key);
+        var targetExperience = GetExperience(state, target.Key);
+        DesktopExperienceRules.Normalize(sourceExperience);
+        DesktopExperienceRules.Normalize(targetExperience);
         var copiedExperience = new DesktopExperienceState
         {
-            ActivePreset = state.DesktopExperience.ActivePreset,
-            Components = state.DesktopExperience.Components
-                .Select(CloneComponent)
-                .ToList()
+            ActivePreset = sourceExperience.ActivePreset,
+            ExtensionData = targetExperience.ExtensionData,
+            Components = sourceExperience.Components.Select(CloneComponent).ToList()
         };
-        DesktopExperienceRules.Normalize(copiedExperience);
-        profile.Experience = copiedExperience;
-        var existingQuickPlaces = QuickPlaceRules.Normalize(profile.QuickPlaces);
-        var hasCustomQuickPlaces = !AreQuickPlacesEquivalent(existingQuickPlaces, QuickPlaceRules.CreateDefaults());
-        if (!hasCustomQuickPlaces)
+        foreach (var component in copiedExperience.Components)
         {
-            profile.QuickPlaces = state.QuickPlaces
-                .Select(place => new QuickPlaceState
-                {
-                    Icon = place.Icon,
-                    Name = place.Name,
-                    Target = place.Target
-                })
-                .ToList();
+            var targetComponent = targetExperience.GetComponent(component.Kind);
+            component.Placement = ClonePlacement(targetComponent.Placement);
+            component.ExtensionData = targetComponent.ExtensionData;
+        }
+        if (target.Key is { } targetKey)
+        {
+            EnsureScreenProfile(state, targetKey).Experience = copiedExperience;
+        }
+        else
+        {
+            // Settings windows hold the root experience by reference.
+            targetExperience.ActivePreset = copiedExperience.ActivePreset;
+            targetExperience.Components = copiedExperience.Components;
         }
 
-        var pixelMap = ApplyPresetToScreen(
-            state,
-            normalizedKey,
-            copiedExperience.ActivePreset,
-            targetWorkAreaPx,
-            targetDpi,
-            currentLayoutKey,
-            preserveGreetingColor: true);
-
-        TodoWidgetState? createdTodo = null;
-        PixelRect? createdTodoPixels = null;
-        var todoComponent = profile.Experience.GetComponent(DesktopComponentKind.Todo);
-        if (todoComponent.IsVisible && GetTodosForScreen(state, normalizedKey).Count == 0)
+        var targetPlaces = GetQuickPlaces(state, target.Key);
+        if (AreQuickPlacesEquivalent(QuickPlaceRules.Normalize(targetPlaces), QuickPlaceRules.CreateDefaults()))
         {
-            createdTodo = TodoService.CreateDefaultWidget();
-            createdTodo.Title = WidgetTitleRules.NextTitle(
-                createdTodo.Title,
-                state.TodoWidgets.Select(todo => todo.Title));
-            createdTodo.ScreenKey = normalizedKey;
-            createdTodo.IsLocked = todoComponent.IsLocked;
-            createdTodo.CornerRadius = todoComponent.CornerRadius;
-            createdTodo.FontScale = todoComponent.FontScale;
-            createdTodo.FontFamily = todoComponent.FontFamily;
-            CopyAppearance(createdTodo.Appearance, todoComponent.Appearance);
-            createdTodo.Placement = ClonePlacement(todoComponent.Placement);
-            if (pixelMap.TryGetValue(DesktopComponentKind.Todo, out var todoPx))
+            SetQuickPlaces(state, target.Key, GetQuickPlaces(state, source.Key).Select(place => new QuickPlaceState
             {
-                createdTodoPixels = todoPx;
-                if (!string.IsNullOrEmpty(currentLayoutKey))
-                {
-                    DisplayLayoutRules.Remember(createdTodo.Placement, currentLayoutKey, todoPx);
-                }
-            }
-            state.TodoWidgets.Add(createdTodo);
-            profile.PrimaryTodoId = createdTodo.Id.ToString("D");
+                Icon = place.Icon,
+                Name = place.Name,
+                Target = place.Target
+            }).ToList());
         }
 
-        return new CopyPrimaryProfileResult(profile, pixelMap, createdTodo, createdTodoPixels);
+        var bounds = new Dictionary<DesktopComponentKind, PixelRect>(ApplyPresetToScreen(
+            state, target.Key, copiedExperience.ActivePreset, target.WorkArea, target.Dpi, layoutKey,
+            preserveGreetingColor: true));
+        if (source.WorkArea.HasArea)
+        {
+            foreach (var component in copiedExperience.Components)
+            {
+                var sourcePlacement = sourceExperience.GetComponent(component.Kind).Placement;
+                if (GetSourceCardBounds(sourcePlacement, source.WorkArea, source.Dpi, layoutKey) is not { } sourceBounds)
+                {
+                    continue;
+                }
+                var pixels = ComputeMovedWidgetPixelBounds(sourceBounds, source.WorkArea, source.Dpi,
+                    target.WorkArea, target.Dpi, sourcePlacement.Width, sourcePlacement.Height);
+                var scale = ResolveScale(target.Dpi);
+                var placement = component.Placement;
+                placement.Left = pixels.Left / scale;
+                placement.Top = pixels.Top / scale;
+                placement.Width = pixels.Width / scale;
+                placement.Height = pixels.Height / scale;
+                RecordMonitorLocalPlacement(placement, pixels, target.WorkArea, target.Dpi);
+                if (!string.IsNullOrEmpty(layoutKey))
+                {
+                    DisplayLayoutRules.Remember(placement, layoutKey, pixels);
+                }
+                bounds[component.Kind] = pixels;
+            }
+        }
+
+        var todoComponent = copiedExperience.GetComponent(DesktopComponentKind.Todo);
+        if (GetPrimaryTodoId(state, target.Key) is { } id && state.TodoWidgets.FirstOrDefault(todo => todo.Id == id) is { } existing)
+        {
+            existing.Placement = ClonePlacement(todoComponent.Placement);
+        }
+
+        if (!todoComponent.IsVisible || GetTodosForScreen(state, target.Key).Count != 0)
+        {
+            return (bounds, null);
+        }
+
+        var created = TodoService.CreateDefaultWidget();
+        created.Title = WidgetTitleRules.NextTitle(created.Title, state.TodoWidgets.Select(todo => todo.Title));
+        created.ScreenKey = target.Key;
+        created.IsLocked = todoComponent.IsLocked;
+        created.CornerRadius = todoComponent.CornerRadius;
+        created.FontScale = todoComponent.FontScale;
+        created.FontFamily = todoComponent.FontFamily;
+        CopyAppearance(created.Appearance, todoComponent.Appearance);
+        created.Placement = ClonePlacement(todoComponent.Placement);
+        state.TodoWidgets.Add(created);
+        SetPrimaryTodoId(state, target.Key, created.Id);
+        return (bounds, created);
+    }
+
+    private static PixelRect? GetSourceCardBounds(WindowPlacement placement, PixelRect workArea, uint dpi, string? layoutKey)
+    {
+        if (!string.IsNullOrEmpty(layoutKey) && DisplayLayoutRules.TryRecall(placement, layoutKey, out var remembered)
+            && remembered.Intersects(workArea))
+        {
+            return remembered;
+        }
+        if (ResolveMonitorLocalBounds(placement, workArea, dpi) is { } localBounds)
+        {
+            return localBounds;
+        }
+        var scale = ResolveScale(dpi);
+        var bounds = new PixelRect(
+            (int)Math.Round(placement.Left * scale), (int)Math.Round(placement.Top * scale),
+            (int)Math.Round((placement.Left + placement.Width) * scale),
+            (int)Math.Round((placement.Top + placement.Height) * scale));
+        return bounds.HasArea && bounds.Intersects(workArea) ? bounds : null;
     }
 
     public static PixelRect? MoveTodoToScreen(

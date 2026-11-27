@@ -145,10 +145,10 @@ public sealed class TopBarState
     /// <summary>Bar height in DIPs; clamped by <see cref="TopBarRules.Normalize"/>.</summary>
     public double Height { get; set; } = DefaultHeightDip;
 
-    /// <summary>Persistent physical display identity; null follows Windows primary when no legacy choice remains.</summary>
+    /// <summary>Persistent physical display identity; null follows Windows primary.</summary>
     public string? MonitorKey { get; set; }
 
-    /// <summary>Unconfirmed legacy display name, retained until the user explicitly chooses a target.</summary>
+    /// <summary>Display name retained for compatibility with older configurations.</summary>
     public string? MonitorDeviceName { get; set; }
 
     public TopBarVisibilityMode VisibilityMode { get; set; } = TopBarVisibilityMode.ReserveTopEdge;

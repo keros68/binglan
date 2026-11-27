@@ -153,7 +153,7 @@ public partial class OnboardingWindow : Window
     {
         if (MonitorSelector.SelectedItem is OnboardingMonitor monitor)
         {
-            _actions.ApplyMonitor(monitor.DeviceName);
+            _actions.ApplyMonitor(monitor.MonitorKey);
         }
     }
 

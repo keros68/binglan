@@ -226,12 +226,15 @@ public partial class SettingsWindow
         }
 
         var connectedCount = hasMultiple ? Math.Max(2, bridge.GetConnectedMonitorCount()) : 1;
-        // Never invoke ResolveConnected()/QueryDisplayConfig while multi-screen is disabled.
-        IReadOnlyList<MonitorCardOption> screens = enabled ? bridge.GetScreens() : [];
-        var selectedKey = !enabled ? null
-            : screens.Any(option => string.Equals(option.ScreenKey, _activeScreenKey, StringComparison.Ordinal))
-                ? _activeScreenKey
-                : (screens.FirstOrDefault(option => option.IsPrimary) ?? screens.FirstOrDefault())?.ScreenKey;
+        var showScreenPicker = hasMultiple && (ComponentsPage.Visibility == Visibility.Visible || DisplaysPage.Visibility == Visibility.Visible);
+        IReadOnlyList<MonitorCardOption> screens = enabled || showScreenPicker ? bridge.GetScreens() : [];
+        if (!enabled && (screens.Count < 2 || !screens.Any(option => option.IsPrimary)))
+        {
+            screens = [];
+        }
+        var selectedKey = screens.Any(option => string.Equals(option.ScreenKey, _activeScreenKey, StringComparison.Ordinal))
+            ? _activeScreenKey
+            : (screens.FirstOrDefault(option => option.IsPrimary) ?? screens.FirstOrDefault())?.ScreenKey;
         if (!string.Equals(selectedKey, _activeScreenKey, StringComparison.Ordinal))
         {
             FlushPendingComponentEditsBeforeScreenSwitch();
@@ -242,29 +245,26 @@ public partial class SettingsWindow
         _updatingMultiScreenUi = true;
         try
         {
-            BuildSchemeMultiScreenSection(hasMultiple || hasSavedProfiles, enabled, connectedCount);
+            BuildSchemeMultiScreenSection(connectedCount);
+            BuildDisplaysPage(bridge, screens, hasMultiple || hasSavedProfiles, enabled);
 
-            if (enabled && screens.Count > 0)
+            if (screens.Count > 0)
             {
                 ComponentsMultiScreenBarHost.Child = BuildTopologySwitcherCard(
                     bridge,
                     screens,
                     isLayoutBar: false);
                 ComponentsMultiScreenBarHost.Visibility = Visibility.Visible;
-
-                LayoutMultiScreenBarHost.Child = BuildTopologySwitcherCard(
-                    bridge,
-                    screens,
-                    isLayoutBar: true);
-                LayoutMultiScreenBarHost.Visibility = Visibility.Visible;
             }
             else
             {
                 ComponentsMultiScreenBarHost.Child = null;
                 ComponentsMultiScreenBarHost.Visibility = Visibility.Collapsed;
-                LayoutMultiScreenBarHost.Child = null;
-                LayoutMultiScreenBarHost.Visibility = Visibility.Collapsed;
             }
+            LayoutMultiScreenBarHost.Child = enabled && screens.Count > 0
+                ? BuildTopologySwitcherCard(bridge, screens, isLayoutBar: true) : null;
+            LayoutMultiScreenBarHost.Visibility = LayoutMultiScreenBarHost.Child is null ? Visibility.Collapsed : Visibility.Visible;
+            UpdateComponentEditorForPendingScreen(!enabled && selectedKey is not null);
 
             UpdateMoveScreenControls(_selectedComponentEntry);
         }
@@ -323,6 +323,7 @@ public partial class SettingsWindow
         }
 
         _activeScreenKey = normalized;
+        MonitorProfileStatusText.Visibility = Visibility.Collapsed;
         RefreshMultiScreenUi();
         SyncPresetRadiosForActiveScreen();
         UpdatePresetPreview(GetSelectedPreset());
@@ -354,6 +355,10 @@ public partial class SettingsWindow
         }
         _activeScreenKey = null;
         _multiScreenOptions = [];
+        UpdateComponentEditorForPendingScreen(false);
+        DisplaysMultiScreenHost.Child = null;
+        DisplaysEmptyText.Visibility = Visibility.Visible;
+        DisplaysModeGroup.Visibility = Visibility.Collapsed;
         if (SchemeMultiScreenHost is not null)
         {
             SchemeMultiScreenHost.Child = null;
@@ -379,6 +384,15 @@ public partial class SettingsWindow
             SelectedWidgetMoveScreenHost.Child = null;
             SelectedWidgetMoveScreenHost.Visibility = Visibility.Collapsed;
         }
+    }
+
+    private void UpdateComponentEditorForPendingScreen(bool pendingSetup)
+    {
+        ComponentCreationButtons.Visibility = pendingSetup ? Visibility.Collapsed : Visibility.Visible;
+        ComponentEditorHost.Visibility = pendingSetup ? Visibility.Collapsed : Visibility.Visible;
+        ComponentsPageSubtitle.Text = pendingSetup
+            ? "复制主屏设置后，可在这里独立调整此屏。"
+            : "选择一张卡片，在右侧调整显示、内容和外观；修改立即生效。";
     }
 
     private void SyncPresetRadiosForActiveScreen()
@@ -417,84 +431,64 @@ public partial class SettingsWindow
         }
     }
 
-    private void BuildSchemeMultiScreenSection(bool canEnable, bool enabled, int connectedMonitorCount)
+    private void BuildSchemeMultiScreenSection(int connectedMonitorCount)
     {
-        var stack = new StackPanel();
-        var header = new TextBlock { Text = "多屏" };
-        if (TryFindResource("SectionHeaderStyle") is Style headerStyle)
-        {
-            header.Style = headerStyle;
-        }
-        stack.Children.Add(header);
-
         var group = new SettingsGroup();
-        var toggleRow = new SettingsRow
+        var openDisplays = new Button { Content = "管理显示器" };
+        openDisplays.Click += (_, _) => SelectNavigationPage(SettingsNavigationRules.DisplaysPageKey);
+        group.Items.Add(new SettingsRow
         {
-            Header = "每屏独立桌面",
-            Description = connectedMonitorCount > 1
-                ? $"已连接 {connectedMonitorCount} 台显示器。开启后可分别设置各屏卡片、布局、Dock 和顶栏，新显示器从空白开始。"
-                : "当前连接 1 台显示器。"
-        };
-
-        var controls = new StackPanel { Orientation = Orientation.Horizontal };
-        if (enabled)
-        {
-            var jumpButton = new Button
-            {
-                Content = "管理各屏桌面 →",
-                Margin = new Thickness(0, 0, 12, 0)
-            };
-            if (TryFindResource("GhostButtonStyle") is Style ghostStyle)
-            {
-                jumpButton.Style = ghostStyle;
-            }
-            AutomationProperties.SetName(jumpButton, "前往桌面卡片管理各屏桌面");
-            jumpButton.Click += (_, _) =>
-            {
-                SelectNavigationPage("Components");
-                ShowPage("Components");
-                RefreshMultiScreenUi();
-            };
-            controls.Children.Add(jumpButton);
-        }
-
-        var toggle = new CheckBox
-        {
-            IsChecked = enabled,
-            IsEnabled = canEnable || enabled
-        };
-        if (TryFindResource("ToggleSwitchStyle") is Style toggleStyle)
-        {
-            toggle.Style = toggleStyle;
-        }
-        AutomationProperties.SetName(toggle, "每屏独立桌面");
-        toggle.Checked += (_, _) =>
-        {
-            if (!_updatingMultiScreenUi)
-            {
-                SetMultiScreenEnabledFromUi(true);
-            }
-        };
-        toggle.Unchecked += (_, _) =>
-        {
-            if (!_updatingMultiScreenUi)
-            {
-                SetMultiScreenEnabledFromUi(false);
-            }
-        };
-        controls.Children.Add(toggle);
-        toggleRow.Content = controls;
-        group.Items.Add(toggleRow);
-        stack.Children.Add(group);
-
-        SchemeMultiScreenHost.Child = stack;
+            Header = "显示器",
+            Description = $"已连接 {connectedMonitorCount} 台显示器。",
+            Content = openDisplays
+        });
+        SchemeMultiScreenHost.Child = group;
         SchemeMultiScreenHost.Visibility = Visibility.Visible;
+    }
+
+    private void BuildDisplaysPage(MultiScreenSettingsBridge bridge, IReadOnlyList<MonitorCardOption> screens,
+        bool canEnable, bool enabled)
+    {
+        DisplaysModeGroup.Visibility = canEnable || enabled ? Visibility.Visible : Visibility.Collapsed;
+        DisplaysIndependentSwitch.IsEnabled = canEnable || enabled;
+        DisplaysIndependentSwitch.IsChecked = enabled;
+        DisplaysEmptyText.Visibility = screens.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        if (DisplaysPage.Visibility != Visibility.Visible || screens.Count == 0)
+        {
+            DisplaysMultiScreenHost.Child = null;
+            return;
+        }
+
+        var body = new StackPanel();
+        body.Children.Add(BuildTopologySwitcherCard(bridge, screens, isLayoutBar: false, isDisplaysPage: true));
+        if (enabled && screens.FirstOrDefault(screen => screen.IsConnected && screen.ScreenKey == _activeScreenKey) is { } selected)
+        {
+            AddSelectedScreenSurfaceControls(body, bridge, selected);
+            var archive = new StackPanel();
+            var archiveCard = new Border { Margin = new Thickness(0, 16, 0, 0), Padding = new Thickness(14, 6, 14, 12), Child = archive };
+            if (TryFindResource("SettingsPanelStyle") is Style style)
+            {
+                archiveCard.Style = style;
+            }
+            AddOfflineScreenProfileControls(archive, bridge, selected);
+            body.Children.Add(archiveCard);
+        }
+        DisplaysMultiScreenHost.Child = body;
+    }
+
+    private void DisplaysIndependentSwitch_Changed(object sender, RoutedEventArgs e)
+    {
+        if (!_updatingMultiScreenUi && sender is CheckBox { IsChecked: { } enabled })
+        {
+            SetMultiScreenEnabledFromUi(enabled);
+        }
     }
 
     private Border BuildTopologySwitcherCard(
         MultiScreenSettingsBridge bridge,
         IReadOnlyList<MonitorCardOption> screens,
-        bool isLayoutBar)
+        bool isLayoutBar,
+        bool isDisplaysPage = false)
     {
         var outer = new Border
         {
@@ -506,15 +500,22 @@ public partial class SettingsWindow
         }
 
         var rootStack = new StackPanel();
+        var enabled = bridge.IsEnabled();
         var rowGrid = new Grid();
         rowGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         rowGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         rowGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        rowGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
-        // Left: proportional mini monitor topology map reflecting real bounds and Y offsets.
-        var miniMap = BuildMiniTopologyCanvas(screens);
-        Grid.SetColumn(miniMap, 0);
-        rowGrid.Children.Add(miniMap);
+        if (isDisplaysPage)
+        {
+            rowGrid.Children.Add(BuildMiniTopologyCanvas(screens));
+        }
+        else
+        {
+            var label = new TextBlock { Text = "屏幕", FontWeight = FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center };
+            rowGrid.Children.Add(label);
+        }
 
         // Center: screen selector buttons + summary.
         var centerStack = new StackPanel
@@ -530,9 +531,12 @@ public partial class SettingsWindow
             FontSize = 13,
             FontWeight = FontWeights.SemiBold
         };
-        centerStack.Children.Add(titleLine);
+        if (isDisplaysPage || isLayoutBar)
+        {
+            centerStack.Children.Add(titleLine);
+        }
 
-        var pillWrap = new WrapPanel { Margin = new Thickness(0, 6, 0, 0) };
+        var pillWrap = new WrapPanel { Margin = new Thickness(0, isDisplaysPage || isLayoutBar ? 6 : 2, 0, 0) };
         foreach (var screen in screens)
         {
             var isSelected = string.Equals(screen.ScreenKey, _activeScreenKey, StringComparison.Ordinal);
@@ -540,8 +544,9 @@ public partial class SettingsWindow
             {
                 Margin = new Thickness(0, 0, 8, 4),
                 Padding = new Thickness(10, 4, 10, 4),
-                Content = $"{screen.ShortLabel} · {screen.ResolutionSummary} ({screen.CardCount}张)",
-                ToolTip = screen.DisplayLabel
+                Content = isDisplaysPage ? $"{screen.ShortLabel} · {screen.ResolutionSummary}"
+                    + (enabled || screen.IsPrimary ? $" ({screen.CardCount}张)" : string.Empty) : screen.ShortLabel,
+                ToolTip = $"{screen.DisplayLabel} · {screen.ResolutionSummary}"
             };
             if (isSelected && TryFindResource("AccentButtonStyle") is Style accentStyle)
             {
@@ -556,42 +561,56 @@ public partial class SettingsWindow
         Grid.SetColumn(centerStack, 1);
         rowGrid.Children.Add(centerStack);
 
-        if (_activeScreenKey is { } secondaryKey && !bridge.CanBindLegacyRoot())
+        var selectedScreen = screens.FirstOrDefault(screen => screen.IsConnected
+            && string.Equals(screen.ScreenKey, _activeScreenKey, StringComparison.Ordinal));
+        var copyStatus = new TextBlock { Margin = new Thickness(0, 8, 0, 0), TextWrapping = TextWrapping.Wrap, Visibility = Visibility.Collapsed };
+        if (selectedScreen is { IsPrimary: false } && screens.Any(screen => screen.IsPrimary && screen.IsConnected))
         {
             var copyButton = new Button
             {
-                Content = "复制原桌面布局",
+                Content = "复制主屏设置",
+                ToolTip = "复制当前主屏的卡片布局、Dock 和顶栏设置。各屏保留自己的内容。",
                 VerticalAlignment = VerticalAlignment.Center,
                 Padding = new Thickness(12, 6, 12, 6)
             };
-            AutomationProperties.SetName(copyButton, "复制原桌面布局");
+            AutomationProperties.SetName(copyButton, "复制主屏设置");
             copyButton.Click += (_, _) =>
             {
-                var status = bridge.CopyPrimaryProfileToScreen(secondaryKey);
-                if (ComponentSettingsStatusText is not null)
+                FlushPendingComponentEditsBeforeScreenSwitch();
+                var status = bridge.CopyPrimaryProfileToScreen(selectedScreen.MonitorKey);
+                if (!bridge.IsEnabled())
                 {
-                    ComponentSettingsStatusText.Text = status;
+                    copyStatus.Text = status;
+                    copyStatus.Visibility = Visibility.Visible;
+                    return;
                 }
-                if (LayoutStatusText is not null)
+                if (bridge.GetScreens().FirstOrDefault(screen => screen.MonitorKey == selectedScreen.MonitorKey) is { } target)
                 {
-                    LayoutStatusText.Text = status;
+                    _activeScreenKey = target.ScreenKey;
                 }
-                RefreshMultiScreenUi();
-                SyncPresetRadiosForActiveScreen();
-                RefreshComponentList();
+                RefreshMultiScreenUi(refreshComponentList: true);
+                SetScreenProfileStatus(status);
             };
             Grid.SetColumn(copyButton, 2);
             rowGrid.Children.Add(copyButton);
         }
 
+        if (!isDisplaysPage && !isLayoutBar)
+        {
+            var openDisplays = new Button { Content = "显示器设置", Margin = new Thickness(8, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
+            if (TryFindResource("GhostButtonStyle") is Style style)
+            {
+                openDisplays.Style = style;
+            }
+            openDisplays.Click += (_, _) => SelectNavigationPage(SettingsNavigationRules.DisplaysPageKey);
+            Grid.SetColumn(openDisplays, 3);
+            rowGrid.Children.Add(openDisplays);
+        }
         rootStack.Children.Add(rowGrid);
 
-        var selectedScreen = screens.FirstOrDefault(screen => screen.IsConnected
-            && string.Equals(screen.ScreenKey, _activeScreenKey, StringComparison.Ordinal));
-        if (selectedScreen is not null)
+        if (!enabled && selectedScreen is { IsPrimary: false })
         {
-            AddSelectedScreenSurfaceControls(rootStack, bridge, selectedScreen);
-            AddOfflineScreenProfileControls(rootStack, bridge, selectedScreen);
+            rootStack.Children.Add(copyStatus);
         }
 
         outer.Child = rootStack;

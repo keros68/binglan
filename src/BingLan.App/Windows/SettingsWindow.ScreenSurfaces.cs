@@ -8,6 +8,14 @@ namespace BingLan.App.Windows;
 
 public partial class SettingsWindow
 {
+    private static readonly (string Label, ScreenSurfaceEnableMode? Value)[] ScreenEnableChoices =
+    [
+        ("按全局目标显示", ScreenSurfaceEnableMode.GlobalTarget),
+        ("此屏跟随全局", ScreenSurfaceEnableMode.FollowGlobal),
+        ("开启", ScreenSurfaceEnableMode.Enabled),
+        ("关闭", ScreenSurfaceEnableMode.Disabled)
+    ];
+
     private bool _screenSurfaceOptionsExpanded;
     private bool _offlineScreenProfilesExpanded;
 
@@ -17,19 +25,17 @@ public partial class SettingsWindow
         MonitorCardOption screen)
     {
         var status = bridge.GetSurfaceStatus(screen.MonitorKey);
-        var statusLine = new TextBlock
-        {
-            Text = $"Dock：{status.DockStatus}　顶栏：{status.TopBarStatus}",
-            Margin = new Thickness(0, 8, 0, 0),
-            TextWrapping = TextWrapping.Wrap
-        };
-        statusLine.SetResourceReference(TextBlock.ForegroundProperty, "SettingsFaintInkBrush");
-        host.Children.Add(statusLine);
+        var switches = new SettingsGroup { Margin = new Thickness(0, 16, 0, 0) };
+        switches.Items.Add(BuildScreenSurfaceRow("冰蓝 Dock", status.DockEnabled, status.DockStatus,
+            mode => ChangeScreenSurfacePreferences(bridge, screen.MonitorKey, current => current.DockEnableMode = mode)));
+        switches.Items.Add(BuildScreenSurfaceRow("顶部信息条", status.TopBarEnabled, status.TopBarStatus,
+            mode => ChangeScreenSurfacePreferences(bridge, screen.MonitorKey, current => current.TopBarEnableMode = mode)));
+        host.Children.Add(switches);
 
         var options = new Expander
         {
-            Header = "此屏 Dock 与顶栏",
-            Margin = new Thickness(0, 8, 0, 0)
+            Header = "位置、显示方式与高度",
+            Margin = new Thickness(0, 10, 0, 0)
         };
         options.Expanded += (_, _) =>
         {
@@ -41,28 +47,41 @@ public partial class SettingsWindow
         host.Children.Add(options);
     }
 
+    private SettingsRow BuildScreenSurfaceRow(string label, bool enabled, string status, Action<ScreenSurfaceEnableMode> apply)
+    {
+        var control = new CheckBox { IsChecked = enabled };
+        if (TryFindResource("ToggleSwitchStyle") is Style style)
+        {
+            control.Style = style;
+        }
+        AutomationProperties.SetName(control, $"此屏的{label}");
+        AutomationProperties.SetItemStatus(control, status);
+        control.Checked += (_, _) => apply(ScreenSurfaceEnableMode.Enabled);
+        control.Unchecked += (_, _) => apply(ScreenSurfaceEnableMode.Disabled);
+        return new SettingsRow { Header = label, Description = status, Content = control };
+    }
+
+    private void ChangeScreenSurfacePreferences(MultiScreenSettingsBridge bridge, string monitorKey,
+        Action<ScreenSurfacePreferences> change)
+    {
+        var current = bridge.GetSurfacePreferences(monitorKey) is { } saved ? saved with { } : new ScreenSurfacePreferences();
+        change(current);
+        bridge.ApplySurfacePreferences(monitorKey, current);
+        RefreshMultiScreenUi();
+    }
+
     private SettingsGroup BuildSelectedScreenSurfaceOptions(MultiScreenSettingsBridge bridge, string monitorKey)
     {
         var preferences = bridge.GetSurfacePreferences(monitorKey) ?? new ScreenSurfacePreferences();
         var group = new SettingsGroup { Margin = new Thickness(0, 8, 0, 0) };
-        void Save(Action<ScreenSurfacePreferences> change)
-        {
-            var current = bridge.GetSurfacePreferences(monitorKey) is { } saved
-                ? saved with { }
-                : new ScreenSurfacePreferences();
-            change(current);
-            bridge.ApplySurfacePreferences(monitorKey, current);
-            RefreshMultiScreenUi();
-        }
+        void Save(Action<ScreenSurfacePreferences> change) => ChangeScreenSurfacePreferences(bridge, monitorKey, change);
 
         group.Items.Add(new SettingsRow
         {
             Header = "Dock",
-            Description = "跟随全局时沿用 Dock 页的设置。",
-            Content = BuildScreenPreferenceCombo<bool>(
-                [("跟随全局", null), ("开启", true), ("关闭", false)],
-                preferences.DockEnabled,
-                value => Save(current => current.DockEnabled = value))
+            Description = "此屏跟随全局时，随桌面方案一起开关。",
+            Content = BuildScreenPreferenceCombo(ScreenEnableChoices, preferences.DockEnableMode,
+                value => Save(current => current.DockEnableMode = value ?? ScreenSurfaceEnableMode.GlobalTarget))
         });
         group.Items.Add(new SettingsRow
         {
@@ -83,11 +102,9 @@ public partial class SettingsWindow
         group.Items.Add(new SettingsRow
         {
             Header = "顶端信息条",
-            Description = "跟随全局时沿用顶端信息条页的设置。",
-            Content = BuildScreenPreferenceCombo<bool>(
-                [("跟随全局", null), ("开启", true), ("关闭", false)],
-                preferences.TopBarEnabled,
-                value => Save(current => current.TopBarEnabled = value))
+            Description = "此屏跟随全局时，随桌面方案一起开关。",
+            Content = BuildScreenPreferenceCombo(ScreenEnableChoices, preferences.TopBarEnableMode,
+                value => Save(current => current.TopBarEnableMode = value ?? ScreenSurfaceEnableMode.GlobalTarget))
         });
         group.Items.Add(new SettingsRow
         {
@@ -114,8 +131,8 @@ public partial class SettingsWindow
                 value => Save(current => current.TopBarHeight = value))
         });
 
-        var reset = new Button { Content = "恢复跟随" };
-        AutomationProperties.SetName(reset, "此屏 Dock 与顶栏恢复跟随全局");
+        var reset = new Button { Content = "恢复默认" };
+        AutomationProperties.SetName(reset, "恢复此屏 Dock 与顶栏的默认设置");
         reset.Click += (_, _) =>
         {
             bridge.ApplySurfacePreferences(monitorKey, new ScreenSurfacePreferences());
@@ -123,8 +140,8 @@ public partial class SettingsWindow
         };
         group.Items.Add(new SettingsRow
         {
-            Header = "恢复跟随全局",
-            Description = "清除这块显示器的 Dock 和顶栏单独设置。",
+            Header = "恢复默认设置",
+            Description = "清除此屏的栏设置，恢复按全局目标显示。",
             Content = reset
         });
         return group;
@@ -242,6 +259,8 @@ public partial class SettingsWindow
 
     private void SetScreenProfileStatus(string message)
     {
+        MonitorProfileStatusText.Text = message;
+        MonitorProfileStatusText.Visibility = string.IsNullOrEmpty(message) ? Visibility.Collapsed : Visibility.Visible;
         if (ComponentSettingsStatusText is not null)
         {
             ComponentSettingsStatusText.Text = message;

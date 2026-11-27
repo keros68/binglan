@@ -337,8 +337,8 @@ internal static class SettingsWindowTests
                 .Where(item => item.Tag is string)
                 .Select(item => (string)item.Tag)
                 .ToList();
-            Assert(tags.SequenceEqual(["Scheme", "Components", "TopBar", "Dock", "Taskbar", "Launcher", "Appearance", "General"]),
-                "导航应依次为桌面方案、桌面卡片、顶部信息条、冰蓝 Dock、Windows 任务栏、冰蓝总览卡、外观样式、通用设置");
+            Assert(tags.SequenceEqual(["Scheme", "Displays", "Components", "TopBar", "Dock", "Taskbar", "Launcher", "Appearance", "General"]),
+                "显示器设置应与桌面卡片分开，且保留其他导航项顺序");
 
             navigation.SelectedItem = navigation.Items
                 .OfType<ListBoxItem>()

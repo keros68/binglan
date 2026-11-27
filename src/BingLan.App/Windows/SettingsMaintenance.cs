@@ -43,7 +43,7 @@ public sealed record MoveWidgetResult(
     WidgetWindowBase? ResultingWindow);
 
 /// <summary>Current effective state of both surfaces on one physical monitor.</summary>
-public sealed record ScreenSurfaceStatus(string DockStatus, string TopBarStatus);
+public sealed record ScreenSurfaceStatus(string DockStatus, string TopBarStatus, bool DockEnabled = false, bool TopBarEnabled = false);
 
 /// <summary>A saved offline desktop that may be associated with a blank connected monitor.</summary>
 public sealed record OfflineScreenProfileOption(string ScreenKey, string DisplayLabel, int CardCount, bool CanBind);

@@ -95,8 +95,8 @@ internal sealed class DockHost : IDisposable
         {
             var preferences = ReadScreenPreferences?.Invoke();
             var targets = SurfaceMonitorTargetResolver.ResolveTargets(
-                _state.MonitorKey, _state.MonitorDeviceName, _state.IsEnabled,
-                preferences, screen => screen.DockEnabled);
+                _state.MonitorKey, _state.IsEnabled,
+                preferences, screen => screen.DockEnableMode);
             var activeKeys = targets.Select(target => target.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
             foreach (var key in _windows.Keys.Where(key => !activeKeys.Contains(key)).ToArray())
             {
@@ -186,7 +186,7 @@ internal sealed class DockHost : IDisposable
                 {
                     return;
                 }
-                preferences.DockEnabled = false;
+                preferences.DockEnableMode = ScreenSurfaceEnableMode.Disabled;
                 Close(target.Key);
             }
             else

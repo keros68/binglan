@@ -412,7 +412,7 @@ public partial class IceBlueDockWindow : Window
             ? MonitorCatalog.GetAll().FirstOrDefault(candidate =>
                 candidate.MonitorHandle == selection.Monitor.MonitorHandle
                 && string.Equals(candidate.DeviceName, selection.Monitor.DeviceName, StringComparison.OrdinalIgnoreCase))
-            : SurfaceMonitorTargetResolver.Resolve(_state.MonitorKey, _state.MonitorDeviceName);
+            : SurfaceMonitorTargetResolver.Resolve(_state.MonitorKey);
         if (monitor is null)
         {
             Close();
@@ -716,7 +716,62 @@ public partial class IceBlueDockWindow : Window
     private bool ClearActivatedAttention(nint window)
     {
         var active = window != 0 ? window : DockNativeMethods.GetForegroundWindow();
-        return active != 0 && _attention.Cleared(active, EffectiveAttentionProcessId(active));
+        if (active == 0)
+        {
+            return false;
+        }
+
+        DockNativeMethods.GetWindowThreadProcessId(active, out var rawProcessId);
+        var executablePath = rawProcessId != 0 ? WindowCatalog.ExecutablePathOf(rawProcessId) : null;
+        var effectivePid = rawProcessId != 0
+            ? AttentionFlashRules.EffectiveProcessId(rawProcessId, executablePath)
+            : 0;
+        var removed = _attention.Cleared(active, effectivePid);
+
+        // If a multi-process app (such as WeChat 4.x) flashed via a child helper process,
+        // resolve the instance tree off the UI thread and clear only that instance's helper mark
+        // without blocking WndProc or clearing a separate dual-opened instance.
+        if (_attention.Count > 0
+            && effectivePid != 0
+            && _attention.HasMarkedExecutableMatching(executablePath))
+        {
+            var activeHandle = active;
+            var activePid = effectivePid;
+            var activeExe = executablePath;
+            _ = Task.Run(() => WindowCommandService.ResolveInstanceProcessIds(activePid, activeExe))
+                .ContinueWith(
+                    task =>
+                    {
+                        if (!task.IsCompletedSuccessfully || _closing)
+                        {
+                            return;
+                        }
+
+                        var instancePids = task.Result;
+                        if (instancePids.Count == 0)
+                        {
+                            return;
+                        }
+
+                        _ = Dispatcher.BeginInvoke(() =>
+                        {
+                            if (_closing || _attention.Count == 0)
+                            {
+                                return;
+                            }
+
+                            if (_attention.Cleared(activeHandle, instancePids))
+                            {
+                                _lastSignature = string.Empty;
+                                _lastStructureKey = string.Empty;
+                                RefreshWindows();
+                            }
+                        });
+                    },
+                    TaskScheduler.Default);
+        }
+
+        return removed;
     }
 
     private static uint EffectiveAttentionProcessId(nint window)
@@ -1641,12 +1696,75 @@ public partial class IceBlueDockWindow : Window
 
     private async void Invoke(DockItem item)
     {
+        var displayName = DisplayNameOf(item);
+        var attentionEntries = _attention.EntriesFor(item);
+        if (attentionEntries.Count > 0)
+        {
+            var latest = attentionEntries[0];
+            HashSet<uint> latestInstancePids;
+            if (latest.ProcessId != 0
+                && (item.Group is null
+                    || item.Group.Windows.Count > 1
+                    || !item.Group.Windows.Any(w => w.Handle == latest.Window || w.ProcessId == latest.ProcessId)))
+            {
+                latestInstancePids = await Task.Run(() =>
+                    WindowCommandService.ResolveInstanceProcessIds(latest.ProcessId, latest.ExecutablePath));
+            }
+            else
+            {
+                latestInstancePids = latest.ProcessId != 0
+                    ? new HashSet<uint> { latest.ProcessId }
+                    : [];
+            }
+
+            if (item.Group is not null)
+            {
+                var latestInGroup = item.Group.Windows.Any(window =>
+                    window.Handle == latest.Window
+                    || (window.ProcessId != 0 && latestInstancePids.Contains(window.ProcessId)));
+
+                if (latestInGroup)
+                {
+                    var result = await WindowCommandService.ToggleAsync(
+                        item.Group,
+                        _toggleCooldown,
+                        displayName,
+                        window => ScoreAttentionCandidate(window, latest, latestInstancePids));
+                    if (!result.NoLiveWindows)
+                    {
+                        Report(result);
+                        return;
+                    }
+
+                    RefreshWindows();
+                }
+                else
+                {
+                    // The most recent alert belongs to another instance hidden in the tray
+                    // (e.g. a 2nd WeChat account while the 1st is open). Do not activate the
+                    // wrong visible instance; route through instance-scoped tray reveal instead.
+                    var targetPin = item.Pinned ?? CreateTransientRevealPin(item, latest.ExecutablePath, displayName);
+                    if (targetPin is not null)
+                    {
+                        await RevealOrLaunchWithAttentionAsync(targetPin, latest, latestInstancePids);
+                        return;
+                    }
+                }
+            }
+
+            if (item.Pinned is not null)
+            {
+                await RevealOrLaunchWithAttentionAsync(item.Pinned, latest, latestInstancePids);
+                return;
+            }
+        }
+
         if (item.Group is not null)
         {
             var result = await WindowCommandService.ToggleAsync(
                 item.Group,
                 _toggleCooldown,
-                DisplayNameOf(item),
+                displayName,
                 _attention.AttentionPriority);
             if (!result.NoLiveWindows)
             {
@@ -1684,6 +1802,82 @@ public partial class IceBlueDockWindow : Window
         {
             _revealPending = false;
         }
+    }
+
+    private int ScoreAttentionCandidate(
+        TrackedWindow window,
+        AttentionEntry latest,
+        HashSet<uint> latestInstancePids)
+    {
+        if (window.Handle != 0 && window.Handle == latest.Window)
+        {
+            return 4;
+        }
+        if (window.ProcessId != 0 && latestInstancePids.Contains(window.ProcessId))
+        {
+            return 3;
+        }
+        return _attention.AttentionPriority(window);
+    }
+
+    private async Task RevealOrLaunchWithAttentionAsync(
+        DockPinnedApp targetPin,
+        AttentionEntry latest,
+        HashSet<uint> latestInstancePids)
+    {
+        if (_revealPending)
+        {
+            return;
+        }
+
+        _revealPending = true;
+        try
+        {
+            var result = await WindowCommandService.RevealOrLaunchAsync(
+                targetPin,
+                preferredProcessId: latest.ProcessId != 0 ? latest.ProcessId : null,
+                launchCooldown: _launchCooldown);
+            if (!result.Succeeded)
+            {
+                // Clear the notified tray-hidden alert so subsequent clicks are not permanently
+                // trapped on the hint; a new flash will re-mark it immediately.
+                if (_attention.Cleared(latest.Window, latestInstancePids))
+                {
+                    _lastSignature = string.Empty;
+                    _lastStructureKey = string.Empty;
+                    RefreshWindows();
+                }
+            }
+            Report(result);
+        }
+        finally
+        {
+            _revealPending = false;
+        }
+    }
+
+    private static DockPinnedApp? CreateTransientRevealPin(
+        DockItem item,
+        string? attentionExecutablePath,
+        string displayName)
+    {
+        var executablePath = !string.IsNullOrWhiteSpace(attentionExecutablePath)
+            ? attentionExecutablePath
+            : item.Group?.Windows
+                .Select(window => window.ExecutablePath)
+                .FirstOrDefault(path => !string.IsNullOrWhiteSpace(path));
+        if (string.IsNullOrWhiteSpace(executablePath)
+            || DockAppResolver.IsFrameHost(executablePath)
+            || DockAppResolver.IsPackagedPath(executablePath))
+        {
+            return null;
+        }
+
+        return new DockPinnedApp
+        {
+            DisplayName = displayName,
+            ExecutablePath = executablePath
+        };
     }
 
     private async Task FocusWindowFromMenuAsync(TrackedWindow window, string displayName)
@@ -2178,7 +2372,7 @@ public partial class IceBlueDockWindow : Window
     {
         var result = await WindowCommandService.QuitAsync(item, name, _items);
         Report(result);
-        if (!_closing && result.Succeeded)
+        if (!_closing)
         {
             RefreshWindows();
         }

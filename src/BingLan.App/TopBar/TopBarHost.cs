@@ -111,8 +111,8 @@ internal sealed class TopBarHost : IDisposable
         try
         {
             var targets = SurfaceMonitorTargetResolver.ResolveTargets(
-                _state.MonitorKey, _state.MonitorDeviceName, _state.IsEnabled,
-                ReadScreenPreferences?.Invoke(), preferences => preferences.TopBarEnabled);
+                _state.MonitorKey, _state.IsEnabled,
+                ReadScreenPreferences?.Invoke(), preferences => preferences.TopBarEnableMode);
             var desired = targets.Select(target => target.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
             foreach (var key in _windows.Keys.Where(key => !desired.Contains(key)).ToArray())
             {
@@ -140,7 +140,7 @@ internal sealed class TopBarHost : IDisposable
                     _notify("顶部信息条未能打开，已恢复屏幕工作区。");
                 }
             }
-            var baseline = SurfaceMonitorTargetResolver.Resolve(_state.MonitorKey, _state.MonitorDeviceName);
+            var baseline = SurfaceMonitorTargetResolver.Resolve(_state.MonitorKey);
             var liveTargets = targets.Where(target => _windows.ContainsKey(target.Key)).ToArray();
             var ownerKey = liveTargets.FirstOrDefault(target => target.Monitor.MonitorHandle == baseline?.MonitorHandle)?.Key
                 ?? liveTargets.FirstOrDefault(target => target.Monitor.IsPrimary)?.Key

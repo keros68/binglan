@@ -131,6 +131,12 @@ internal static class Program
         }
         if (Environment.GetCommandLineArgs().Contains("--multi-screen-settings-preview"))
         {
+            var startWithSharedDesktop = Environment.GetCommandLineArgs().Contains("--shared-desktop");
+            if (Environment.GetCommandLineArgs().Contains("--simulated-monitors"))
+            {
+                var monitors = MultiScreenUiTests.CreateDualMonitors(@"\\.\DISPLAY1");
+                MonitorIdentityResolver.ResolveOverrideForTests = () => monitors;
+            }
             var dataDirectory = Path.Combine(Path.GetTempPath(), "BingLan-MultiScreen-Preview-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(dataDirectory);
             var seed = LocalStateStore.CreateDefault();
@@ -138,8 +144,8 @@ internal static class Program
             seed.LauncherEnabled = false;
             seed.MultiScreen = new MultiScreenState
             {
-                IsEnabled = true,
-                RootMonitorKey = "DISPLAY#PREVIEW_ROOT#OFFLINE"
+                IsEnabled = !startWithSharedDesktop,
+                RootMonitorKey = startWithSharedDesktop ? null : "DISPLAY#PREVIEW_ROOT#OFFLINE"
             };
             var note = NoteService.CreateDefaultWidget();
             note.Title = "原屏预览便签";
@@ -5503,8 +5509,8 @@ internal static class Program
         {
             Monitors =
             [
-                new OnboardingMonitor(@"\\.\DISPLAY1", "主显示器 1 · 2560×1440 · 125%", true),
-                new OnboardingMonitor(@"\\.\DISPLAY2", "显示器 2 · 1920×1080 · 100%", false)
+                new OnboardingMonitor(null, "跟随 Windows 主显示器", true),
+                new OnboardingMonitor("DISPLAY#TESTMON#2", "显示器 2 · 1920×1080 · 100%", false)
             ],
             ApplyMonitor = device => dockMonitor = device,
             DownloadsFolder = Path.GetTempPath(),
@@ -5530,7 +5536,9 @@ internal static class Program
             Assert(monitorSelector.Items.Count == 2 && monitorSelector.SelectedIndex == 0, "应列出显示器并默认选中主显示器");
             monitorSelector.SelectedIndex = 1;
             Pump();
-            Assert(dockMonitor == @"\\.\DISPLAY2", "选择显示器应用于 Dock");
+            Assert(dockMonitor == "DISPLAY#TESTMON#2", "选择副屏时应将物理身份应用于 Dock");
+            monitorSelector.SelectedIndex = 0;
+            Assert(dockMonitor is null, "选择跟随主显示器时应清除固定目标");
             var next = Require<Button>(window, "NextButton");
             Require<RadioButton>(window, "GlacierPresetRadio").IsChecked = true;
             next.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));

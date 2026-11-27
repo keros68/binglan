@@ -140,15 +140,7 @@ public sealed partial class WidgetCoordinator
 
             return _multiScreen?.ResetPlacementForScreen(normalized, window, kind) ?? false;
         },
-        CopyPrimaryProfileToScreen = targetScreenKey =>
-        {
-            if (_multiScreen is null && ScreenProfileAccessor.IsMultiScreenEnabled(_state))
-            {
-                SyncMultiScreenRuntime();
-            }
-            return _multiScreen?.CopyPrimaryProfileToScreen(targetScreenKey)
-                ?? "请先开启多屏模式并连接副屏";
-        },
+        CopyPrimaryProfileToScreen = CopyPrimarySettingsToScreen,
         MoveWidgetToScreen = (window, targetScreenKey) =>
         {
             if (_multiScreen is null && ScreenProfileAccessor.IsMultiScreenEnabled(_state))
@@ -166,8 +158,8 @@ public sealed partial class WidgetCoordinator
 
     private IReadOnlyList<MonitorCardOption> BuildMonitorCardOptions()
     {
-        // Zero QueryDisplayConfig guarantee: when multi-screen is disabled, never call ResolveConnected().
-        if (!ScreenProfileAccessor.IsMultiScreenEnabled(_state))
+        var enabled = ScreenProfileAccessor.IsMultiScreenEnabled(_state);
+        if (!enabled && !MonitorIdentityResolver.HasMultipleMonitors())
         {
             return [];
         }
@@ -176,8 +168,9 @@ public sealed partial class WidgetCoordinator
         var options = new List<MonitorCardOption>(monitors.Count);
         foreach (var monitor in monitors.Where(m => m.IsPersistentIdentity))
         {
-            var screenKey = _multiScreen is { } host ? host.GetScreenKeyForMonitor(monitor) : monitor.MonitorKey;
-            var cardCount = CountVisibleCardsOnScreen(screenKey);
+            var screenKey = enabled && _multiScreen is { } host ? host.GetScreenKeyForMonitor(monitor)
+                : !enabled && monitor.IsPrimary ? null : monitor.MonitorKey;
+            var cardCount = enabled || monitor.IsPrimary ? CountVisibleCardsOnScreen(screenKey) : 0;
             var shortLabel = monitor.IsPrimary ? "主屏" : $"副屏 {monitor.DisplayIndex}";
             options.Add(new MonitorCardOption(
                 ScreenKey: screenKey,

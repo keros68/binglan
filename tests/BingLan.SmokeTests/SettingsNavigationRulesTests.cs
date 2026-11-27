@@ -10,7 +10,7 @@ internal static class SettingsNavigationRulesTests
 {
     public static void Run()
     {
-        // 1. 导航结构：首页在最上，中间六页按屏幕位置排列，通用设置单独放最后（前面一条分隔线）。
+        // 1. 导航结构：首页和显示器在最上，通用设置单独放最后。
         var groups = SettingsNavigationRules.Groups;
         Check(groups.Count == 2, $"导航分组应为 2 组，实际 {groups.Count} 组");
         Check(groups.Select(group => group.GroupKey).SequenceEqual(
@@ -19,6 +19,7 @@ internal static class SettingsNavigationRulesTests
 
         Check(groups[0].Pages.Select(page => (page.PageKey, page.Title)).SequenceEqual([
                 (SettingsNavigationRules.SchemePageKey, "桌面方案"),
+                (SettingsNavigationRules.DisplaysPageKey, "显示器"),
                 (SettingsNavigationRules.ComponentsPageKey, "桌面卡片"),
                 (SettingsNavigationRules.TopBarPageKey, "顶部信息条"),
                 (SettingsNavigationRules.DockPageKey, "冰蓝 Dock"),
@@ -33,7 +34,7 @@ internal static class SettingsNavigationRulesTests
             "末尾分组只应包含通用设置");
 
         var flatPages = SettingsNavigationRules.Pages;
-        Check(flatPages.Count == 8, $"扁平页面清单应为 8 页，实际 {flatPages.Count} 页");
+        Check(flatPages.Count == 9, $"扁平页面清单应为 9 页，实际 {flatPages.Count} 页");
         Check(flatPages.SequenceEqual(groups.SelectMany(group => group.Pages)),
             "Pages 清单必须与 Groups 展开顺序完全一致");
 
@@ -81,6 +82,8 @@ internal static class SettingsNavigationRulesTests
         // 3. 深链解析：Bars/Dock/TopBar/Taskbar 分别映射到独立页，未知深链安全回退首页。
         Check(SettingsNavigationRules.ResolveLink("Bars") == (SettingsNavigationRules.DockPageKey, null),
             "旧入口 Bars 应映射到 Dock 页");
+        Check(SettingsNavigationRules.ResolveLink("displays") == (SettingsNavigationRules.DisplaysPageKey, null),
+            "显示器入口应直达独立设置页");
         Check(SettingsNavigationRules.ResolveLink("Dock") == (SettingsNavigationRules.DockPageKey, null)
                 && SettingsNavigationRules.ResolveLink("TopBar") == (SettingsNavigationRules.TopBarPageKey, null)
                 && SettingsNavigationRules.ResolveLink("Taskbar") == (SettingsNavigationRules.TaskbarPageKey, null),
@@ -100,23 +103,22 @@ internal static class SettingsNavigationRulesTests
             "未知深链应安全回退到首页 Scheme 而非空白页");
 
         // 4. 键盘上下/Home/End 移动时跳过不可点击的分隔线与隐藏项。
-        // [0:Scheme, 1:Components, 2:TopBar, 3:Dock, 4:Taskbar, 5:Launcher, 6:Appearance, 7:分隔线, 8:General]
-        bool[] fullSidebar = [true, true, true, true, true, true, true, false, true];
-        Check(SettingsNavigationRules.FindNextSelectableIndex(fullSidebar, 6, +1) == 8,
+        bool[] fullSidebar = [true, true, true, true, true, true, true, true, false, true];
+        Check(SettingsNavigationRules.FindNextSelectableIndex(fullSidebar, 7, +1) == 9,
             "向下移动从外观样式应跳过分隔线落到通用设置");
-        Check(SettingsNavigationRules.FindNextSelectableIndex(fullSidebar, 8, -1) == 6,
+        Check(SettingsNavigationRules.FindNextSelectableIndex(fullSidebar, 9, -1) == 7,
             "向上移动从通用设置应跳过分隔线落到外观样式");
         Check(SettingsNavigationRules.FindNextSelectableIndex(fullSidebar, 0, -1) == 0,
             "位于首项时向上移动应停在首项");
-        Check(SettingsNavigationRules.FindNextSelectableIndex(fullSidebar, 8, +1) == 8,
+        Check(SettingsNavigationRules.FindNextSelectableIndex(fullSidebar, 9, +1) == 9,
             "位于末项时向下移动应停在末项");
         Check(SettingsNavigationRules.FindEdgeSelectableIndex(fullSidebar, fromStart: true) == 0
-                && SettingsNavigationRules.FindEdgeSelectableIndex(fullSidebar, fromStart: false) == 8,
+                && SettingsNavigationRules.FindEdgeSelectableIndex(fullSidebar, fromStart: false) == 9,
             "Home/End 应分别落到首个与最后一个可选导航项");
 
-        bool[] withoutTopBar = [true, true, false, true, true, true, true, false, true];
-        Check(SettingsNavigationRules.FindNextSelectableIndex(withoutTopBar, 1, +1) == 3
-                && SettingsNavigationRules.FindNextSelectableIndex(withoutTopBar, 3, -1) == 1,
+        bool[] withoutTopBar = [true, true, true, false, true, true, true, true, false, true];
+        Check(SettingsNavigationRules.FindNextSelectableIndex(withoutTopBar, 2, +1) == 4
+                && SettingsNavigationRules.FindNextSelectableIndex(withoutTopBar, 4, -1) == 2,
             "隐藏顶部信息条时上下键应同时跳过隐藏项");
 
         // 5. 本地持久化 LastSettingsPage 迁移（Bars -> Dock，未知键 -> Scheme，不进入主题包）。

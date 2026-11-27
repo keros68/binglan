@@ -2115,7 +2115,7 @@ public partial class SettingsWindow : Window
 
     private void ShowPage(string page)
     {
-        if (SchemePage is null || ComponentsPage is null || AppearancePage is null
+        if (SchemePage is null || DisplaysPage is null || ComponentsPage is null || AppearancePage is null
             || DockPage is null || TopBarPage is null || TaskbarPage is null
             || LauncherPage is null || GeneralPage is null)
         {
@@ -2126,6 +2126,7 @@ public partial class SettingsWindow : Window
         InvalidatePendingReveal();
         SettingsSearchPopup.IsOpen = false;
         SchemePage.Visibility = page == SettingsNavigationRules.SchemePageKey ? Visibility.Visible : Visibility.Collapsed;
+        DisplaysPage.Visibility = page == SettingsNavigationRules.DisplaysPageKey ? Visibility.Visible : Visibility.Collapsed;
         ComponentsPage.Visibility = page == SettingsNavigationRules.ComponentsPageKey ? Visibility.Visible : Visibility.Collapsed;
         AppearancePage.Visibility = page == SettingsNavigationRules.AppearancePageKey ? Visibility.Visible : Visibility.Collapsed;
         DockPage.Visibility = page == SettingsNavigationRules.DockPageKey ? Visibility.Visible : Visibility.Collapsed;
@@ -2154,6 +2155,10 @@ public partial class SettingsWindow : Window
             RefreshBackupList();
         }
 
+        if (page is SettingsNavigationRules.ComponentsPageKey or SettingsNavigationRules.DisplaysPageKey)
+        {
+            RefreshMultiScreenUi();
+        }
         if (page == SettingsNavigationRules.ComponentsPageKey)
         {
             RefreshComponentList(
@@ -2172,6 +2177,7 @@ public partial class SettingsWindow : Window
     private (FrameworkElement Page, string Tag, string Title)[] SearchPages =>
     [
         (SchemePage, SettingsNavigationRules.SchemePageKey, "桌面方案"),
+        (DisplaysPage, SettingsNavigationRules.DisplaysPageKey, "显示器"),
         (ComponentsPage, SettingsNavigationRules.ComponentsPageKey, "桌面卡片"),
         (AppearancePage, SettingsNavigationRules.AppearancePageKey, "外观样式"),
         (DockPage, SettingsNavigationRules.DockPageKey, "冰蓝 Dock"),
@@ -3362,7 +3368,7 @@ public partial class SettingsWindow : Window
 
             if (DockPage.Visibility == Visibility.Visible)
             {
-                LoadSurfaceMonitorChoices(DockMonitorComboBox, _dockState.MonitorKey, _dockState.MonitorDeviceName);
+                LoadSurfaceMonitorChoices(DockMonitorComboBox, _dockState.MonitorKey);
             }
 
             RefreshDockPinnedList();
@@ -3374,12 +3380,12 @@ public partial class SettingsWindow : Window
         }
     }
 
-    private sealed record SurfaceMonitorChoice(string? MonitorKey, string? LegacyDeviceName = null);
+    private sealed record SurfaceMonitorChoice(string? MonitorKey);
 
-    private static void LoadSurfaceMonitorChoices(ComboBox combo, string? monitorKey, string? legacyDeviceName)
+    private static void LoadSurfaceMonitorChoices(ComboBox combo, string? monitorKey)
     {
         combo.Items.Clear();
-        var followsPrimary = SurfaceMonitorTargetRules.FollowsPrimary(monitorKey, legacyDeviceName);
+        var followsPrimary = SurfaceMonitorTargetRules.FollowsPrimary(monitorKey);
         var followItem = new ComboBoxItem
         {
             Content = "跟随 Windows 主显示器",
@@ -3407,10 +3413,8 @@ public partial class SettingsWindow : Window
         {
             var item = new ComboBoxItem
             {
-                Content = string.IsNullOrWhiteSpace(monitorKey)
-                    ? $"原显示器选择待确认（{legacyDeviceName}），请重新选择"
-                    : "固定显示器未连接，连接后自动恢复",
-                Tag = new SurfaceMonitorChoice(monitorKey, legacyDeviceName)
+                Content = "固定显示器未连接，连接后自动恢复",
+                Tag = new SurfaceMonitorChoice(monitorKey)
             };
             combo.Items.Add(item);
             combo.SelectedItem = item;
@@ -3426,11 +3430,11 @@ public partial class SettingsWindow : Window
         {
             if (DockPage.Visibility == Visibility.Visible)
             {
-                LoadSurfaceMonitorChoices(DockMonitorComboBox, _dockState.MonitorKey, _dockState.MonitorDeviceName);
+                LoadSurfaceMonitorChoices(DockMonitorComboBox, _dockState.MonitorKey);
             }
             if (TopBarPage.Visibility == Visibility.Visible && _topBarState is { } state)
             {
-                LoadSurfaceMonitorChoices(TopBarMonitorComboBox, state.MonitorKey, state.MonitorDeviceName);
+                LoadSurfaceMonitorChoices(TopBarMonitorComboBox, state.MonitorKey);
             }
         }
         finally
@@ -3530,7 +3534,7 @@ public partial class SettingsWindow : Window
             && DockMonitorComboBox.SelectedItem is ComboBoxItem { Tag: SurfaceMonitorChoice choice })
         {
             _dockState.MonitorKey = choice.MonitorKey;
-            _dockState.MonitorDeviceName = choice.LegacyDeviceName;
+            _dockState.MonitorDeviceName = null;
         }
         ApplyDockChange(_dockState.IsEnabled ? "已应用" : "冰蓝 Dock 已关闭");
         LoadDesktopMode();
@@ -3668,7 +3672,7 @@ public partial class SettingsWindow : Window
 
             if (TopBarPage.Visibility == Visibility.Visible)
             {
-                LoadSurfaceMonitorChoices(TopBarMonitorComboBox, state.MonitorKey, state.MonitorDeviceName);
+                LoadSurfaceMonitorChoices(TopBarMonitorComboBox, state.MonitorKey);
             }
 
             LoadTopBarVisualEditor();
@@ -3701,7 +3705,7 @@ public partial class SettingsWindow : Window
             && TopBarMonitorComboBox.SelectedItem is ComboBoxItem { Tag: SurfaceMonitorChoice choice })
         {
             state.MonitorKey = choice.MonitorKey;
-            state.MonitorDeviceName = choice.LegacyDeviceName;
+            state.MonitorDeviceName = null;
         }
         LoadTopBarVisualEditor();
         LoadTopBarOrderList();

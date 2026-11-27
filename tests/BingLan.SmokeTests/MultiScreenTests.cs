@@ -21,9 +21,11 @@ internal static class MultiScreenTests
         TestLegacySchemaMigrationAndNullZeroOverhead();
         TestLegacyRootBindingAndPreservation();
         TestSurfacePreferencesAndOfflineAssociation();
+        TestFollowGlobalSurfaceSwitches();
         TestMonitorKeyNormalizationAndBlankProfile();
         TestLocalDipToPhysicalBoundsNegativeYAndMixedDpi();
         TestCopyPrimaryProfileAndCrossScreenMove();
+        TestCopySettingsFromCurrentPrimary();
         TestThemeExportImportDoesNotTouchMultiScreen();
         TestWeatherServiceConcurrentDeduplication();
         TestMonitorLocalPlacementAndPortMigrationRules();
@@ -448,6 +450,45 @@ internal static class MultiScreenTests
             CancellationToken cancellationToken) => send(request, cancellationToken);
     }
 
+    private static void TestCopySettingsFromCurrentPrimary()
+    {
+        var state = LocalStateStore.CreateDefault();
+        state.MultiScreen = new MultiScreenState { IsEnabled = true, RootMonitorKey = "DISPLAY#ROOT#1" };
+        var rootExperience = state.DesktopExperience;
+        var primary = ScreenProfileAccessor.EnsureScreenProfile(state, SecondaryKey);
+        primary.Experience.ActivePreset = DesktopLayoutPreset.CenterClock;
+        var weather = primary.Experience.GetComponent(DesktopComponentKind.Weather);
+        weather.IsVisible = true;
+        weather.IsLocked = true;
+        weather.FontScale = 1.4;
+        var sourcePixels = new PixelRect(2150, 30, 2490, 210);
+        ScreenProfileAccessor.RecordMonitorLocalPlacement(weather.Placement, sourcePixels, SecondaryWorkPx, SecondaryDpi);
+        var targetNote = new NoteWidgetState { Title = "本屏便签", Content = "保留正文" };
+        state.NoteWidgets.Add(targetNote);
+        primary.Experience.GetComponent(DesktopComponentKind.Todo).IsVisible = true;
+        var sourceTodo = TodoService.CreateDefaultWidget();
+        sourceTodo.ScreenKey = SecondaryKey;
+        sourceTodo.Items.Add(new TodoItemState { Text = "主屏私有待办" });
+        state.TodoWidgets.Add(sourceTodo);
+        state.TodoWidgets.RemoveAll(todo => todo.ScreenKey is null);
+
+        var (bounds, createdTodo) = ScreenProfileAccessor.CopyScreenCardSettings(state,
+            (SecondaryKey, SecondaryWorkPx, SecondaryDpi), (null, PrimaryWorkPx, PrimaryDpi), "primary-swapped");
+        var copied = rootExperience.GetComponent(DesktopComponentKind.Weather);
+        var copiedBounds = bounds[DesktopComponentKind.Weather];
+        Check(ReferenceEquals(state.DesktopExperience, rootExperience)
+            && rootExperience.ActivePreset == DesktopLayoutPreset.CenterClock && copied.IsVisible
+            && copied.IsLocked && copied.FontScale == 1.4 && copiedBounds.Width == 425 && copiedBounds.Height == 225
+            && copiedBounds.Left >= PrimaryWorkPx.Left && copiedBounds.Right <= PrimaryWorkPx.Right,
+            "主屏角色互换后应从当前主屏复制自定义样式、位置和尺寸，按目标缩放并保留设置引用");
+        Check(state.NoteWidgets.Single() == targetNote && targetNote.Content == "保留正文"
+            && sourceTodo.Items.Single().Text == "主屏私有待办"
+            && createdTodo is { ScreenKey: null } && createdTodo.Items.Count == 0,
+            "复制设置应保留目标屏便签，并给副屏创建独立空待办");
+        copied.FontScale = 1;
+        Check(weather.FontScale == 1.4, "调整副屏不能改动复制来源");
+    }
+
     private static void TestSurfacePreferencesAndOfflineAssociation()
     {
         const string root = "DISPLAY#ROOT#1";
@@ -505,6 +546,35 @@ internal static class MultiScreenTests
         Check(DesktopModeRules.TopBarDuplicatesCard(modules, DesktopComponentKind.Weather)
               && !DesktopModeRules.TopBarDuplicatesCard(modules, DesktopComponentKind.TimeDate),
             "只隐藏顶栏确实启用的重复数据卡片");
+    }
+
+    private static void TestFollowGlobalSurfaceSwitches()
+    {
+        var state = LocalStateStore.CreateDefault();
+        var screen = new ScreenSurfacePreferences
+        {
+            DockEnableMode = ScreenSurfaceEnableMode.FollowGlobal,
+            TopBarEnableMode = ScreenSurfaceEnableMode.FollowGlobal
+        };
+        var persisted = JsonSerializer.Deserialize<ScreenSurfacePreferences>(JsonSerializer.Serialize(screen))!;
+        persisted.Normalize();
+        Check(!persisted.IsEmpty && persisted.DockEnableMode == ScreenSurfaceEnableMode.FollowGlobal
+            && persisted.TopBarEnableMode == ScreenSurfaceEnableMode.FollowGlobal,
+            "只更改此屏跟随全局时应保留逐屏状态");
+
+        DesktopModeRules.Apply(DesktopMode.AppleStyle, state.Dock, state.Taskbar, state.TopBar, state.DesktopExperience,
+            updateInformationCards: false);
+        Check(SurfaceMonitorTargetRules.IsEnabledOnMonitor(state.Dock.IsEnabled, false, persisted.DockEnableMode)
+            && SurfaceMonitorTargetRules.IsEnabledOnMonitor(state.TopBar.IsEnabled, false, persisted.TopBarEnableMode)
+            && !SurfaceMonitorTargetRules.IsEnabledOnMonitor(state.Dock.IsEnabled, false, ScreenSurfaceEnableMode.GlobalTarget),
+            "苹果式应点亮选择跟随全局的副屏，默认目标模式仍只在选定屏显示");
+
+        DesktopModeRules.Apply(DesktopMode.WindowsNative, state.Dock, state.Taskbar, state.TopBar, state.DesktopExperience,
+            updateInformationCards: false);
+        Check(!SurfaceMonitorTargetRules.IsEnabledOnMonitor(state.Dock.IsEnabled, false, persisted.DockEnableMode)
+            && !SurfaceMonitorTargetRules.IsEnabledOnMonitor(state.TopBar.IsEnabled, false, persisted.TopBarEnableMode)
+            && SurfaceMonitorTargetRules.IsEnabledOnMonitor(state.Dock.IsEnabled, false, ScreenSurfaceEnableMode.Enabled),
+            "关闭全局时此屏跟随同步关闭，逐屏明确开启时保持显示");
     }
 
     private static void TestThemeExportImportDoesNotTouchMultiScreen()

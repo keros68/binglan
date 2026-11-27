@@ -38,11 +38,28 @@ internal static class WindowCommandService
             .Select(entry => entry.Window)
             .FirstOrDefault(window => window.Handle == foreground
                 || (foregroundRoot != 0 && GetRootOwnerOrSelf(window.Handle) == foregroundRoot));
-        Func<nint, int>? handlePriority = attentionPriority is null
-            ? null
-            : handle => live.FirstOrDefault(entry => entry.Window.Handle == handle).Window is { } matched
-                ? attentionPriority(matched)
-                : 0;
+        Func<nint, int>? handlePriority = null;
+        if (attentionPriority is not null)
+        {
+            var priorities = new Dictionary<nint, int>(live.Count);
+            var maxActivatablePriority = 0;
+            foreach (var entry in live)
+            {
+                var priority = attentionPriority(entry.Window);
+                priorities[entry.Window.Handle] = priority;
+                if (entry.Candidate.CanActivateDirectly && priority > maxActivatablePriority)
+                {
+                    maxActivatablePriority = priority;
+                }
+            }
+
+            if (maxActivatablePriority > 0)
+            {
+                handlePriority = handle => priorities.TryGetValue(handle, out var p) && p == maxActivatablePriority
+                    ? 2
+                    : 0;
+            }
+        }
         var selected = WindowActivationRules.SelectActivationTarget(
             live.Select(entry => entry.Candidate).ToArray(),
             handlePriority)!;
@@ -328,12 +345,20 @@ internal static class WindowCommandService
 
         var processIds = hierarchy.Select(entry => entry.ProcessId).ToHashSet();
 
-        // If a specific flashing instance was targeted (e.g. from the top bar), check all
-        // processes belonging to that root instance before falling back to any global hotkey
-        // (an alert may come from a hidden helper process while the main process has a window).
+        // If a specific flashing instance was targeted (e.g. from the top bar or dock attention),
+        // check all processes belonging to that root instance before falling back to any global
+        // hotkey (an alert may come from a hidden helper process while the main process has a window).
         if (preferredProcessId is { } targetPid && targetPid != 0)
         {
-            var instancePids = TrayAppRevealRules.InstanceProcessIdsFor(hierarchy, targetPid);
+            var instancePids = await Task.Run(() =>
+            {
+                var resolved = ResolveInstanceProcessIds(targetPid, app.ExecutablePath);
+                foreach (var pid in TrayAppRevealRules.InstanceProcessIdsFor(hierarchy, targetPid))
+                {
+                    resolved.Add(pid);
+                }
+                return resolved;
+            });
             var preferredShown = FindShownWindow(instancePids);
             if (preferredShown != 0)
             {
@@ -352,6 +377,11 @@ internal static class WindowCommandService
         }
 
         var rootCount = TrayAppRevealRules.CountRootInstances(hierarchy);
+        if (hotkey is not null)
+        {
+            var hotkeyHierarchy = await Task.Run(() => RunningHotkeySharingHierarchy(app.ExecutablePath!));
+            rootCount = Math.Max(rootCount, TrayAppRevealRules.CountRootInstances(hotkeyHierarchy));
+        }
         var canSendHotkey = hotkey is not null && IsHotkeyRegistered(hotkey);
         var decision = TrayAppRevealRules.DecideWhenHidden(rootCount, canSendHotkey);
         switch (decision)
@@ -429,19 +459,36 @@ internal static class WindowCommandService
             return Task.FromResult(new WindowCommandResult(false, $"不能从 Dock 结束 {displayName}"));
         }
 
-        return Task.Run(() => QuitCore(item, displayName));
+        var itemsSnapshot = allItems?.ToArray();
+        return Task.Run(() => QuitCore(item, displayName, itemsSnapshot));
     }
 
-    private static WindowCommandResult QuitCore(DockItem item, string displayName)
+    private static WindowCommandResult QuitCore(
+        DockItem item,
+        string displayName,
+        IReadOnlyList<DockItem>? allItems)
     {
-        var selfPid = Environment.ProcessId;
+        var selfPid = (uint)Environment.ProcessId;
+        int currentSessionId;
+        using (var current = Process.GetCurrentProcess())
+        {
+            currentSessionId = current.SessionId;
+        }
+
         var groupExecutablePaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var groupAumids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var groupProcessIds = new HashSet<uint>();
 
         if (item.Group is { } group)
         {
             foreach (var window in group.Windows)
             {
+                if (window.ProcessId > 4 && window.ProcessId != selfPid
+                    && !DockQuitRules.IsProtectedExecutable(window.ExecutablePath)
+                    && !DockQuitRules.IsProtectedAumid(window.AppUserModelId))
+                {
+                    groupProcessIds.Add(window.ProcessId);
+                }
                 if (!string.IsNullOrWhiteSpace(window.ExecutablePath)
                     && !DockQuitRules.IsProtectedExecutable(window.ExecutablePath))
                 {
@@ -455,57 +502,39 @@ internal static class WindowCommandService
             }
         }
 
+        var otherItemExecutablePaths = CollectOtherItemExecutables(item, allItems);
         var checkAumid = !string.IsNullOrWhiteSpace(item.Pinned?.AppUserModelId) || groupAumids.Count > 0;
+
         var matchedAny = false;
         var terminated = 0;
         var accessDenied = false;
-        foreach (var process in Process.GetProcesses())
+
+        for (var pass = 0; pass < 2; pass++)
         {
-            using (process)
+            var passResult = TerminateMatchingPass(
+                item.Pinned,
+                groupExecutablePaths,
+                groupAumids,
+                pass == 0 ? groupProcessIds : EmptyProcessIds,
+                otherItemExecutablePaths,
+                checkAumid,
+                selfPid,
+                currentSessionId);
+
+            matchedAny |= passResult.MatchedAny;
+            terminated += passResult.Terminated;
+            accessDenied |= passResult.AccessDenied;
+
+            if (passResult.Terminated == 0)
             {
-                var pid = process.Id;
-                if (pid <= 4 || pid == selfPid)
-                {
-                    continue;
-                }
+                break;
+            }
 
-                // Read executable path with limited-query first to skip unrelated processes cheaply.
-                var previewExe = WindowCatalog.ExecutablePathOf((uint)pid);
-                if (DockQuitRules.IsProtectedExecutable(previewExe))
-                {
-                    continue;
-                }
-                var previewAumid = checkAumid ? WindowCatalog.AppUserModelIdOf((uint)pid) : null;
-                if (!DockQuitRules.MatchesProcess(item.Pinned, groupExecutablePaths, groupAumids, previewExe, previewAumid))
-                {
-                    continue;
-                }
-
-                matchedAny = true;
-                try
-                {
-                    // Hold one Process handle across final identity verification and termination so
-                    // PID reuse cannot target an unrelated process, and terminate only verified
-                    // processes (never Kill(entireProcessTree: true), which could kill unrelated children).
-                    var handle = process.Handle;
-                    var verifiedExe = WindowCatalog.TryGetExecutablePath(handle);
-                    var verifiedAumid = checkAumid ? WindowCatalog.TryGetAppUserModelId(handle) : null;
-                    if (!DockQuitRules.MatchesProcess(item.Pinned, groupExecutablePaths, groupAumids, verifiedExe, verifiedAumid))
-                    {
-                        continue;
-                    }
-
-                    process.Kill();
-                    terminated++;
-                }
-                catch (Exception exception) when (exception is ArgumentException or InvalidOperationException)
-                {
-                    terminated++;
-                }
-                catch (Exception exception) when (exception is Win32Exception or UnauthorizedAccessException)
-                {
-                    accessDenied = true;
-                }
+            if (pass == 0)
+            {
+                // Brief pause off the UI thread so any watchdog/parent-spawned child or
+                // tray helper that spun up during pass 1 is caught in the follow-up sweep.
+                Thread.Sleep(80);
             }
         }
 
@@ -527,6 +556,166 @@ internal static class WindowCommandService
                 $"已结束 {displayName} 的部分进程，其余进程需要管理员权限。");
         }
         return new WindowCommandResult(true, $"已结束 {displayName}");
+    }
+
+    private static readonly HashSet<uint> EmptyProcessIds = [];
+
+    private static (bool MatchedAny, int Terminated, bool AccessDenied) TerminateMatchingPass(
+        DockPinnedApp? pinned,
+        HashSet<string> groupExecutablePaths,
+        HashSet<string> groupAumids,
+        IReadOnlySet<uint> groupProcessIds,
+        HashSet<string> otherItemExecutablePaths,
+        bool checkAumid,
+        uint selfPid,
+        int currentSessionId)
+    {
+        var allParents = ReadAllParentProcessIds();
+        var candidates = new List<ProcessQuitCandidate>();
+        var expectedExeByPid = new Dictionary<uint, string?>();
+
+        foreach (var process in Process.GetProcesses())
+        {
+            using (process)
+            {
+                var pid = (uint)process.Id;
+                if (pid <= 4 || pid == selfPid)
+                {
+                    continue;
+                }
+
+                try
+                {
+                    if (process.SessionId != currentSessionId)
+                    {
+                        continue;
+                    }
+                }
+                catch (Exception exception) when (exception is Win32Exception or InvalidOperationException)
+                {
+                    continue;
+                }
+
+                var previewExe = WindowCatalog.ExecutablePathOf(pid);
+                if (DockQuitRules.IsProtectedExecutable(previewExe))
+                {
+                    continue;
+                }
+
+                var previewAumid = checkAumid ? WindowCatalog.AppUserModelIdOf(pid) : null;
+                if (DockQuitRules.IsProtectedAumid(previewAumid))
+                {
+                    continue;
+                }
+
+                allParents.TryGetValue(pid, out var parentPid);
+                candidates.Add(new ProcessQuitCandidate(pid, parentPid, previewExe, previewAumid));
+                expectedExeByPid[pid] = string.IsNullOrWhiteSpace(previewExe)
+                    ? null
+                    : WindowGrouping.NormalizeExecutablePath(previewExe);
+            }
+        }
+
+        var targets = DockQuitRules.SelectProcessesToTerminate(
+            pinned,
+            groupExecutablePaths,
+            groupAumids,
+            groupProcessIds,
+            candidates,
+            otherItemExecutablePaths);
+        if (targets.Count == 0)
+        {
+            return (false, 0, false);
+        }
+
+        var terminated = 0;
+        var accessDenied = false;
+        foreach (var targetPid in targets)
+        {
+            try
+            {
+                using var process = Process.GetProcessById((int)targetPid);
+                if (process.SessionId != currentSessionId)
+                {
+                    continue;
+                }
+
+                // Hold one Process handle across final identity verification and termination so
+                // PID reuse cannot target an unrelated process.
+                var handle = process.Handle;
+                var verifiedExe = WindowCatalog.TryGetExecutablePath(handle);
+                var verifiedAumid = checkAumid ? WindowCatalog.TryGetAppUserModelId(handle) : null;
+                if (DockQuitRules.IsProtectedExecutable(verifiedExe)
+                    || DockQuitRules.IsProtectedAumid(verifiedAumid))
+                {
+                    continue;
+                }
+
+                if (expectedExeByPid.TryGetValue(targetPid, out var expectedExe) && expectedExe is not null)
+                {
+                    if (string.IsNullOrWhiteSpace(verifiedExe)
+                        || !string.Equals(
+                            WindowGrouping.NormalizeExecutablePath(verifiedExe),
+                            expectedExe,
+                            StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+                }
+                else if (!DockQuitRules.MatchesProcess(pinned, groupExecutablePaths, groupAumids, verifiedExe, verifiedAumid))
+                {
+                    continue;
+                }
+
+                process.Kill();
+                terminated++;
+            }
+            catch (Exception exception) when (exception is ArgumentException or InvalidOperationException)
+            {
+                terminated++;
+            }
+            catch (Exception exception) when (exception is Win32Exception or UnauthorizedAccessException)
+            {
+                accessDenied = true;
+            }
+        }
+
+        return (true, terminated, accessDenied);
+    }
+
+    private static HashSet<string> CollectOtherItemExecutables(DockItem item, IReadOnlyList<DockItem>? allItems)
+    {
+        var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (allItems is null)
+        {
+            return result;
+        }
+
+        foreach (var other in allItems)
+        {
+            if (ReferenceEquals(other, item)
+                || string.Equals(other.Key, item.Key, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (!string.IsNullOrWhiteSpace(other.Pinned?.ExecutablePath))
+            {
+                result.Add(WindowGrouping.NormalizeExecutablePath(other.Pinned.ExecutablePath));
+            }
+            if (other.Group is not null)
+            {
+                foreach (var window in other.Group.Windows)
+                {
+                    if (!string.IsNullOrWhiteSpace(window.ExecutablePath))
+                    {
+                        result.Add(WindowGrouping.NormalizeExecutablePath(window.ExecutablePath));
+                    }
+                }
+            }
+        }
+
+        return result;
     }
 
     internal static WindowCommandResult OpenFileLocation(string executablePath)
@@ -718,6 +907,177 @@ internal static class WindowCommandService
             50,
             out _) != 0;
 
+    internal static TrackedWindow SelectBestWindow(IReadOnlyList<TrackedWindow> windows)
+    {
+        var live = FilterLiveCandidates(windows);
+        if (live.Count == 0)
+        {
+            return windows.FirstOrDefault(window => !window.IsMinimized) ?? windows[0];
+        }
+
+        var selected = WindowActivationRules.SelectActivationTarget(
+            live.Select(entry => entry.Candidate).ToArray())!;
+        return live.First(entry => entry.Window.Handle == selected.Handle).Window;
+    }
+
+    internal static HashSet<uint> ResolveInstanceProcessIds(uint processId, string? hintExecutablePath = null) =>
+        ResolveInstanceInfo(processId, hintExecutablePath).ProcessIds;
+
+    internal static (HashSet<uint> ProcessIds, string? RootExecutablePath) ResolveInstanceInfo(
+        uint processId,
+        string? hintExecutablePath = null)
+    {
+        if (processId == 0)
+        {
+            return ([], hintExecutablePath);
+        }
+
+        var seedExe = WindowCatalog.ExecutablePathOf(processId) ?? hintExecutablePath;
+        if (string.IsNullOrWhiteSpace(seedExe))
+        {
+            return ([processId], null);
+        }
+
+        var normalizedSeed = WindowGrouping.NormalizeExecutablePath(seedExe);
+        if (DockQuitRules.IsProtectedExecutable(normalizedSeed)
+            || DockQuitRules.IsGenericShellExecutable(normalizedSeed))
+        {
+            return ([processId], normalizedSeed);
+        }
+
+        var appRoot = DockQuitRules.ResolveDedicatedAppRoot(normalizedSeed);
+        int currentSessionId;
+        using (var current = Process.GetCurrentProcess())
+        {
+            currentSessionId = current.SessionId;
+        }
+
+        var allParents = ReadAllParentProcessIds();
+        if (allParents.Count == 0)
+        {
+            return ([processId], normalizedSeed);
+        }
+
+        string? TryGetSameAppExecutable(uint pid)
+        {
+            if (pid <= 4)
+            {
+                return null;
+            }
+            if (pid == processId)
+            {
+                return normalizedSeed;
+            }
+            if (!IsProcessInSession(pid, currentSessionId))
+            {
+                return null;
+            }
+
+            var candidateExe = WindowCatalog.ExecutablePathOf(pid);
+            if (string.IsNullOrWhiteSpace(candidateExe))
+            {
+                return null;
+            }
+
+            var normalizedCandidate = WindowGrouping.NormalizeExecutablePath(candidateExe);
+            if (DockQuitRules.IsProtectedExecutable(normalizedCandidate)
+                || DockQuitRules.IsGenericShellExecutable(normalizedCandidate))
+            {
+                return null;
+            }
+
+            var sameApp = DockQuitRules.MatchesExecutableOrVersionSibling(normalizedSeed, normalizedCandidate)
+                || (appRoot is not null
+                    && string.Equals(
+                        appRoot,
+                        DockQuitRules.ResolveDedicatedAppRoot(normalizedCandidate),
+                        StringComparison.OrdinalIgnoreCase));
+            return sameApp ? normalizedCandidate : null;
+        }
+
+        // Walk UP only through ancestors belonging to the same app to find this instance's root.
+        var rootPid = processId;
+        var rootExe = normalizedSeed;
+        var visitedUp = new HashSet<uint> { processId };
+        while (allParents.TryGetValue(rootPid, out var parentPid)
+            && parentPid > 4
+            && visitedUp.Add(parentPid))
+        {
+            if (TryGetSameAppExecutable(parentPid) is not { } parentExe)
+            {
+                break;
+            }
+
+            rootPid = parentPid;
+            rootExe = parentExe;
+        }
+
+        // Traverse DOWN only descendants reachable from rootPid, querying process metadata
+        // strictly along same-app edges instead of scanning every OS process.
+        var childrenByParent = new Dictionary<uint, List<uint>>();
+        foreach (var (childPid, parentPid) in allParents)
+        {
+            if (childPid <= 4 || parentPid <= 4)
+            {
+                continue;
+            }
+
+            if (!childrenByParent.TryGetValue(parentPid, out var children))
+            {
+                children = [];
+                childrenByParent[parentPid] = children;
+            }
+            children.Add(childPid);
+        }
+
+        var instancePids = new HashSet<uint> { rootPid };
+        var queue = new Queue<uint>();
+        queue.Enqueue(rootPid);
+        if (instancePids.Add(processId))
+        {
+            queue.Enqueue(processId);
+        }
+        while (queue.Count > 0)
+        {
+            var currentPid = queue.Dequeue();
+            if (!childrenByParent.TryGetValue(currentPid, out var children))
+            {
+                continue;
+            }
+
+            foreach (var childPid in children)
+            {
+                if (instancePids.Contains(childPid))
+                {
+                    continue;
+                }
+
+                if (TryGetSameAppExecutable(childPid) is null)
+                {
+                    continue;
+                }
+
+                instancePids.Add(childPid);
+                queue.Enqueue(childPid);
+            }
+        }
+
+        return (instancePids, rootExe);
+    }
+
+    private static bool IsProcessInSession(uint processId, int expectedSessionId)
+    {
+        try
+        {
+            using var process = Process.GetProcessById((int)processId);
+            return process.SessionId == expectedSessionId;
+        }
+        catch (Exception exception) when (exception is ArgumentException or Win32Exception or InvalidOperationException)
+        {
+            return false;
+        }
+    }
+
     private static List<ProcessHierarchyEntry> RunningProcessHierarchy(string executablePath)
     {
         var ids = RunningProcessIds(executablePath);
@@ -734,6 +1094,93 @@ internal static class WindowCommandService
             entries.Add(new ProcessHierarchyEntry(pid, ppid));
         }
         return entries;
+    }
+
+    private static List<ProcessHierarchyEntry> RunningHotkeySharingHierarchy(string executablePath)
+    {
+        var names = TrayAppRevealRules.HotkeySharingProcessNames(executablePath);
+        if (names.Count == 0)
+        {
+            return [];
+        }
+
+        var ids = new HashSet<uint>();
+        int currentSessionId;
+        using (var current = Process.GetCurrentProcess())
+        {
+            currentSessionId = current.SessionId;
+        }
+
+        foreach (var name in names)
+        {
+            foreach (var process in Process.GetProcessesByName(name))
+            {
+                using (process)
+                {
+                    try
+                    {
+                        if (process.SessionId != currentSessionId)
+                        {
+                            continue;
+                        }
+                    }
+                    catch (Exception exception) when (exception is Win32Exception or InvalidOperationException)
+                    {
+                        continue;
+                    }
+
+                    // Include all same-session processes whose image name shares this global hotkey,
+                    // even if installed in another folder or elevated (where path lookup may return null).
+                    ids.Add((uint)process.Id);
+                }
+            }
+        }
+
+        if (ids.Count == 0)
+        {
+            return [];
+        }
+
+        var parents = ReadParentProcessIds(ids);
+        var entries = new List<ProcessHierarchyEntry>(ids.Count);
+        foreach (var pid in ids)
+        {
+            parents.TryGetValue(pid, out var ppid);
+            entries.Add(new ProcessHierarchyEntry(pid, ppid));
+        }
+        return entries;
+    }
+
+    private static Dictionary<uint, uint> ReadAllParentProcessIds()
+    {
+        var result = new Dictionary<uint, uint>();
+        var snapshot = DockNativeMethods.CreateToolhelp32Snapshot(DockNativeMethods.Th32csSnapProcess, 0);
+        if (snapshot == 0 || snapshot == DockNativeMethods.InvalidHandleValue)
+        {
+            return result;
+        }
+
+        try
+        {
+            var entry = new DockNativeMethods.ProcessEntry32W
+            {
+                Size = (uint)Marshal.SizeOf<DockNativeMethods.ProcessEntry32W>()
+            };
+            if (DockNativeMethods.Process32FirstW(snapshot, ref entry))
+            {
+                do
+                {
+                    result[entry.ProcessId] = entry.ParentProcessId;
+                }
+                while (DockNativeMethods.Process32NextW(snapshot, ref entry));
+            }
+        }
+        finally
+        {
+            DockNativeMethods.CloseHandle(snapshot);
+        }
+
+        return result;
     }
 
     private static Dictionary<uint, uint> ReadParentProcessIds(HashSet<uint> targetPids)
@@ -774,13 +1221,14 @@ internal static class WindowCommandService
     private static HashSet<uint> RunningProcessIds(string executablePath)
     {
         var ids = new HashSet<uint>();
+        var normalizedTarget = WindowGrouping.NormalizeExecutablePath(executablePath);
         int currentSessionId;
         using (var current = Process.GetCurrentProcess())
         {
             currentSessionId = current.SessionId;
         }
 
-        foreach (var process in Process.GetProcessesByName(Path.GetFileNameWithoutExtension(executablePath)))
+        foreach (var process in Process.GetProcessesByName(Path.GetFileNameWithoutExtension(normalizedTarget)))
         {
             using (process)
             {
@@ -796,10 +1244,9 @@ internal static class WindowCommandService
                     continue;
                 }
 
-                if (string.Equals(
-                        WindowCatalog.ExecutablePathOf((uint)process.Id),
-                        executablePath,
-                        StringComparison.OrdinalIgnoreCase))
+                var candidatePath = WindowCatalog.ExecutablePathOf((uint)process.Id);
+                if (!string.IsNullOrWhiteSpace(candidatePath)
+                    && DockQuitRules.MatchesExecutableOrVersionSibling(normalizedTarget, candidatePath))
                 {
                     ids.Add((uint)process.Id);
                 }
@@ -809,20 +1256,34 @@ internal static class WindowCommandService
     }
 
     // The same test the dock uses to list a window, so a hit means the app is back.
+    // Selects the best activatable window rather than stopping at the first Z-order match.
     private static nint FindShownWindow(HashSet<uint> processIds)
     {
         var shell = DockNativeMethods.GetShellWindow();
-        nint found = 0;
+        var candidates = new List<TrackedWindow>();
         DockNativeMethods.EnumWindows((window, _) =>
         {
             DockNativeMethods.GetWindowThreadProcessId(window, out var processId);
             if (processIds.Contains(processId) && WindowCatalog.ShouldInclude(window, shell))
             {
-                found = window;
+                candidates.Add(new TrackedWindow(
+                    window,
+                    processId,
+                    string.Empty,
+                    null,
+                    null,
+                    false,
+                    DockNativeMethods.IsIconic(window)));
             }
-            return found == 0;
+            return true;
         }, 0);
-        return found;
+
+        if (candidates.Count == 0)
+        {
+            return 0;
+        }
+
+        return SelectBestWindow(candidates).Handle;
     }
 
     // A free combination means the app has no such hotkey now; sending it then would

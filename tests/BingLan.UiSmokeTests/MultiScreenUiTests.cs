@@ -189,9 +189,7 @@ internal static class MultiScreenUiTests
 
             hasSaved = true;
             settings.RefreshMultiScreenUi();
-            Check(settings.FindName("SchemeMultiScreenHost") is Border { Child: StackPanel section }
-                  && ((SettingsGroup)section.Children[1]).Items.OfType<SettingsRow>().Single().Content
-                     is StackPanel controls && controls.Children.OfType<CheckBox>().Single().IsEnabled,
+            Check(settings.FindName("DisplaysIndependentSwitch") is CheckBox { IsEnabled: true },
                 "只剩一屏时应仍能重新启用已保存的屏幕档案");
         }
         finally
@@ -238,24 +236,51 @@ internal static class MultiScreenUiTests
             pump();
 
             Check(settings.IsMultiScreenUiVisible && !settings.IsMultiScreenTopologyBarVisible,
-                "双屏但多屏关闭时，桌面方案页应显示总开关且桌面卡片页不显示拓扑栏");
+                "双屏但多屏关闭时，桌面方案页只读取连接数量");
             Check(MonitorIdentityResolver.QueryDisplayConfigCallCountForTests == 0,
                 $"双屏但关闭多屏开关时打开设置页严禁触发 QueryDisplayConfig，实际触发 {MonitorIdentityResolver.QueryDisplayConfigCallCountForTests} 次");
+
+            settings.ShowSettingsPage("Components");
+            settings.SelectActiveScreen(SecondaryHardwareKey);
+            pump();
+            Check(settings.IsMultiScreenTopologyBarVisible && !bridge.IsEnabled() && !coordinator.HasActiveMultiScreenHost
+                && settings.FindName("ComponentEditorHost") is Grid { Visibility: Visibility.Collapsed },
+                "关闭多屏时可直接选副屏，选屏保持独立桌面未启用，并隐藏主屏编辑器");
+            Button CopyButton() => ((StackPanel)((Border)((Border)settings.FindName("ComponentsMultiScreenBarHost")).Child).Child)
+                .Children.OfType<Grid>().Single().Children.OfType<Button>()
+                .Single(button => Equals(button.Content, "复制主屏设置"));
+            var unavailableCopy = CopyButton();
+            var queryCount = MonitorIdentityResolver.QueryDisplayConfigCallCountForTests;
             activeMonitors = CreatePrimaryOnlyMonitors();
+            unavailableCopy.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Check(!bridge.IsEnabled(), "点击时副屏已断开应保持独立桌面未启用");
             settings.RefreshMultiScreenUi();
             pump();
 
             Check(settings.IsMultiScreenUiVisible && !settings.IsMultiScreenTopologyBarVisible
                 && settings.FindName("ComponentsMultiScreenBarHost") is Border { Child: null }
-                && settings.FindName("SchemeMultiScreenHost") is Border { Child: StackPanel section }
-                && !section.Children.OfType<Border>().Any(),
-                "副屏断开后设置仅保留多屏总开关，桌面方案和卡片页均不出现迁移入口");
-            Check(MonitorIdentityResolver.QueryDisplayConfigCallCountForTests == 0,
+                && settings.FindName("SchemeMultiScreenHost") is Border { Child: SettingsGroup shortcut }
+                && shortcut.Items.OfType<SettingsRow>().Single().Content is Button,
+                "副屏断开后保留显示器设置入口，桌面卡片页不出现迁移入口");
+            Check(MonitorIdentityResolver.QueryDisplayConfigCallCountForTests == queryCount,
                 "副屏拔出成单屏后刷新设置不应触发 QueryDisplayConfig");
             var saved = store.Load();
             Check(saved.NoteWidgets.Any(note => note.Id == savedNote.Id && note.ScreenKey == SecondaryHardwareKey)
                 && saved.MultiScreen!.Screens[SecondaryHardwareKey].Experience.GetComponent(DesktopComponentKind.Weather).IsVisible,
                 "拔屏后副屏便签、天气卡和原屏归属仍保留在存档");
+
+            activeMonitors = CreateDualMonitors(@"\\.\DISPLAY1");
+            coordinator.Start();
+            settings.RefreshMultiScreenUi();
+            settings.SelectActiveScreen(SecondaryHardwareKey);
+            CopyButton().RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            pump();
+            saved = store.Load();
+            Check(bridge.IsEnabled() && coordinator.HasActiveMultiScreenHost && settings.ActiveScreenKey == SecondaryHardwareKey
+                && settings.FindName("ComponentEditorHost") is Grid { Visibility: Visibility.Visible }
+                && saved.MultiScreen?.RootMonitorKey == PrimaryHardwareKey
+                && saved.NoteWidgets.Any(note => note.Id == savedNote.Id && note.ScreenKey == SecondaryHardwareKey),
+                "直接点击复制应绑定当前主屏、启用各屏编辑并保留副屏已有内容");
         }
         finally
         {
@@ -929,7 +954,7 @@ internal static class MultiScreenUiTests
             Dpi: 120) { IdentityKind = MonitorIdentityKind.DeviceInterfacePath }
     ];
 
-    private static IReadOnlyList<ResolvedMonitor> CreateDualMonitors(string secondaryGdiName) =>
+    internal static IReadOnlyList<ResolvedMonitor> CreateDualMonitors(string secondaryGdiName) =>
     [
         new ResolvedMonitor(
             MonitorKey: PrimaryHardwareKey,
@@ -1614,9 +1639,9 @@ internal static class MultiScreenUiTests
             [thirdKey] = new() { DockEnabled = true, TopBarEnabled = true, TopBarHeight = 40 }
         };
         IReadOnlyList<SurfaceMonitorSelection> DockTargets(string? fixedKey = null) =>
-            SurfaceMonitorTargetResolver.ResolveTargets(fixedKey, null, true, overrides, item => item.DockEnabled, activeMonitors);
+            SurfaceMonitorTargetResolver.ResolveTargets(fixedKey, true, overrides, item => item.DockEnableMode, activeMonitors);
         IReadOnlyList<SurfaceMonitorSelection> BarTargets() =>
-            SurfaceMonitorTargetResolver.ResolveTargets(null, null, true, overrides, item => item.TopBarEnabled, activeMonitors);
+            SurfaceMonitorTargetResolver.ResolveTargets(null, true, overrides, item => item.TopBarEnableMode, activeMonitors);
         Check(DockTargets().Select(target => target.Key).SequenceEqual([thirdKey])
               && BarTargets().Select(target => target.Key).SequenceEqual([PrimaryHardwareKey, thirdKey])
               && BarTargets()[1].Monitor.Dpi == 144 && BarTargets()[1].Preferences?.TopBarHeight == 40,
@@ -1700,6 +1725,21 @@ internal static class MultiScreenUiTests
                 && coordinator.ActiveMultiScreenHost!.TryGetScreenKey(marquee) == SecondaryHardwareKey
                 && marquee.State.Placement.MonitorLocal is not null,
                 "实际框选入口应按物理坐标选择显示器并记录独立归属与本地位置");
+
+            state.MultiScreen!.SurfacePreferences[SecondaryHardwareKey] = new ScreenSurfacePreferences
+            {
+                DockEnableMode = ScreenSurfaceEnableMode.Disabled, DockEdge = DockEdge.Left,
+                TopBarEnableMode = ScreenSurfaceEnableMode.Disabled, TopBarHeight = 40
+            };
+            var copyStatus = bridge.CopyPrimaryProfileToScreen(PrimaryHardwareKey);
+            pump();
+            var copiedPreferences = state.MultiScreen.SurfacePreferences[PrimaryHardwareKey];
+            Check(copyStatus.Contains("已复制", StringComparison.Ordinal)
+                && Math.Abs(state.DesktopExperience.GetComponent(DesktopComponentKind.Todo).FontScale - 1.35) < 0.01
+                && copiedPreferences.DockEdge == DockEdge.Left && copiedPreferences.TopBarHeight == 40
+                && copiedPreferences.DockEnableMode == ScreenSurfaceEnableMode.Disabled
+                && coordinator.GetWindowsForScreen(null).Contains(rootNote),
+                "复制应取当前 Windows 主屏的卡片和栏设置，目标是原根屏时也保留便签");
 
             settings.Close();
             settings = null;

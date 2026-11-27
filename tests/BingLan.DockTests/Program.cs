@@ -6,7 +6,7 @@ using BingLan.Core.Taskbar;
 using BingLan.Core.TopBar;
 
 var failures = new List<string>();
-Run("Dock 与顶栏显示器目标：主屏跟随、固定设备、断开恢复与旧名称待确认", TestSurfaceMonitorTargets);
+Run("Dock 与顶栏显示器目标：旧配置跟随主屏、固定设备、断开恢复", TestSurfaceMonitorTargets);
 Run("Dock 四边几何与负坐标", TestDockGeometry);
 Run("原生任务栏四边占用与顶栏保留预留冲突", TestNativeTaskbarGeometry);
 Run("Dock 非法厚度", TestInvalidThickness);
@@ -81,6 +81,8 @@ Run("免激活右键菜单防闪退与外部点击收起状态机", TestMenuDism
 Run("智能隐藏瞬态右键菜单/弹窗宿主重叠与最大化合并规则", TestTransientPopupSmartHideRules);
 Run("系统表面礼让细化与异边/折叠任务栏推断规则", TestSystemSurfaceYieldAndEdgeInference);
 Run("最小化后被动聚焦自动隐藏任务栏的恢复守卫规则", TestTaskbarPassiveFocusRules);
+Run("微信双开提醒：跨实例托盘闪烁、辅助进程归属、最近闪烁优先与共享热键识别", TestDualWeChatAttentionAndReveal);
+Run("Dock 结束应用：同目录托盘宿主/子进程/启动器联动清理与系统/多应用安全边界", TestDockQuitProcessTreeAndSafety);
 
 if (failures.Count > 0)
 {
@@ -3162,19 +3164,18 @@ static void TestSurfaceMonitorTargets()
 {
     SurfaceMonitorTarget[] initial = [new("device:A", true, true), new("device:B", false, true)];
     SurfaceMonitorTarget[] swapped = [new("device:B", true, true), new("device:A", false, true)];
-    AssertEqual(0, SurfaceMonitorTargetRules.ResolveIndex(null, null, initial), "默认跟随当前主屏");
-    AssertEqual(0, SurfaceMonitorTargetRules.ResolveIndex(null, null, swapped), "Windows 更换主屏后应跟随");
-    AssertEqual(1, SurfaceMonitorTargetRules.ResolveIndex("device:B", null, initial), "可固定副屏");
-    AssertEqual(0, SurfaceMonitorTargetRules.ResolveIndex("device:B", null, swapped), "固定设备成为主屏后仍指向同一设备");
-    AssertEqual(1, SurfaceMonitorTargetRules.ResolveIndex("device:A", null, swapped), "固定原主屏不应跟随主屏变化");
-    Assert(SurfaceMonitorTargetRules.ResolveIndex("device:B", null, [initial[0]]) is null, "固定设备断开不能回退其他屏幕");
-    AssertEqual(1, SurfaceMonitorTargetRules.ResolveIndex("device:B", null, initial), "同一设备重连后恢复原选择");
-    Assert(SurfaceMonitorTargetRules.ResolveIndex(null, @"\\.\DISPLAY1", initial) is null, "旧显示器名称不能自动认作当前同名设备");
-    Assert(SurfaceMonitorTargetRules.ResolveIndex("slot:DISPLAY1", null, [new("slot:DISPLAY1", true, false)]) is null,
+    AssertEqual(0, SurfaceMonitorTargetRules.ResolveIndex(null, initial), "默认跟随当前主屏");
+    AssertEqual(0, SurfaceMonitorTargetRules.ResolveIndex(null, swapped), "Windows 更换主屏后应跟随");
+    AssertEqual(1, SurfaceMonitorTargetRules.ResolveIndex("device:B", initial), "可固定副屏");
+    AssertEqual(0, SurfaceMonitorTargetRules.ResolveIndex("device:B", swapped), "固定设备成为主屏后仍指向同一设备");
+    AssertEqual(1, SurfaceMonitorTargetRules.ResolveIndex("device:A", swapped), "固定原主屏不应跟随主屏变化");
+    Assert(SurfaceMonitorTargetRules.ResolveIndex("device:B", [initial[0]]) is null, "固定设备断开不能回退其他屏幕");
+    AssertEqual(1, SurfaceMonitorTargetRules.ResolveIndex("device:B", initial), "同一设备重连后恢复原选择");
+    Assert(SurfaceMonitorTargetRules.ResolveIndex("slot:DISPLAY1", [new("slot:DISPLAY1", true, false)]) is null,
         "无持久身份的显示器不能用临时编号固定");
-    Assert(SurfaceMonitorTargetRules.ResolveIndex("device:A", null, [initial[0], initial[0]]) is null,
+    Assert(SurfaceMonitorTargetRules.ResolveIndex("device:A", [initial[0], initial[0]]) is null,
         "身份有歧义时不能任意选中一台");
-    Assert(SurfaceMonitorTargetRules.ResolveIndex(null, null, []) is null, "没有连接的主屏时保持隐藏");
+    Assert(SurfaceMonitorTargetRules.ResolveIndex(null, []) is null, "没有连接的主屏时保持隐藏");
 
     var temp = Path.Combine(Path.GetTempPath(), $"BingLan-surface-target-{Guid.NewGuid():N}");
     try
@@ -3195,11 +3196,18 @@ static void TestSurfaceMonitorTargets()
         state.Dock.MonitorDeviceName = @"\\.\DISPLAY2";
         state.TopBar.MonitorKey = null;
         state.TopBar.MonitorDeviceName = @"\\.\DISPLAY1";
+        state.MultiScreen = new MultiScreenState { IsEnabled = true };
+        DesktopModeRules.Apply(DesktopMode.AppleStyle, state.Dock, state.Taskbar, state.TopBar, state.DesktopExperience,
+            updateInformationCards: false);
         store.Save(state);
         loaded = store.Load();
-        AssertEqual(@"\\.\DISPLAY2", loaded.Dock.MonitorDeviceName, "Dock 旧名称应保留供明确重选");
-        AssertEqual(@"\\.\DISPLAY1", loaded.TopBar.MonitorDeviceName, "顶栏旧名称应保留供明确重选");
+        AssertEqual(@"\\.\DISPLAY2", loaded.Dock.MonitorDeviceName, "兼容读取旧 Dock 目标名称");
+        AssertEqual(@"\\.\DISPLAY1", loaded.TopBar.MonitorDeviceName, "兼容读取旧顶栏目标名称");
         Assert(loaded.Dock.MonitorKey is null && loaded.TopBar.MonitorKey is null, "旧名称不能自动迁移为当前连接设备");
+        Assert(loaded.Dock.IsEnabled && loaded.TopBar.IsEnabled
+            && SurfaceMonitorTargetRules.ResolveIndex(loaded.Dock.MonitorKey, initial) == 0
+            && SurfaceMonitorTargetRules.ResolveIndex(loaded.TopBar.MonitorKey, initial) == 0,
+            "苹果式下，两条栏只有旧目标名称时应都能跟随 Windows 主屏");
     }
     finally
     {
@@ -3383,6 +3391,291 @@ static void TestTaskbarPassiveFocusRules()
         "光标在窗口右上角最小化按钮处不应判定为靠近任务栏");
     Assert(TaskbarPassiveFocusRules.IsPointerNearTaskbarOrEdge(1915, 540, new PixelRect(1918, 0, 1920, 1080), monitor, DockEdge.Right),
         "右侧自动隐藏任务栏应检测右边缘窄带");
+}
+
+static void TestDualWeChatAttentionAndReveal()
+{
+    const string weixinExe = @"C:\Program Files\Tencent\Weixin\Weixin.exe";
+    const string weixinVersionedExe = @"C:\Program Files\Tencent\Weixin\4.1.15\Weixin.exe";
+    const string wechat3Exe = @"C:\Program Files\Tencent\WeChat\WeChat.exe";
+
+    var firstWindow = Window(1001, 14600, "微信", null, weixinExe);
+    var secondWindow = Window(2001, 24600, "微信", null, weixinExe);
+    var weixinPin = new DockPinnedApp { DisplayName = "微信", ExecutablePath = weixinExe };
+
+    // 场景 1：微信 #1 可见，微信 #2 驻留托盘并收到新消息闪烁。
+    var firstOnlyGroup = new WindowGroup($"exe:{weixinExe}", "微信", [firstWindow]);
+    var pinnedWithFirstOpen = new DockItem(firstOnlyGroup.Key, "微信", weixinPin, firstOnlyGroup);
+    var unpinnedWithFirstOpen = new DockItem(firstOnlyGroup.Key, "微信", null, firstOnlyGroup);
+
+    var attention = new DockAttention();
+    Assert(attention.Flashed(9201, 24600, 3, weixinExe), "第二实例隐藏消息窗闪烁应被记录");
+    Assert(attention.Wants(pinnedWithFirstOpen), "第一实例可见时，第二实例在托盘闪烁仍须点亮 Dock 提醒");
+    Assert(attention.Wants(unpinnedWithFirstOpen), "未固定场景下，第二实例在托盘闪烁也须点亮运行项提醒");
+    AssertEqual(3, attention.UnreadCount(pinnedWithFirstOpen), "第二实例托盘未读数应汇总到 Dock 项");
+    var entries = attention.EntriesFor(pinnedWithFirstOpen);
+    AssertEqual(1, entries.Count, "应返回第二实例的提醒记录");
+    AssertEqual(24600u, entries[0].ProcessId, "提醒记录应保留第二实例 PID 而非第一实例");
+
+    // 场景 2：双开均在分组内，先闪烁 #1，再闪烁 #2，最近闪烁的 #2 必须排在最前。
+    var dualGroup = new WindowGroup($"exe:{weixinExe}", "微信", [firstWindow, secondWindow]);
+    var dualItem = new DockItem(dualGroup.Key, "微信", weixinPin, dualGroup);
+    var recencyAttention = new DockAttention();
+    recencyAttention.Flashed(1001, 14600, 1, weixinExe);
+    recencyAttention.Flashed(9202, 24600, 1, weixinExe);
+    var ordered = recencyAttention.EntriesFor(dualItem);
+    AssertEqual(2, ordered.Count, "双开两个实例的提醒都应保留");
+    AssertEqual(24600u, ordered[0].ProcessId, "后闪烁的微信 #2 应排在最前");
+    Assert(recencyAttention.AttentionRank(secondWindow).CompareTo(recencyAttention.AttentionRank(firstWindow)) > 0,
+        "后闪烁的 #2（即便来自隐藏消息窗）应优先于较早闪烁的 #1");
+
+    // #1 再次闪烁（即便未读数未增加，Flashed 返回 false）后，最新顺序应更新到 #1。
+    Assert(!recencyAttention.Flashed(1001, 14600, 1, weixinExe), "未读数未增加时重复闪烁不触发 UI 重建");
+    AssertEqual(14600u, recencyAttention.EntriesFor(dualItem)[0].ProcessId, "再次闪烁的实例应成为最新提醒");
+
+    // 场景 3：微信 4.x 多进程辅助子进程闪烁，按实例进程树匹配并仅清除对应实例。
+    var dualHierarchy = new ProcessHierarchyEntry[]
+    {
+        new(14600, 500),
+        new(10632, 14600),
+        new(24600, 500),
+        new(20632, 24600),
+        new(20633, 24600)
+    };
+    var instance1Pids = TrayAppRevealRules.InstanceProcessIdsFor(dualHierarchy, 14600);
+    var instance2Pids = TrayAppRevealRules.InstanceProcessIdsFor(dualHierarchy, 20633);
+    AssertEqual(24600u, TrayAppRevealRules.ResolveRootProcessId(dualHierarchy, 20633), "辅助子进程应回溯到第二实例根 PID");
+    Assert(instance2Pids.SetEquals([24600u, 20632u, 20633u]), "第二实例进程集不得串入第一实例");
+
+    var helperAttention = new DockAttention();
+    helperAttention.Flashed(9101, 10632, 1, weixinExe);
+    helperAttention.Flashed(9203, 20633, 2, weixinVersionedExe);
+    AssertEqual(1, helperAttention.AttentionPriority(secondWindow, instance2Pids), "辅助子进程闪烁应命中同实例主窗");
+    Assert(helperAttention.HasMarkedExecutableMatching(weixinExe), "同应用/版本目录可执行文件应命中预筛");
+    Assert(!helperAttention.HasMarkedExecutableMatching(@"C:\Program Files\Google\Chrome\Application\chrome.exe"), "无关应用不应命中预筛");
+    Assert(helperAttention.Cleared(secondWindow.Handle, instance2Pids), "激活第二实例主窗应一并清除其辅助进程提醒");
+    AssertEqual(0, helperAttention.AttentionPriority(secondWindow, instance2Pids), "清除后第二实例不再带提醒");
+    AssertEqual(1, helperAttention.AttentionPriority(firstWindow, instance1Pids), "清除第二实例不得误清第一实例的提醒");
+
+    // 场景 4：跨版本/跨目录共享全局热键（WeChat 3.x + Weixin 4.x 均占用 Ctrl+Alt+W）。
+    Assert(TrayAppRevealRules.SharesHotkey(wechat3Exe, weixinExe), "微信 3.x 与 4.x 共享全局唤回热键");
+    Assert(!TrayAppRevealRules.SharesHotkey(weixinExe, @"D:\App\QQ\QQ.exe"), "不同热键应用不应视为共享");
+    var sharedNames = TrayAppRevealRules.HotkeySharingProcessNames(weixinExe);
+    Assert(sharedNames.Contains("Weixin", StringComparer.OrdinalIgnoreCase)
+        && sharedNames.Contains("WeChat", StringComparer.OrdinalIgnoreCase),
+        "微信热键冲突计数应同时覆盖 Weixin 与 WeChat");
+
+    // 场景 5：浏览器 PWA 隔离不变量——普通 Edge 闪烁不得误点亮 PWA 固定项。
+    var pwaPin = new DockPinnedApp
+    {
+        DisplayName = "Notion PWA",
+        AppUserModelId = "MSEdge._crx_abcdef",
+        ExecutablePath = @"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+        Arguments = "--app-id=abcdef"
+    };
+    var pwaItem = new DockItem("aumid:MSEdge._crx_abcdef", "Notion PWA", pwaPin, null);
+    var pwaAttention = new DockAttention();
+    pwaAttention.Flashed(7001, 7777, 1, @"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe");
+    Assert(!pwaAttention.Wants(pwaItem), "普通浏览器闪烁不得误匹配带独立 AUMID 的 PWA 固定项");
+}
+
+static void TestDockQuitProcessTreeAndSafety()
+{
+    // 1. 专用应用根目录解析：折叠内部/版本子目录，绝不爬进厂商目录或系统/共享容器目录。
+    AssertEqual(@"C:\Program Files\Tencent\Weixin",
+        DockQuitRules.ResolveDedicatedAppRoot(@"C:\Program Files\Tencent\Weixin\4.1.15\Weixin.exe"),
+        "微信版本子目录应折叠到 Weixin 根目录，而非 Tencent 厂商目录");
+    AssertEqual(@"C:\Program Files\Tencent\QQ",
+        DockQuitRules.ResolveDedicatedAppRoot(@"C:\Program Files\Tencent\QQ\QQ.exe"),
+        "QQ 应停在独立的 QQ 目录");
+    AssertEqual(@"C:\Program Files\PowerToys",
+        DockQuitRules.ResolveDedicatedAppRoot(@"C:\Program Files\PowerToys\WinUI3Apps\PowerToys.Settings.exe"),
+        "PowerToys WinUI3Apps 子目录应折叠到 PowerToys 根目录");
+    AssertEqual(@"C:\Program Files (x86)\Steam",
+        DockQuitRules.ResolveDedicatedAppRoot(@"C:\Program Files (x86)\Steam\bin\cef\cef.win7x64\steamwebhelper.exe"),
+        "Steam CEF 子目录应折叠到 Steam 根目录");
+    AssertEqual(@"D:\App\DingDing",
+        DockQuitRules.ResolveDedicatedAppRoot(@"D:\App\DingDing\main\current\DingTalk.exe"),
+        "钉钉 main\\current 子目录应折叠到 DingDing 根目录");
+    AssertEqual(@"C:\Users\demo\AppData\Local\Discord",
+        DockQuitRules.ResolveDedicatedAppRoot(@"C:\Users\demo\AppData\Local\Discord\app-1.0.9165\Discord.exe"),
+        "Discord app-版本子目录应折叠到 Discord 根目录");
+    AssertEqual(@"D:\Program Files\WPS Office",
+        DockQuitRules.ResolveDedicatedAppRoot(@"D:\Program Files\WPS Office\12.1.0.15990\office6\wps.exe"),
+        "WPS 版本与 office6 子目录应折叠到 WPS Office 根目录");
+
+    Assert(DockQuitRules.ResolveDedicatedAppRoot(@"C:\Windows\System32\notepad.exe") is null, "System32 不得作为专用应用根目录");
+    Assert(DockQuitRules.ResolveDedicatedAppRoot(@"C:\Program Files\Standalone.exe") is null, "Program Files 顶层不得作为专用应用根目录");
+    Assert(DockQuitRules.ResolveDedicatedAppRoot(@"C:\Program Files (x86)\Standalone.exe") is null, "Program Files (x86) 顶层不得作为专用应用根目录");
+    Assert(DockQuitRules.ResolveDedicatedAppRoot(@"D:\Tools\Everything.exe") is null, "Tools 通用集合目录不得作为专用应用根目录");
+    Assert(DockQuitRules.ResolveDedicatedAppRoot(@"C:\Users\demo\Desktop\MyApp.exe") is null, "Desktop 不得作为专用应用根目录");
+    Assert(DockQuitRules.ResolveDedicatedAppRoot(@"C:\Users\demo\MyApp.exe") is null, "用户主目录不得作为专用应用根目录");
+    Assert(DockQuitRules.ResolveDedicatedAppRoot(@"C:\Standalone.exe") is null, "盘符根目录不得作为专用应用根目录");
+
+    var emptyStrings = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    var emptyPids = new HashSet<uint>();
+
+    // 2. 托盘宿主拉起 UI 子窗（PowerToys / Steam）：结束应用必须向上命中托盘宿主并父先子后结束。
+    var powerToysProcesses = new ProcessQuitCandidate[]
+    {
+        new(500, 4, @"C:\Windows\explorer.exe", null),
+        new(1000, 500, @"C:\Program Files\PowerToys\PowerToys.exe", null),
+        new(1001, 1000, @"C:\Program Files\PowerToys\WinUI3Apps\PowerToys.Settings.exe", null),
+        new(1002, 1000, @"C:\Program Files\PowerToys\PowerToys.Awake.exe", null),
+        new(2000, 500, @"C:\Program Files\Google\Chrome\Application\chrome.exe", null)
+    };
+    var ptTargets = DockQuitRules.SelectProcessesToTerminate(
+        pinned: null,
+        groupExecutablePaths: new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            { @"C:\Program Files\PowerToys\WinUI3Apps\PowerToys.Settings.exe" },
+        groupAumids: emptyStrings,
+        groupProcessIds: new HashSet<uint> { 1001 },
+        runningProcesses: powerToysProcesses);
+    AssertEqual(3, ptTargets.Count, "结束 PowerToys 设置窗应一并结束托盘宿主与模块子进程");
+    AssertEqual(1000u, ptTargets[0], "必须先结束父托盘宿主 PowerToys.exe，防止子进程被拉起");
+    Assert(!ptTargets.Contains(500u) && !ptTargets.Contains(2000u), "不得波及 explorer.exe 或无关浏览器");
+
+    // 3. 代理/工具子进程（v2rayN -> bin\xray\xray.exe），且不波及 D:\Tools 下其他应用。
+    var proxyProcesses = new ProcessQuitCandidate[]
+    {
+        new(500, 4, @"C:\Windows\explorer.exe", null),
+        new(3000, 500, @"D:\Tools\v2rayN\v2rayN.exe", null),
+        new(3001, 3000, @"D:\Tools\v2rayN\bin\xray\xray.exe", null),
+        new(3002, 500, @"D:\Tools\Snipaste\Snipaste.exe", null),
+        new(3003, 500, @"D:\Tools\Everything.exe", null)
+    };
+    var proxyTargets = DockQuitRules.SelectProcessesToTerminate(
+        pinned: null,
+        groupExecutablePaths: new HashSet<string>(StringComparer.OrdinalIgnoreCase) { @"D:\Tools\v2rayN\v2rayN.exe" },
+        groupAumids: emptyStrings,
+        groupProcessIds: new HashSet<uint> { 3000 },
+        runningProcesses: proxyProcesses);
+    Assert(proxyTargets.SequenceEqual([3000u, 3001u]), "应结束 v2rayN 及其子目录内核进程，且不波及同在 D:\\Tools 下的其他应用");
+
+    // 4. 微信 4.x 版本目录 + AppEx 辅助进程，绝不误杀同厂商 Tencent\QQ 或从微信打开的 Chrome/cmd。
+    var weixinProcesses = new ProcessQuitCandidate[]
+    {
+        new(500, 4, @"C:\Windows\explorer.exe", null),
+        new(4000, 500, @"C:\Program Files\Tencent\Weixin\Weixin.exe", null),
+        new(4001, 4000, @"C:\Program Files\Tencent\Weixin\4.1.15\WeChatAppEx.exe", null),
+        new(4002, 4000, @"C:\Program Files\Google\Chrome\Application\chrome.exe", null),
+        new(4003, 4000, @"C:\Windows\System32\cmd.exe", null),
+        new(4004, 500, @"C:\Program Files\Tencent\QQ\QQ.exe", null),
+        new(4005, 500, @"C:\Users\demo\AppData\Local\Programs\BingLan\BingLan.exe", null)
+    };
+    var weixinTargets = DockQuitRules.SelectProcessesToTerminate(
+        pinned: new DockPinnedApp { DisplayName = "微信", ExecutablePath = @"C:\Program Files\Tencent\Weixin\Weixin.exe" },
+        groupExecutablePaths: emptyStrings,
+        groupAumids: emptyStrings,
+        groupProcessIds: emptyPids,
+        runningProcesses: weixinProcesses);
+    Assert(weixinTargets.SequenceEqual([4000u, 4001u]), "微信结束应用应清理主进程和 AppEx，绝不误杀同厂商 QQ、打开的浏览器、cmd 或冰蓝自身");
+
+    // 5. 带显式窗口 AUMID 的 Win32 固定项（飞书/QQ/Electron）收进托盘后，仍应按可执行文件匹配后台进程与脱离的 Helper。
+    var feishuPin = new DockPinnedApp
+    {
+        DisplayName = "飞书",
+        AppUserModelId = "com.bytedance.feishu",
+        ExecutablePath = @"C:\Users\demo\AppData\Local\Feishu\Feishu.exe"
+    };
+    var feishuProcesses = new ProcessQuitCandidate[]
+    {
+        new(5000, 500, @"C:\Users\demo\AppData\Local\Feishu\app\Feishu.exe", null),
+        new(5001, 500, @"C:\Users\demo\AppData\Local\Feishu\app\FeishuHelper.exe", null)
+    };
+    var feishuTargets = DockQuitRules.SelectProcessesToTerminate(
+        pinned: feishuPin,
+        groupExecutablePaths: emptyStrings,
+        groupAumids: emptyStrings,
+        groupProcessIds: emptyPids,
+        runningProcesses: feishuProcesses);
+    Assert(feishuTargets.ToHashSet().SetEquals([5000u, 5001u]), "带 Win32 窗口 AUMID 的固定项在后台驻留时应匹配真实进程与 Helper");
+
+    // 6. Squirrel Update.exe --processStart 固定项（如 Discord）驻留托盘时应匹配子目录真实进程。
+    var discordPin = new DockPinnedApp
+    {
+        DisplayName = "Discord",
+        ExecutablePath = @"C:\Users\demo\AppData\Local\Discord\Update.exe",
+        Arguments = "--processStart Discord.exe"
+    };
+    AssertEqual("Discord.exe", DockQuitRules.ExtractSquirrelStartExecutable(discordPin), "应正确解析 Squirrel --processStart 目标");
+    var discordTargets = DockQuitRules.SelectProcessesToTerminate(
+        pinned: discordPin,
+        groupExecutablePaths: emptyStrings,
+        groupAumids: emptyStrings,
+        groupProcessIds: emptyPids,
+        runningProcesses: [new(6000, 500, @"C:\Users\demo\AppData\Local\Discord\app-1.0.9165\Discord.exe", null)]);
+    Assert(discordTargets.SequenceEqual([6000u]), "Squirrel 固定项应匹配版本子目录里的真实托盘进程");
+
+    // 7. 未固定的钉钉（窗口在 main\current）应反向匹配根目录 DingtalkLauncher.exe。
+    var dingTargets = DockQuitRules.SelectProcessesToTerminate(
+        pinned: null,
+        groupExecutablePaths: new HashSet<string>(StringComparer.OrdinalIgnoreCase) { @"D:\App\DingDing\main\current\DingTalk.exe" },
+        groupAumids: emptyStrings,
+        groupProcessIds: new HashSet<uint> { 7001 },
+        runningProcesses:
+        [
+            new(7000, 500, @"D:\App\DingDing\DingtalkLauncher.exe", null),
+            new(7001, 500, @"D:\App\DingDing\main\current\DingTalk.exe", null)
+        ]);
+    Assert(dingTargets.ToHashSet().SetEquals([7000u, 7001u]), "未固定子目录应用应反向清理根目录启动器");
+
+    // 8. 多应用套件安全边界：Office16 中结束 Excel 不得误杀 Word；WPS 中结束 wps.exe 清理 wpscenter 但不误杀 et.exe。
+    var officeTargets = DockQuitRules.SelectProcessesToTerminate(
+        pinned: null,
+        groupExecutablePaths: new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            { @"C:\Program Files\Microsoft Office\root\Office16\EXCEL.EXE" },
+        groupAumids: emptyStrings,
+        groupProcessIds: new HashSet<uint> { 8001 },
+        runningProcesses:
+        [
+            new(8001, 500, @"C:\Program Files\Microsoft Office\root\Office16\EXCEL.EXE", null),
+            new(8002, 500, @"C:\Program Files\Microsoft Office\root\Office16\WINWORD.EXE", null)
+        ]);
+    Assert(officeTargets.SequenceEqual([8001u]), "结束 Excel 不得误杀同套件目录的 Word");
+
+    var wpsTargets = DockQuitRules.SelectProcessesToTerminate(
+        pinned: null,
+        groupExecutablePaths: new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            { @"D:\Program Files\WPS Office\12.1.0.15990\office6\wps.exe" },
+        groupAumids: emptyStrings,
+        groupProcessIds: new HashSet<uint> { 8101 },
+        runningProcesses:
+        [
+            new(8101, 500, @"D:\Program Files\WPS Office\12.1.0.15990\office6\wps.exe", null),
+            new(8102, 500, @"D:\Program Files\WPS Office\12.1.0.15990\office6\wpscenter.exe", null),
+            new(8103, 500, @"D:\Program Files\WPS Office\12.1.0.15990\office6\et.exe", null)
+        ]);
+    Assert(wpsTargets.ToHashSet().SetEquals([8101u, 8102u]), "结束 WPS 文字应清理 wpscenter，但不得误杀独立的 WPS 表格 et.exe");
+
+    // 9. System32 / 共享容器 / 其他 Dock 项保护：绝不误杀同目录其他进程。
+    var sys32Targets = DockQuitRules.SelectProcessesToTerminate(
+        pinned: null,
+        groupExecutablePaths: new HashSet<string>(StringComparer.OrdinalIgnoreCase) { @"C:\Windows\System32\notepad.exe" },
+        groupAumids: emptyStrings,
+        groupProcessIds: new HashSet<uint> { 9001 },
+        runningProcesses:
+        [
+            new(9001, 500, @"C:\Windows\System32\notepad.exe", null),
+            new(9002, 500, @"C:\Windows\System32\mspaint.exe", null),
+            new(9003, 500, @"C:\Windows\System32\svchost.exe", null)
+        ]);
+    Assert(sys32Targets.SequenceEqual([9001u]), "System32 中仅允许结束精确匹配的记事本，绝不波及同目录其他进程");
+
+    var otherDockItemExe = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        { @"C:\Program Files\SuiteApp\SuiteHelper.exe" };
+    var otherProtectedTargets = DockQuitRules.SelectProcessesToTerminate(
+        pinned: null,
+        groupExecutablePaths: new HashSet<string>(StringComparer.OrdinalIgnoreCase) { @"C:\Program Files\SuiteApp\SuiteApp.exe" },
+        groupAumids: emptyStrings,
+        groupProcessIds: new HashSet<uint> { 9101 },
+        runningProcesses:
+        [
+            new(9101, 500, @"C:\Program Files\SuiteApp\SuiteApp.exe", null),
+            new(9102, 9101, @"C:\Program Files\SuiteApp\SuiteHelper.exe", null)
+        ],
+        otherItemExecutablePaths: otherDockItemExe);
+    Assert(otherProtectedTargets.SequenceEqual([9101u]), "属于其他独立 Dock 项的可执行文件不得被连带结束");
 }
 
 static void AssertEqual<T>(T expected, T actual, string message)

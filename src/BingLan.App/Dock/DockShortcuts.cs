@@ -112,10 +112,70 @@ internal static class DockShortcuts
             fileExplorer.DisplayName = "文件资源管理器";
             apps[Key(explorerPath, fileExplorer)] = fileExplorer;
         }
+        // The Start menu's Control Panel entry also points at a shell object with an empty
+        // TargetPath, so add control.exe directly and deduplicate bare control.exe entries.
+        if (ResolveControlPanelExecutablePath() is { } control
+            && CreatePin(control) is { ExecutablePath: { } controlPath } controlPanel)
+        {
+            controlPanel.DisplayName = AppDisplayNameRules.TryResolveCanonicalName(controlPath) ?? "控制面板";
+            foreach (var duplicate in apps
+                         .Where(entry => IsDuplicateControlPanelEntry(entry.Value, preserveLaunchVariants))
+                         .ToArray())
+            {
+                apps.Remove(duplicate.Key);
+                startMenuFolders?.Remove(duplicate.Value);
+                shortcutPaths?.Remove(duplicate.Value);
+            }
+            apps[Key(controlPath, controlPanel)] = controlPanel;
+        }
         return apps.Values.OrderBy(app => app.DisplayName, StringComparer.CurrentCultureIgnoreCase).ToArray();
 
         string Key(string path, DockPinnedApp app) => preserveLaunchVariants
             ? LaunchVariantKey(path, app.Arguments, app.WorkingDirectory) : path;
+    }
+
+    internal static string? ResolveControlPanelExecutablePath(
+        string? systemDirectory = null,
+        string? windowsDirectory = null,
+        Func<string, bool>? fileExists = null)
+    {
+        var exists = fileExists ?? File.Exists;
+        string?[] candidateDirectories =
+        [
+            string.IsNullOrWhiteSpace(systemDirectory)
+                ? Environment.GetFolderPath(Environment.SpecialFolder.System)
+                : systemDirectory,
+            string.IsNullOrWhiteSpace(windowsDirectory)
+                ? Environment.GetFolderPath(Environment.SpecialFolder.Windows)
+                : windowsDirectory
+        ];
+
+        foreach (var directory in candidateDirectories)
+        {
+            if (string.IsNullOrWhiteSpace(directory))
+            {
+                continue;
+            }
+
+            var candidate = Path.Combine(directory, "control.exe");
+            if (exists(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        return null;
+    }
+
+    private static bool IsDuplicateControlPanelEntry(DockPinnedApp app, bool preserveLaunchVariants)
+    {
+        if (string.IsNullOrWhiteSpace(app.ExecutablePath)
+            || !string.Equals(Path.GetFileName(app.ExecutablePath), "control.exe", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        return !preserveLaunchVariants || string.IsNullOrWhiteSpace(app.Arguments);
     }
 
     internal static string LaunchVariantKey(string path, string? arguments, string? workingDirectory)
@@ -214,10 +274,17 @@ internal static class DockShortcuts
             ? Path.GetDirectoryName(target)
             : resolved.WorkingDirectory;
 
-        // A shortcut's own name ("微信") reads better than the program's ("Weixin").
-        app.DisplayName = extension.Equals(".lnk", StringComparison.OrdinalIgnoreCase)
-            ? Path.GetFileNameWithoutExtension(path)
-            : DockAppResolver.GetFileDescription(target) ?? app.DisplayName;
+        // A shortcut's own name ("微信") reads better than the program's ("Weixin"),
+        // while known raw English/pinyin shortcut names normalize to readable Chinese names.
+        if (extension.Equals(".lnk", StringComparison.OrdinalIgnoreCase))
+        {
+            var shortcutName = Path.GetFileNameWithoutExtension(path);
+            app.DisplayName = AppDisplayNameRules.Normalize(shortcutName, target) ?? shortcutName;
+        }
+        else
+        {
+            app.DisplayName = DockAppResolver.GetFileDescription(target) ?? app.DisplayName;
+        }
         return app;
     }
 

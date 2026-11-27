@@ -1,4 +1,5 @@
 using BingLan.App.Dock;
+using BingLan.App.Services;
 using BingLan.App.Windows;
 using BingLan.Core.Models;
 
@@ -32,17 +33,27 @@ public sealed partial class WidgetCoordinator
         {
             return;
         }
+        StoreScreenSurfacePreferences(multiScreen, monitor, preferences);
+        ApplyScreenSurfaceChanges();
+    }
+
+    private static void StoreScreenSurfacePreferences(
+        MultiScreenState multiScreen, ResolvedMonitor monitor, ScreenSurfacePreferences preferences)
+    {
         preferences = preferences with { DisplayLabel = monitor.DisplayLabel };
         preferences.Normalize();
         if (preferences.IsEmpty)
         {
-            multiScreen.SurfacePreferences.Remove(monitorKey);
+            multiScreen.SurfacePreferences.Remove(monitor.MonitorKey);
         }
         else
         {
-            multiScreen.SurfacePreferences[monitorKey] = preferences;
+            multiScreen.SurfacePreferences[monitor.MonitorKey] = preferences;
         }
+    }
 
+    private void ApplyScreenSurfaceChanges()
+    {
         _topBar.Apply();
         _dock.Apply();
         RefreshInformationCardVisibility();
@@ -51,17 +62,98 @@ public sealed partial class WidgetCoordinator
         NotifyMultiScreenUiChanged(refreshComponentList: true);
     }
 
+    private string CopyPrimarySettingsToScreen(string targetMonitorKey)
+    {
+        var connected = MonitorIdentityResolver.ResolveConnected();
+        var source = connected.FirstOrDefault(monitor => monitor.IsPrimary && monitor.IsPersistentIdentity);
+        var target = connected.FirstOrDefault(monitor => monitor.IsPersistentIdentity && monitor.MonitorKey == targetMonitorKey);
+        if (source is null || target is null || target.IsPrimary)
+        {
+            return "请选择已连接的副屏。";
+        }
+
+        var multiScreen = _state.MultiScreen ??= new MultiScreenState();
+        var wasEnabled = multiScreen.IsEnabled;
+        if (!wasEnabled)
+        {
+            CaptureAll();
+            if (multiScreen.RootMonitorKey is null)
+            {
+                ScreenProfileAccessor.BindLegacyRootToScreen(_state, source.MonitorKey);
+            }
+        }
+
+        // While using one shared desktop, the visible source layout lives in the root document.
+        var sourceKey = wasEnabled && multiScreen.RootMonitorKey != source.MonitorKey ? source.MonitorKey : null;
+        var targetKey = multiScreen.RootMonitorKey == target.MonitorKey ? null : target.MonitorKey;
+        var activePreferences = ReadScreenSurfacePreferences();
+        var sourcePreferences = activePreferences?.GetValueOrDefault(source.MonitorKey);
+        var targetPreferences = multiScreen.SurfacePreferences.GetValueOrDefault(target.MonitorKey) ?? new();
+        var dockShown = SurfaceMonitorTargetResolver.ResolveTargets(_state.Dock.MonitorKey, _state.Dock.IsEnabled,
+            activePreferences, item => item.DockEnableMode, connected).Any(item => item.Monitor.MonitorHandle == source.MonitorHandle);
+        var topBarShown = SurfaceMonitorTargetResolver.ResolveTargets(_state.TopBar.MonitorKey, _state.TopBar.IsEnabled,
+            activePreferences, item => item.TopBarEnableMode, connected).Any(item => item.Monitor.MonitorHandle == source.MonitorHandle);
+
+        // Close the old card layouts before copying, so a later window capture cannot restore their previous positions.
+        if (!ScreenProfileAccessor.MatchesScreen(sourceKey, targetKey))
+        {
+            foreach (var window in GetWindowsForScreen(targetKey)
+                         .Where(window => window is InformationWidgetWindow or QuickPlacesWindow or TodoWidgetWindow))
+            {
+                Capture(window);
+                _multiScreen?.UntrackSecondaryWindow(window);
+                _windows.Remove(window);
+                _windowsHiddenFromTray.Remove(window);
+                if (!window.IsClosingOrClosed)
+                {
+                    window.CanClose = true;
+                    using (window.SuppressPlacementCapture())
+                    {
+                        window.Close();
+                    }
+                }
+            }
+
+            ScreenProfileAccessor.CopyScreenCardSettings(_state,
+                (sourceKey, source.WorkingArea, source.Dpi), (targetKey, target.WorkingArea, target.Dpi),
+                MultiScreenHost.CurrentLayoutKey(connected));
+        }
+        StoreScreenSurfacePreferences(multiScreen, target, targetPreferences with
+        {
+            DockEnableMode = dockShown ? ScreenSurfaceEnableMode.Enabled : ScreenSurfaceEnableMode.Disabled,
+            TopBarEnableMode = topBarShown ? ScreenSurfaceEnableMode.Enabled : ScreenSurfaceEnableMode.Disabled,
+            DockEdge = sourcePreferences?.DockEdge ?? _state.Dock.Edge,
+            DockVisibilityMode = sourcePreferences?.DockVisibilityMode ?? _state.Dock.VisibilityMode,
+            TopBarVisibilityMode = sourcePreferences?.TopBarVisibilityMode ?? _state.TopBar.VisibilityMode,
+            TopBarHeight = sourcePreferences?.TopBarHeight ?? _state.TopBar.Height
+        });
+
+        multiScreen.IsEnabled = true;
+        SyncMultiScreenRuntime();
+        if (targetKey is null)
+        {
+            ApplyDesktopExperienceWithSave(_state.DesktopExperience, saveImmediate: false);
+        }
+        if (!wasEnabled)
+        {
+            ApplyDisplayRecovery();
+        }
+        ApplyScreenSurfaceChanges();
+        return "已复制主屏设置。此屏可单独调整。";
+    }
+
     private ScreenSurfaceStatus GetScreenSurfaceStatus(string monitorKey)
     {
         var monitors = _multiScreen?.ConnectedMonitors ?? [];
         var preferences = ReadScreenSurfacePreferences();
+        var dockEnabled = SurfaceMonitorTargetResolver.ResolveTargets(_state.Dock.MonitorKey,
+            _state.Dock.IsEnabled, preferences, item => item.DockEnableMode, monitors).Any(item => item.Key == monitorKey);
+        var topBarEnabled = SurfaceMonitorTargetResolver.ResolveTargets(_state.TopBar.MonitorKey,
+            _state.TopBar.IsEnabled, preferences, item => item.TopBarEnableMode, monitors).Any(item => item.Key == monitorKey);
         return new ScreenSurfaceStatus(
-            DescribeScreenSurface(_dock.IsRunningOnMonitor(monitorKey), _dock.IsVisibleOnMonitor(monitorKey),
-                SurfaceMonitorTargetResolver.ResolveTargets(_state.Dock.MonitorKey, _state.Dock.MonitorDeviceName,
-                    _state.Dock.IsEnabled, preferences, item => item.DockEnabled, monitors).Any(item => item.Key == monitorKey)),
-            DescribeScreenSurface(_topBar.IsRunningOnMonitor(monitorKey), _topBar.IsVisibleOnMonitor(monitorKey),
-                SurfaceMonitorTargetResolver.ResolveTargets(_state.TopBar.MonitorKey, _state.TopBar.MonitorDeviceName,
-                    _state.TopBar.IsEnabled, preferences, item => item.TopBarEnabled, monitors).Any(item => item.Key == monitorKey)));
+            DescribeScreenSurface(_dock.IsRunningOnMonitor(monitorKey), _dock.IsVisibleOnMonitor(monitorKey), dockEnabled),
+            DescribeScreenSurface(_topBar.IsRunningOnMonitor(monitorKey), _topBar.IsVisibleOnMonitor(monitorKey), topBarEnabled),
+            dockEnabled, topBarEnabled);
     }
 
     private static string DescribeScreenSurface(bool running, bool visible, bool configured) =>

@@ -23,6 +23,7 @@ public sealed record SettingsNavigationGroup(
 public static class SettingsNavigationRules
 {
     public const string SchemePageKey = "Scheme";
+    public const string DisplaysPageKey = "Displays";
     public const string ComponentsPageKey = "Components";
     public const string AppearancePageKey = "Appearance";
     public const string DockPageKey = "Dock";
@@ -39,7 +40,7 @@ public static class SettingsNavigationRules
 
     public static IReadOnlyList<SettingsNavigationGroup> Groups { get; } =
     [
-        // 首页在最上；中间按它们在屏幕上的位置从上到下排（桌面卡片、顶部信息条、Dock、任务栏），
+        // 首页和显示器在最上；中间按它们在屏幕上的位置从上到下排（桌面卡片、顶部信息条、Dock、任务栏），
         // 再是冰蓝总览卡，最后是作用于以上各部分的「外观样式」；通用设置与具体对象无关，单独放最后。
         new(
             MainGroupKey,
@@ -49,6 +50,11 @@ public static class SettingsNavigationRules
                     MainGroupKey,
                     "桌面方案",
                     "选一套方案，一次设好冰蓝 Dock、顶部信息条和 Windows 任务栏。之后可在左侧的 Dock、顶部信息条、Windows 任务栏页里单独微调。"),
+                new(
+                    DisplaysPageKey,
+                    MainGroupKey,
+                    "显示器",
+                    "选择屏幕，调整此屏的 Dock 和顶部信息条，或恢复离线档案。"),
                 new(
                     ComponentsPageKey,
                     MainGroupKey,
@@ -152,6 +158,11 @@ public static class SettingsNavigationRules
         if (EqualsIgnoreCase(trimmed, "CleanDesktop"))
         {
             return (SchemePageKey, "CleanDesktop");
+        }
+
+        if (EqualsIgnoreCase(trimmed, DisplaysPageKey))
+        {
+            return (DisplaysPageKey, null);
         }
 
         if (EqualsIgnoreCase(trimmed, ComponentsPageKey))

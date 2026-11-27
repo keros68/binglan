@@ -35,6 +35,43 @@ public static class AppDisplayNameRules
         ["SunloginClient.exe"] = "向日葵",
         ["ToDesk.exe"] = "ToDesk",
         ["explorer.exe"] = "文件资源管理器",
+        ["control.exe"] = "控制面板",
+        ["AliWorkbench.exe"] = "千牛工作台",
+        ["QianNiu.exe"] = "千牛工作台",
+        ["AliIM.exe"] = "阿里旺旺",
+        ["AliWangWang.exe"] = "阿里旺旺",
+        ["CNPrintClient.exe"] = "菜鸟打印",
+        ["PddWorkbench.exe"] = "拼多多商家工作台",
+        ["PddWebWorkbench.exe"] = "拼多多商家工作台",
+        ["PinduoduoWorkbench.exe"] = "拼多多商家工作台",
+        ["PddMerchant.exe"] = "拼多多商家工作台",
+        ["PddIM.exe"] = "拼多多商家客服",
+        ["PDDPrintClient.exe"] = "拼多多打印",
+        ["DouDian.exe"] = "抖店",
+        ["DoudianClient.exe"] = "抖店",
+        ["DoudianWorkbench.exe"] = "抖店",
+        ["DoudianFeige.exe"] = "飞鸽客服",
+        ["OceanEngine.Feige.exe"] = "飞鸽客服",
+        ["Feige.exe"] = "飞鸽",
+        ["JingMai.exe"] = "京麦",
+        ["JMWorkstation.exe"] = "京麦",
+        ["JMWorkBench.exe"] = "京麦",
+        ["JDWorkbench.exe"] = "京麦",
+        ["JDShopAssistant.exe"] = "京麦",
+        ["jm_dd_workbench.exe"] = "京东咚咚",
+        ["dd_workbench_jd.exe"] = "京东咚咚",
+        ["JDDongDong.exe"] = "京东咚咚",
+        ["DongDong.exe"] = "京东咚咚",
+        ["KuaishouShop.exe"] = "快手小店",
+        ["kuaishou_shop.exe"] = "快手小店",
+        ["KwaiShop.exe"] = "快手小店",
+        ["KsImClient.exe"] = "快手客服",
+        ["QianFan.exe"] = "小红书千帆",
+        ["XhsQianFan.exe"] = "小红书千帆",
+        ["WangDianTong.exe"] = "旺店通",
+        ["WdtErp.exe"] = "旺店通",
+        ["WdtClient.exe"] = "旺店通",
+        ["JuShuiTan.exe"] = "聚水潭",
         ["msedge.exe"] = "Edge",
         ["chrome.exe"] = "Chrome",
         ["firefox.exe"] = "Firefox",
@@ -69,7 +106,69 @@ public static class AppDisplayNameRules
         ["WPS Writer"] = "WPS 文字",
         ["WPS Spreadsheets"] = "WPS 表格",
         ["WPS Presentation"] = "WPS 演示",
-        ["Windows Explorer"] = "文件资源管理器"
+        ["Windows Explorer"] = "文件资源管理器",
+        ["Windows Control Panel"] = "控制面板",
+        ["Control Panel"] = "控制面板",
+        ["AliWorkbench"] = "千牛工作台",
+        ["AliWorkbench Application"] = "千牛工作台",
+        ["QianNiu"] = "千牛工作台",
+        ["QianNiu Workbench"] = "千牛工作台",
+        ["Taobao Seller Workbench"] = "千牛工作台",
+        ["AliIM"] = "阿里旺旺",
+        ["AliWangWang"] = "阿里旺旺",
+        ["Alibaba TradeManager"] = "阿里旺旺",
+        ["CNPrintClient"] = "菜鸟打印",
+        ["PddWorkbench"] = "拼多多商家工作台",
+        ["PddWebWorkbench"] = "拼多多商家工作台",
+        ["PinduoduoWorkbench"] = "拼多多商家工作台",
+        ["Pinduoduo Workbench"] = "拼多多商家工作台",
+        ["PDD Workbench"] = "拼多多商家工作台",
+        ["PddMerchant"] = "拼多多商家工作台",
+        ["PddIM"] = "拼多多商家客服",
+        ["PDDPrintClient"] = "拼多多打印",
+        ["DouDian"] = "抖店",
+        ["DoudianClient"] = "抖店",
+        ["DoudianWorkbench"] = "抖店",
+        ["DoudianFeige"] = "飞鸽客服",
+        ["OceanEngine.Feige"] = "飞鸽客服",
+        ["Feige"] = "飞鸽",
+        ["JingMai"] = "京麦",
+        ["JMWorkstation"] = "京麦",
+        ["JMWorkBench"] = "京麦",
+        ["JDWorkbench"] = "京麦",
+        ["JDShopAssistant"] = "京麦",
+        ["jm_dd_workbench"] = "京东咚咚",
+        ["dd_workbench_jd"] = "京东咚咚",
+        ["JDDongDong"] = "京东咚咚",
+        ["DongDong"] = "京东咚咚",
+        ["KuaishouShop"] = "快手小店",
+        ["kuaishou_shop"] = "快手小店",
+        ["KwaiShop"] = "快手小店",
+        ["KsImClient"] = "快手客服",
+        ["QianFan"] = "小红书千帆",
+        ["XhsQianFan"] = "小红书千帆",
+        ["WangDianTong"] = "旺店通",
+        ["WdtErp"] = "旺店通",
+        ["WdtClient"] = "旺店通",
+        ["JuShuiTan"] = "聚水潭"
+    };
+
+    // Electron/CEF/desktop wrappers often ship with a generic framework FileDescription instead
+    // of the product name; treat these as non-distinct so known executables resolve cleanly.
+    private static readonly HashSet<string> GenericRuntimeDescriptions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "Electron",
+        "Chromium",
+        "CEF",
+        "CefClient",
+        "CefSharp",
+        "nwjs",
+        "Application",
+        "Main",
+        "Client",
+        "Launcher",
+        "Desktop",
+        "App"
     };
 
     public static string? TryResolveCanonicalName(string? executablePath, string? rawName = null)
@@ -87,7 +186,7 @@ public static class AppDisplayNameRules
             // Only map by executable filename when no distinct descriptive name was supplied,
             // so a custom tool sharing a generic basename (e.g. Code.exe / et.exe) keeps its FileDescription.
             if (!string.IsNullOrWhiteSpace(exeName)
-                && (cleaned.Length == 0 || string.Equals(cleaned, exeStem, StringComparison.OrdinalIgnoreCase))
+                && IsNonDistinctRawName(cleaned, exeStem)
                 && KnownExecutableNames.TryGetValue(exeName, out var byExe))
             {
                 return byExe;
@@ -95,6 +194,33 @@ public static class AppDisplayNameRules
         }
 
         return null;
+    }
+
+    private static bool IsNonDistinctRawName(string cleaned, string exeStem)
+    {
+        if (cleaned.Length == 0
+            || string.Equals(cleaned, exeStem, StringComparison.OrdinalIgnoreCase)
+            || GenericRuntimeDescriptions.Contains(cleaned))
+        {
+            return true;
+        }
+
+        if (exeStem.Length >= 4
+            && cleaned.StartsWith(exeStem, StringComparison.OrdinalIgnoreCase)
+            && cleaned.Length > exeStem.Length
+            && char.IsWhiteSpace(cleaned[exeStem.Length]))
+        {
+            var suffix = cleaned[(exeStem.Length + 1)..].Trim();
+            if (suffix.Length > 0
+                && (GenericRuntimeDescriptions.Contains(suffix)
+                    || char.IsDigit(suffix[0])
+                    || (suffix[0] is 'v' or 'V' && suffix.Length > 1 && char.IsDigit(suffix[1]))))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     public static string? Normalize(string? rawName, string? executablePath = null)

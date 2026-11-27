@@ -608,12 +608,15 @@ public sealed partial class WidgetCoordinator : IDisposable
         var guide = new OnboardingWindow(new OnboardingActions
         {
             CitySearch = _citySearchService,
-            Monitors = MonitorCatalog.GetAll()
-                .Select(monitor => new OnboardingMonitor(monitor.DeviceName, monitor.Label, monitor.IsPrimary))
+            Monitors = MonitorIdentityResolver.ResolveConnected()
+                .Where(monitor => monitor.IsPrimary || monitor.IsPersistentIdentity)
+                .Select(monitor => new OnboardingMonitor(monitor.IsPrimary ? null : monitor.MonitorKey,
+                    monitor.IsPrimary ? "跟随 Windows 主显示器" : monitor.DisplayLabel, monitor.IsPrimary))
                 .ToList(),
-            ApplyMonitor = deviceName =>
+            ApplyMonitor = monitorKey =>
             {
-                _state.Dock.MonitorDeviceName = deviceName;
+                _state.Dock.MonitorKey = monitorKey;
+                _state.Dock.MonitorDeviceName = null;
                 _dock.Apply();
                 ScheduleSave();
             },
@@ -4211,21 +4214,23 @@ public sealed partial class WidgetCoordinator : IDisposable
                 return false;
             }
 
-            // A visible window can be raised directly; a hidden message window delegates to
-            // the owning process's live window or its tray-reveal / launch path off-thread.
-            if (handle != 0
-                && DockNativeMethods.IsWindow(handle)
-                && DockNativeMethods.IsWindowVisible(handle)
-                && !NativeMethods.IsWindowCloaked(handle))
-            {
-                return WindowCommandService.Focus(
-                    new TrackedWindow(handle, processId, "窗口", null, null, false, DockNativeMethods.IsIconic(handle))).Succeeded;
-            }
-
             if (processId == 0 && handle != 0 && DockNativeMethods.IsWindow(handle))
             {
                 DockNativeMethods.GetWindowThreadProcessId(handle, out processId);
             }
+
+            // A visible top-level window can be raised directly (with async restore retries);
+            // hidden message windows or non-top-level ghosts delegate to the owning instance.
+            if (handle != 0
+                && DockNativeMethods.IsWindow(handle)
+                && DockNativeMethods.IsWindowVisible(handle)
+                && !NativeMethods.IsWindowCloaked(handle)
+                && WindowCatalog.ShouldInclude(handle, DockNativeMethods.GetShellWindow()))
+            {
+                _ = ActivateHandleOrProcessAsync(handle, processId);
+                return true;
+            }
+
             if (processId == 0)
             {
                 return false;
@@ -4235,22 +4240,57 @@ public sealed partial class WidgetCoordinator : IDisposable
             return true;
         }
 
-        private async Task ActivateProcessAttentionAsync(uint processId)
+        private async Task ActivateHandleOrProcessAsync(nint handle, uint processId)
         {
-            var running = await Task.Run(() => new WindowCatalog().Capture());
-            var processWindows = running.Where(window => window.ProcessId == processId).ToArray();
-            if (processWindows.Length > 0)
+            var restore = DockNativeMethods.IsIconic(handle);
+            var result = await WindowCommandService.FocusAsync(
+                new TrackedWindow(handle, processId, "窗口", null, null, false, restore),
+                restore);
+            if (result.Succeeded)
             {
-                var group = WindowGrouping.Group(processWindows)[0];
-                var target = processWindows.FirstOrDefault(window => !window.IsMinimized) ?? processWindows[0];
-                _ = await WindowCommandService.FocusAsync(
-                    target,
-                    DockNativeMethods.IsIconic(target.Handle),
-                    group.DisplayName);
                 return;
             }
 
-            var executablePath = await Task.Run(() => WindowCatalog.ExecutablePathOf(processId));
+            if (result.NoLiveWindows && processId != 0)
+            {
+                await ActivateProcessAttentionAsync(processId);
+                return;
+            }
+
+            if (!owner._isExiting && !string.IsNullOrWhiteSpace(result.Message))
+            {
+                owner._trayIcon.ShowBalloonTip(3000, "顶端信息条", result.Message, TrayTipKind.Info);
+            }
+        }
+
+        private async Task ActivateProcessAttentionAsync(uint processId)
+        {
+            var (running, instancePids, rootExecutablePath) = await Task.Run(() =>
+            {
+                var captured = new WindowCatalog().Capture();
+                var (pids, rootExe) = WindowCommandService.ResolveInstanceInfo(processId);
+                return (captured, pids, rootExe);
+            });
+
+            var instanceWindows = running
+                .Where(window => window.ProcessId == processId || instancePids.Contains(window.ProcessId))
+                .ToArray();
+            if (instanceWindows.Length > 0)
+            {
+                var group = WindowGrouping.Group(instanceWindows)[0];
+                var target = WindowCommandService.SelectBestWindow(instanceWindows);
+                var focusResult = await WindowCommandService.FocusAsync(
+                    target,
+                    DockNativeMethods.IsIconic(target.Handle),
+                    group.DisplayName);
+                if (!focusResult.Succeeded && !owner._isExiting && !string.IsNullOrWhiteSpace(focusResult.Message))
+                {
+                    owner._trayIcon.ShowBalloonTip(3000, group.DisplayName, focusResult.Message, TrayTipKind.Info);
+                }
+                return;
+            }
+
+            var executablePath = rootExecutablePath;
             if (string.IsNullOrWhiteSpace(executablePath)
                 || DockAppResolver.IsFrameHost(executablePath)
                 || DockAppResolver.IsPackagedPath(executablePath))
@@ -4260,10 +4300,8 @@ public sealed partial class WidgetCoordinator : IDisposable
 
             var pinned = owner._state.Dock.PinnedApps.FirstOrDefault(candidate =>
                     !string.IsNullOrWhiteSpace(candidate.ExecutablePath)
-                    && string.Equals(
-                        WindowGrouping.NormalizeExecutablePath(candidate.ExecutablePath),
-                        WindowGrouping.NormalizeExecutablePath(executablePath),
-                        StringComparison.OrdinalIgnoreCase))
+                    && (DockPinRules.MatchesExecutablePath(candidate, executablePath)
+                        || DockQuitRules.MatchesExecutableOrVersionSibling(candidate.ExecutablePath, executablePath)))
                 ?? new DockPinnedApp
                 {
                     DisplayName = DockAppResolver.GetFileDescription(executablePath)

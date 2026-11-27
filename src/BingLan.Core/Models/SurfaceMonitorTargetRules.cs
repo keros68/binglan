@@ -5,23 +5,22 @@ public readonly record struct SurfaceMonitorTarget(string MonitorKey, bool IsPri
 /// <summary>Default and per-display targeting for the Dock and top bar.</summary>
 public static class SurfaceMonitorTargetRules
 {
-    public static bool FollowsPrimary(string? monitorKey, string? legacyDeviceName) =>
-        string.IsNullOrWhiteSpace(monitorKey) && string.IsNullOrWhiteSpace(legacyDeviceName);
+    // A legacy DISPLAYn name cannot establish a physical target. Without a key, use Windows primary.
+    public static bool FollowsPrimary(string? monitorKey) => string.IsNullOrWhiteSpace(monitorKey);
 
-    public static bool IsEnabledOnMonitor(bool defaultEnabled, bool isDefaultTarget, bool? screenOverride) =>
-        screenOverride ?? (defaultEnabled && isDefaultTarget);
+    public static bool IsEnabledOnMonitor(bool defaultEnabled, bool isDefaultTarget, ScreenSurfaceEnableMode mode) => mode switch
+    {
+        ScreenSurfaceEnableMode.Enabled => true,
+        ScreenSurfaceEnableMode.Disabled => false,
+        ScreenSurfaceEnableMode.FollowGlobal => defaultEnabled,
+        _ => defaultEnabled && isDefaultTarget
+    };
 
     public static int? ResolveIndex(
         string? monitorKey,
-        string? legacyDeviceName,
         IReadOnlyList<SurfaceMonitorTarget> monitors)
     {
-        var followsPrimary = FollowsPrimary(monitorKey, legacyDeviceName);
-        if (!followsPrimary && string.IsNullOrWhiteSpace(monitorKey))
-        {
-            // A DISPLAYn name alone cannot prove which physical display was originally selected.
-            return null;
-        }
+        var followsPrimary = FollowsPrimary(monitorKey);
 
         int? match = null;
         for (var index = 0; index < monitors.Count; index++)

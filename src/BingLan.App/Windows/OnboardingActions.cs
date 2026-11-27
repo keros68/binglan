@@ -9,14 +9,14 @@ public sealed record OnboardingEntry(string Slot, DockPinnedApp? App);
 
 /// <summary>What the first-run guide may change; the coordinator owns the state.</summary>
 /// <summary>One display offered in the first-run guide: resolution and scaling in the label.</summary>
-public sealed record OnboardingMonitor(string DeviceName, string Label, bool IsPrimary);
+public sealed record OnboardingMonitor(string? MonitorKey, string Label, bool IsPrimary);
 
 public sealed class OnboardingActions
 {
     public CityLookupService CitySearch { get; init; } = new();
     /// <summary>Connected displays, primary first; the chosen one hosts the dock.</summary>
     public IReadOnlyList<OnboardingMonitor> Monitors { get; init; } = [];
-    public Action<string> ApplyMonitor { get; init; } = _ => { };
+    public Action<string?> ApplyMonitor { get; init; } = _ => { };
     /// <summary>The folder offered for the Downloads entry, or null when none was found.</summary>
     public string? DownloadsFolder { get; init; }
     public string GreetingName { get; init; } = string.Empty;
