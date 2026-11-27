@@ -34,6 +34,10 @@ public sealed partial class WidgetCoordinator : IDisposable
     private readonly TrayIconHost _trayIcon;
     private readonly WindowsPerformanceSamplingService _performanceSampler;
     private readonly WeatherService _weatherService;
+    private readonly PeripheralBatteryService _peripheralBatteryService;
+    private bool _peripheralEngineUsed;
+    private Dictionary<string, (bool Low, bool Full)> _peripheralAlertState = [];
+    private bool _peripheralAlertSeeded;
     private readonly CityLookupService _citySearchService;
     private readonly DockHost _dock;
     private readonly TopBarHost _topBar;
@@ -105,6 +109,9 @@ public sealed partial class WidgetCoordinator : IDisposable
         _lastAppliedStyle = _state.Style.Clone();
         _performanceSampler = new WindowsPerformanceSamplingService();
         _weatherService = new WeatherService();
+        _peripheralBatteryService = new PeripheralBatteryService(
+            BatteryEngineNative.PollJson,
+            pollExtrasJson: BatteryEngineNative.PollExtrasJson);
         _citySearchService = new CityLookupService();
         _mappingWatcher = new FileMappingWatchService(SweepGoneFileMappings, ImportNewDesktopEntries);
         _saveTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(350) };
@@ -908,6 +915,74 @@ public sealed partial class WidgetCoordinator : IDisposable
         _dock.Dispose();
         _topBar.Dispose();
         _taskbar.Dispose();
+        ShutdownPeripheralEngine();
+    }
+
+    /// <summary>
+    /// 外设电量提醒（承接 BatteryHub 的低电/充满托盘提醒）：只在状态翻转时弹一次气泡，
+    /// 首次快照只播种状态不弹，避免开机时把已经低电的设备当新闻报一遍。
+    /// </summary>
+    private void OnPeripheralBatterySnapshot(PeripheralBatterySnapshot snapshot)
+    {
+        if (snapshot.Status is PeripheralBatteryStatus.NoData or PeripheralBatteryStatus.EngineUnavailable)
+        {
+            return;
+        }
+
+        var lowLines = new List<string>();
+        var fullLines = new List<string>();
+        var next = new Dictionary<string, (bool Low, bool Full)>();
+        foreach (var device in snapshot.Devices)
+        {
+            var low = device.Connected && device.Low;
+            var full = device.Connected && device.Charging && device.Percent >= 100;
+            next[device.Key] = (low, full);
+            if (!_peripheralAlertSeeded)
+            {
+                continue;
+            }
+
+            _peripheralAlertState.TryGetValue(device.Key, out var before);
+            if (low && !before.Low)
+            {
+                lowLines.Add($"{device.Name} 只剩 {device.Percent}%");
+            }
+            if (full && !before.Full)
+            {
+                fullLines.Add(device.Name);
+            }
+        }
+
+        _peripheralAlertState = next;
+        _peripheralAlertSeeded = true;
+
+        if (lowLines.Count > 0)
+        {
+            _trayIcon.ShowBalloonTip(
+                8000,
+                "外设电量低",
+                string.Join("；", lowLines) + "，记得充电。",
+                TrayTipKind.Warning);
+        }
+        if (fullLines.Count > 0)
+        {
+            _trayIcon.ShowBalloonTip(
+                5000,
+                "外设已充满",
+                string.Join("、", fullLines) + " 已充满 100%。",
+                TrayTipKind.Info);
+        }
+    }
+
+    private void ShutdownPeripheralEngine()
+    {
+        if (!_peripheralEngineUsed)
+        {
+            return;
+        }
+
+        _peripheralEngineUsed = false;
+        BatteryEngineNative.Shutdown();
     }
 
     public void Dispose()
@@ -950,6 +1025,7 @@ public sealed partial class WidgetCoordinator : IDisposable
         _topBar.Dispose();
         _trayOverflow?.Dispose();
         _performanceSampler.Dispose();
+        ShutdownPeripheralEngine();
     }
 
     private bool IsPrimaryTodo(TodoWidgetState state) =>
@@ -3675,6 +3751,7 @@ public sealed partial class WidgetCoordinator : IDisposable
     private sealed class TopBarEnvironment(WidgetCoordinator owner) : ITopBarEnvironment
     {
         private volatile bool _weatherInFlight;
+        private volatile bool _peripheralInFlight;
 
         public bool Use24HourClock => owner.InformationState().Use24HourClock;
 
@@ -3724,6 +3801,58 @@ public sealed partial class WidgetCoordinator : IDisposable
                 finally
                 {
                     _weatherInFlight = false;
+                }
+            });
+        }
+
+        public PeripheralBatterySnapshot ReadPeripheralBattery() =>
+            owner._peripheralBatteryService.GetSnapshot();
+
+        public void RefreshPeripheralBatteryIfDue()
+        {
+            // 模块没开就不轮询：引擎轮询要枚举全部 HID 设备，没必要为看不见的模块花这份开销。
+            if (_peripheralInFlight ||
+                !TopBarRules.IsModuleOn(owner._state.TopBar.Modules, TopBarModuleKind.PeripheralBattery))
+            {
+                return;
+            }
+
+            owner._peripheralBatteryService.PollInterval =
+                TimeSpan.FromSeconds(TopBarRules.EffectivePeripheralPollSeconds(owner._state.TopBar));
+            if (!owner._peripheralBatteryService.IsAutomaticRefreshDue(DateTimeOffset.Now))
+            {
+                return;
+            }
+
+            KickPeripheralRefresh();
+        }
+
+        public void ForceRefreshPeripheralBattery()
+        {
+            if (_peripheralInFlight ||
+                !TopBarRules.IsModuleOn(owner._state.TopBar.Modules, TopBarModuleKind.PeripheralBattery))
+            {
+                return;
+            }
+
+            owner._peripheralBatteryService.ForceRefreshDue();
+            KickPeripheralRefresh();
+        }
+
+        private void KickPeripheralRefresh()
+        {
+            _peripheralInFlight = true;
+            owner._peripheralEngineUsed = true;
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await owner._peripheralBatteryService.RefreshAsync();
+                    owner.OnPeripheralBatterySnapshot(owner._peripheralBatteryService.GetSnapshot());
+                }
+                finally
+                {
+                    _peripheralInFlight = false;
                 }
             });
         }

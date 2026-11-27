@@ -448,6 +448,112 @@ public static class TopBarModuleRules
         };
     }
 
+    // ---- 外设电量（融合版）：BatteryEngine.dll 的读数经 PeripheralBatteryService 成快照 ----
+
+    /// <summary>顶栏里每台设备用一个汉字标种类，避免多台设备只剩一串分不清的百分比。</summary>
+    public static string PeripheralKindTag(PeripheralDeviceKind kind) => kind switch
+    {
+        PeripheralDeviceKind.Mouse => "鼠",
+        PeripheralDeviceKind.Headset => "耳",
+        PeripheralDeviceKind.Keyboard => "键",
+        PeripheralDeviceKind.Gamepad => "柄",
+        PeripheralDeviceKind.Phone => "机",
+        _ => "设"
+    };
+
+    /// <summary>会显示在顶栏的设备：已连接且有展示值（实时或最后已知）。</summary>
+    public static IReadOnlyList<PeripheralDevice> ShownPeripherals(PeripheralBatterySnapshot? snapshot)
+    {
+        if (snapshot is null ||
+            snapshot.Status is PeripheralBatteryStatus.NoData or PeripheralBatteryStatus.EngineUnavailable)
+        {
+            return Array.Empty<PeripheralDevice>();
+        }
+
+        return snapshot.Devices.Where(d => d.Connected && d.Percent >= 0).ToList();
+    }
+
+    public static string FormatPeripheralBatteryLabel(
+        PeripheralBatterySnapshot? snapshot,
+        TopBarBatteryStyle style = TopBarBatteryStyle.IconAndPercent)
+    {
+        if (style == TopBarBatteryStyle.IconOnly || snapshot is null)
+        {
+            return string.Empty;
+        }
+
+        if (snapshot.Status is PeripheralBatteryStatus.NoData or PeripheralBatteryStatus.EngineUnavailable)
+        {
+            return string.Empty;
+        }
+
+        var shown = ShownPeripherals(snapshot);
+        return shown.Count == 0
+            ? "—"
+            : string.Join(" ", shown.Select(d => $"{PeripheralKindTag(d.Kind)}{d.Percent}%"));
+    }
+
+    public static string FormatPeripheralBatteryTooltip(PeripheralBatterySnapshot? snapshot)
+    {
+        if (snapshot is null || snapshot.Status == PeripheralBatteryStatus.NoData)
+        {
+            return "外设电量";
+        }
+
+        if (snapshot.Status == PeripheralBatteryStatus.EngineUnavailable)
+        {
+            return "外设电量：引擎不可用，请确认 BatteryEngine.dll 随程序一起安装";
+        }
+
+        var lines = new List<string>
+        {
+            snapshot.Status == PeripheralBatteryStatus.Stale
+                ? "外设电量（更新失败，显示上次数据）"
+                : "外设电量"
+        };
+        foreach (var d in snapshot.Devices)
+        {
+            if (!d.Connected)
+            {
+                lines.Add($"{d.Name}：已断开");
+            }
+            else if (d.Percent < 0)
+            {
+                lines.Add($"{d.Name}：未知");
+            }
+            else if (d.Charging)
+            {
+                lines.Add($"{d.Name}：{d.Percent}%（充电中）");
+            }
+            else if (d.Asleep)
+            {
+                lines.Add($"{d.Name}：{d.Percent}%（休眠，最后已知）");
+            }
+            else if (!d.Live)
+            {
+                lines.Add($"{d.Name}：{d.Percent}%（最后已知）");
+            }
+            else
+            {
+                lines.Add($"{d.Name}：{d.Percent}%");
+            }
+        }
+
+        return string.Join("\n", lines);
+    }
+
+    /// <summary>需要低电提醒的设备（引擎已按 20% 阈值算好 low，充电中不算）。</summary>
+    public static IReadOnlyList<PeripheralDevice> LowPeripherals(PeripheralBatterySnapshot? snapshot)
+    {
+        if (snapshot is null ||
+            snapshot.Status is PeripheralBatteryStatus.NoData or PeripheralBatteryStatus.EngineUnavailable)
+        {
+            return Array.Empty<PeripheralDevice>();
+        }
+
+        return snapshot.Devices.Where(d => d.Connected && d.Low).ToList();
+    }
+
     public static string FormatPerformanceLabel(
         PerformanceSnapshot? snapshot,
         TopBarPerformanceStyle style = TopBarPerformanceStyle.Full)

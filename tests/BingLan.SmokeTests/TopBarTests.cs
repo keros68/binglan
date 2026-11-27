@@ -49,6 +49,13 @@ public static class TopBarTests
         Assert(state.FrostedGlass, "默认开启磨砂");
         foreach (var kind in TopBarRules.ModuleOrder)
         {
+            // Fusion extension: the peripheral-battery module is opt-in (it needs the
+            // optional engine DLL), so it is the one module that defaults to off.
+            if (kind == TopBarModuleKind.PeripheralBattery)
+            {
+                Assert(!TopBarRules.IsModuleOn(state.Modules, kind), "外设电量模块默认关闭（融合扩展，需手动开启）");
+                continue;
+            }
             Assert(TopBarRules.IsModuleOn(state.Modules, kind), $"模块 {kind} 默认开启");
         }
 

@@ -595,6 +595,21 @@ public partial class SettingsWindow
                     ],
                     TopBarRules.EffectiveBatteryStyle(state).ToString());
                 break;
+            case TopBarModuleKind.PeripheralBattery:
+                // 显示方式与本机电量共用（在「电量」模块处调）；这里调轮询间隔。
+                PopulateStyleCombo(
+                    "外设电量刷新间隔",
+                    "多久读一次全部外设的电量；显示方式与本机电量共用同一设置（在上方「电量」处调整）",
+                    [
+                        ("15 秒（默认）", "15"),
+                        ("30 秒", "30"),
+                        ("1 分钟", "60"),
+                        ("5 分钟", "300"),
+                        ("15 分钟", "900"),
+                        ("1 小时", "3600")
+                    ],
+                    TopBarRules.EffectivePeripheralPollSeconds(state).ToString());
+                break;
             case TopBarModuleKind.InputMethod:
                 PopulateStyleCombo(
                     "输入法显示方式",
@@ -785,6 +800,9 @@ public partial class SettingsWindow
             case TopBarModuleKind.Battery:
                 state.BatteryStyle = tag == "IconOnly" ? TopBarBatteryStyle.IconOnly : TopBarBatteryStyle.IconAndPercent;
                 break;
+            case TopBarModuleKind.PeripheralBattery:
+                state.PeripheralPollSeconds = int.TryParse(tag, out var seconds) ? seconds : null;
+                break;
             case TopBarModuleKind.InputMethod:
                 state.InputMethodStyle = tag == "BadgeOnly" ? TopBarInputMethodStyle.BadgeOnly : TopBarInputMethodStyle.BadgeAndName;
                 break;
@@ -823,7 +841,9 @@ public partial class SettingsWindow
         }
 
         LoadTopBarVisualEditor();
-        ApplyTopBarChange($"已更新“{TopBarRules.ModuleLabel(_selectedTopBarModule)}”显示样式");
+        ApplyTopBarChange(_selectedTopBarModule == TopBarModuleKind.PeripheralBattery
+            ? $"已更新“{TopBarRules.ModuleLabel(_selectedTopBarModule)}”刷新间隔"
+            : $"已更新“{TopBarRules.ModuleLabel(_selectedTopBarModule)}”显示样式");
     }
 
     private void TopBarSearchOptions_Changed(object sender, RoutedEventArgs e)
@@ -870,6 +890,7 @@ public partial class SettingsWindow
         TopBarModuleKind.Clock => "时钟",
         TopBarModuleKind.Search => "搜索",
         TopBarModuleKind.TrayOverflow => "托盘",
+        TopBarModuleKind.PeripheralBattery => "外设",
         _ => kind.ToString()
     };
 
@@ -886,6 +907,7 @@ public partial class SettingsWindow
         TopBarModuleKind.Clock => "\uE823",
         TopBarModuleKind.Search => "\uE721",
         TopBarModuleKind.TrayOverflow => "\uE70E",
+        TopBarModuleKind.PeripheralBattery => "\uE83F",
         _ => "\uE713"
     };
 
@@ -894,6 +916,7 @@ public partial class SettingsWindow
         TopBarModuleKind.Volume when TopBarRules.EffectiveVolumeStyle(state) == TopBarVolumeStyle.IconOnly => "图标",
         TopBarModuleKind.Network when TopBarRules.EffectiveNetworkDisplayMode(state) == TopBarNetworkDisplayMode.IconOnly => "图标",
         TopBarModuleKind.Battery when TopBarRules.EffectiveBatteryStyle(state) == TopBarBatteryStyle.IconOnly => "图标",
+        TopBarModuleKind.PeripheralBattery when TopBarRules.EffectiveBatteryStyle(state) == TopBarBatteryStyle.IconOnly => "图标",
         TopBarModuleKind.InputMethod when TopBarRules.EffectiveInputMethodStyle(state) == TopBarInputMethodStyle.BadgeOnly => "徽标",
         TopBarModuleKind.Weather when TopBarRules.EffectiveWeatherStyle(state) == TopBarWeatherStyle.Compact => "极简",
         TopBarModuleKind.Weather when TopBarRules.EffectiveWeatherStyle(state) == TopBarWeatherStyle.TempAndCondition => "简明",
