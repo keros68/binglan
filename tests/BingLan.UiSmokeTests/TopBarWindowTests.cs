@@ -756,17 +756,21 @@ internal static class TopBarWindowTests
         try
         {
             bar.ApplyState();
+            var configuredBackground = (bar.Surface.Background as SolidColorBrush)?.Color
+                ?? throw new InvalidOperationException("顶栏底板应使用纯色画刷");
+            // A 0% custom surface keeps one alpha step so its hit area still works.
+            Assert(configuredBackground.A <= 1, $"0% 自定义顶栏应接近透明，实际为 {configuredBackground}");
             overlap.SetValue(bar, true);
             dwell.SetValue(bar, Environment.TickCount64);
             sample.SetValue(bar, new ColorContrastRules.SrgbColor(1d, 1d, 1d));
             previousInk.SetValue(bar, true);
             bar.RefreshAppearance();
-            Assert(bar.Surface.Background is SolidColorBrush { Color.A: > 0 },
+            Assert(bar.Surface.Background is SolidColorBrush overlapBrush && overlapBrush.Color.A > configuredBackground.A,
                 "智能隐藏覆盖窗口时应使用临时可读底板");
 
             state.VisibilityMode = TopBarVisibilityMode.ReserveTopEdge;
             bar.ApplyState();
-            Assert(bar.Surface.Background is SolidColorBrush { Color.A: 0 },
+            Assert(bar.Surface.Background is SolidColorBrush restoredBrush && restoredBrush.Color == configuredBackground,
                 "切换预留顶边后应立即恢复透明外观，不能保留智能隐藏的临时底板");
             Assert(overlap.GetValue(bar) is false && dwell.GetValue(bar) is null
                 && sample.GetValue(bar) is null && !bar.UsesDarkInk,
