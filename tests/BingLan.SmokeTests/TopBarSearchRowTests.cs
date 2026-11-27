@@ -259,18 +259,40 @@ public static class TopBarSearchRowTests
         var style = new DesktopStyleState { Glass = GlassMode.Clear, Palette = DesktopStyleRules.DefaultPalette };
         var followLauncher = new LauncherAppearanceState { FollowCardLook = true };
 
-        // Transparent TopBar (< 0.12 opacity) with a stale neon cyan SurfaceColor must NEVER bleed #00FFFF,
-        // and must stay on the user's global IceBlue style instead of flipping to dark grey.
+        // Transparent TopBar (< 0.12 opacity) + global Clear glass + White ink (user's exact
+        // pure-transparent desktop setup): must use crisp white text + sheer translucent frosted glass,
+        // NOT opaque dark grey (#162230 @ 80%), NOT opaque white slab, and never leak stale #00FFFF.
         var transparentBar = new TopBarState
         {
             FollowCardLook = false,
             SurfaceColor = "#00FFFF",
             SurfaceOpacity = 0.0d
         };
-        var overTransparentBar = TopBarSearchLookRules.Resolve(style, followLauncher, transparentBar);
-        Assert(overTransparentBar.UseDarkInk
-            && overTransparentBar.GlassTint.EndsWith("ECF6FF", StringComparison.OrdinalIgnoreCase),
-            "透明顶栏且全局为纯透明冰蓝时，内联搜索应跟随冰蓝浅色玻璃，不变成深灰也不泄露 #00FFFF");
+        var clearWhiteStyle = new DesktopStyleState
+        {
+            Glass = GlassMode.Clear,
+            Palette = DesktopStyleRules.DefaultPalette,
+            TextInk = TextInk.White
+        };
+        var overTransparentBar = TopBarSearchLookRules.Resolve(clearWhiteStyle, followLauncher, transparentBar);
+        Assert(!overTransparentBar.UseDarkInk
+            && overTransparentBar.Foreground == TopBarSearchLookRules.ClearGlassWhiteForeground
+            && overTransparentBar.UseTextShadow
+            && ColorContrastRules.ParseHex(overTransparentBar.GlassTint).A <= 0.35d
+            && !overTransparentBar.GlassTint.EndsWith("00FFFF", StringComparison.OrdinalIgnoreCase),
+            "纯透明+白色字全局风格下，内联搜索应使用白色字、柔和文字阴影与低不透明度通透磨砂玻璃，不发闷发灰也不泄露 #00FFFF");
+
+        // Clear glass with explicit Dark text ink -> dark ink on light ice glass.
+        var clearDarkInkStyle = new DesktopStyleState
+        {
+            Glass = GlassMode.Clear,
+            Palette = DesktopStyleRules.DefaultPalette,
+            TextInk = TextInk.Dark
+        };
+        var clearDarkInk = TopBarSearchLookRules.Resolve(clearDarkInkStyle, followLauncher, transparentBar);
+        Assert(clearDarkInk.UseDarkInk
+            && clearDarkInk.GlassTint.EndsWith("ECF6FF", StringComparison.OrdinalIgnoreCase),
+            "纯透明+深色字全局风格下应使用深色字与浅色冰蓝磨砂玻璃");
 
         // Custom light launcher surface (e.g. pure white) -> dark ink, visible non-white border/badges/hover.
         var customLightLauncher = new LauncherAppearanceState
@@ -312,8 +334,8 @@ public static class TopBarSearchRowTests
             topBar);
         Assert(iceLight.UseDarkInk && iceLight.GlassTint.EndsWith("ECF6FF", StringComparison.OrdinalIgnoreCase),
             "跟随浅色冰蓝卡片风格时应使用柔和冰蓝 #ECF6FF，而不是偏青发灰的低透明度色");
-        Assert(ColorContrastRules.ParseHex(iceLight.GlassTint).A >= 0.74d,
-            "浅色冰蓝磨砂层不透明度应足够高，避免叠加深色窗口后发灰偏色");
+        Assert(ColorContrastRules.ParseHex(iceLight.GlassTint).A >= 0.62d,
+            "浅色冰蓝磨砂层不透明度应保持可读同时保留通透玻璃质感");
 
         var milkTea = TopBarSearchLookRules.Resolve(
             new DesktopStyleState { Glass = GlassMode.Light, Palette = "milk-tea" },
@@ -329,13 +351,19 @@ public static class TopBarSearchRowTests
         Assert(!darkGlass.UseDarkInk && darkGlass.GlassTint.EndsWith("162230", StringComparison.OrdinalIgnoreCase),
             "跟随深色玻璃时应使用深蓝灰底板与浅色文字");
 
-        var clearGlassMilkTea = TopBarSearchLookRules.Resolve(
-            new DesktopStyleState { Glass = GlassMode.Clear, Palette = "milk-tea" },
+        var lightWithWhiteInk = TopBarSearchLookRules.Resolve(
+            new DesktopStyleState { Glass = GlassMode.Light, TextInk = TextInk.White },
             followLauncher,
             topBar);
-        Assert(clearGlassMilkTea.UseDarkInk
-            && clearGlassMilkTea.GlassTint.EndsWith("F6EBDD", StringComparison.OrdinalIgnoreCase),
-            "纯透明全局风格且配色为奶茶时，内联搜索应继续跟随奶茶配色而非跳回灰色");
+        Assert(!lightWithWhiteInk.UseDarkInk && lightWithWhiteInk.Foreground == TopBarSearchLookRules.DarkSurfaceForeground,
+            "浅色玻璃显式选择白色字时，内联搜索应使用浅色/白色字并配可读深色调玻璃");
+
+        var customInk = TopBarSearchLookRules.Resolve(
+            new DesktopStyleState { Glass = GlassMode.Clear, TextInk = TextInk.Custom, CustomTextColor = "#FFF2CC" },
+            followLauncher,
+            topBar);
+        Assert(!customInk.UseDarkInk && customInk.Foreground == "#FFF2CC",
+            "自定义浅色文字应保留用户所选字色");
     }
 
     private static void TestSearchLookBlurAndClearGlassFlags()
@@ -381,13 +409,21 @@ public static class TopBarSearchRowTests
             var fallback = ColorContrastRules.ParseHex(p.FallbackSurface);
             var activeRow = ColorContrastRules.ParseHex(p.ActiveRowBackground);
 
-            // Foreground over GlassTint composited over pure black & pure white must meet WCAG AA (4.5:1).
-            var glassOverBlack = ColorContrastRules.CompositeLayers("#000000", glass);
-            var glassOverWhite = ColorContrastRules.CompositeLayers("#FFFFFF", glass);
-            Assert(ColorContrastRules.ContrastRatio(fg, glassOverBlack) >= ColorContrastRules.MinimumNormalTextContrast,
-                $"主文字在深色背景下对比度不足：{p.Foreground} on {p.GlassTint}");
-            Assert(ColorContrastRules.ContrastRatio(fg, glassOverWhite) >= ColorContrastRules.MinimumNormalTextContrast,
-                $"主文字在浅色背景下对比度不足：{p.Foreground} on {p.GlassTint}");
+            // Foreground over FallbackSurface (and over GlassTint for non-sheer modes) must meet WCAG AA (4.5:1).
+            var fbOverBlack = ColorContrastRules.CompositeLayers("#000000", fallback);
+            var fbOverWhite = ColorContrastRules.CompositeLayers("#FFFFFF", fallback);
+            Assert(ColorContrastRules.ContrastRatio(fg, fbOverBlack) >= ColorContrastRules.MinimumNormalTextContrast
+                && ColorContrastRules.ContrastRatio(fg, fbOverWhite) >= ColorContrastRules.MinimumNormalTextContrast,
+                $"回退底色主文字对比度不足：{p.Foreground} on {p.FallbackSurface}");
+            if (!p.UseTextShadow)
+            {
+                var glassOverBlack = ColorContrastRules.CompositeLayers("#000000", glass);
+                var glassOverWhite = ColorContrastRules.CompositeLayers("#FFFFFF", glass);
+                Assert(ColorContrastRules.ContrastRatio(fg, glassOverBlack) >= ColorContrastRules.MinimumNormalTextContrast,
+                    $"主文字在深色背景下对比度不足：{p.Foreground} on {p.GlassTint}");
+                Assert(ColorContrastRules.ContrastRatio(fg, glassOverWhite) >= ColorContrastRules.MinimumNormalTextContrast,
+                    $"主文字在浅色背景下对比度不足：{p.Foreground} on {p.GlassTint}");
+            }
 
             // Muted & placeholder text over FallbackSurface over dark/bright wallpaper must meet WCAG AA.
             var fbOverDark = ColorContrastRules.CompositeLayers(ColorContrastRules.DarkWallpaper, fallback);

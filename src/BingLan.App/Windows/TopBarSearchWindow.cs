@@ -324,6 +324,24 @@ internal sealed class TopBarSearchWindow : Window
         _list.Foreground = _ink;
         _status.Foreground = _muted;
 
+        System.Windows.Media.Effects.DropShadowEffect? textShadow = null;
+        if (_look.UseTextShadow && !highContrast)
+        {
+            textShadow = new System.Windows.Media.Effects.DropShadowEffect
+            {
+                Color = Colors.Black,
+                Opacity = 0.45d,
+                BlurRadius = 5d,
+                ShadowDepth = 1d,
+                Direction = 270d
+            };
+            textShadow.Freeze();
+        }
+        _input.Effect = textShadow;
+        _placeholder.Effect = textShadow;
+        _searchGlyph.Effect = textShadow;
+        _escHintText.Effect = textShadow;
+
         _glass.SetClearMode(false);
         _glass.SetFrostedGlass(_look.AllowBackdropBlur && !highContrast);
     }
@@ -1121,6 +1139,7 @@ internal sealed class TopBarSearchWindow : Window
 internal sealed record TopBarSearchLook(
     bool UseDarkInk,
     bool AllowBackdropBlur,
+    bool UseTextShadow,
     Color GlassTint,
     Color FallbackSurface,
     Color Border,
@@ -1146,6 +1165,7 @@ internal sealed record TopBarSearchLook(
         return new TopBarSearchLook(
             UseDarkInk: palette.UseDarkInk,
             AllowBackdropBlur: palette.AllowBackdropBlur,
+            UseTextShadow: palette.UseTextShadow,
             GlassTint: Parse(palette.GlassTint, Color.FromArgb(0xD2, 0xEC, 0xF6, 0xFF)),
             FallbackSurface: Parse(palette.FallbackSurface, Color.FromArgb(0xEE, 0xEC, 0xF6, 0xFF)),
             Border: Parse(palette.Border, Color.FromArgb(0x36, 0x12, 0x2C, 0x44)),

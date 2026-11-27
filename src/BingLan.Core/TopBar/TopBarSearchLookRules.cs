@@ -9,6 +9,7 @@ namespace BingLan.Core.TopBar;
 public sealed record TopBarSearchPalette(
     bool UseDarkInk,
     bool AllowBackdropBlur,
+    bool UseTextShadow,
     string GlassTint,
     string FallbackSurface,
     string Border,
@@ -32,6 +33,17 @@ public static class TopBarSearchLookRules
     public const double TransparentTopBarOpacityThreshold = 0.12d;
     public const string DefaultLightSurfaceRgb = "#ECF6FF";
     public const string DefaultDarkSurfaceRgb = "#162230";
+    public const string ClearGlassDarkTintRgb = "#1E2D3D";
+
+    public const string ClearGlassWhiteForeground = "#FFFFFF";
+    public const string ClearGlassMutedForeground = "#E4F1FC";
+    public const string ClearGlassPlaceholderForeground = "#D8EAFA";
+    public const string ClearGlassBorder = "#5CFFFFFF";
+    public const string ClearGlassDivider = "#30FFFFFF";
+    public const string ClearGlassBadgeBackground = "#26FFFFFF";
+    public const string ClearGlassBadgeBorder = "#48FFFFFF";
+    public const string ClearGlassHoverRow = "#2CFFFFFF";
+    public const string ClearGlassDefaultActiveRow = "#583BA7F0";
 
     public const string DarkSurfaceForeground = "#F2F6FC";
     public const string DarkSurfaceMutedForeground = "#C4D5E6";
@@ -75,13 +87,14 @@ public static class TopBarSearchLookRules
         var allowBackdropBlur = effectiveTopBar.FrostedGlass && !effectiveLauncher.UseClearGlass;
 
         bool darkSurface;
+        bool sheerClearGlass = false;
         string baseRgb;
         double density;
         double? guaranteedFallbackOpacity = null;
+        string? customForeground = null;
 
-        // Follow the user's global card style (or explicit launcher appearance override) so
-        // inline search matches the desktop's IceBlue/palette/dark theme instead of turning
-        // dark grey under a transparent or default-dark top bar.
+        // Follow the user's global style (material, palette, and TextInk) or explicit
+        // launcher appearance override so inline search matches cards & the top bar pill.
         if (!effectiveLauncher.FollowCardLook)
         {
             var customRgb = WidgetAppearanceRules.CoerceColorOrDefault(
@@ -93,44 +106,60 @@ public static class TopBarSearchLookRules
             density = readability.SurfaceOpacity;
             guaranteedFallbackOpacity = readability.PlateOpacity;
         }
-        else if (effectiveStyle.Glass == GlassMode.Dark)
-        {
-            darkSurface = true;
-            baseRgb = DefaultDarkSurfaceRgb;
-            density = effectiveStyle.GlassDensity;
-        }
         else
         {
-            // Both Light glass and Clear (borderless) follow the active card palette (IceBlue
-            // by default) with luminous frosted glass so the search box stays crisp and on-theme.
-            darkSurface = false;
-            var palette = DesktopStyleRules.GetPalette(effectiveStyle.Palette);
-            baseRgb = palette.Key == DesktopStyleRules.DefaultPalette
-                ? DefaultLightSurfaceRgb
-                : WidgetAppearanceRules.CoerceColorOrDefault(palette.Body, DefaultLightSurfaceRgb);
-            density = effectiveStyle.Glass == GlassMode.Clear
-                ? DesktopStyleRules.DefaultGlassDensity
-                : effectiveStyle.GlassDensity;
+            var wantsLightInk = ResolveWantsLightInk(effectiveStyle, out customForeground);
+            if (wantsLightInk)
+            {
+                darkSurface = true;
+                sheerClearGlass = effectiveStyle.Glass == GlassMode.Clear;
+                baseRgb = sheerClearGlass ? ClearGlassDarkTintRgb : DefaultDarkSurfaceRgb;
+                density = sheerClearGlass ? 0.26d : effectiveStyle.GlassDensity;
+            }
+            else
+            {
+                darkSurface = false;
+                var palette = DesktopStyleRules.GetPalette(effectiveStyle.Palette);
+                baseRgb = palette.Key == DesktopStyleRules.DefaultPalette
+                    ? DefaultLightSurfaceRgb
+                    : WidgetAppearanceRules.CoerceColorOrDefault(palette.Body, DefaultLightSurfaceRgb);
+                density = effectiveStyle.Glass == GlassMode.Clear
+                    ? 0.48d
+                    : effectiveStyle.GlassDensity;
+            }
         }
 
         if (darkSurface)
         {
-            var blurAlpha = guaranteedFallbackOpacity is not null
-                ? (byte)Math.Clamp((int)Math.Ceiling(Math.Max(density, 0.72d) * 255d - 1e-9), 0xB8, 0xFF)
-                : (byte)Math.Clamp((int)Math.Round((0.72d + (density - 0.25d) * 0.22d) * 255d), 0xB8, 0xDC);
+            var blurAlpha = sheerClearGlass
+                ? (byte)0x42
+                : guaranteedFallbackOpacity is not null
+                    ? (byte)Math.Clamp((int)Math.Ceiling(Math.Max(density, 0.72d) * 255d - 1e-9), 0xB8, 0xFF)
+                    : (byte)Math.Clamp((int)Math.Round((0.64d + (density - 0.25d) * 0.24d) * 255d), 0x9C, 0xD6);
             var fallbackAlpha = guaranteedFallbackOpacity is { } minPlate
                 ? (byte)Math.Clamp((int)Math.Ceiling(Math.Max(minPlate, 0.88d) * 255d - 1e-9), 0xE0, 0xFF)
-                : (byte)Math.Clamp((int)Math.Round((0.88d + (density - 0.25d) * 0.10d) * 255d), 0xE0, 0xF2);
+                : sheerClearGlass
+                    ? (byte)0xDC
+                    : (byte)Math.Clamp((int)Math.Round((0.88d + (density - 0.25d) * 0.10d) * 255d), 0xE0, 0xF2);
 
             var glassTint = WithAlphaByte(baseRgb, blurAlpha);
             var fallbackSurface = WithAlphaByte(baseRgb, fallbackAlpha);
-            var muted = EnsureReadableSecondaryInk(DarkSurfaceMutedForeground, DarkSurfaceForeground, fallbackSurface);
-            var placeholder = EnsureReadableSecondaryInk(DarkSurfacePlaceholderForeground, muted, fallbackSurface);
+            var foreground = customForeground
+                ?? (sheerClearGlass ? ClearGlassWhiteForeground : DarkSurfaceForeground);
+            var muted = EnsureReadableSecondaryInk(
+                sheerClearGlass ? ClearGlassMutedForeground : DarkSurfaceMutedForeground,
+                foreground,
+                fallbackSurface);
+            var placeholder = EnsureReadableSecondaryInk(
+                sheerClearGlass ? ClearGlassPlaceholderForeground : DarkSurfacePlaceholderForeground,
+                muted,
+                fallbackSurface);
             var activeRow = ResolveActiveRowBackground(
                 accentRgb,
                 darkSurface: true,
+                sheerClearGlass,
                 fallbackSurface,
-                DarkSurfaceForeground);
+                foreground);
             var selection = IsDefaultAccent(accentRgb)
                 ? DarkSurfaceDefaultSelection
                 : WithAlphaByte(accentRgb, 0x66);
@@ -138,37 +167,40 @@ public static class TopBarSearchLookRules
             return new TopBarSearchPalette(
                 UseDarkInk: false,
                 AllowBackdropBlur: allowBackdropBlur,
+                UseTextShadow: sheerClearGlass,
                 GlassTint: glassTint,
                 FallbackSurface: fallbackSurface,
-                Border: DarkSurfaceBorder,
-                Foreground: DarkSurfaceForeground,
+                Border: sheerClearGlass ? ClearGlassBorder : DarkSurfaceBorder,
+                Foreground: foreground,
                 MutedForeground: muted,
                 PlaceholderForeground: placeholder,
-                Divider: DarkSurfaceDivider,
-                BadgeBackground: DarkSurfaceBadgeBackground,
-                BadgeBorder: DarkSurfaceBadgeBorder,
+                Divider: sheerClearGlass ? ClearGlassDivider : DarkSurfaceDivider,
+                BadgeBackground: sheerClearGlass ? ClearGlassBadgeBackground : DarkSurfaceBadgeBackground,
+                BadgeBorder: sheerClearGlass ? ClearGlassBadgeBorder : DarkSurfaceBadgeBorder,
                 ActiveRowBackground: activeRow,
-                HoverRowBackground: DarkSurfaceHoverRow,
+                HoverRowBackground: sheerClearGlass ? ClearGlassHoverRow : DarkSurfaceHoverRow,
                 SelectionBrush: selection);
         }
         else
         {
             var blurAlpha = guaranteedFallbackOpacity is not null
                 ? (byte)Math.Clamp((int)Math.Ceiling(Math.Max(density, 0.74d) * 255d - 1e-9), 0xBD, 0xFF)
-                : (byte)Math.Clamp((int)Math.Round((0.74d + (density - 0.25d) * 0.20d) * 255d), 0xBD, 0xDF);
+                : (byte)Math.Clamp((int)Math.Round((0.64d + (density - 0.25d) * 0.22d) * 255d), 0x9E, 0xD4);
             var fallbackAlpha = guaranteedFallbackOpacity is { } minPlate
                 ? (byte)Math.Clamp((int)Math.Ceiling(Math.Max(minPlate, 0.90d) * 255d - 1e-9), 0xE6, 0xFF)
                 : (byte)Math.Clamp((int)Math.Round((0.90d + (density - 0.25d) * 0.08d) * 255d), 0xE6, 0xF4);
 
             var glassTint = WithAlphaByte(baseRgb, blurAlpha);
             var fallbackSurface = WithAlphaByte(baseRgb, fallbackAlpha);
-            var muted = EnsureReadableSecondaryInk(LightSurfaceMutedForeground, LightSurfaceForeground, fallbackSurface);
+            var foreground = customForeground ?? LightSurfaceForeground;
+            var muted = EnsureReadableSecondaryInk(LightSurfaceMutedForeground, foreground, fallbackSurface);
             var placeholder = EnsureReadableSecondaryInk(LightSurfacePlaceholderForeground, muted, fallbackSurface);
             var activeRow = ResolveActiveRowBackground(
                 accentRgb,
                 darkSurface: false,
+                sheerClearGlass: false,
                 fallbackSurface,
-                LightSurfaceForeground);
+                foreground);
             var selection = IsDefaultAccent(accentRgb)
                 ? LightSurfaceDefaultSelection
                 : WithAlphaByte(accentRgb, 0x52);
@@ -176,10 +208,11 @@ public static class TopBarSearchLookRules
             return new TopBarSearchPalette(
                 UseDarkInk: true,
                 AllowBackdropBlur: allowBackdropBlur,
+                UseTextShadow: false,
                 GlassTint: glassTint,
                 FallbackSurface: fallbackSurface,
                 Border: LightSurfaceBorder,
-                Foreground: LightSurfaceForeground,
+                Foreground: foreground,
                 MutedForeground: muted,
                 PlaceholderForeground: placeholder,
                 Divider: LightSurfaceDivider,
@@ -188,6 +221,25 @@ public static class TopBarSearchLookRules
                 ActiveRowBackground: activeRow,
                 HoverRowBackground: LightSurfaceHoverRow,
                 SelectionBrush: selection);
+        }
+    }
+
+    private static bool ResolveWantsLightInk(DesktopStyleState style, out string? customForeground)
+    {
+        customForeground = null;
+        switch (style.TextInk)
+        {
+            case TextInk.White:
+                return true;
+            case TextInk.Dark:
+                return false;
+            case TextInk.Custom:
+                var custom = WidgetAppearanceRules.CoerceTextColor(style.CustomTextColor);
+                customForeground = custom;
+                return ColorContrastRules.RelativeLuminance(ColorContrastRules.ParseHex(custom)) > 0.45d;
+            default:
+                // TextInk.Follow matches DesktopStyleRules: white on Dark and Clear glass, dark on Light glass.
+                return style.Glass is GlassMode.Dark or GlassMode.Clear;
         }
     }
 
@@ -212,11 +264,14 @@ public static class TopBarSearchLookRules
     private static string ResolveActiveRowBackground(
         string accentRgb,
         bool darkSurface,
+        bool sheerClearGlass,
         string fallbackSurface,
         string foreground)
     {
         var preferred = IsDefaultAccent(accentRgb)
-            ? (darkSurface ? DarkSurfaceDefaultActiveRow : LightSurfaceDefaultActiveRow)
+            ? (darkSurface
+                ? (sheerClearGlass ? ClearGlassDefaultActiveRow : DarkSurfaceDefaultActiveRow)
+                : LightSurfaceDefaultActiveRow)
             : WithAlphaByte(accentRgb, darkSurface ? (byte)0x48 : (byte)0x34);
 
         string[] candidates = darkSurface
