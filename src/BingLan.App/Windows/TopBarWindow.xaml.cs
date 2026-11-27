@@ -248,6 +248,8 @@ public sealed partial class TopBarWindow : Window
     private TopBarSearchWindow? _searchPopup;
     private long _searchPopupOpenedTick;
     private long? _searchPopupPointerLeftSinceTick;
+    private nint _searchPopupOpenedForegroundWindow;
+    private bool _searchPopupObservedForeground;
     private int _moduleMask = -1;
     private string _orderSignature = string.Empty;
     private bool? _appliedAcrylic;
@@ -2980,12 +2982,16 @@ public sealed partial class TopBarWindow : Window
             {
                 _searchPopup = null;
                 _searchPopupPointerLeftSinceTick = null;
+                _searchPopupOpenedForegroundWindow = 0;
+                _searchPopupObservedForeground = false;
                 UpdateForegroundTimerInterval();
             }
         };
         _searchPopup = popup;
         _searchPopupOpenedTick = Environment.TickCount64;
         _searchPopupPointerLeftSinceTick = null;
+        _searchPopupOpenedForegroundWindow = DockNativeMethods.GetForegroundWindow();
+        _searchPopupObservedForeground = false;
         TopBarNativeMethods.ConsumeMouseButtonDown(TopBarNativeMethods.LeftMouseButton);
         TopBarNativeMethods.ConsumeMouseButtonDown(TopBarNativeMethods.RightMouseButton);
         TopBarNativeMethods.ConsumeMouseButtonDown(TopBarNativeMethods.EscapeKey);
@@ -2998,6 +3004,8 @@ public sealed partial class TopBarWindow : Window
         if (_searchPopup is not { } popup) return;
         _searchPopup = null;
         _searchPopupPointerLeftSinceTick = null;
+        _searchPopupOpenedForegroundWindow = 0;
+        _searchPopupObservedForeground = false;
         UpdateForegroundTimerInterval();
         popup.RequestClose();
     }
@@ -3018,20 +3026,27 @@ public sealed partial class TopBarWindow : Window
 
         var now = Environment.TickCount64;
         var fg = DockNativeMethods.GetForegroundWindow();
-        if (now - _searchPopupOpenedTick >= 450
+        if (fg != 0 && popup.WindowHandle != 0 && fg == popup.WindowHandle)
+        {
+            _searchPopupObservedForeground = true;
+        }
+        else if (now - _searchPopupOpenedTick >= 250
             && fg != 0
-            && popup.WindowHandle != 0
-            && fg != popup.WindowHandle
             && fg != _handle)
         {
-            CloseSearchPopup();
-            return;
+            if (_searchPopupObservedForeground
+                || (_searchPopupOpenedForegroundWindow != 0 && fg != _searchPopupOpenedForegroundWindow))
+            {
+                CloseSearchPopup();
+                return;
+            }
         }
 
         DockNativeMethods.GetCursorPos(out var cursor);
         var inside = IsPointerInsideSearchPopupOrAnchor(popup, cursor);
-        if (TopBarNativeMethods.IsMouseButtonDown(TopBarNativeMethods.LeftMouseButton)
-            || TopBarNativeMethods.IsMouseButtonDown(TopBarNativeMethods.RightMouseButton))
+        if (now - _searchPopupOpenedTick >= 200
+            && (TopBarNativeMethods.IsMouseButtonDown(TopBarNativeMethods.LeftMouseButton)
+                || TopBarNativeMethods.IsMouseButtonDown(TopBarNativeMethods.RightMouseButton)))
         {
             if (!inside)
             {

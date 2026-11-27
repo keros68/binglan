@@ -786,6 +786,21 @@ internal static class WindowCommandService
             WindowActivationRules.FormatSwitchBlockedMessage(name, targetElevated, foregroundElevated));
     }
 
+    /// <summary>
+    /// Brings one of BingLan's own activatable windows (such as the TopBar inline search popup)
+    /// to the foreground when triggered from a <c>WS_EX_NOACTIVATE</c> surface like the TopBar.
+    /// Uses the same responsive, same-integrity <c>AttachThreadInput</c> handoff as Dock focus
+    /// and returns whether the target actually became the foreground window.
+    /// </summary>
+    internal static bool TryActivateOwnWindow(nint handle)
+    {
+        if (handle == 0 || !DockNativeMethods.IsWindow(handle))
+        {
+            return false;
+        }
+        return TryBringToForeground(handle, restore: false);
+    }
+
     private static bool TryBringToForeground(nint targetWindow, bool restore)
     {
         if (restore)

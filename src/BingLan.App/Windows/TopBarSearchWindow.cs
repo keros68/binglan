@@ -341,9 +341,9 @@ internal sealed class TopBarSearchWindow : Window
     {
         Activate();
         var handle = new WindowInteropHelper(this).Handle;
-        if (handle != 0)
+        if (handle != 0 && DockNativeMethods.GetForegroundWindow() != handle)
         {
-            DockNativeMethods.SetForegroundWindow(handle);
+            _ = WindowCommandService.TryActivateOwnWindow(handle);
         }
         if (IsActive || (handle != 0 && DockNativeMethods.GetForegroundWindow() == handle))
         {
@@ -352,27 +352,27 @@ internal sealed class TopBarSearchWindow : Window
             Keyboard.Focus(_input);
             return;
         }
-        // A foreground change can land between Show and this callback; one more attempt
-        // covers it, and giving up closes the panel instead of leaving an unfocusable
-        // window on screen where Escape could not reach it.
+        // A foreground change can land between Show and this callback; retry once on
+        // ApplicationIdle, and keep the popup visible if Windows still denies foreground
+        // (for example when an elevated window holds focus) so the user can click to focus
+        // or move away / click outside to dismiss it.
         Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, () =>
         {
             if (_closing || _closed)
             {
                 return;
             }
-            if (handle != 0 && !IsActive)
+            if (handle != 0 && !IsActive && DockNativeMethods.GetForegroundWindow() != handle)
             {
-                DockNativeMethods.SetForegroundWindow(handle);
+                _ = WindowCommandService.TryActivateOwnWindow(handle);
+                Activate();
             }
             if (IsActive || (handle != 0 && DockNativeMethods.GetForegroundWindow() == handle))
             {
                 _activated = true;
-                _input.Focus();
-                Keyboard.Focus(_input);
-                return;
             }
-            RequestClose();
+            _input.Focus();
+            Keyboard.Focus(_input);
         });
     }
 
