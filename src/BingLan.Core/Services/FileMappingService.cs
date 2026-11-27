@@ -97,32 +97,62 @@ public static class FileMappingService
         !IsShellEntry(path) && !File.Exists(path) && !Directory.Exists(path);
 
     /// <summary>
-    /// A missing path whose drive or network share is reachable, so the original was
-    /// really deleted or moved. Paths on an unplugged drive or an offline share are not
-    /// gone and keep their mapping.
+    /// A confirmed missing leaf in a readable directory. Inaccessible paths retain their mappings.
     /// </summary>
-    public static bool IsGone(string path)
+    public static bool IsGone(string path, Func<string, FileAttributes>? readAttributes = null,
+        Action<string>? probeDirectory = null)
     {
-        if (!IsMissing(path))
+        if (string.IsNullOrWhiteSpace(path) || IsShellEntry(path) || !Path.IsPathFullyQualified(path))
+        {
+            return false;
+        }
+
+        var attributesOf = readAttributes ?? File.GetAttributes;
+        try
+        {
+            attributesOf(path);
+            return false;
+        }
+        catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
+        {
+            // An unavailable mount or share can also report not-found.
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
+            or ArgumentException or NotSupportedException or System.Security.SecurityException)
         {
             return false;
         }
 
         try
         {
-            var root = Path.GetPathRoot(path);
-            return !string.IsNullOrEmpty(root) && Directory.Exists(root);
+            var parent = Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(Path.GetFullPath(path)));
+            if (string.IsNullOrEmpty(parent))
+            {
+                return false;
+            }
+            // Opening the containing directory follows junctions and mounts. Reading
+            // only the first entry also works for an empty directory without a full scan.
+            (probeDirectory ?? ProbeDirectory)(parent);
+            return true;
         }
-        catch (Exception ex) when (ex is ArgumentException or NotSupportedException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
+            or ArgumentException or NotSupportedException or System.Security.SecurityException)
         {
             return false;
         }
     }
 
-    /// <summary>Drops mappings whose originals are gone; only the records are removed.</summary>
-    public static int RemoveGone(FileBoxState box, IReadOnlySet<Guid> goneIds)
+    private static void ProbeDirectory(string path)
     {
-        var removed = box.Items.RemoveAll(x => goneIds.Contains(x.Id));
+        using var entries = Directory.EnumerateFileSystemEntries(path).GetEnumerator();
+        _ = entries.MoveNext();
+    }
+
+    /// <summary>Removes only mappings whose identity and path still match the cleanup snapshot.</summary>
+    public static int RemoveGone(FileBoxState box, IReadOnlyDictionary<Guid, string> gonePaths)
+    {
+        var removed = box.Items.RemoveAll(item => gonePaths.TryGetValue(item.Id, out var originalPath)
+            && string.Equals(item.Path, originalPath, StringComparison.OrdinalIgnoreCase));
         if (removed > 0)
         {
             Normalize(box);
@@ -130,15 +160,19 @@ public static class FileMappingService
         return removed;
     }
 
-    /// <summary>
-    /// Ids of the mappings whose originals are confirmed deleted (see <see cref="IsGone"/>);
-    /// mappings on unplugged drives or offline shares are kept.
-    /// </summary>
-    public static IReadOnlySet<Guid> CollectGoneIds(IEnumerable<FileMappingState> mappings) =>
-        mappings
-            .Where(item => IsGone(item.Path))
-            .Select(item => item.Id)
-            .ToHashSet();
+    /// <summary>Checks immutable path snapshots off the UI thread for later conditional cleanup.</summary>
+    public static IReadOnlyDictionary<Guid, string> CollectGonePaths(IEnumerable<(Guid Id, string Path)> mappings)
+    {
+        var gone = new Dictionary<Guid, string>();
+        foreach (var (id, path) in mappings)
+        {
+            if (IsGone(path))
+            {
+                gone[id] = path;
+            }
+        }
+        return gone;
+    }
 
     /// <summary>Extensions of in-progress downloads and temp files; not collected yet.</summary>
     private static readonly HashSet<string> PartialDownloadExtensions = new(

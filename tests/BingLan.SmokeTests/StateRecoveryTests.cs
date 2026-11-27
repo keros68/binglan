@@ -8,6 +8,7 @@ internal static class StateRecoveryTests
 {
     internal static void TestUnreadableStateStartsFromDefaults()
     {
+        TestIncompatiblePrimaryPreservesBackup();
         var temp = Path.Combine(Path.GetTempPath(), $"BingLan-state-recovery-{Guid.NewGuid():N}");
         try
         {
@@ -58,6 +59,61 @@ internal static class StateRecoveryTests
             Check(v18.SchemaVersion == AppState.CurrentSchemaVersion
                 && v18.DismissedDesktopCategories.SequenceEqual([DesktopGroupCategory.Folders]),
                 "v18 迁移后已删除的分类只保留有效且不重复的项");
+        }
+        finally
+        {
+            if (Directory.Exists(temp))
+            {
+                Directory.Delete(temp, true);
+            }
+        }
+    }
+
+    private static void TestIncompatiblePrimaryPreservesBackup()
+    {
+        var temp = Path.Combine(Path.GetTempPath(), $"BingLan-state-incompatible-{Guid.NewGuid():N}");
+        var invalidPrimaryFiles = new[]
+        {
+            $$"""{"SchemaVersion":{{AppState.CurrentSchemaVersion}},"TodoWidgets":"incompatible"}""",
+            """{"SchemaVersion":"invalid"}""",
+            """{"SchemaVersion":null}""",
+            """{"SchemaVersion":{}}""",
+            """{"SchemaVersion":true}"""
+        };
+        try
+        {
+            foreach (var invalidJson in invalidPrimaryFiles)
+            {
+                var store = new LocalStateStore(Path.Combine(temp, Guid.NewGuid().ToString("N")));
+                var state = LocalStateStore.CreateDefault();
+                state.NoteWidgets.Add(new NoteWidgetState { Content = "保留备份便签" });
+                store.Save(state);
+                store.Save(state);
+                var validBackup = File.ReadAllText(store.StatePath + ".bak");
+
+                File.WriteAllText(store.StatePath, invalidJson);
+                var recovered = store.Load();
+                Check(recovered.NoteWidgets.Single().Content == "保留备份便签", "字段类型错误的主文件应回退到有效备份");
+                store.Save(recovered);
+                Check(File.ReadAllText(store.StatePath + ".bak") == validBackup,
+                    "从备份恢复后保存，不兼容的主文件不能替换有效备份");
+
+                var backupReader = new LocalStateStore(Path.Combine(store.DataDirectory, "verify"));
+                Directory.CreateDirectory(backupReader.DataDirectory);
+                File.Copy(store.StatePath + ".bak", backupReader.StatePath);
+                Check(backupReader.Load().NoteWidgets.Single().Content == "保留备份便签", "保留的备份应仍可真实读取");
+
+                recovered.NoteWidgets.Single().Content = "后续修改";
+                store.Save(recovered);
+                Check(File.ReadAllText(store.StatePath + ".bak") == validBackup
+                    && new LocalStateStore(store.DataDirectory).Load().NoteWidgets.Single().Content == "后续修改",
+                    "恢复后的后续保存应正常轮换有效状态并保留新内容");
+
+                File.WriteAllText(store.StatePath, invalidJson);
+                new LocalStateStore(store.DataDirectory).Save(recovered);
+                Check(File.ReadAllText(store.StatePath + ".bak") == validBackup,
+                    "未先调用 Load 的保存入口也不能用不兼容的主文件覆盖备份");
+            }
         }
         finally
         {

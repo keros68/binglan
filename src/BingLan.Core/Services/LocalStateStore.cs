@@ -123,9 +123,8 @@ public sealed class LocalStateStore
             var json = JsonSerializer.Serialize(state, JsonOptions);
             File.WriteAllText(temporaryPath, json);
 
-            // Preserve the previous valid contents without re-running full migrations on every save.
-            // A damaged primary file (such as "null" or truncated JSON) never overwrites a valid .bak.
-            if (TryReadValidStateHeader(StatePath, out var existingVersion))
+            // Validate known field types before rotating, without running migrations on current-version saves.
+            if (TryReadCompatibleStateVersion(StatePath, out var existingVersion))
             {
                 if (existingVersion >= AppState.CurrentSchemaVersion)
                 {
@@ -141,7 +140,7 @@ public sealed class LocalStateStore
                     File.Move(temporaryBackupPath, StatePath + ".bak", true);
                 }
             }
-            else if (TryReadValidStateHeader(StatePath + ".bak", out var backupVersion)
+            else if (TryReadCompatibleStateVersion(StatePath + ".bak", out var backupVersion)
                      && backupVersion < AppState.CurrentSchemaVersion
                      && TryLoad(StatePath + ".bak", out var previousBackup, out _))
             {
@@ -155,7 +154,7 @@ public sealed class LocalStateStore
         }
     }
 
-    private static bool TryReadValidStateHeader(string path, out int schemaVersion)
+    private static bool TryReadCompatibleStateVersion(string path, out int schemaVersion)
     {
         schemaVersion = 0;
         if (!File.Exists(path))
@@ -165,23 +164,12 @@ public sealed class LocalStateStore
         try
         {
             using var stream = File.OpenRead(path);
-            using var document = JsonDocument.Parse(stream);
-            if (document.RootElement.ValueKind != JsonValueKind.Object)
+            var state = JsonSerializer.Deserialize<AppState>(stream, JsonOptions);
+            if (state is null || state.SchemaVersion <= 0)
             {
                 return false;
             }
-            schemaVersion = AppState.CurrentSchemaVersion;
-            foreach (var property in document.RootElement.EnumerateObject())
-            {
-                if (string.Equals(property.Name, nameof(AppState.SchemaVersion), StringComparison.OrdinalIgnoreCase))
-                {
-                    if (!property.Value.TryGetInt32(out schemaVersion) || schemaVersion <= 0)
-                    {
-                        return false;
-                    }
-                    break;
-                }
-            }
+            schemaVersion = state.SchemaVersion;
             return true;
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException)

@@ -28,6 +28,8 @@ public partial class FileBoxWindow : WidgetWindowBase
     // or the list being rebuilt; the anchor remembers where a Shift range starts.
     private readonly HashSet<Guid> _selectedIds = [];
     private readonly CancellationTokenSource _closeCts = new();
+    private readonly Dictionary<Guid, long> _pendingSorts = [];
+    private long _sortRevision;
     private readonly CardFoldAnimator _foldAnimator;
     private readonly System.Windows.Threading.DispatcherTimer _autoCollapseTimer = new()
     {
@@ -972,17 +974,17 @@ public partial class FileBoxWindow : WidgetWindowBase
         }
     }
 
-    private void SortManual_Click(object sender, RoutedEventArgs e) =>
-        ApplySort(FileMappingSortMode.Manual);
+    private async void SortManual_Click(object sender, RoutedEventArgs e) =>
+        await ApplySort(FileMappingSortMode.Manual);
 
-    private void SortName_Click(object sender, RoutedEventArgs e) =>
-        ApplySort(FileMappingSortMode.Name);
+    private async void SortName_Click(object sender, RoutedEventArgs e) =>
+        await ApplySort(FileMappingSortMode.Name);
 
-    private void SortType_Click(object sender, RoutedEventArgs e) =>
-        ApplySort(FileMappingSortMode.Type);
+    private async void SortType_Click(object sender, RoutedEventArgs e) =>
+        await ApplySort(FileMappingSortMode.Type);
 
-    private void SortModified_Click(object sender, RoutedEventArgs e) =>
-        ApplySort(FileMappingSortMode.Modified);
+    private async void SortModified_Click(object sender, RoutedEventArgs e) =>
+        await ApplySort(FileMappingSortMode.Modified);
 
     public void CaptureState()
     {
@@ -2331,14 +2333,14 @@ public partial class FileBoxWindow : WidgetWindowBase
         return (added, invalid, normalized.Length);
     }
 
-    internal int RemoveGoneMappings(IReadOnlySet<Guid> goneIds)
+    internal int RemoveGoneMappings(IReadOnlyDictionary<Guid, string> gonePaths)
     {
         CaptureState();
         var totalRemoved = 0;
         var activeRemoved = 0;
         foreach (var tab in _tabs)
         {
-            var removed = FileMappingService.RemoveGone(tab, goneIds);
+            var removed = FileMappingService.RemoveGone(tab, gonePaths);
             totalRemoved += removed;
             if (tab.Id == State.Id)
             {
@@ -2479,13 +2481,92 @@ public partial class FileBoxWindow : WidgetWindowBase
         return icons;
     }
 
-    private void ApplySort(FileMappingSortMode mode)
+    private async Task ApplySort(FileMappingSortMode mode)
     {
         CaptureState();
-        FileMappingService.Sort(State, mode);
-        ReloadItems();
-        NotifyStateChanged();
+        var box = State;
+        if (mode is not (FileMappingSortMode.Type or FileMappingSortMode.Modified))
+        {
+            _pendingSorts.Remove(box.Id);
+            FileMappingService.Sort(box, mode);
+            ReloadItems();
+            NotifyStateChanged();
+            return;
+        }
+
+        var revision = ++_sortRevision;
+        _pendingSorts[box.Id] = revision;
+        var snapshot = box.Items.Select(SortValues).ToArray();
+        var token = _closeCts.Token;
+        try
+        {
+            await ProbeLimiter.WaitAsync(token);
+            Dictionary<Guid, int> order;
+            try
+            {
+                if (_pendingSorts.GetValueOrDefault(box.Id) != revision)
+                {
+                    return;
+                }
+
+                order = await Task.Run(() =>
+                {
+                    var detached = new FileBoxState
+                    {
+                        Items = snapshot.Select(item => new FileMappingState
+                        {
+                            Id = item.Id,
+                            Path = item.Path,
+                            Title = item.Title,
+                            Order = item.Order
+                        }).ToList()
+                    };
+                    FileMappingService.Sort(detached, mode);
+                    return detached.Items.ToDictionary(item => item.Id, item => item.Order);
+                }, token);
+            }
+            finally
+            {
+                ProbeLimiter.Release();
+            }
+
+            if (token.IsCancellationRequested || _pendingSorts.GetValueOrDefault(box.Id) != revision || !_tabs.Contains(box))
+            {
+                return;
+            }
+            var isActiveTab = ReferenceEquals(State, box);
+            if (isActiveTab)
+            {
+                CaptureState();
+            }
+            if (!box.Items.Select(SortValues).SequenceEqual(snapshot))
+            {
+                return;
+            }
+            foreach (var item in box.Items)
+            {
+                item.Order = order[item.Id];
+            }
+            if (isActiveTab)
+            {
+                ReloadItems();
+            }
+            NotifyStateChanged();
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        {
+        }
+        finally
+        {
+            if (_pendingSorts.GetValueOrDefault(box.Id) == revision)
+            {
+                _pendingSorts.Remove(box.Id);
+            }
+        }
     }
+
+    private static (Guid Id, string Path, string? Title, int Order) SortValues(FileMappingState item) =>
+        (item.Id, item.Path, item.Title, item.Order);
 
     private void AnimateTileEnter(IReadOnlyList<FileTile> tiles)
     {

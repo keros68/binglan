@@ -3233,10 +3233,8 @@ public sealed partial class WidgetCoordinator : IDisposable
     }
 
     /// <summary>
-    /// Removes mappings whose originals are confirmed deleted (the drive is reachable, so
-    /// the file is really gone rather than on an unplugged drive or an offline share) and
-    /// refreshes the watched folders. Runs once at startup and after watcher notices or box
-    /// changes; the filesystem checks run off the UI thread.
+    /// Removes mappings whose originals are confirmed missing and refreshes the watched folders.
+    /// Runs once at startup and after watcher notices or box changes; the filesystem checks run off the UI thread.
     /// </summary>
     private async Task SweepGoneFileMappings()
     {
@@ -3255,18 +3253,18 @@ public sealed partial class WidgetCoordinator : IDisposable
             do
             {
                 _sweepGoneAgain = false;
-                var items = _state.FileBoxes.SelectMany(box => box.Items).ToList();
-                var (goneIds, parents) = await Task.Run(() => (
-                    FileMappingService.CollectGoneIds(items),
+                var items = _state.FileBoxes.SelectMany(box => box.Items).Select(item => (item.Id, item.Path)).ToArray();
+                var (gonePaths, parents) = await Task.Run(() => (
+                    FileMappingService.CollectGonePaths(items),
                     FileMappingService.CollectExistingParentDirectories(items.Select(item => item.Path))));
-                if (_isExiting)
+                if (_isExiting || !_state.FileBoxAutomationEnabled)
                 {
                     return;
                 }
 
                 foreach (var box in _windows.OfType<FileBoxWindow>())
                 {
-                    var clearedHere = box.RemoveGoneMappings(goneIds);
+                    var clearedHere = box.RemoveGoneMappings(gonePaths);
                     if (clearedHere > 0)
                     {
                         box.SetOperationStatus($"已自动移除 {clearedHere} 项已失效映射");
@@ -3383,14 +3381,18 @@ public sealed partial class WidgetCoordinator : IDisposable
         {
             CaptureAll();
             var boxes = ScreenProfileAccessor.FilterPrimaryFileBoxes(_state.FileBoxes);
-            var goneIds = await Task.Run(() =>
-                FileMappingService.CollectGoneIds(boxes.SelectMany(box => box.Items)));
+            var items = boxes.SelectMany(box => box.Items).Select(item => (item.Id, item.Path)).ToArray();
+            var gonePaths = await Task.Run(() => FileMappingService.CollectGonePaths(items));
+            if (_isExiting)
+            {
+                return;
+            }
             var cleared = 0;
-            if (goneIds.Count > 0)
+            if (gonePaths.Count > 0)
             {
                 foreach (var box in _windows.OfType<FileBoxWindow>().Where(box => !IsSecondaryWindow(box)))
                 {
-                    cleared += box.RemoveGoneMappings(goneIds);
+                    cleared += box.RemoveGoneMappings(gonePaths);
                 }
             }
 

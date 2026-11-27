@@ -16,7 +16,9 @@ internal static class FileBoxRuleTests
     public static void Run()
     {
         TestShellEntryAndMissingRules();
-        TestCollectGoneIdsAndParentDirectories();
+        TestCollectGonePathsAndParentDirectories();
+        TestGoneMappingRequiresReadableDirectory();
+        TestGoneMappingSnapshotPreservesRelinkedItems();
         TestAddSystemEntryDedupe();
         TestPreparedImportPreservesMappingsAndDoesNotRecheckFiles();
         TestRelinkKeepsIdAndOrder();
@@ -33,6 +35,62 @@ internal static class FileBoxRuleTests
         TestInternetShortcutIconParsing();
         TestFileBoxHoverRevealRulesAndPersistence();
         TestFileBoxGroupRulesAndPersistence();
+    }
+
+    private static void TestGoneMappingRequiresReadableDirectory()
+    {
+        const string path = @"C:\Data\Mount\report.docx";
+        const string parent = @"C:\Data\Mount";
+        FileAttributes MissingLeaf(string _) => throw new FileNotFoundException();
+        void ReadableDirectory(string candidate) => Assert(candidate == parent, "应实际打开原路径的直接父目录");
+
+        Assert(FileMappingService.IsGone(path, MissingLeaf, ReadableDirectory), "可访问目录内明确不存在的文件应能自动清理");
+        Assert(FileMappingService.IsGone(path, _ => throw new DirectoryNotFoundException(), ReadableDirectory),
+            "文件夹叶节点已删除且父目录可读时应能自动清理");
+        Assert(!FileMappingService.IsGone(path, _ => FileAttributes.Normal), "现存文件不能自动清理");
+        foreach (var error in new Exception[]
+                 {
+                     new UnauthorizedAccessException(), new IOException(),
+                     new IOException("设备尚未就绪", unchecked((int)0x80070015))
+                 })
+        {
+            Assert(!FileMappingService.IsGone(path, _ => throw error, ReadableDirectory),
+                "原路径权限、I/O 或设备不可用时应保留映射");
+            Assert(!FileMappingService.IsGone(path, MissingLeaf, _ => throw error),
+                "父目录权限、I/O 或设备不可用时应保留映射");
+        }
+        Assert(!FileMappingService.IsGone(path, MissingLeaf, _ => throw new DirectoryNotFoundException()),
+            "挂载点断开或父目录缺失时应保留映射");
+    }
+
+    private static void TestGoneMappingSnapshotPreservesRelinkedItems()
+    {
+        var temp = Path.Combine(Path.GetTempPath(), $"BingLan-cleanup-relink-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(temp);
+        try
+        {
+            var original = Path.Combine(temp, "已删除.txt");
+            var replacement = Path.Combine(temp, "重新定位.txt");
+            File.WriteAllText(replacement, "保留原文件");
+            var relinked = new FileMappingState { Path = original, Title = "自定名称", Order = 0 };
+            var unchanged = new FileMappingState { Path = Path.Combine(temp, "同样已删除.txt"), Order = 1 };
+            var box = new FileBoxState { Items = [relinked, unchanged] };
+            var snapshots = box.Items.Select(item => (item.Id, item.Path)).ToArray();
+            var gonePaths = FileMappingService.CollectGonePaths(snapshots);
+            Assert(gonePaths.Count == 2, "缺失叶节点应进入路径快照清理结果");
+
+            Assert(FileMappingService.Relink(box, relinked.Id, replacement), "清理检查期间应能重新定位失效映射");
+            Assert(FileMappingService.RemoveGone(box, gonePaths) == 1,
+                "提交清理结果只能移除路径未变化的映射");
+            Assert(box.Items.Count == 1 && ReferenceEquals(box.Items[0], relinked)
+                && relinked.Path == replacement && relinked.Order == 0,
+                "重新定位后的映射应保持标识、路径与连续顺序");
+            Assert(File.ReadAllText(replacement) == "保留原文件", "条件清理不能改动重新定位的原文件");
+        }
+        finally
+        {
+            Directory.Delete(temp, true);
+        }
     }
 
     private static void TestPreparedImportPreservesMappingsAndDoesNotRecheckFiles()
@@ -169,7 +227,7 @@ internal static class FileBoxRuleTests
         }
     }
 
-    private static void TestCollectGoneIdsAndParentDirectories()
+    private static void TestCollectGonePathsAndParentDirectories()
     {
         var temp = Path.Combine(Path.GetTempPath(), $"BingLan-collect-gone-{Guid.NewGuid():N}");
         Directory.CreateDirectory(temp);
@@ -187,10 +245,10 @@ internal static class FileBoxRuleTests
             var goneId = box.Items.Single(item => item.Path == goneFile).Id;
             File.Delete(goneFile);
 
-            var goneIds = FileMappingService.CollectGoneIds(box.Items);
-            Assert(goneIds.Contains(goneId), "原文件已删除的映射应进入待清除集合");
-            Assert(!goneIds.Contains(keptId), "原文件存在的映射不应进入待清除集合");
-            Assert(goneIds.Count == 1, "系统入口不应进入待清除集合");
+            var gonePaths = FileMappingService.CollectGonePaths(box.Items.Select(item => (item.Id, item.Path)));
+            Assert(gonePaths.TryGetValue(goneId, out var gonePath) && gonePath == goneFile, "原文件已删除的映射应进入待清除集合");
+            Assert(!gonePaths.ContainsKey(keptId), "原文件存在的映射不应进入待清除集合");
+            Assert(gonePaths.Count == 1, "系统入口不应进入待清除集合");
 
             var parents = FileMappingService.CollectExistingParentDirectories(
                 box.Items.Select(item => item.Path));
@@ -199,8 +257,8 @@ internal static class FileBoxRuleTests
                 "监听目录应只包含现存映射的父目录，系统入口被跳过");
 
             Assert(
-                !FileMappingService.CollectGoneIds(
-                        [new FileMappingState { Path = @"\\binglan-offline-host.invalid\share\报告.docx" }])
+                !FileMappingService.CollectGonePaths(
+                        [(Guid.NewGuid(), @"\\binglan-offline-host.invalid\share\报告.docx")])
                     .Any(),
                 "离线网络共享上的映射不应进入待清除集合");
 
@@ -387,6 +445,8 @@ internal static class FileBoxRuleTests
 
             Assert(FileMappingService.IsGone(missing), "所在磁盘可访问但路径不存在应判定为已删除");
             Assert(!FileMappingService.IsGone(file), "存在的文件不应判定为已删除");
+            Assert(!FileMappingService.IsGone(Path.Combine(file, "不可访问.txt")),
+                "父路径不是目录时，不能仅凭盘符可访问就确认原文件已删除");
             Assert(!FileMappingService.IsGone("shell:RecycleBinFolder"), "系统入口不应判定为已删除");
             var offlineRoot = Enumerable.Range('D', 23)
                 .Select(letter => $"{(char)letter}:\\")
@@ -406,7 +466,8 @@ internal static class FileBoxRuleTests
             var kept = box.Items[0];
             var gone = new FileMappingState { Path = missing, Order = 1 };
             box.Items.Add(gone);
-            Assert(FileMappingService.RemoveGone(box, new HashSet<Guid> { gone.Id }) == 1, "应清除一项已删除映射");
+            Assert(FileMappingService.RemoveGone(box, new Dictionary<Guid, string> { [gone.Id] = gone.Path }) == 1,
+                "应清除一项已删除映射");
             Assert(box.Items.Count == 1 && box.Items[0].Id == kept.Id, "清除后应只保留有效映射");
             Assert(File.Exists(file), "清除映射不应影响原文件");
         }

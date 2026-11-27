@@ -258,6 +258,7 @@ internal static class Program
         Run("预设布局在同步状态捕获时完整应用", TestApplyPlacementDuringCapture, failures);
         Run("窗口位置尺寸关闭后重载", TestWindowPersistence, failures);
         Run("桌面分组盒导入入口、排序和图标网格", TestFileBoxWindow, failures);
+        Run("分组盒后台排序不盖过后续排序", TestFileBoxMetadataSortRespectsLatestRequest, failures);
         Run("桌面分组盒失效状态与系统入口菜单", TestFileBoxInvalidStateAndSystemEntries, failures);
         Run("原文件删除后映射自动从分组盒清除", TestFileMappingWatchClearsDeletedMapping, failures);
         Run("桌面新文件触发自动收纳，非桌面目录不触发", TestFileMappingWatchImportTrigger, failures);
@@ -3434,7 +3435,7 @@ internal static class Program
         ShowAndPump(window);
         var watcher = new FileMappingWatchService(
             () => Task.FromResult(window.RemoveGoneMappings(
-                FileMappingService.CollectGoneIds(state.Items))),
+                FileMappingService.CollectGonePaths(state.Items.Select(item => (item.Id, item.Path))))),
             () => Task.CompletedTask);
         watcher.UpdateWatchedDirectories(
             FileMappingService.CollectExistingParentDirectories(state.Items.Select(item => item.Path)));
@@ -3908,7 +3909,7 @@ internal static class Program
             window.HandleTilePointerSelect(Tile(paths[1]), ModifierKeys.Control);
             File.Delete(paths[3]);
             var goneId = state.Items.Single(item => item.Path == paths[3]).Id;
-            window.RemoveGoneMappings(new HashSet<Guid> { goneId });
+            window.RemoveGoneMappings(new Dictionary<Guid, string> { [goneId] = paths[3] });
             Pump();
             Assert(
                 Tile(paths[0]).IsSelected && Tile(paths[1]).IsSelected && list.Items.Count == 3,
@@ -4941,6 +4942,61 @@ internal static class Program
             window.CanClose = true;
             window.Close();
             Pump();
+            Directory.Delete(temp, true);
+        }
+    }
+
+    private static void TestFileBoxMetadataSortRespectsLatestRequest()
+    {
+        var temp = Path.Combine(Path.GetTempPath(), $"BingLan-sort-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(temp);
+        var older = Path.Combine(temp, "a-older.txt");
+        var newer = Path.Combine(temp, "z-newer.txt");
+        File.WriteAllText(older, "older");
+        File.WriteAllText(newer, "newer");
+        File.SetLastWriteTimeUtc(older, new DateTime(2020, 1, 1, 0, 0, 0, DateTimeKind.Utc));
+        File.SetLastWriteTimeUtc(newer, new DateTime(2021, 1, 1, 0, 0, 0, DateTimeKind.Utc));
+        var state = new FileBoxState();
+        FileMappingService.AddExisting(state, [older, newer]);
+        var window = new FileBoxWindow(state);
+        const System.Reflection.BindingFlags Private = System.Reflection.BindingFlags.NonPublic;
+        var applySort = typeof(FileBoxWindow).GetMethod("ApplySort", Private | System.Reflection.BindingFlags.Instance)!;
+        var limiter = (SemaphoreSlim)typeof(FileBoxWindow)
+            .GetField("ProbeLimiter", Private | System.Reflection.BindingFlags.Static)!.GetValue(null)!;
+        var heldSlots = 0;
+        try
+        {
+            PumpUntil(() => limiter.CurrentCount == 2, "等待上一项分组盒后台工作完成");
+            while (heldSlots < 2 && limiter.Wait(0))
+            {
+                heldSlots++;
+            }
+            Assert(heldSlots == 2, "应能占用后台读取队列以控制执行时序");
+
+            var pending = (Task)applySort.Invoke(window, [FileMappingSortMode.Modified])!;
+            Assert(!pending.IsCompleted, "修改时间排序应异步等待磁盘读取");
+            var byName = (Task)applySort.Invoke(window, [FileMappingSortMode.Name])!;
+            Assert(byName.IsCompletedSuccessfully, "名称排序应当即生效");
+            limiter.Release(heldSlots);
+            heldSlots = 0;
+            PumpUntil(() => pending.IsCompleted, "被替代的后台排序未退出");
+            pending.GetAwaiter().GetResult();
+            Assert(state.Items.OrderBy(item => item.Order).First().Path == older,
+                "旧的后台排序不得覆盖较新的名称排序");
+
+            var byModified = (Task)applySort.Invoke(window, [FileMappingSortMode.Modified])!;
+            PumpUntil(() => byModified.IsCompleted, "等待修改时间排序生效");
+            byModified.GetAwaiter().GetResult();
+            Assert(state.Items.OrderBy(item => item.Order).First().Path == newer,
+                "后台修改时间排序应把更新的文件排在前面");
+        }
+        finally
+        {
+            if (heldSlots > 0)
+            {
+                limiter.Release(heldSlots);
+            }
+            Close(window);
             Directory.Delete(temp, true);
         }
     }
