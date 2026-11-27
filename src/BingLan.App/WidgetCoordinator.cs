@@ -367,9 +367,7 @@ public sealed partial class WidgetCoordinator : IDisposable
         await ApplyTaskbarModeAsync();
         StartupLog.Write("任务栏模式已应用");
         RunShellStep("任务栏边缘唤出", () => _cornerReveal.SetMode(_state.Taskbar.EdgeRevealMode));
-#if TRAY_PANEL_PREVIEW
         if (!_isExiting) TopBarWindow.EnableTrayPanelWarmup();
-#endif
         if (!_cleanDesktopRecovered)
         {
             // The original icon state is unknown or could not be put back; stay off

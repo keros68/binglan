@@ -100,7 +100,7 @@ dotnet run --project .\src\BingLan.App\BingLan.App.csproj
 pwsh -NoProfile -File .\installer\build.ps1 -Version 0.6.0
 ```
 
-生成按用户安装的 `installer\bin\BingLan-Setup-0.6.0.exe`（Inno Setup，自包含 .NET 运行时，不需要管理员权限）。安装位置、卸载行为、依赖许可证和验证状态见 [安装包](INSTALLER.md)。v0.6.0 为当前正式版，独立托盘验收包由 `installer/build-tray-preview.ps1` 生成；操作步骤与限制见[托盘验收说明](TRAY-PREVIEW.md)。
+生成按用户安装的 `installer\bin\BingLan-Setup-0.6.6.exe`（Inno Setup，自包含 .NET 运行时，不需要管理员权限）。安装位置、卸载行为、依赖许可证和验证状态见 [安装包](INSTALLER.md)。v0.6.6 包含独立托盘。兼容性验收包由 `installer/build-tray-preview.ps1` 生成；操作步骤与限制见[托盘验收说明](TRAY-PREVIEW.md)。
 
 使用 `-FrameworkDependentPortable` 可单独生成轻量便携包，运行环境和文件名见 [轻量便携包](INSTALLER.md#轻量便携包)。
 

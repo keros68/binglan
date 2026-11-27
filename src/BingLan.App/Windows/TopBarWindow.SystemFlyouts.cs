@@ -55,13 +55,13 @@ public partial class TopBarWindow
         _volumeFlyout?.IsOpen == true
         || _batteryFlyout?.IsOpen == true
         || _networkFlyout?.IsOpen == true
-        || HasOpenTrayPanelPreview;
+        || HasOpenTrayPanel;
 
     private bool HasAnySystemFlyoutRef =>
         _volumeFlyout is not null
         || _batteryFlyout is not null
         || _networkFlyout is not null
-        || HasOpenTrayPanelPreview;
+        || HasOpenTrayPanel;
 
     private bool IsSystemFlyoutBusy => _networkBusyCount > 0;
 
@@ -88,7 +88,7 @@ public partial class TopBarWindow
 
     private void CloseSystemFlyouts()
     {
-        CloseTrayPanelPreview();
+        CloseTrayPanel();
         CloseVolumeFlyout();
         CloseBatteryFlyout();
         CloseNetworkFlyout();
@@ -289,9 +289,7 @@ public partial class TopBarWindow
     private sealed class PopupGlassBackdrop : IDisposable
     {
         private readonly Popup? _popup;
-#if TRAY_PANEL_PREVIEW
         private readonly Window? _window;
-#endif
         private readonly Border _card;
         private readonly SystemFlyoutLook _look;
         private HwndSource? _hookedSource;
@@ -315,18 +313,14 @@ public partial class TopBarWindow
             popup.Closed += OnClosed;
         }
 
-#if TRAY_PANEL_PREVIEW
         internal PopupGlassBackdrop(Window window, Border card, SystemFlyoutLook look) : this(card, look)
         {
             _window = window;
             window.Closed += OnClosed;
         }
-#endif
 
         private bool IsSurfaceOpen => _popup?.IsOpen == true
-#if TRAY_PANEL_PREVIEW
             || _window?.IsVisible == true
-#endif
             ;
 
         private void OnTrigger(object? sender, EventArgs e)
@@ -514,12 +508,10 @@ public partial class TopBarWindow
                 popup.Opened -= OnTrigger;
                 popup.Closed -= OnClosed;
             }
-#if TRAY_PANEL_PREVIEW
             if (_window is { } window)
             {
                 window.Closed -= OnClosed;
             }
-#endif
             _card.Loaded -= OnTrigger;
             _card.SizeChanged -= OnTrigger;
             DetachHook();

@@ -321,7 +321,7 @@ public sealed partial class TopBarWindow : Window
         _backdropTimer.Stop();
         IsVisibleChanged += (_, _) =>
         {
-            if (!IsVisible) CloseTrayPanelPreview();
+            if (!IsVisible) CloseTrayPanel();
             UpdateBackdropSampling(immediate: IsVisible);
         };
         AccessibilityThemeManager.HighContrastChanged += OnHighContrastChanged;
@@ -430,7 +430,7 @@ public sealed partial class TopBarWindow : Window
         if (previousBounds is { } before && _appBar is { } afterBar && before != afterBar.Bounds)
         {
             CloseFlyoutsBeforeOpening();
-            CloseTrayPanelPreview();
+            CloseTrayPanel();
         }
         // While a flyout is open the fast interval keeps its outside-click watch
         // prompt even in reserve mode.
@@ -1131,37 +1131,7 @@ public sealed partial class TopBarWindow : Window
             case TopBarModuleKind.TrayOverflow:
                 if (TrayOverflowController.IsSupported)
                 {
-#if TRAY_PANEL_PREVIEW
-                    AddTrayPanelPreviewModule(panel);
-#else
-                    var visibleOnPress = false;
-                    AddModule(TopBarModuleKind.TrayOverflow, panel, "托盘", () =>
-                    {
-                        var wasVisibleOnPress = visibleOnPress;
-                        visibleOnPress = false;
-                        // If Explorer light-dismissed the XAML overflow island on mouse-down,
-                        // do not immediately reopen it on mouse-up.
-                        if (wasVisibleOnPress && !TrayOverflowController.IsVisible)
-                        {
-                            return;
-                        }
-                        _environment.OpenTrayOverflow();
-                    }, "\uE70E");
-                    if (ModuleText(TopBarModuleKind.TrayOverflow) is { } trayText)
-                    {
-                        ApplyIconTextModule(
-                            TopBarModuleKind.TrayOverflow,
-                            trayText,
-                            TopBarRules.EffectiveTrayIconOnly(_state) ? string.Empty : "托盘",
-                            "打开 Windows 隐藏的托盘图标");
-                    }
-                    if (_modules.TryGetValue(TopBarModuleKind.TrayOverflow, out var trayButton))
-                    {
-                        trayButton.PreviewMouseLeftButtonDown += (_, _) =>
-                            visibleOnPress = TrayOverflowController.IsVisible;
-                        trayButton.MouseLeave += (_, _) => visibleOnPress = false;
-                    }
-#endif
+                    AddTrayPanelModule(panel);
                 }
                 break;
             case TopBarModuleKind.Search:
@@ -2632,8 +2602,8 @@ public sealed partial class TopBarWindow : Window
     private void CloseFlyoutOnOutsideClick()
     {
         CheckSearchPopupAutoDismiss();
-        CheckTrayPanelPreviewDismissal();
-        if (HasOpenTrayPanelPreview)
+        CheckTrayPanelDismissal();
+        if (HasOpenTrayPanel)
         {
             return;
         }
@@ -3986,7 +3956,7 @@ public sealed partial class TopBarWindow : Window
         if (_appBar.RefreshBottomDockOffset())
         {
             CloseFlyoutsBeforeOpening();
-            CloseTrayPanelPreview();
+            CloseTrayPanel();
         }
         var bounds = _appBar.Bounds;
         var taskbarOverlaps = _state.ShowAtBottom && liveTaskbar is { Edge: DockEdge.Bottom, AutoHidden: true }
@@ -4223,7 +4193,7 @@ public sealed partial class TopBarWindow : Window
         bounds = default;
         window = DockNativeMethods.GetForegroundWindow();
         if (window == 0 || window == _handle || window == (_barMenu?.PopupHandle ?? 0)
-            || IsTrayPanelPreviewWindow(window) || DockNativeMethods.IsIconic(window))
+            || IsTrayPanelWindow(window) || DockNativeMethods.IsIconic(window))
         {
             return false;
         }
@@ -4393,7 +4363,7 @@ public sealed partial class TopBarWindow : Window
         {
             existing.IsOpen = false;
         }
-        CloseTrayPanelPreview();
+        CloseTrayPanel();
         var highContrast = AccessibilityThemeManager.IsHighContrastEnabled || SystemParameters.HighContrast;
         var darkSurface = !ResolveSystemFlyoutLook(highContrast).Palette.UseDarkInk;
         var menu = new NonActivatingPopupMenu(Surface, PlacementMode.Mouse, darkSurface);
@@ -4513,9 +4483,7 @@ public sealed partial class TopBarWindow : Window
                 });
                 break;
             case TopBarModuleKind.TrayOverflow:
-#if TRAY_PANEL_PREVIEW
-                menu.AddItem("打开 Windows 托盘", _environment.OpenTrayOverflow);
-#endif
+                menu.AddItem("打开 Windows 托盘", OpenNativeTrayOverflow);
                 var trayIconOnly = TopBarRules.EffectiveTrayIconOnly(_state);
                 menu.AddItem(trayIconOnly ? "托盘：显示文字" : "托盘：仅显示图标", () =>
                 {

@@ -6,13 +6,18 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <PlatformTarget>x64</PlatformTarget>
+    <TraySource>../../src/BingLan.App/Tray</TraySource>
   </PropertyGroup>
   <ItemGroup>
     <Resource Include="../../src/BingLan.App/Assets/Brand/binglan-icon.png" Link="Assets/Brand/binglan-icon.png"/>
+    <Compile Include="$(TraySource)/TrayReader.cs;$(TraySource)/TrayIconArtwork.cs;$(TraySource)/TrayPanelWindow.xaml.cs"
+             Link="Tray/%(Filename)%(Extension)" />
+    <Page Include="$(TraySource)/TrayPanelWindow.xaml" Link="Tray/TrayPanelWindow.xaml" />
   </ItemGroup>
   <Target Name="BuildTrayContextNative" AfterTargets="Build"
-          Inputs="native\TrayContextNative.cpp;native\TrayContextNative.h;native\build.ps1"
+          Inputs="$(TraySource)/native/TrayContextNative.cpp;$(TraySource)/native/TrayContextNative.h;$(TraySource)/native/build.ps1"
           Outputs="$(TargetDir)BingLan.TrayContextNative.dll">
-    <Exec Command="pwsh -NoProfile -File &quot;$(MSBuildProjectDirectory)\native\build.ps1&quot; -OutputDirectory &quot;$(TargetDir).&quot;" />
+    <Exec Command="pwsh -NoProfile -File &quot;$(TraySource)/native/build.ps1&quot; -OutputDirectory &quot;$(TargetDir).&quot;"
+          WorkingDirectory="$(MSBuildProjectDirectory)" />
   </Target>
 </Project>

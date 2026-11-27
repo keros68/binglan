@@ -969,7 +969,16 @@ internal static class TopBarWindowTests
                 var tray = ButtonByName(bar, "托盘模块");
                 Assert(tray.ActualWidth >= 32 && tray.ActualHeight >= 32, "托盘入口应有可点击的热区");
                 Invoke(tray);
-                Assert(environment.TrayOverflowRequested == 1, "托盘按钮应调用原生面板入口");
+                pump();
+                if (System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture == System.Runtime.InteropServices.Architecture.X64)
+                {
+                    var trayPanel = Application.Current.Windows.OfType<BingLan.App.Tray.TrayPanelWindow>()
+                        .Single(window => window.Owner == bar && window.IsVisible);
+                    Invoke((Button)trayPanel.FindName("NativeTrayButton"));
+                    pump();
+                    Assert(!trayPanel.IsVisible, "切换到 Windows 托盘时应关闭冰蓝托盘");
+                }
+                Assert(environment.TrayOverflowRequested == 1, "Windows 托盘入口应调用原生面板");
                 state.Modules.TrayOverflow = false;
                 bar.ApplyState();
                 pump();

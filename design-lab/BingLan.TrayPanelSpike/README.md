@@ -1,6 +1,6 @@
 # 独立托盘面板实验
 
-.NET 10 / WPF 托盘实验支持独立运行，也可在本地预览构建中从顶栏「托盘」打开。预览面板随顶栏配色，平时收起，点开后默认一排显示最多 5 个应用，点箭头可展开其余图标。悬停显示应用名称、Windows 提供的状态和所在区域。名称为空时，面板按 Windows 报告的图标位置确认所属应用，显示其名称和图标；无法确认时显示「未命名的托盘图标」。Esc 可关闭面板。顶栏入口启用时在后台准备一份图标列表，打开时先显示已准备好的图标，再向 Windows 核对新增、退出的应用和状态。面板已打开时也可以点刷新。OneDrive 使用蓝色云朵标识，其同步状态取自 Windows 返回的文字。
+.NET 10 / WPF 托盘实验支持独立运行，正式版可从顶栏「托盘」打开同一面板。预览面板随顶栏配色，平时收起，点开后默认一排显示最多 5 个应用，点箭头可展开其余图标。悬停显示应用名称、Windows 提供的状态和所在区域。名称为空时，面板按 Windows 报告的图标位置确认所属应用，显示其名称和图标；无法确认时显示「未命名的托盘图标」。Esc 可关闭面板。顶栏入口启用时在后台准备一份图标列表，打开时先显示已准备好的图标，再向 Windows 核对新增、退出的应用和状态。面板已打开时也可以点刷新。OneDrive 使用蓝色云朵标识，其同步状态取自 Windows 返回的文字。
 
 工具按需读取当前 Explorer 的任务栏和已存在的折叠区，包括隐藏 XAML 子窗口。Explorer 刚重启时，部分隐藏图标要在 Windows 原生折叠区打开一次后才可读取。遇到缺项，可打开原生折叠区，再回冰蓝刷新。图像从本机 Windows 通知区域缓存匹配，缺少图片的应用以名称首字显示。
 
@@ -17,7 +17,7 @@ dotnet build .\design-lab\BingLan.TrayPanelSpike -c Release
 构建带顶栏入口的本地预览，右键顶栏「托盘」可打开 Windows 原生托盘：
 
 ```powershell
-dotnet build .\src\BingLan.App -c Release -p:TrayPanelPreview=true --artifacts-path "$env:TEMP\BingLan-TrayHostArtifacts"
+dotnet build .\src\BingLan.App -c Release --artifacts-path "$env:TEMP\BingLan-TrayHostArtifacts"
 ```
 
 只读探测，输出 JSON，8 秒内未完成则退出：
