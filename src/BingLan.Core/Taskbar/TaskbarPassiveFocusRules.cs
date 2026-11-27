@@ -6,7 +6,9 @@ public readonly record struct TaskbarPassiveFocusInput(
     bool IsTaskbarForeground,
     bool AutoHideEnabled,
     long ElapsedSinceMinimizeMs,
-    bool AlreadyRestoredForMinimize,
+    bool MinimizedWindowStillIconic,
+    bool HasNewUserInput,
+    bool HasVisibleApplicationWindow,
     bool PointerInTaskbarOrEdge,
     bool AnyModifierHeld,
     bool AnyMouseButtonDown,
@@ -33,7 +35,9 @@ public static class TaskbarPassiveFocusRules
     public static bool ShouldRestoreDesktopFocus(TaskbarPassiveFocusInput input) =>
         input.IsTaskbarForeground
         && input.AutoHideEnabled
-        && !input.AlreadyRestoredForMinimize
+        && input.MinimizedWindowStillIconic
+        && !input.HasNewUserInput
+        && !input.HasVisibleApplicationWindow
         && input.ElapsedSinceMinimizeMs >= 0
         && input.ElapsedSinceMinimizeMs <= MinimizeGraceWindowMs
         && !input.PointerInTaskbarOrEdge

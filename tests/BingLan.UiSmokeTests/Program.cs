@@ -235,6 +235,7 @@ internal static class Program
         Run("快捷入口显示系统位置图标", TestQuickPlaces, failures);
         Run("新建卡片不会重置 Dock 与卡片颜色", TestNewCardKeepsAppBrushes, failures);
         Run("卡片显示后与切换窗口后位于普通窗口下方", TestCardsStayBehindWindows, failures);
+        Run("Dock 确认已打开和已最小化的窗口真正取得前台", TestDockFocusConfirmsForeground, failures);
         Run("开始菜单应用列表可直接固定到 Dock", TestStartMenuApps, failures);
         Run("固定项保留快捷方式的启动参数与工作目录", TestPinKeepsShortcutArguments, failures);
         Run("Dock 拖入路径在后台解析且保留真实类型与快捷方式参数", DockFileSystemTests.PrepareDroppedPaths, failures);
@@ -1778,6 +1779,44 @@ internal static class Program
     }
 
     // True when `upper` is earlier than `lower` in the top-down window order.
+    private static void TestDockFocusConfirmsForeground()
+    {
+        var source = new Window { Title = "模拟当前前台软件", Width = 360, Height = 220 };
+        var target = new Window { Title = "模拟 Dock 目标软件", Width = 320, Height = 200, ShowActivated = false };
+        ShowAndPump(source);
+        try
+        {
+            ShowAndPump(target);
+            var sourceHandle = new WindowInteropHelper(source).Handle;
+            var targetHandle = new WindowInteropHelper(target).Handle;
+            DockNativeMethods.GetWindowThreadProcessId(targetHandle, out var processId);
+            foreach (var minimized in new[] { false, true })
+            {
+                if (minimized)
+                {
+                    target.WindowState = WindowState.Minimized;
+                }
+                source.Activate();
+                PumpUntil(() => DockNativeMethods.GetForegroundWindow() == sourceHandle
+                    && DockNativeMethods.IsIconic(targetHandle) == minimized, "测试窗口前台或最小化状态未就绪");
+
+                var focus = WindowCommandService.FocusAsync(
+                    new TrackedWindow(targetHandle, processId, target.Title, null, null, false, minimized),
+                    restore: minimized);
+                PumpUntil(() => focus.IsCompleted, "Dock 切换窗口未完成");
+                Assert(focus.GetAwaiter().GetResult().Succeeded
+                    && DockNativeMethods.GetForegroundWindow() == targetHandle
+                    && !DockNativeMethods.IsIconic(targetHandle), "Dock 报告成功时目标窗口应已经可见且取得前台");
+            }
+        }
+        finally
+        {
+            target.Close();
+            source.Close();
+            Pump();
+        }
+    }
+
     private static bool IsAbove(nint upper, nint lower)
     {
         for (var window = GetWindow(upper, GwHwndNext); window != 0; window = GetWindow(window, GwHwndNext))
@@ -5429,6 +5468,38 @@ internal static class Program
                     && (GetWindowLongPtr(anchorHandle, GwlExStyle) & WsExTopmost) == 0,
                     "批量回落后两个组件都应立即离开置顶层");
                 Assert(IsWindowVisible(handle) && IsWindowVisible(anchorHandle), "批量回落应保持组件可见");
+
+                var topmostApp = new Window
+                {
+                    Title = "模拟保持置顶的软件",
+                    Left = window.Left,
+                    Top = window.Top,
+                    Width = 220,
+                    Height = 160,
+                    ShowActivated = false,
+                    Topmost = true
+                };
+                anchor.RaiseAboveDesktop(DockNativeMethods.HwndTopmost);
+                ShowAndPump(topmostApp);
+                try
+                {
+                    var appHandle = new WindowInteropHelper(topmostApp).Handle;
+                    window.RaiseAboveDesktop(NativeMethods.GetWindowAboveInBand(anchorHandle, topmost: true),
+                        topmost: true, keepDesktopOrder: true);
+                    Assert(IsAbove(appHandle, handle) && IsAbove(handle, anchorHandle),
+                        "显示桌面时卡片应排在壁纸上方、置顶软件下方");
+
+                    NativeMethods.SetWindowPos(handle, DockNativeMethods.HwndTopmost, 0, 0, 0, 0,
+                        NativeMethods.SwpNoMove | NativeMethods.SwpNoSize | NativeMethods.SwpNoActivate);
+                    Assert(IsAbove(appHandle, handle) && IsAbove(handle, anchorHandle),
+                        "已提升的桌面卡片在收到自身置顶请求时应保持桌面层级");
+                    window.ReturnBelowOrdinaryWindows();
+                }
+                finally
+                {
+                    topmostApp.Close();
+                    Pump();
+                }
             }
             finally
             {

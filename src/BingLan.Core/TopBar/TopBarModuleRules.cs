@@ -97,8 +97,8 @@ public static class TopBarModuleRules
 
     /// <summary>
     /// Normalized snapshot of one OS network interface used by both the TopBar status icon
-    /// and the Network flyout so virtual switches, WAN Miniport pseudo-adapters, and NDIS/WFP
-    /// filter drivers never masquerade as a wired Ethernet connection when Wi-Fi is off.
+    /// and the Network flyout so isolated virtual switches, WAN Miniport pseudo-adapters,
+    /// and NDIS/WFP filter drivers do not masquerade as a wired Ethernet connection.
     /// </summary>
     public sealed record NetworkAdapterCandidate(
         bool IsUp,
@@ -114,18 +114,7 @@ public static class TopBarModuleRules
     public static bool IsVirtualOrFilterAdapter(string? name, string? description)
     {
         var text = $"{name} {description}";
-        return text.Contains("WFP ", StringComparison.OrdinalIgnoreCase)
-            || text.Contains("LightWeight Filter", StringComparison.OrdinalIgnoreCase)
-            || text.Contains("QoS Packet Scheduler", StringComparison.OrdinalIgnoreCase)
-            || text.Contains("Filter Driver", StringComparison.OrdinalIgnoreCase)
-            || text.Contains("WAN Miniport (IP)", StringComparison.OrdinalIgnoreCase)
-            || text.Contains("WAN Miniport (IPv6)", StringComparison.OrdinalIgnoreCase)
-            || text.Contains("WAN Miniport (Network Monitor)", StringComparison.OrdinalIgnoreCase)
-            || text.Contains("Kernel Debug", StringComparison.OrdinalIgnoreCase)
-            || text.Contains("Loopback", StringComparison.OrdinalIgnoreCase)
-            || text.Contains("Npcap", StringComparison.OrdinalIgnoreCase)
-            || text.Contains("KM-TEST", StringComparison.OrdinalIgnoreCase)
-            || text.Contains("Wi-Fi Direct", StringComparison.OrdinalIgnoreCase)
+        return IsFilterOrPseudoAdapter(name, description)
             || text.Contains("Hyper-V", StringComparison.OrdinalIgnoreCase)
             || text.Contains("vEthernet", StringComparison.OrdinalIgnoreCase)
             || text.Contains("WSL", StringComparison.OrdinalIgnoreCase)
@@ -148,6 +137,23 @@ public static class TopBarModuleRules
             || text.Contains("VPN", StringComparison.OrdinalIgnoreCase);
     }
 
+    private static bool IsFilterOrPseudoAdapter(string? name, string? description)
+    {
+        var text = $"{name} {description}";
+        return text.Contains("WFP ", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("LightWeight Filter", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("QoS Packet Scheduler", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("Filter Driver", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("WAN Miniport (IP)", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("WAN Miniport (IPv6)", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("WAN Miniport (Network Monitor)", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("Kernel Debug", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("Loopback", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("Npcap", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("KM-TEST", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("Wi-Fi Direct", StringComparison.OrdinalIgnoreCase);
+    }
+
     public static bool IsUsableNetworkAdapter(NetworkAdapterCandidate adapter)
     {
         ArgumentNullException.ThrowIfNull(adapter);
@@ -158,7 +164,12 @@ public static class TopBarModuleRules
 
         if (IsVirtualOrFilterAdapter(adapter.Name, adapter.Description))
         {
-            return false;
+            // An external Hyper-V switch can own the host's only IP/default route.
+            // Keep host-only switches and filter-driver projections out of this fallback.
+            return adapter.Speed > 0 && adapter.HasDefaultGateway && adapter.HasUsableUnicastIp
+                && !IsFilterOrPseudoAdapter(adapter.Name, adapter.Description)
+                && (adapter.Name.Contains("vEthernet", StringComparison.OrdinalIgnoreCase)
+                    || adapter.Description.Contains("Hyper-V", StringComparison.OrdinalIgnoreCase));
         }
 
         if (adapter.IsPpp)
@@ -176,9 +187,10 @@ public static class TopBarModuleRules
 
     /// <summary>
     /// Selects the index of the primary active adapter from <paramref name="adapters"/>, or
-    /// <c>-1</c> when no real wired/wireless/PPPoE connection is active.
+    /// <c>-1</c> when no usable wired/wireless/PPPoE or routed Hyper-V host connection is active.
     /// Priority: physical wired with default gateway → wireless with default gateway →
-    /// any usable wireless → any usable physical wired (e.g. static LAN without gateway).
+    /// any usable wireless → any usable physical wired (e.g. static LAN without gateway)
+    /// → routed Hyper-V host adapter.
     /// </summary>
     public static int SelectActiveNetworkAdapterIndex(IReadOnlyList<NetworkAdapterCandidate> adapters)
     {
@@ -187,12 +199,19 @@ public static class TopBarModuleRules
         var wirelessWithGateway = -1;
         var wirelessFallback = -1;
         var wiredFallback = -1;
+        var virtualHostFallback = -1;
 
         for (var i = 0; i < adapters.Count; i++)
         {
             var adapter = adapters[i];
             if (!IsUsableNetworkAdapter(adapter))
             {
+                continue;
+            }
+
+            if (IsVirtualOrFilterAdapter(adapter.Name, adapter.Description))
+            {
+                if (virtualHostFallback < 0) virtualHostFallback = i;
                 continue;
             }
 
@@ -223,7 +242,7 @@ public static class TopBarModuleRules
         if (wiredWithGateway >= 0) return wiredWithGateway;
         if (wirelessWithGateway >= 0) return wirelessWithGateway;
         if (wirelessFallback >= 0) return wirelessFallback;
-        return wiredFallback;
+        return wiredFallback >= 0 ? wiredFallback : virtualHostFallback;
     }
 
     public const int MaxNetworkSsidDisplayLength = 14;

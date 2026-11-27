@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using System.Reflection;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Automation.Peers;
@@ -15,6 +16,8 @@ using BingLan.Core.Models;
 using BingLan.Core.Services;
 using BingLan.Core.TopBar;
 using BingLan.App.TopBar;
+using BingLan.App.Dock;
+using BingLan.Core.Dock;
 using System.Buffers.Binary;
 using System.Text;
 
@@ -156,6 +159,7 @@ internal static class TopBarWindowTests
         ModuleSwitchesRemoveButtons(show, pump);
         ClicksOpenSettings(show, pump);
         SurfacePaintsGlass(show, pump);
+        ReservedModeClearsSmartHideAppearance();
         TodoFlyoutShowsItemsAndCloses(show, pump);
         CapsuleExpandsWithinItsSurface(show, pump);
         WeatherHoverOpensTooltip(show, pump);
@@ -277,6 +281,55 @@ internal static class TopBarWindowTests
         {
             bar.Close();
             pump();
+        }
+    }
+
+    private static void ReservedModeClearsSmartHideAppearance()
+    {
+        var monitor = MonitorCatalog.GetAll().FirstOrDefault(candidate =>
+            TopBarReserveRules.ShouldReserve(true, false, candidate.Bounds,
+                DockAppBarController.GetLiveWorkingArea(candidate),
+                TaskbarEdgeGuard.GetNativeTaskbarLayout(candidate.Bounds)?.Edge == DockEdge.Top))
+            ?? throw new InvalidOperationException("预留模式外观回归需要一个未占用顶边的显示器");
+        var state = BarState();
+        state.VisibilityMode = TopBarVisibilityMode.SmartHide;
+        state.FollowCardLook = false;
+        state.SurfaceOpacity = 0d;
+        state.FrostedGlass = false;
+        using var sampler = new WindowsPerformanceSamplingService();
+        // Keep the window unshown so ApplyState can exercise the reservation decision
+        // without registering a real AppBar or changing the desktop work area.
+        var bar = new TopBarWindow(state, new DesktopStyleState { Glass = GlassMode.Clear },
+            new FakeEnvironment(), sampler,
+            screenTarget: new SurfaceMonitorSelection(monitor.DeviceName, monitor, null),
+            ownsGlobalEvents: false);
+        const BindingFlags fields = BindingFlags.Instance | BindingFlags.NonPublic;
+        var overlap = typeof(TopBarWindow).GetField("_smartHideOverlappingWindow", fields)!;
+        var dwell = typeof(TopBarWindow).GetField("_revealZoneEnteredTick", fields)!;
+        var sample = typeof(TopBarWindow).GetField("_sampledBackdrop", fields)!;
+        var previousInk = typeof(TopBarWindow).GetField("_lastAdaptiveDarkInk", fields)!;
+        try
+        {
+            bar.ApplyState();
+            overlap.SetValue(bar, true);
+            dwell.SetValue(bar, Environment.TickCount64);
+            sample.SetValue(bar, new ColorContrastRules.SrgbColor(1d, 1d, 1d));
+            previousInk.SetValue(bar, true);
+            bar.RefreshAppearance();
+            Assert(bar.Surface.Background is SolidColorBrush { Color.A: > 0 },
+                "智能隐藏覆盖窗口时应使用临时可读底板");
+
+            state.VisibilityMode = TopBarVisibilityMode.ReserveTopEdge;
+            bar.ApplyState();
+            Assert(bar.Surface.Background is SolidColorBrush { Color.A: 0 },
+                "切换预留顶边后应立即恢复透明外观，不能保留智能隐藏的临时底板");
+            Assert(overlap.GetValue(bar) is false && dwell.GetValue(bar) is null
+                && sample.GetValue(bar) is null && !bar.UsesDarkInk,
+                "切换预留顶边后应清除覆盖状态、唤出停留时间和旧背景采样");
+        }
+        finally
+        {
+            bar.Close();
         }
     }
 

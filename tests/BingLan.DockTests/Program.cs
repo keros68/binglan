@@ -76,6 +76,7 @@ Run("拖拽文件到应用判定是否直接打开及收集有效目标", TestDo
 Run("拖拽文件命令行参数转义与悬停 500ms 唤起状态机", TestDockFileDropLaunchArgumentsAndHoverState);
 Run("Dock 顶层窗口过滤规则：排除零尺寸、穿透阴影与无标题禁用辅助窗", TestTopLevelWindowFilterRules);
 Run("Dock 激活目标选择：WPS 最小化主窗优先于未最小化的禁用辅助窗", TestSelectActivationTarget);
+Run("Dock 只在没有新输入或前台切换时重试激活", TestForegroundRequestRetry);
 Run("Dock 权限隔离提示文案：区分目标提权、前台提权与常规拦截", TestActivationBlockedMessages);
 Run("免激活右键菜单防闪退与外部点击收起状态机", TestMenuDismissState);
 Run("智能隐藏瞬态右键菜单/弹窗宿主重叠与最大化合并规则", TestTransientPopupSmartHideRules);
@@ -2698,6 +2699,15 @@ static void TestSelectActivationTarget()
         "不可直接激活的闪烁窗口不应压过同组内可激活窗口");
 }
 
+static void TestForegroundRequestRetry()
+{
+    Assert(WindowActivationRules.CanRetryForegroundRequest(1, 1, 100, 100), "原前台和输入均未变化时允许重试");
+    Assert(WindowActivationRules.CanRetryForegroundRequest(1, 0, 100, 100), "窗口切换间的空前台允许重试");
+    Assert(!WindowActivationRules.CanRetryForegroundRequest(1, 2, 100, 100), "资源管理器等其他窗口取得前台后应取消重试");
+    Assert(!WindowActivationRules.CanRetryForegroundRequest(1, 1, 100, 101), "右 Alt 等新输入应取消重试");
+    Assert(!WindowActivationRules.CanRetryForegroundRequest(1, 1, null, null), "读取不到输入时间时不得重试");
+}
+
 static void TestActivationBlockedMessages()
 {
     var targetElevated = WindowActivationRules.FormatSwitchBlockedMessage("WPS Office", targetElevated: true, foregroundElevated: true);
@@ -3373,7 +3383,9 @@ static void TestTaskbarPassiveFocusRules()
         IsTaskbarForeground: true,
         AutoHideEnabled: true,
         ElapsedSinceMinimizeMs: 120,
-        AlreadyRestoredForMinimize: false,
+        MinimizedWindowStillIconic: true,
+        HasNewUserInput: false,
+        HasVisibleApplicationWindow: false,
         PointerInTaskbarOrEdge: false,
         AnyModifierHeld: false,
         AnyMouseButtonDown: false,
@@ -3383,8 +3395,12 @@ static void TestTaskbarPassiveFocusRules()
         "满足全部门禁时应将最小化后被动落到任务栏的焦点归还桌面");
     Assert(!TaskbarPassiveFocusRules.ShouldRestoreDesktopFocus(valid with { ElapsedSinceMinimizeMs = 600 }),
         "超过最小化宽限窗口后不得干预任务栏焦点");
-    Assert(!TaskbarPassiveFocusRules.ShouldRestoreDesktopFocus(valid with { AlreadyRestoredForMinimize = true }),
-        "同一次最小化只能归还一次焦点，防止重试循环");
+    Assert(!TaskbarPassiveFocusRules.ShouldRestoreDesktopFocus(valid with { MinimizedWindowStillIconic = false }),
+        "应用开始还原后不得将焦点归还桌面");
+    Assert(!TaskbarPassiveFocusRules.ShouldRestoreDesktopFocus(valid with { HasNewUserInput = true }),
+        "最小化后收到新的键鼠输入不得接管前台");
+    Assert(!TaskbarPassiveFocusRules.ShouldRestoreDesktopFocus(valid with { HasVisibleApplicationWindow = true }),
+        "仍有窗口可见时不得将焦点切回桌面");
     Assert(!TaskbarPassiveFocusRules.ShouldRestoreDesktopFocus(valid with { AutoHideEnabled = false }),
         "未开启系统自动隐藏时无需干预任务栏焦点");
     Assert(!TaskbarPassiveFocusRules.ShouldRestoreDesktopFocus(valid with { PointerInTaskbarOrEdge = true }),
@@ -3530,7 +3546,6 @@ static void TestDockQuitProcessTreeAndSafety()
     Assert(DockQuitRules.ResolveDedicatedAppRoot(@"C:\Standalone.exe") is null, "盘符根目录不得作为专用应用根目录");
 
     var emptyStrings = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-    var emptyPids = new HashSet<uint>();
 
     // 2. 托盘宿主拉起 UI 子窗（PowerToys / Steam）：结束应用必须向上命中托盘宿主并父先子后结束。
     var powerToysProcesses = new ProcessQuitCandidate[]
@@ -3546,7 +3561,6 @@ static void TestDockQuitProcessTreeAndSafety()
         groupExecutablePaths: new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             { @"C:\Program Files\PowerToys\WinUI3Apps\PowerToys.Settings.exe" },
         groupAumids: emptyStrings,
-        groupProcessIds: new HashSet<uint> { 1001 },
         runningProcesses: powerToysProcesses);
     AssertEqual(3, ptTargets.Count, "结束 PowerToys 设置窗应一并结束托盘宿主与模块子进程");
     AssertEqual(1000u, ptTargets[0], "必须先结束父托盘宿主 PowerToys.exe，防止子进程被拉起");
@@ -3565,7 +3579,6 @@ static void TestDockQuitProcessTreeAndSafety()
         pinned: null,
         groupExecutablePaths: new HashSet<string>(StringComparer.OrdinalIgnoreCase) { @"D:\Tools\v2rayN\v2rayN.exe" },
         groupAumids: emptyStrings,
-        groupProcessIds: new HashSet<uint> { 3000 },
         runningProcesses: proxyProcesses);
     Assert(proxyTargets.SequenceEqual([3000u, 3001u]), "应结束 v2rayN 及其子目录内核进程，且不波及同在 D:\\Tools 下的其他应用");
 
@@ -3584,7 +3597,6 @@ static void TestDockQuitProcessTreeAndSafety()
         pinned: new DockPinnedApp { DisplayName = "微信", ExecutablePath = @"C:\Program Files\Tencent\Weixin\Weixin.exe" },
         groupExecutablePaths: emptyStrings,
         groupAumids: emptyStrings,
-        groupProcessIds: emptyPids,
         runningProcesses: weixinProcesses);
     Assert(weixinTargets.SequenceEqual([4000u, 4001u]), "微信结束应用应清理主进程和 AppEx，绝不误杀同厂商 QQ、打开的浏览器、cmd 或冰蓝自身");
 
@@ -3604,7 +3616,6 @@ static void TestDockQuitProcessTreeAndSafety()
         pinned: feishuPin,
         groupExecutablePaths: emptyStrings,
         groupAumids: emptyStrings,
-        groupProcessIds: emptyPids,
         runningProcesses: feishuProcesses);
     Assert(feishuTargets.ToHashSet().SetEquals([5000u, 5001u]), "带 Win32 窗口 AUMID 的固定项在后台驻留时应匹配真实进程与 Helper");
 
@@ -3620,7 +3631,6 @@ static void TestDockQuitProcessTreeAndSafety()
         pinned: discordPin,
         groupExecutablePaths: emptyStrings,
         groupAumids: emptyStrings,
-        groupProcessIds: emptyPids,
         runningProcesses: [new(6000, 500, @"C:\Users\demo\AppData\Local\Discord\app-1.0.9165\Discord.exe", null)]);
     Assert(discordTargets.SequenceEqual([6000u]), "Squirrel 固定项应匹配版本子目录里的真实托盘进程");
 
@@ -3629,7 +3639,6 @@ static void TestDockQuitProcessTreeAndSafety()
         pinned: null,
         groupExecutablePaths: new HashSet<string>(StringComparer.OrdinalIgnoreCase) { @"D:\App\DingDing\main\current\DingTalk.exe" },
         groupAumids: emptyStrings,
-        groupProcessIds: new HashSet<uint> { 7001 },
         runningProcesses:
         [
             new(7000, 500, @"D:\App\DingDing\DingtalkLauncher.exe", null),
@@ -3643,7 +3652,6 @@ static void TestDockQuitProcessTreeAndSafety()
         groupExecutablePaths: new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             { @"C:\Program Files\Microsoft Office\root\Office16\EXCEL.EXE" },
         groupAumids: emptyStrings,
-        groupProcessIds: new HashSet<uint> { 8001 },
         runningProcesses:
         [
             new(8001, 500, @"C:\Program Files\Microsoft Office\root\Office16\EXCEL.EXE", null),
@@ -3656,7 +3664,6 @@ static void TestDockQuitProcessTreeAndSafety()
         groupExecutablePaths: new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             { @"D:\Program Files\WPS Office\12.1.0.15990\office6\wps.exe" },
         groupAumids: emptyStrings,
-        groupProcessIds: new HashSet<uint> { 8101 },
         runningProcesses:
         [
             new(8101, 500, @"D:\Program Files\WPS Office\12.1.0.15990\office6\wps.exe", null),
@@ -3670,7 +3677,6 @@ static void TestDockQuitProcessTreeAndSafety()
         pinned: null,
         groupExecutablePaths: new HashSet<string>(StringComparer.OrdinalIgnoreCase) { @"C:\Windows\System32\notepad.exe" },
         groupAumids: emptyStrings,
-        groupProcessIds: new HashSet<uint> { 9001 },
         runningProcesses:
         [
             new(9001, 500, @"C:\Windows\System32\notepad.exe", null),
@@ -3685,7 +3691,6 @@ static void TestDockQuitProcessTreeAndSafety()
         pinned: null,
         groupExecutablePaths: new HashSet<string>(StringComparer.OrdinalIgnoreCase) { @"C:\Program Files\SuiteApp\SuiteApp.exe" },
         groupAumids: emptyStrings,
-        groupProcessIds: new HashSet<uint> { 9101 },
         runningProcesses:
         [
             new(9101, 500, @"C:\Program Files\SuiteApp\SuiteApp.exe", null),
@@ -3693,6 +3698,34 @@ static void TestDockQuitProcessTreeAndSafety()
         ],
         otherItemExecutablePaths: otherDockItemExe);
     Assert(otherProtectedTargets.SequenceEqual([9101u]), "属于其他独立 Dock 项的可执行文件不得被连带结束");
+
+    var capturedWindow = new TrackedWindow(
+        (nint)9201, 9201, "TargetApp", null, @"C:\Program Files\TargetApp\TargetApp.exe", false, false);
+    var reusedPidTargets = DockQuitRules.SelectProcessesToTerminate(
+        pinned: null,
+        groupExecutablePaths: new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            { capturedWindow.ExecutablePath! },
+        groupAumids: emptyStrings,
+        runningProcesses:
+        [
+            new(capturedWindow.ProcessId, 500, @"C:\Program Files\DocumentEditor\DocumentEditor.exe", null),
+            new(9202, 9201, @"C:\Program Files\DocumentEditor\DocumentEditorHelper.exe", null),
+            new(9203, 500, @"C:\Program Files\TargetApp\TargetApp.exe", null),
+            new(9204, 9203, @"C:\Program Files\TargetApp\TargetAppHelper.exe", null)
+        ]);
+    Assert(reusedPidTargets.SequenceEqual([9203u, 9204u]),
+        "窗口快照中的 PID 被其他应用复用时，只能结束身份仍匹配的应用及其辅助进程");
+
+    var unidentifiedTargets = DockQuitRules.SelectProcessesToTerminate(
+        pinned: null,
+        groupExecutablePaths: emptyStrings,
+        groupAumids: emptyStrings,
+        runningProcesses:
+        [
+            new(9301, 500, @"C:\Program Files\DocumentEditor\DocumentEditor.exe", null),
+            new(9302, 500, null, null)
+        ]);
+    Assert(unidentifiedTargets.Count == 0, "没有可执行路径或 AUMID 的窗口快照不能授权结束进程");
 }
 
 static void AssertEqual<T>(T expected, T actual, string message)

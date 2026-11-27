@@ -613,13 +613,11 @@ public static class DockQuitRules
         DockPinnedApp? pinned,
         IReadOnlySet<string> groupExecutablePaths,
         IReadOnlySet<string> groupAumids,
-        IReadOnlySet<uint> groupProcessIds,
         IReadOnlyList<ProcessQuitCandidate> runningProcesses,
         IReadOnlySet<string>? otherItemExecutablePaths = null)
     {
         ArgumentNullException.ThrowIfNull(groupExecutablePaths);
         ArgumentNullException.ThrowIfNull(groupAumids);
-        ArgumentNullException.ThrowIfNull(groupProcessIds);
         ArgumentNullException.ThrowIfNull(runningProcesses);
 
         var candidatesByPid = new Dictionary<uint, (ProcessQuitCandidate Candidate, string? NormalizedExe)>(runningProcesses.Count);
@@ -701,11 +699,12 @@ public static class DockQuitRules
             }
         }
 
-        // Step 1: direct seed matches (exact exe, launcher stub, Squirrel target, AUMID, or group PID).
+        // Step 1: direct seed matches (exact exe, launcher stub, Squirrel target, or AUMID).
+        // Captured window PIDs are not identities: the process can exit and its PID be reused
+        // while a Dock context menu remains open.
         foreach (var (pid, (candidate, normalizedExe)) in candidatesByPid)
         {
-            var directMatch = groupProcessIds.Contains(pid)
-                || MatchesProcess(pinned, groupExecutablePaths, groupAumids, normalizedExe, candidate.AppUserModelId);
+            var directMatch = MatchesProcess(pinned, groupExecutablePaths, groupAumids, normalizedExe, candidate.AppUserModelId);
             if (directMatch)
             {
                 matchedPids.Add(pid);

@@ -1589,18 +1589,29 @@ public class WidgetWindowBase : Window
     /// </summary>
     private void KeepOnDesktopLayer(nint lParam)
     {
-        if (_raisedAboveDesktop)
+        if (_raisedAboveDesktop && !_keepRaisedDesktopOrder)
         {
             return;
         }
 
         var position = Marshal.PtrToStructure<NativeMethods.WindowPos>(lParam);
-        if ((position.Flags & NativeMethods.SwpNoZOrder) == 0
-            && position.InsertAfter != DockNativeMethods.HwndBottom)
+        if ((position.Flags & NativeMethods.SwpNoZOrder) != 0)
+        {
+            return;
+        }
+        if (_raisedAboveDesktop)
+        {
+            position.Flags |= NativeMethods.SwpNoZOrder;
+        }
+        else if (position.InsertAfter != DockNativeMethods.HwndBottom)
         {
             position.InsertAfter = DockNativeMethods.HwndBottom;
-            Marshal.StructureToPtr(position, lParam, false);
         }
+        else
+        {
+            return;
+        }
+        Marshal.StructureToPtr(position, lParam, false);
     }
 
     /// <summary>
@@ -1878,8 +1889,9 @@ public class WidgetWindowBase : Window
         internal bool Moving { get; set; }
     }
 
-    // Set while the shell shows the desktop and the card sits in the topmost band.
     private bool _raisedAboveDesktop;
+    // Shell desktop cards keep their relative position while they receive input.
+    private bool _keepRaisedDesktopOrder;
 
     /// <summary>
     /// Puts the card behind all ordinary windows without activating it. Does nothing
@@ -1965,9 +1977,16 @@ public class WidgetWindowBase : Window
     /// <summary>
     /// Places the card above the wallpaper in the shell desktop's current Z-order band.
     /// </summary>
-    internal void RaiseAboveDesktop(nint insertAfter, bool topmost = true)
+    internal void RaiseAboveDesktop(nint insertAfter, bool topmost = true, bool keepDesktopOrder = false)
     {
+        if (insertAfter == DockNativeMethods.HwndBottom)
+        {
+            ReturnBelowOrdinaryWindows();
+            return;
+        }
+
         _raisedAboveDesktop = true;
+        _keepRaisedDesktopOrder = false;
         if (_source is { IsDisposed: false } source)
         {
             if (NativeMethods.IsIconic(source.Handle) || !NativeMethods.IsWindowVisible(source.Handle))
@@ -1977,6 +1996,7 @@ public class WidgetWindowBase : Window
 
             NativeMethods.PutAboveDesktop(source.Handle, insertAfter, topmost);
         }
+        _keepRaisedDesktopOrder = keepDesktopOrder;
     }
 
     /// <summary>

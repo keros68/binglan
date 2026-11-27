@@ -18,20 +18,29 @@ internal static class ScreenSurfaceSettingsTests
         var archiveQueries = 0;
         var associations = new List<(string Source, string Destination)>();
         var copiedTo = new List<string>();
+        var createdOn = new List<(string? ScreenKey, NewWidgetKind Kind)>();
+        var fallbackCreations = new List<NewWidgetKind>();
+        var independentEnabled = true;
+        var rootIsPrimary = true;
         var canBind = true;
         var bridge = new MultiScreenSettingsBridge
         {
-            IsEnabled = () => true,
+            IsEnabled = () => independentEnabled,
             HasMultipleMonitors = () => true,
             GetConnectedMonitorCount = () => 2,
             GetScreens = () =>
             [
-                new(null, rootMonitor, "原屏", "原屏", "1920×1080", 1, true, true,
+                new(null, rootMonitor, "原屏", "原屏", "1920×1080", 1, rootIsPrimary, true,
                     new(0, 0, 1920, 1080), new(0, 0, 1920, 1040), 96, 0),
-                new(otherMonitor, otherMonitor, "第二屏", "第二屏", "2560×1440", 2, false, true,
+                new(otherMonitor, otherMonitor, "第二屏", "第二屏", "2560×1440", 2, !rootIsPrimary, true,
                     new(1920, 0, 4480, 1440), new(1920, 0, 4480, 1400), 120, canBind ? 0 : 1)
             ],
             GetSurfacePreferences = key => preferences.GetValueOrDefault(key),
+            AddWidgetOnScreen = (key, kind) =>
+            {
+                createdOn.Add((key, kind));
+                return null;
+            },
             ApplySurfacePreferences = (key, value) =>
             {
                 preferences[key] = value;
@@ -56,7 +65,15 @@ internal static class ScreenSurfaceSettingsTests
         };
         var settings = new SettingsWindow(new CityLookupService(), new InformationWidgetState(),
             DesktopExperienceRules.CreateDefault(), (_, _) => { }, _ => { }, _ => { },
-            maintenance: new SettingsMaintenance { MultiScreen = bridge });
+            maintenance: new SettingsMaintenance
+            {
+                MultiScreen = bridge,
+                AddWidget = kind =>
+                {
+                    fallbackCreations.Add(kind);
+                    return null;
+                }
+            });
         try
         {
             Check(!settings.IsVisible, "范围测试不得显示设置窗口");
@@ -133,6 +150,26 @@ internal static class ScreenSurfaceSettingsTests
             row = ((StackPanel)offline.Content).Children.OfType<SettingsGroup>().Single().Items.OfType<SettingsRow>().Single();
             Check(!((Button)row.Content).IsEnabled && associations.Count == 1,
                 "已有内容的屏幕应禁用关联，刷新不得自动迁移或合并档案");
+
+            rootIsPrimary = false;
+            settings.ShowSettingsPage("Components");
+            settings.SelectActiveScreen(null);
+            foreach (var buttonName in new[] { "AddTodoButton", "AddNoteButton", "AddFileBoxButton" })
+            {
+                ((Button)settings.FindName(buttonName)).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            }
+            Check(createdOn.SequenceEqual(new (string?, NewWidgetKind)[]
+                { (null, NewWidgetKind.Todo), (null, NewWidgetKind.Note), (null, NewWidgetKind.FileBox) })
+                && fallbackCreations.Count == 0,
+                "切换 Windows 主屏后，根屏新增仍须传入空别名，不能调用跟随 Windows 主屏的新增入口");
+            settings.SelectActiveScreen(otherMonitor);
+            ((Button)settings.FindName("AddNoteButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Check(createdOn.Last() == (otherMonitor, NewWidgetKind.Note), "独立屏新增应传入选中的屏幕身份");
+            independentEnabled = false;
+            settings.RefreshMultiScreenUi();
+            settings.SelectActiveScreen(null);
+            ((Button)settings.FindName("AddNoteButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Check(fallbackCreations.SequenceEqual([NewWidgetKind.Note]), "关闭独立桌面后应使用普通新增入口");
         }
         finally
         {

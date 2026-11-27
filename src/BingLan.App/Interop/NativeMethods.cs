@@ -162,10 +162,17 @@ internal static class NativeMethods
     [DllImport("user32.dll")]
     internal static extern nint GetWindow(nint window, uint command);
 
-    internal static nint GetNormalWindowAbove(nint window)
+    internal static nint GetWindowAboveInBand(nint window, bool topmost)
     {
-        var above = window != 0 ? GetWindow(window, GwHwndPrev) : 0;
-        return above != 0 && !IsTopmostWindow(above) ? above : DockNativeMethods.HwndTop;
+        if (window == 0 || !DockNativeMethods.IsWindow(window) || IsTopmostWindow(window) != topmost)
+        {
+            return DockNativeMethods.HwndBottom;
+        }
+
+        var above = GetWindow(window, GwHwndPrev);
+        return above != 0 && IsTopmostWindow(above) == topmost
+            ? above
+            : topmost ? DockNativeMethods.HwndTopmost : DockNativeMethods.HwndTop;
     }
 
     internal static bool IsTopmostWindow(nint window) =>

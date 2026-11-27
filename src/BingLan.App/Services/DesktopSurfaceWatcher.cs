@@ -27,7 +27,7 @@ internal sealed class DesktopSurfaceWatcher : IDisposable
     private readonly DispatcherTimer _evaluateTimer;
     private readonly DispatcherTimer _trailingTimer;
     private BackgroundWinEventPump.WinEventSubscription? _shellShowHook;
-    private BackgroundWinEventPump.WinEventSubscription? _raisedGlobalShowHook;
+    private BackgroundWinEventPump.WinEventSubscription? _raisedGlobalObjectHook;
     private uint _shellProcessId;
     private long _lastEvaluateTick;
     private long _burstStartedTick;
@@ -77,7 +77,7 @@ internal sealed class DesktopSurfaceWatcher : IDisposable
 
     internal bool IsTopmostLayerRequired { get; private set; }
 
-    internal bool HasGlobalShowHook => _raisedGlobalShowHook is { IsActive: true };
+    internal bool HasRaisedGlobalObjectHook => _raisedGlobalObjectHook is { IsActive: true };
 
     internal uint ShellHookProcessId => Volatile.Read(ref _shellProcessId);
 
@@ -162,8 +162,8 @@ internal sealed class DesktopSurfaceWatcher : IDisposable
         _fastTimer.Stop();
         _evaluateTimer.Stop();
         _trailingTimer.Stop();
-        _raisedGlobalShowHook?.Dispose();
-        _raisedGlobalShowHook = null;
+        _raisedGlobalObjectHook?.Dispose();
+        _raisedGlobalObjectHook = null;
         _shellShowHook?.Dispose();
         _shellShowHook = null;
         foreach (var subscription in _subscriptions)
@@ -301,8 +301,13 @@ internal sealed class DesktopSurfaceWatcher : IDisposable
         return BackgroundWinEventPump.IsTopLevelWindowEvent(message);
     }
 
-    internal static bool ShouldForwardGlobalShowEvent(in WinEventMessage message, uint shellProcessId)
+    internal static bool ShouldForwardRaisedObjectEvent(in WinEventMessage message, uint shellProcessId)
     {
+        if (message.EventType == DockNativeMethods.EventObjectReorder)
+        {
+            // A window can move above the desktop with SWP_NOACTIVATE and no show event.
+            return ShouldForwardShellObjectEvent(message);
+        }
         if (message.EventType != DockNativeMethods.EventObjectShow
             || !BackgroundWinEventPump.IsTopLevelWindowEvent(message))
         {
@@ -413,30 +418,30 @@ internal sealed class DesktopSurfaceWatcher : IDisposable
         }
     }
 
-    private void SyncRaisedGlobalShowHook(bool desktopShown)
+    private void SyncRaisedGlobalObjectHook(bool desktopShown)
     {
         if (!_started || _disposed || !desktopShown)
         {
-            _raisedGlobalShowHook?.Dispose();
-            _raisedGlobalShowHook = null;
+            _raisedGlobalObjectHook?.Dispose();
+            _raisedGlobalObjectHook = null;
             return;
         }
 
-        if (_raisedGlobalShowHook is { IsActive: true })
+        if (_raisedGlobalObjectHook is { IsActive: true })
         {
             return;
         }
 
-        // Only listen for non-Explorer top-level window shows while cards are raised over
-        // "show desktop", pre-filtered on the background WinEvent pump thread.
+        // While raised, also watch top-level Z-order changes initiated outside Explorer.
+        // ForwardBackgroundEvent coalesces these notifications with the shell reorders.
         var subscription = _pump.Subscribe(
             DockNativeMethods.EventObjectShow,
-            DockNativeMethods.EventObjectShow,
-            message => ShouldForwardGlobalShowEvent(message, Volatile.Read(ref _shellProcessId)),
+            DockNativeMethods.EventObjectReorder,
+            message => ShouldForwardRaisedObjectEvent(message, Volatile.Read(ref _shellProcessId)),
             ForwardBackgroundEvent);
         if (subscription.IsActive)
         {
-            _raisedGlobalShowHook = subscription;
+            _raisedGlobalObjectHook = subscription;
         }
         else
         {
@@ -701,7 +706,10 @@ internal sealed class DesktopSurfaceWatcher : IDisposable
         {
             _restoringWindow = 0;
         }
-        var hasActiveApplication = IsApplicationWindowBlocking(DockNativeMethods.GetForegroundWindow(), shellProcess)
+        var foreground = DockNativeMethods.GetForegroundWindow();
+        var hasActiveApplication = IsApplicationWindowBlocking(foreground, shellProcess)
+            || (TransientForegroundResolver.TryResolveBackingWindow(foreground, 0, out var backing)
+                && IsApplicationWindowBlocking(backing.Handle, shellProcess))
             || IsApplicationWindowBlocking(_restoringWindow, shellProcess, isRestoring: true);
         var blockers = 0;
         var surfaces = _cardHandles()
@@ -813,7 +821,7 @@ internal sealed class DesktopSurfaceWatcher : IDisposable
             anySurfaceCovered || IsTopmostLayerRequired != topmostLayerRequired);
         IsDesktopShown = shown;
         IsTopmostLayerRequired = topmostLayerRequired;
-        SyncRaisedGlobalShowHook(shown);
+        SyncRaisedGlobalObjectHook(shown);
         if (action != DesktopSurfaceAction.None)
         {
             Changed?.Invoke();
@@ -833,6 +841,16 @@ internal sealed class DesktopSurfaceWatcher : IDisposable
         }
 
         var exStyle = NativeMethods.GetExStyleOf(window);
+        var isTopmost = (exStyle & NativeMethods.WsExTopmost) != 0;
+        var isTopmostApplication = false;
+        if (isTopmost)
+        {
+            const long appFrame = NativeMethods.WsCaption | NativeMethods.WsThickFrame;
+            var style = (long)NativeMethods.GetWindowLongPtr(window, NativeMethods.GwlStyle);
+            isTopmostApplication = (exStyle & NativeMethods.WsExAppWindow) != 0
+                || ((exStyle & NativeMethods.WsExToolWindow) == 0
+                    && (style & appFrame) == appFrame);
+        }
         return DesktopSurfaceRules.CountsAsForegroundBlocker(
             hasWindow: true,
             isOwnProcess: false,
@@ -842,12 +860,13 @@ internal sealed class DesktopSurfaceWatcher : IDisposable
             isVisible: true,
             NativeMethods.IsIconic(window),
             NativeMethods.IsWindowCloaked(window),
-            isTopmost: (exStyle & NativeMethods.WsExTopmost) != 0,
+            isTopmost,
             isLayeredClickThrough: (exStyle & NativeMethods.WsExLayered) != 0
                 && (exStyle & NativeMethods.WsExTransparent) != 0,
             rect.Right - rect.Left,
             rect.Bottom - rect.Top,
-            isRestoring);
+            isRestoring,
+            isTopmostApplication);
     }
 
     private static string ClassNameOf(nint window)

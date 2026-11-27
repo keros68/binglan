@@ -77,8 +77,8 @@ public static class DesktopSurfaceRules
             height);
 
     /// <summary>
-    /// Whether a foreground or restoring window is a visible, non-topmost application
-    /// window, including tool-styled launchers or login dialogs that
+    /// Whether a foreground or restoring window is a visible application window,
+    /// including tool-styled launchers or login dialogs that
     /// <see cref="CountsAsOrdinaryBlocker"/> skips while passive in the background.
     /// Topmost shell flyouts (Start menu, Quick Settings) are excluded so opening them
     /// during "show desktop" does not drop cards behind a still-topmost <c>WorkerW</c>.
@@ -96,7 +96,8 @@ public static class DesktopSurfaceRules
         bool isLayeredClickThrough,
         int width,
         int height,
-        bool isRestoring = false) =>
+        bool isRestoring = false,
+        bool isTopmostApplication = false) =>
         hasWindow
         && !isOwnProcess
         && !isMonitoredDesktopSurface
@@ -104,7 +105,7 @@ public static class DesktopSurfaceRules
         && isVisible
         && (!isMinimized || isRestoring)
         && !isCloaked
-        && !isTopmost
+        && (!isTopmost || isTopmostApplication)
         && !isLayeredClickThrough
         && width > 1
         && height > 1;

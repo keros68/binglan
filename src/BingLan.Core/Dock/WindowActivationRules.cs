@@ -12,6 +12,15 @@ public sealed record WindowCandidateInfo(
 
 public static class WindowActivationRules
 {
+    public static bool CanRetryForegroundRequest(
+        nint originalForegroundRoot,
+        nint currentForegroundRoot,
+        uint? inputTickAtRequest,
+        uint? currentInputTick) =>
+        inputTickAtRequest.HasValue
+        && inputTickAtRequest == currentInputTick
+        && (currentForegroundRoot == 0 || currentForegroundRoot == originalForegroundRoot);
+
     public static bool ShouldIncludeTopLevelWindow(
         bool isAppWindow,
         bool isToolWindow,
