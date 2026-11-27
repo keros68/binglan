@@ -2058,6 +2058,7 @@ static void TestStartMenuMigration()
         Assert(state.Dock.ShowStartMenuButton, "开始菜单入口默认开启");
         Assert(state.Dock.ShowLauncherButton, "旧版本数据中没有的启动面板入口默认开启");
         Assert(state.Dock.ShowDesktopButton, "旧版本数据中没有的“显示桌面”按钮默认开启");
+        Assert(!state.Dock.ShowTaskViewButton, "旧配置的任务视图按钮应默认关闭");
         AssertEqual(DockRevealMode.EdgeAndHandle, state.Dock.RevealMode, "旧版本迁移后唤出方式应为底边和把手");
         AssertEqual(48d, state.Dock.IconSize, "图标大小应保留");
         AssertEqual("C:\\Apps\\Example.exe", state.Dock.PinnedApps.Single().ExecutablePath!, "应用绑定应保留");
@@ -2080,6 +2081,7 @@ static void TestDockStateRoundTrip()
         state.Dock.ShowStartMenuButton = false;
         state.Dock.ShowLauncherButton = false;
         state.Dock.ShowDesktopButton = false;
+        state.Dock.ShowTaskViewButton = true;
         state.Dock.MonitorDeviceName = @"\\.\DISPLAY1";
         state.Dock.VisibilityMode = DockVisibilityMode.SmartHide;
         state.Dock.BottomGapDip = 52;
@@ -2109,6 +2111,7 @@ static void TestDockStateRoundTrip()
         Assert(!loaded.Dock.ShowStartMenuButton, "关闭开始菜单入口的个人设置应保留");
         Assert(!loaded.Dock.ShowLauncherButton, "关闭启动面板入口的个人设置应保留");
         Assert(!loaded.Dock.ShowDesktopButton, "关闭“显示桌面”按钮的个人设置应保留");
+        Assert(loaded.Dock.ShowTaskViewButton, "开启任务视图按钮的个人设置应保留");
 
         Assert(loaded.Dock.IsEnabled, "Dock 启用状态未保留");
         AssertEqual(@"\\.\DISPLAY1", loaded.Dock.MonitorDeviceName, "显示器名称未保留");
@@ -2256,18 +2259,32 @@ static void TestPathPinsPersistAndStayOutOfThemes()
         state.Dock.PinnedApps.Add(DockPinRules.CreateFromPath(@"C:\Work\Reports")!);
         state.Dock.PinnedApps.Add(new DockPinnedApp { DisplayName = "记事本", ExecutablePath = @"C:\Windows\System32\notepad.exe" });
         state.Dock.PinnedApps.Add(DockPinRules.CreateFromPath(@"C:\Work\报告.docx")!);
+        var recycleBin = DockPinRules.CreateFromSystemPlace("::{645ff040-5081-101b-9f08-00aa002f954e}");
+        var computer = DockPinRules.CreateFromSystemPlace(QuickPlaceRules.ComputerTarget);
+        Assert(recycleBin is not null && computer is not null, "应支持回收站和此电脑系统入口");
+        Assert(!DockPinRules.IsSystemPlace("shell:AppsFolder"), "应仅识别支持的系统入口");
+        Assert(DockPinRules.Pin(state.Dock, recycleBin!), "回收站应可固定");
+        Assert(!DockPinRules.Pin(state.Dock, DockPinRules.CreateFromSystemPlace(QuickPlaceRules.RecycleBinTarget)!),
+            "拖入和选取的回收站应共用固定标识");
+        Assert(DockPinRules.Pin(state.Dock, computer!), "此电脑应可固定");
         store.Save(state);
         var loaded = store.Load();
-        AssertEqual(3, loaded.Dock.PinnedApps.Count, "路径固定项未保留");
+        AssertEqual(5, loaded.Dock.PinnedApps.Count, "路径和系统位置固定项未保留");
         AssertEqual(@"C:\Work\Reports", loaded.Dock.PinnedApps[0].TargetPath, "文件夹路径未保留");
         Assert(DockPinRules.IsPathPin(loaded.Dock.PinnedApps[2]), "文件固定项未保留");
         AssertEqual("报告.docx", loaded.Dock.PinnedApps[2].DisplayName, "文件显示名未保留");
+        AssertEqual(QuickPlaceRules.RecycleBinTarget, loaded.Dock.PinnedApps[3].TargetPath, "回收站目标未保留");
+        AssertEqual(QuickPlaceRules.ComputerTarget, loaded.Dock.PinnedApps[4].TargetPath, "此电脑目标未保留");
+        var explorer = Window(1, 10, "资源管理器", null, @"C:\Windows\explorer.exe");
+        var explorerGroup = WindowGrouping.Group([explorer]).Single();
+        Assert(!DockPinRules.Matches(loaded.Dock.PinnedApps[3], explorerGroup), "回收站不应吸收资源管理器窗口");
 
         var package = ThemeRules.Export(loaded, "测试", new ThemeArea(0, 0, 1920, 1040), new Version(0, 1, 0));
         AssertEqual(1, package.Bindings.Apps.Count, "主题只应包含应用固定项");
         var json = System.Text.Json.JsonSerializer.Serialize(package);
-        Assert(!json.Contains("Reports") && !json.Contains("报告") && !json.Contains("Work"),
-            "主题导出不应含文件夹或文件的名称与路径");
+        Assert(!json.Contains("Reports") && !json.Contains("报告") && !json.Contains("Work")
+            && !json.Contains(QuickPlaceRules.RecycleBinTarget) && !json.Contains(QuickPlaceRules.ComputerTarget),
+            "主题导出不应含文件夹、文件或系统位置固定项");
     }
     finally
     {

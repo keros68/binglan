@@ -66,7 +66,7 @@ public partial class IceBlueDockWindow : Window
     private bool _bounceRequested;
     private string _lastSignature = string.Empty;
     private string _lastStructureKey = string.Empty;
-    private (bool Start, bool Launcher, bool Desktop) _renderedCommandButtons;
+    private (bool Start, bool Launcher, bool Desktop, bool TaskView) _renderedCommandButtons;
     private nint _handle;
     private bool _closing;
     private bool _isChangingVisibilityByApp;
@@ -944,6 +944,10 @@ public partial class IceBlueDockWindow : Window
         {
             ItemPanel.Children.Add(BuildShowDesktopButton());
         }
+        if (commands.TaskView)
+        {
+            ItemPanel.Children.Add(BuildTaskViewButton());
+        }
         if (LeadingButtonCount > 0 && items.Count > 0)
         {
             ItemPanel.Children.Add(BuildDivider());
@@ -1087,6 +1091,21 @@ public partial class IceBlueDockWindow : Window
         var glyph = CreateDockCommandOutline("M4,4 H20 A2,2 0 0 1 22,6 V18 A2,2 0 0 1 20,20 H4 A2,2 0 0 1 2,18 V6 A2,2 0 0 1 4,4 Z M2,9 H22 M6,13 H13 M6,16 H17");
         var button = BuildDockCommandButton(glyph, "打开冰蓝总览卡", "打开冰蓝总览卡");
         button.Click += (_, _) => LauncherRequested?.Invoke();
+        return button;
+    }
+
+    private Button BuildTaskViewButton()
+    {
+        var glyph = CreateDockCommandOutline("M5,8 H19 A2,2 0 0 1 21,10 V18 A2,2 0 0 1 19,20 H5 A2,2 0 0 1 3,18 V10 A2,2 0 0 1 5,8 Z M7,4 H17 M8,14 H16");
+        var button = BuildDockCommandButton(glyph, "打开任务视图", "任务视图（Win+Tab）");
+        AutomationProperties.SetHelpText(button, "选择打开的窗口或切换虚拟桌面");
+        button.Click += async (_, _) =>
+        {
+            if (await ShellSurfaceService.OpenTaskViewAsync() != ShellSurfaceResult.Opened)
+            {
+                CommandFailed?.Invoke("无法打开任务视图，请按 Win+Tab。");
+            }
+        };
         return button;
     }
 
@@ -2430,6 +2449,7 @@ public partial class IceBlueDockWindow : Window
                 .Select(window => window.ExecutablePath)
                 .FirstOrDefault(path => !string.IsNullOrWhiteSpace(path));
         if (executablePath is not null
+            && !DockPinRules.IsSystemPlace(executablePath)
             && !DockAppResolver.IsFrameHost(executablePath)
             && !DockAppResolver.IsPackagedPath(executablePath))
         {
@@ -2531,7 +2551,7 @@ public partial class IceBlueDockWindow : Window
                     return;
                 }
                 var menu = CreateMenu();
-                menu.AddItem("添加应用…", PickAppToPin);
+                menu.AddItem("添加到 Dock…", PickAppToPin);
                 menu.AddItem("Dock 设置…", () => SettingsRequested?.Invoke());
                 if (ScreenSelection is null)
                 {
@@ -2622,7 +2642,7 @@ public partial class IceBlueDockWindow : Window
             return;
         }
 
-        if (e.Data.GetDataPresent(System.Windows.DataFormats.FileDrop))
+        if (e.Data.GetDataPresent(System.Windows.DataFormats.FileDrop) || DockShortcuts.HasShellItemDrop(e.Data))
         {
             _externalDragActive = true;
             if (!_dragHoverTimer.IsEnabled)
@@ -2667,12 +2687,9 @@ public partial class IceBlueDockWindow : Window
         ClearPinDragIndicator();
 
         if (parts.Button.Tag is not DockItem current
-            || e.Data.GetData(System.Windows.DataFormats.FileDrop) is not string[] files)
+            || e.Data.GetData(System.Windows.DataFormats.FileDrop) is not string[] { Length: > 0 } files)
         {
-            ClearDragTargetVisual();
-            _dragHover.Clear();
-            e.Effects = DragDropEffects.None;
-            e.Handled = true;
+            OnSurfaceDragOver(parts.Button, e);
             return;
         }
 
@@ -2850,7 +2867,7 @@ public partial class IceBlueDockWindow : Window
 
     private async void OnItemDrop(DockButtonParts parts, DockItem target, DragEventArgs e)
     {
-        if (e.Data.GetData(System.Windows.DataFormats.FileDrop) is string[] files)
+        if (e.Data.GetData(System.Windows.DataFormats.FileDrop) is string[] { Length: > 0 } files)
         {
             e.Handled = true;
             var inspection = InspectDragPathsAsync(files);
@@ -2961,21 +2978,42 @@ public partial class IceBlueDockWindow : Window
     private void OnDropOnSurface(object sender, DragEventArgs e)
     {
         EndExternalDrag();
-        if (!e.Handled && e.Data.GetData(System.Windows.DataFormats.FileDrop) is string[] files)
+        if (_closing || e.Handled)
+        {
+            return;
+        }
+        if (e.Data.GetData(System.Windows.DataFormats.FileDrop) is string[] { Length: > 0 } files)
         {
             e.Handled = true;
             _ = PinFilesAsync(files);
             return;
         }
 
-        if (!e.Handled && e.Data.GetData(RunningDragFormat) is string runningKey)
+        if (e.Data is System.Runtime.InteropServices.ComTypes.IDataObject shellData
+            && DockShortcuts.HasShellItemDrop(e.Data))
+        {
+            e.Handled = true;
+            e.Effects = DragDropEffects.None;
+            if ((e.AllowedEffects & DragDropEffects.Link) != 0)
+            {
+                var locations = DockShortcuts.ReadSystemPlacePins(shellData);
+                if (locations.Count > 0)
+                {
+                    e.Effects = DragDropEffects.Link;
+                    PinApps(locations);
+                }
+            }
+            return;
+        }
+
+        if (e.Data.GetData(RunningDragFormat) is string runningKey)
         {
             e.Handled = true;
             PinRunning(runningKey, _state.PinnedApps.Count);
             return;
         }
 
-        if (!e.Handled && e.Data.GetData(PinDragFormat) is string key
+        if (e.Data.GetData(PinDragFormat) is string key
             && DockPinRules.Move(_state, key, _state.PinnedApps.Count - 1))
         {
             PinsChanged();
@@ -3045,15 +3083,16 @@ public partial class IceBlueDockWindow : Window
                + (DividerCount(_items) * DockLayoutMetrics.DividerDip);
     }
 
-    private (bool Start, bool Launcher, bool Desktop) VisibleCommands =>
-        (_state.ShowStartMenuButton, LauncherEnabled && _state.ShowLauncherButton && LauncherRequested is not null, _state.ShowDesktopButton);
+    private (bool Start, bool Launcher, bool Desktop, bool TaskView) VisibleCommands =>
+        (_state.ShowStartMenuButton, LauncherEnabled && _state.ShowLauncherButton && LauncherRequested is not null,
+            _state.ShowDesktopButton, _state.ShowTaskViewButton);
 
     private int LeadingButtonCount
     {
         get
         {
-            var (start, launcher, desktop) = VisibleCommands;
-            return (start ? 1 : 0) + (launcher ? 1 : 0) + (desktop ? 1 : 0);
+            var (start, launcher, desktop, taskView) = VisibleCommands;
+            return (start ? 1 : 0) + (launcher ? 1 : 0) + (desktop ? 1 : 0) + (taskView ? 1 : 0);
         }
     }
 
@@ -3650,13 +3689,7 @@ public partial class IceBlueDockWindow : Window
                 UpdateForForeground();
             }
         };
-        _handleWindow.FilesDropped += files =>
-        {
-            if (!_closing)
-            {
-                _ = PinFilesAsync(files);
-            }
-        };
+        _handleWindow.ExternalDrop += OnDropOnSurface;
         _handleWindow.ShellRecovered += () => ShellRecovered?.Invoke();
         // Create the HWND now so the handle is already positioned when it first shows.
         _ = new WindowInteropHelper(_handleWindow).EnsureHandle();

@@ -121,6 +121,9 @@ public static class DockItemComposer
 
 public static class DockPinRules
 {
+    private const string ComputerParsingName = "::{20D04FE0-3AEA-1069-A2D8-08002B30309D}";
+    private const string RecycleBinParsingName = "::{645FF040-5081-101B-9F08-00AA002F954E}";
+
     public static DockPinnedApp Copy(DockPinnedApp app)
     {
         ArgumentNullException.ThrowIfNull(app);
@@ -157,7 +160,7 @@ public static class DockPinRules
             : $"path:{NormalizeTargetPath(app.TargetPath)}";
     }
 
-    /// <summary>Whether the pin is a folder or file rather than an app.</summary>
+    /// <summary>Whether the pin opens a folder, file or system place.</summary>
     public static bool IsPathPin(DockPinnedApp app)
     {
         ArgumentNullException.ThrowIfNull(app);
@@ -183,10 +186,39 @@ public static class DockPinRules
         };
     }
 
+    public static DockPinnedApp? CreateFromSystemPlace(string? path) => NormalizeSystemPlace(path) switch
+    {
+        QuickPlaceRules.ComputerTarget => CreateFromPath(QuickPlaceRules.ComputerTarget, "此电脑"),
+        QuickPlaceRules.RecycleBinTarget => CreateFromPath(QuickPlaceRules.RecycleBinTarget, "回收站"),
+        _ => null
+    };
+
+    public static bool IsSystemPlace(string? path) => NormalizeSystemPlace(path) is not null;
+
+    private static string? NormalizeSystemPlace(string? path)
+    {
+        var target = path?.Trim();
+        if (string.Equals(target, ComputerParsingName, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(target, QuickPlaceRules.ComputerTarget, StringComparison.OrdinalIgnoreCase))
+        {
+            return QuickPlaceRules.ComputerTarget;
+        }
+        if (string.Equals(target, RecycleBinParsingName, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(target, QuickPlaceRules.RecycleBinTarget, StringComparison.OrdinalIgnoreCase))
+        {
+            return QuickPlaceRules.RecycleBinTarget;
+        }
+        return null;
+    }
+
     // A folder path with or without a trailing separator is the same pin; a drive root
     // keeps its separator.
     private static string NormalizeTargetPath(string path)
     {
+        if (NormalizeSystemPlace(path) is { } place)
+        {
+            return place;
+        }
         var full = WindowGrouping.NormalizeExecutablePath(path);
         var root = Path.GetPathRoot(full);
         return full.Length > (root?.Length ?? 0)

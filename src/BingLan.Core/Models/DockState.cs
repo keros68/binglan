@@ -25,7 +25,7 @@ public sealed class DockPinnedApp
     public string? AppUserModelId { get; set; }
 
     /// <summary>
-    /// Full path of a pinned folder or file, or null for an app pin. Only the path is
+    /// Path of a pinned folder, file or supported system place, or null for an app pin. Only the target is
     /// recorded; the item itself is never moved, copied or changed. Such pins never match
     /// running windows and are left out of shared themes.
     /// </summary>
@@ -81,6 +81,8 @@ public sealed class DockState
     /// Whether the "show desktop" entry appears in the Dock command group. Machine-local.
     /// </summary>
     public bool ShowDesktopButton { get; set; } = true;
+    /// <summary>Whether to show the Windows Task View button. Machine-local.</summary>
+    public bool ShowTaskViewButton { get; set; }
     /// <summary>Persistent physical display identity; null follows Windows primary.</summary>
     public string? MonitorKey { get; set; }
     /// <summary>Display name retained for compatibility with older configurations.</summary>

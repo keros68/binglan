@@ -57,7 +57,7 @@ public partial class DockHandleWindow : Window
     internal event Action? FileDragEntered;
 
     /// <summary>Raised when external files are dropped directly onto the handle.</summary>
-    internal event Action<string[]>? FilesDropped;
+    internal event System.Windows.DragEventHandler? ExternalDrop;
 
     internal PixelRect CurrentRect
     {
@@ -266,17 +266,21 @@ public partial class DockHandleWindow : Window
             return;
         }
 
+        if (DockShortcuts.HasShellItemDrop(e.Data) && (e.AllowedEffects & DragDropEffects.Link) != 0)
+        {
+            e.Effects = DragDropEffects.Link;
+            e.Handled = true;
+            FileDragEntered?.Invoke();
+            return;
+        }
+
         e.Effects = DragDropEffects.None;
         e.Handled = true;
     }
 
     private void OnHandleDrop(object sender, DragEventArgs e)
     {
-        if (e.Data.GetData(System.Windows.DataFormats.FileDrop) is string[] files)
-        {
-            e.Handled = true;
-            FilesDropped?.Invoke(files);
-        }
+        ExternalDrop?.Invoke(this, e);
     }
 
     private void OnHandleMouseLeftButtonDown(object sender, MouseButtonEventArgs e)

@@ -2684,7 +2684,7 @@
                                                        Description="也可以把程序或快捷方式拖到 Dock 上，或在 Dock 中右键正在运行的应用选择“固定到 Dock”；拖动图标可调整顺序"
                                                        local:SettingsSearch.Keywords="固定 Pin 添加应用">
                                         <StackPanel Orientation="Horizontal">
-                                            <Button Style="{StaticResource AccentButtonStyle}" Content="添加应用…" Click="AddDockApp_Click"/>
+                                            <Button Style="{StaticResource AccentButtonStyle}" Content="添加到 Dock…" Click="AddDockApp_Click"/>
                                             <Button Margin="8,0,0,0" Content="导入任务栏应用" Click="ImportTaskbarPins_Click"/>
                                         </StackPanel>
                                     </local:SettingsRow>
@@ -2768,6 +2768,15 @@
                                                            local:SettingsSearch.Keywords="显示桌面 回到桌面 Win+D">
                                             <CheckBox x:Name="DockShowDesktopButtonCheckBox"
                                                       AutomationProperties.Name="显示“显示桌面”按钮"
+                                                      Style="{StaticResource ToggleSwitchStyle}"
+                                                      Checked="DockSetting_Changed"
+                                                      Unchecked="DockSetting_Changed"/>
+                                        </local:SettingsRow>
+                                        <local:SettingsRow Header="显示任务视图按钮"
+                                                           Description="打开 Windows 任务视图，选择窗口或切换虚拟桌面"
+                                                           local:SettingsSearch.Keywords="任务视图 虚拟桌面 多桌面 窗口切换 Win+Tab">
+                                            <CheckBox x:Name="DockTaskViewButtonCheckBox"
+                                                      AutomationProperties.Name="显示任务视图按钮"
                                                       Style="{StaticResource ToggleSwitchStyle}"
                                                       Checked="DockSetting_Changed"
                                                       Unchecked="DockSetting_Changed"/>

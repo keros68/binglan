@@ -72,6 +72,10 @@ internal static class DockAppResolver
     // program. A target that is gone gets the generic folder or document icon.
     private static DockAppVisual ResolvePath(string path)
     {
+        if (DockPinRules.IsSystemPlace(path))
+        {
+            return new DockAppVisual(ShellIconProvider.GetIcon(path), null);
+        }
         if (Directory.Exists(path) || File.Exists(path))
         {
             if (IconFromParsingName(path, isPath: true) is { } icon)

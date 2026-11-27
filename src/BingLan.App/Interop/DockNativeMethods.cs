@@ -207,6 +207,38 @@ internal static class DockNativeMethods
     [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
     internal interface IShellItemArray
     {
+        [PreserveSig]
+        int BindToHandler(nint bindContext, in Guid handlerId, in Guid interfaceId, out nint result);
+
+        [PreserveSig]
+        int GetPropertyStore(uint flags, in Guid interfaceId, out nint store);
+
+        [PreserveSig]
+        int GetPropertyDescriptionList(nint key, in Guid interfaceId, out nint descriptions);
+
+        [PreserveSig]
+        int GetAttributes(uint flags, uint mask, out uint attributes);
+
+        [PreserveSig]
+        int GetCount(out uint count);
+
+        [PreserveSig]
+        int GetItemAt(uint index, [MarshalAs(UnmanagedType.Interface)] out IShellItem item);
+    }
+
+    [ComImport]
+    [Guid("43826D1E-E718-42EE-BC55-A1E261C37BFE")]
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    internal interface IShellItem
+    {
+        [PreserveSig]
+        int BindToHandler(nint bindContext, in Guid handlerId, in Guid interfaceId, out nint result);
+
+        [PreserveSig]
+        int GetParent([MarshalAs(UnmanagedType.Interface)] out IShellItem parent);
+
+        [PreserveSig]
+        int GetDisplayName(uint nameKind, out nint name);
     }
 
     [ComImport]
@@ -507,6 +539,12 @@ internal static class DockNativeMethods
     internal static extern int SHCreateShellItemArrayFromIDLists(
         uint count,
         [In] nint[] itemIdLists,
+        [MarshalAs(UnmanagedType.Interface)] out IShellItemArray itemArray);
+
+    [DllImport("shell32.dll")]
+    internal static extern int SHCreateShellItemArrayFromDataObject(
+        [MarshalAs(UnmanagedType.Interface)] System.Runtime.InteropServices.ComTypes.IDataObject data,
+        in Guid interfaceId,
         [MarshalAs(UnmanagedType.Interface)] out IShellItemArray itemArray);
 
     [DllImport("shell32.dll")]

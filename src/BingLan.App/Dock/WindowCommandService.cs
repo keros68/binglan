@@ -296,7 +296,8 @@ internal static class WindowCommandService
     private static async Task<WindowCommandResult> OpenPathAsync(DockPinnedApp item)
     {
         var path = item.TargetPath!;
-        if (!await Task.Run(() => Directory.Exists(path) || File.Exists(path)))
+        if (!DockPinRules.IsSystemPlace(path)
+            && !await Task.Run(() => Directory.Exists(path) || File.Exists(path)))
         {
             return new WindowCommandResult(false, "文件或文件夹已不存在");
         }
