@@ -1503,6 +1503,7 @@ public sealed partial class TopBarWindow : Window
             Padding = new Thickness(10, 10, 10, 10),
             Child = BuildInputMethodCard(highContrast, flyoutPalette)
         };
+        ApplyFlyoutContentShadow(card, look);
         var onRight = ReferenceEquals(button.Parent, RightModules);
         var hostPanel = button.Parent as Panel ?? RightModules;
         var flyout = new Popup
@@ -1908,6 +1909,7 @@ public sealed partial class TopBarWindow : Window
             Padding = new Thickness(16, 12, 16, 14),
             Child = BuildClockCard(flyoutPalette)
         };
+        ApplyFlyoutContentShadow(card, look);
         var onRight = ReferenceEquals(button.Parent, RightModules);
         var flyout = new Popup
         {
@@ -2192,6 +2194,7 @@ public sealed partial class TopBarWindow : Window
             Padding = new Thickness(14, 10, 14, 12),
             Child = panel
         };
+        ApplyFlyoutContentShadow(card, look);
         // The flyout owns its closing: a StaysOpen popup drops cross-process clicks
         // silently and swallows in-thread ones through capture, so the bar closes it
         // from its own poll instead.
@@ -3104,7 +3107,7 @@ public sealed partial class TopBarWindow : Window
     }
 
     private TopBarSearchLook ResolveSearchLook() =>
-        TopBarSearchLook.Resolve(_style, _environment.LauncherAppearance, _state);
+        TopBarSearchLook.FromPalette(ResolveTopBarPopupPalette());
 
 
 

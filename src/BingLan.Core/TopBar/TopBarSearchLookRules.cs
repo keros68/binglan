@@ -76,7 +76,8 @@ public static class TopBarSearchLookRules
     public static TopBarSearchPalette Resolve(
         DesktopStyleState? style,
         LauncherAppearanceState? launcherAppearance = null,
-        TopBarState? topBar = null)
+        TopBarState? topBar = null,
+        bool? useClearGlass = null)
     {
         var effectiveStyle = style ?? new DesktopStyleState();
         var effectiveLauncher = launcherAppearance ?? new LauncherAppearanceState();
@@ -84,7 +85,8 @@ public static class TopBarSearchLookRules
         var accentRgb = WidgetAppearanceRules.CoerceColorOrDefault(
             effectiveStyle.AccentColor,
             DesktopStyleRules.DefaultAccentColor);
-        var allowBackdropBlur = effectiveTopBar.FrostedGlass && !effectiveLauncher.UseClearGlass;
+        var clearGlass = useClearGlass ?? effectiveLauncher.UseClearGlass;
+        var allowBackdropBlur = effectiveTopBar.FrostedGlass && !clearGlass;
 
         bool darkSurface;
         bool sheerClearGlass = false;

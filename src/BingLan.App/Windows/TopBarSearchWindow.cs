@@ -1158,8 +1158,9 @@ internal sealed record TopBarSearchLook(
     internal static TopBarSearchLook Resolve(
         DesktopStyleState? style,
         LauncherAppearanceState? launcherAppearance = null,
-        TopBarState? topBar = null) =>
-        FromPalette(TopBarSearchLookRules.Resolve(style, launcherAppearance, topBar));
+        TopBarState? topBar = null,
+        bool? useClearGlass = null) =>
+        FromPalette(TopBarSearchLookRules.Resolve(style, launcherAppearance, topBar, useClearGlass));
 
     internal static TopBarSearchLook FromPalette(TopBarSearchPalette palette)
     {

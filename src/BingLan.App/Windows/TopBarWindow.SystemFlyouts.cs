@@ -184,94 +184,69 @@ public partial class TopBarWindow
         Color FallbackSurface,
         Color BorderColor,
         string AccentHex,
-        bool AllowBackdropBlur);
+        bool AllowBackdropBlur,
+        bool UseTextShadow);
+
+    private TopBarSearchPalette ResolveTopBarPopupPalette() =>
+        TopBarSearchLookRules.Resolve(
+            _style,
+            launcherAppearance: null,
+            topBar: _state,
+            useClearGlass: _environment.LauncherAppearance.UseClearGlass);
 
     private SystemFlyoutLook ResolveSystemFlyoutLook(bool highContrast)
     {
         var accentHex = WidgetAppearanceRules.CoerceColorOrDefault(_style.AccentColor, DesktopStyleRules.DefaultAccentColor);
-        var allowBlur = !highContrast && _state.FrostedGlass && !_environment.LauncherAppearance.UseClearGlass;
+        var unified = ResolveTopBarPopupPalette();
+        var allowBlur = !highContrast && unified.AllowBackdropBlur;
+        var glassTint = ParseColorOrDefault(unified.GlassTint, Color.FromArgb(0xB8, 0xEC, 0xF6, 0xFF));
+        var fallbackSurface = ParseColorOrDefault(unified.FallbackSurface, Color.FromArgb(0xE8, 0xEC, 0xF6, 0xFF));
+        var borderColor = ParseColorOrDefault(unified.Border, Color.FromArgb(0x5C, 0xFF, 0xFF, 0xFF));
+        var activeBadgeBackground = unified.UseDarkInk ? "#82B9E1FA" : "#44FFFFFF";
+        var flyoutPalette = new TopBarFlyoutPalette(
+            UseDarkInk: unified.UseDarkInk,
+            Background: unified.FallbackSurface,
+            Border: unified.Border,
+            Foreground: unified.Foreground,
+            Divider: unified.Divider,
+            BadgeBackground: unified.BadgeBackground,
+            ActiveBadgeBackground: activeBadgeBackground,
+            ActiveRowBackground: unified.ActiveRowBackground,
+            HoverRowBackground: unified.HoverRowBackground);
+        return new SystemFlyoutLook(
+            flyoutPalette,
+            glassTint,
+            fallbackSurface,
+            borderColor,
+            accentHex,
+            allowBlur,
+            UseTextShadow: !highContrast && unified.UseTextShadow);
+    }
 
-        bool darkSurface;
-        Color baseRgb;
-        double density;
-        double? guaranteedFallbackOpacity = null;
-        // A nearly/fully transparent custom top bar (e.g. SurfaceOpacity == 0) has no visible
-        // tint of its own; never bleed a hidden/stale SurfaceColor (like #00FFFF) into flyouts.
-        if (!_state.FollowCardLook && _state.SurfaceOpacity >= 0.12d)
+    private static void ApplyFlyoutContentShadow(Border card, SystemFlyoutLook look)
+    {
+        if (!look.UseTextShadow)
         {
-            var customRgb = WidgetAppearanceRules.CoerceColorOrDefault(_state.SurfaceColor, DockState.DefaultSurfaceColor);
-            var readability = LauncherReadabilityRules.Resolve(customRgb, _state.SurfaceOpacity);
-            baseRgb = ParseColorOrDefault(customRgb, Color.FromRgb(0xEC, 0xF6, 0xFF));
-            darkSurface = !readability.DarkInk;
-            density = readability.SurfaceOpacity;
-            guaranteedFallbackOpacity = readability.PlateOpacity;
+            return;
         }
-        else if (_style.Glass == GlassMode.Dark)
+        void Apply()
         {
-            darkSurface = true;
-            baseRgb = Color.FromRgb(0x16, 0x22, 0x30);
-            density = _style.GlassDensity;
+            if (card.Child is UIElement content && content.Effect is null)
+            {
+                var shadow = new System.Windows.Media.Effects.DropShadowEffect
+                {
+                    Color = Colors.Black,
+                    Opacity = 0.65d,
+                    BlurRadius = 8d,
+                    ShadowDepth = 1d,
+                    Direction = 270d
+                };
+                shadow.Freeze();
+                content.Effect = shadow;
+            }
         }
-        else
-        {
-            darkSurface = false;
-            var palette = DesktopStyleRules.GetPalette(_style.Palette);
-            baseRgb = _style.Glass == GlassMode.Clear || palette.Key == DesktopStyleRules.DefaultPalette
-                ? Color.FromRgb(0xEC, 0xF6, 0xFF)
-                : ParseColorOrDefault(palette.Body, Color.FromRgb(0xEC, 0xF6, 0xFF));
-            density = _style.Glass == GlassMode.Clear ? 0.25d : _style.GlassDensity;
-        }
-
-        if (darkSurface)
-        {
-            var blurAlpha = guaranteedFallbackOpacity is not null
-                ? (byte)Math.Clamp(Math.Round(Math.Max(density, 0.70d) * 255d), 0xB2, 0xF0)
-                : (byte)Math.Clamp(Math.Round((0.70d + (density - 0.25d) * 0.22d) * 255d), 0xAA, 0xDC);
-            var fallbackAlpha = guaranteedFallbackOpacity is { } minPlate
-                ? (byte)Math.Clamp(Math.Round(Math.Max(minPlate, 0.86d) * 255d), 0xDC, 0xFF)
-                : (byte)Math.Clamp(Math.Round((0.86d + (density - 0.25d) * 0.12d) * 255d), 0xD8, 0xEE);
-            var glassTint = Color.FromArgb(blurAlpha, baseRgb.R, baseRgb.G, baseRgb.B);
-            var fallbackSurface = Color.FromArgb(fallbackAlpha, baseRgb.R, baseRgb.G, baseRgb.B);
-            var borderColor = Color.FromArgb(0x4C, 0xFF, 0xFF, 0xFF);
-            var flyoutPalette = new TopBarFlyoutPalette(
-                UseDarkInk: false,
-                Background: FormatArgb(fallbackSurface),
-                Border: FormatArgb(borderColor),
-                Foreground: "#F2F6FC",
-                Divider: "#26FFFFFF",
-                BadgeBackground: "#22FFFFFF",
-                ActiveBadgeBackground: "#44FFFFFF",
-                ActiveRowBackground: "#4872BFEF",
-                HoverRowBackground: "#26FFFFFF");
-            return new SystemFlyoutLook(flyoutPalette, glassTint, fallbackSurface, borderColor, accentHex, allowBlur);
-        }
-        else
-        {
-            var blurAlpha = guaranteedFallbackOpacity is not null
-                ? (byte)Math.Clamp(Math.Round(Math.Max(density, 0.72d) * 255d), 0xB8, 0xF2)
-                : _style.Glass == GlassMode.Clear && _state.FollowCardLook
-                    ? (byte)0xB0
-                    : (byte)Math.Clamp(Math.Round((0.72d + (density - 0.25d) * 0.22d) * 255d), 0xAE, 0xDC);
-            var fallbackAlpha = guaranteedFallbackOpacity is { } minPlate
-                ? (byte)Math.Clamp(Math.Round(Math.Max(minPlate, 0.88d) * 255d), 0xE0, 0xFF)
-                : _style.Glass == GlassMode.Clear && _state.FollowCardLook
-                    ? (byte)0xE4
-                    : (byte)Math.Clamp(Math.Round((0.88d + (density - 0.25d) * 0.10d) * 255d), 0xDE, 0xF2);
-            var glassTint = Color.FromArgb(blurAlpha, baseRgb.R, baseRgb.G, baseRgb.B);
-            var fallbackSurface = Color.FromArgb(fallbackAlpha, baseRgb.R, baseRgb.G, baseRgb.B);
-            var borderColor = Color.FromArgb(0xDC, 0xFF, 0xFF, 0xFF);
-            var flyoutPalette = new TopBarFlyoutPalette(
-                UseDarkInk: true,
-                Background: FormatArgb(fallbackSurface),
-                Border: FormatArgb(borderColor),
-                Foreground: "#122C44",
-                Divider: "#20122C44",
-                BadgeBackground: "#7AFFFFFF",
-                ActiveBadgeBackground: "#82B9E1FA",
-                ActiveRowBackground: "#82B9E1FA",
-                HoverRowBackground: "#66FFFFFF");
-            return new SystemFlyoutLook(flyoutPalette, glassTint, fallbackSurface, borderColor, accentHex, allowBlur);
-        }
+        Apply();
+        card.Loaded += (_, _) => Apply();
     }
 
     private static Color ParseColorOrDefault(string hex, Color fallback)
@@ -542,7 +517,7 @@ public partial class TopBarWindow
 
     private Border CreateSystemFlyoutCard(bool highContrast, SystemFlyoutLook look, double width)
     {
-        return new Border
+        var card = new Border
         {
             Width = width,
             Background = highContrast ? SystemColors.WindowBrush : FrozenBrush(look.Palette.Background),
@@ -552,6 +527,8 @@ public partial class TopBarWindow
             Padding = new Thickness(12, 12, 12, 10),
             SnapsToDevicePixels = true
         };
+        ApplyFlyoutContentShadow(card, look);
+        return card;
     }
 
     // ---------------------------------------------------------------- 音量控制浮层
