@@ -23,10 +23,12 @@ if (Test-Path -LiteralPath $publish) { Remove-Item -Recurse -Force -LiteralPath 
 dotnet publish (Join-Path $root "src\BingLan.App\BingLan.App.csproj") -c Release -r win-x64 `
     --self-contained $selfContained.ToString().ToLowerInvariant() -p:SatelliteResourceLanguages="zh-Hans%3Ben" -p:Version=$Version -o $publish
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-if ($selfContained) {
-    if (-not (Test-Path -LiteralPath (Join-Path $publish "BingLan.exe") -PathType Leaf)) {
-        throw "发布目录缺少 BingLan.exe。"
+foreach ($fileName in @("BingLan.exe", "BingLan.Composition.dll", "BingLan.Taskbar.Xaml.dll", "BingLan.TrayContextNative.dll")) {
+    if (-not (Test-Path -LiteralPath (Join-Path $publish $fileName) -PathType Leaf)) {
+        throw "发布目录缺少 $fileName。"
     }
+}
+if ($selfContained) {
     $packageHashes = & {
         foreach ($file in (Get-ChildItem -LiteralPath $publish -File -Recurse)) {
             $hash = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash
