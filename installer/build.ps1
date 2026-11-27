@@ -1,39 +1,78 @@
-# Builds installer\bin\BingLan-Setup-<version>.exe: a self-contained win-x64 publish of the
-# app wrapped in a per-user Inno Setup installer (no administrator rights needed), plus
-# installer\bin\BingLan-<version>-portable.zip: the same publish as an unpack-and-run archive.
-param([string]$Version = "0.6.5")
+# Builds the self-contained installer and portable archive, or the framework-dependent archive.
+param(
+    [string]$Version = "0.6.6",
+    [switch]$FrameworkDependentPortable
+)
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
-$publish = Join-Path $PSScriptRoot "obj\publish"
-$iscc = @(
-    (Get-Command ISCC.exe -ErrorAction SilentlyContinue)?.Source,
-    "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe",
-    "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
-) | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
-if (-not $iscc) { throw "未找到 Inno Setup 6：winget install JRSoftware.InnoSetup --scope user" }
+$guide = Join-Path $root "docs\USER-GUIDE.md"
+$fontLicenses = @(Get-ChildItem -Path (Join-Path $root "src\BingLan.App\Assets\Fonts\LICENSE-*.txt") -File)
+$selfContained = -not $FrameworkDependentPortable
+$variant = if ($selfContained) { "" } else { "-framework-dependent" }
+if ($selfContained) {
+    $iscc = @(
+        (Get-Command ISCC.exe -ErrorAction SilentlyContinue)?.Source,
+        "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe",
+        "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+    ) | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+    if (-not $iscc) { throw "未找到 Inno Setup 6：winget install JRSoftware.InnoSetup --scope user" }
+}
 
-if (Test-Path $publish) { Remove-Item -Recurse -Force $publish }
+$publish = Join-Path $PSScriptRoot "obj\publish$variant"
+if (Test-Path -LiteralPath $publish) { Remove-Item -Recurse -Force -LiteralPath $publish }
 dotnet publish (Join-Path $root "src\BingLan.App\BingLan.App.csproj") -c Release -r win-x64 `
-    --self-contained true -p:SatelliteResourceLanguages="zh-Hans%3Ben" -p:Version=$Version -o $publish
+    --self-contained $selfContained.ToString().ToLowerInvariant() -p:SatelliteResourceLanguages="zh-Hans%3Ben" -p:Version=$Version -o $publish
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-& $iscc "/DAppVersion=$Version" (Join-Path $PSScriptRoot "BingLan.iss")
-if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+if ($selfContained) {
+    if (-not (Test-Path -LiteralPath (Join-Path $publish "BingLan.exe") -PathType Leaf)) {
+        throw "发布目录缺少 BingLan.exe。"
+    }
+    $packageHashes = & {
+        foreach ($file in (Get-ChildItem -LiteralPath $publish -File -Recurse)) {
+            $hash = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash
+            $name = [IO.Path]::GetRelativePath($publish, $file.FullName)
+            "$hash  $name"
+        }
+        foreach ($file in $fontLicenses) {
+            "$((Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash)  字体许可\$($file.Name)"
+        }
+        "$((Get-FileHash -LiteralPath $guide -Algorithm SHA256).Hash)  使用说明.md"
+    }
+    $packageHashes | Set-Content -LiteralPath (Join-Path $PSScriptRoot "obj\publish-sha256.txt") -Encoding utf8BOM
 
-# Portable zip: the publish output plus the files the installer adds to {app}, under a
-# single BingLan\ root so extraction does not spill files. .NET's ZipFile writes forward-
-# slash entry names, which every unzipper reads correctly.
-$portable = Join-Path $PSScriptRoot "obj\portable"
+    & $iscc "/DAppVersion=$Version" (Join-Path $PSScriptRoot "BingLan.iss")
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+}
+
+# Keep the publish output and the additional documentation under a single BingLan root.
+$portable = Join-Path $PSScriptRoot "obj\portable$variant"
 $stage = Join-Path $portable "BingLan"
-if (Test-Path $portable) { Remove-Item -Recurse -Force $portable }
+if (Test-Path -LiteralPath $portable) { Remove-Item -Recurse -Force -LiteralPath $portable }
 New-Item -ItemType Directory -Path $stage | Out-Null
 Copy-Item -Path (Join-Path $publish "*") -Destination $stage -Recurse
-Copy-Item (Join-Path $root "docs\USER-GUIDE.md") (Join-Path $stage "使用说明.md")
+if ($FrameworkDependentPortable) {
+    Get-ChildItem -LiteralPath $stage -File -Recurse -Filter "*.pdb" | ForEach-Object {
+        Remove-Item -LiteralPath $_.FullName
+    }
+}
+Copy-Item -LiteralPath $guide -Destination (Join-Path $stage "使用说明.md")
 New-Item -ItemType Directory -Path (Join-Path $stage "字体许可") | Out-Null
-Copy-Item (Join-Path $root "src\BingLan.App\Assets\Fonts\LICENSE-*.txt") (Join-Path $stage "字体许可")
-$zip = Join-Path $PSScriptRoot "bin\BingLan-$Version-portable.zip"
-if (Test-Path $zip) { Remove-Item $zip }
-[System.IO.Compression.ZipFile]::CreateFromDirectory(
-    $stage, $zip, [System.IO.Compression.CompressionLevel]::Optimal, $true)
-Remove-Item -Recurse -Force $portable
-Write-Host "已生成 installer\bin\BingLan-Setup-$Version.exe 和 installer\bin\BingLan-$Version-portable.zip"
-exit $LASTEXITCODE
+Copy-Item -LiteralPath $fontLicenses.FullName -Destination (Join-Path $stage "字体许可")
+$outputFolder = Join-Path $PSScriptRoot "bin"
+New-Item -ItemType Directory -Path $outputFolder -Force | Out-Null
+$zipName = "BingLan-$Version-portable$variant.zip"
+$zip = Join-Path $outputFolder $zipName
+$temporaryZip = Join-Path $outputFolder ([guid]::NewGuid().ToString() + ".tmp")
+try {
+    [System.IO.Compression.ZipFile]::CreateFromDirectory(
+        $stage, $temporaryZip, [System.IO.Compression.CompressionLevel]::Optimal, $true)
+    Move-Item -Force -LiteralPath $temporaryZip -Destination $zip
+} finally {
+    if (Test-Path -LiteralPath $temporaryZip) { Remove-Item -LiteralPath $temporaryZip }
+    Remove-Item -Recurse -Force -LiteralPath $portable
+}
+if ($selfContained) {
+    Write-Host "已生成 installer\bin\BingLan-Setup-$Version.exe 和 installer\bin\$zipName"
+} else {
+    Write-Host "已生成 installer\bin\$zipName（需要 .NET 10 Windows Desktop Runtime x64）"
+}

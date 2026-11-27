@@ -2,7 +2,7 @@
 ; installer\obj\publish and passes the version with /DAppVersion=x.y.z.
 
 #ifndef AppVersion
-  #define AppVersion "0.6.5"
+  #define AppVersion "0.6.6"
 #endif
 
 [Setup]
@@ -28,6 +28,7 @@ UninstallDisplayIcon={app}\BingLan.exe
 ; Tells Explorer to refresh its icon cache, so a new app icon shows after an update.
 ChangesAssociations=yes
 UninstallDisplayName=冰蓝桌面
+CreateUninstallRegKey=ArePackageFilesVerified
 CloseApplications=no
 RestartApplications=no
 
@@ -38,17 +39,34 @@ Name: "zh"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
 Name: "startup"; Description: "登录 Windows 时启动冰蓝桌面"
 Name: "desktopicon"; Description: "创建桌面快捷方式"; Flags: unchecked
 
+[InstallDelete]
+; SHA-256 of obsolete runtime files from the v0.2.63 and v0.2.64 portable packages.
+; InstallDelete runs before [Files], so a dependency included again will be installed.
+Type: files; Name: "{app}\Microsoft.VisualBasic.Forms.dll"; Check: IsObsoleteRuntimeFile('Microsoft.VisualBasic.Forms.dll', '640f7fc1fcd098e04f3f8d03668039719cfe799d2a12eda7a9c6a2e9bc1e2acf', '9ec2b355dc54744ad583b95301e7b98e16a7398fd73a91e09da141cd4338f235')
+Type: files; Name: "{app}\Microsoft.Windows.SDK.NET.dll"; Check: IsObsoleteRuntimeFile('Microsoft.Windows.SDK.NET.dll', '0ec371d93798852e36461c8adddbeadce0f963a04752f0b64e54fe19c1c834a7', '')
+Type: files; Name: "{app}\System.Design.dll"; Check: IsObsoleteRuntimeFile('System.Design.dll', '50250d023c53b39520dff62d7263e70cd432e2a2355b8b16320ced2dcf0fcd08', '38e1692b3a318305e414e1a90ddfc50c31f7e94b2f359507e95c8ee2ff865f31')
+Type: files; Name: "{app}\System.Drawing.Design.dll"; Check: IsObsoleteRuntimeFile('System.Drawing.Design.dll', 'c2a5c1f2d68683bf2b2d5207f07cd73cc90bc8ea26d82691d8633fb6b10b1d9a', '2ea6eef09fef23d0ba0704c21b5a76c342006e4fb9cea9bdc948cc7927eb61af')
+Type: files; Name: "{app}\System.Windows.Forms.Design.Editors.dll"; Check: IsObsoleteRuntimeFile('System.Windows.Forms.Design.Editors.dll', 'c2ae228226d9d83601722c8801260a3907f52d4176b87e40470677ec61ef0758', 'c6ce67b9a2e53c1abdd6791209e83be2ed72e34d52643ec55f96b23f6abb756f')
+Type: files; Name: "{app}\System.Windows.Forms.Design.dll"; Check: IsObsoleteRuntimeFile('System.Windows.Forms.Design.dll', '4b96cf16ea44e11627be57f7ebd5580e7553547d83eb5dc61121ff0d84eff4b3', 'f15d79f9c205a8189a38c753caa5a2c556bf601099d889d96df4b6c9bc86d1ae')
+Type: files; Name: "{app}\System.Windows.Forms.Primitives.dll"; Check: IsObsoleteRuntimeFile('System.Windows.Forms.Primitives.dll', '1ce7325bd95c3998fb34b158bd99c3b2105ec6627e4e878f2089c8b77e23cc96', 'dac7659c0440b15657f3500f17b7c54d97e7e40e43dd8563904090d43a93e947')
+Type: files; Name: "{app}\System.Windows.Forms.dll"; Check: IsObsoleteRuntimeFile('System.Windows.Forms.dll', 'a178f2f0de086c30e743ce32b8bfbb150e802e1bab235ff14525b4a6e2227df9', 'e64a7d4cc4988dc78f8231c8b2a2a501d3464f70e461fc72253207b194b3901d')
+Type: files; Name: "{app}\WinRT.Runtime.dll"; Check: IsObsoleteRuntimeFile('WinRT.Runtime.dll', 'bcf3a14e8712a90837fc5c0d8c8a24696af2bd7f74e9767597ec81ededfb23db', '')
+Type: files; Name: "{app}\WindowsFormsIntegration.dll"; Check: IsObsoleteRuntimeFile('WindowsFormsIntegration.dll', '994cb84f5f46df57be5ea9ed3de1c6b703212b9985a28440806fc131c7d0119f', 'd2d133c35fe183f6924d8502d73ab3ee4d341a99d0b44dbfbb6af71af7b132d1')
+Type: files; Name: "{app}\mscordaccore_amd64_amd64_10.0.1126.37416.dll"; Check: IsObsoleteRuntimeFile('mscordaccore_amd64_amd64_10.0.1126.37416.dll', 'c1b92da5356bb36f4ab55aa54b2d25a8a27518cf7a456eb4957ddfe94e2d428c', '')
+
 [Files]
+Source: "obj\publish-sha256.txt"; Flags: dontcopy
 Source: "obj\publish\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs
-Source: "..\docs\USER-GUIDE.md"; DestDir: "{app}"; DestName: "使用说明.md"; Flags: ignoreversion
 ; Licences of the open fonts built into the app (SIL Open Font License 1.1).
 Source: "..\src\BingLan.App\Assets\Fonts\LICENSE-*.txt"; DestDir: "{app}\字体许可"; Flags: ignoreversion
+; The last payload entry verifies the files before Setup creates shortcuts or registers the new version.
+Source: "..\docs\USER-GUIDE.md"; DestDir: "{app}"; DestName: "使用说明.md"; Flags: ignoreversion; AfterInstall: VerifyInstalledFiles
 
 [Icons]
-Name: "{autoprograms}\冰蓝桌面"; Filename: "{app}\BingLan.exe"
-Name: "{autoprograms}\冰蓝桌面使用说明"; Filename: "{app}\使用说明.md"
-Name: "{autoprograms}\卸载冰蓝桌面"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\冰蓝桌面"; Filename: "{app}\BingLan.exe"; Tasks: desktopicon
+Name: "{autoprograms}\冰蓝桌面"; Filename: "{app}\BingLan.exe"; Check: ArePackageFilesVerified
+Name: "{autoprograms}\冰蓝桌面使用说明"; Filename: "{app}\使用说明.md"; Check: ArePackageFilesVerified
+Name: "{autoprograms}\卸载冰蓝桌面"; Filename: "{uninstallexe}"; Check: ArePackageFilesVerified
+Name: "{autodesktop}\冰蓝桌面"; Filename: "{app}\BingLan.exe"; Tasks: desktopicon; Check: ArePackageFilesVerified
 
 [Registry]
 ; The app's single startup entry; the app can switch it off. Uninstall removes it in
@@ -57,18 +75,39 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: 
     ValueName: "BingLan"; ValueData: """{app}\BingLan.exe"""; Tasks: startup; Check: KeepsStartupChoice
 
 [Run]
-Filename: "{app}\BingLan.exe"; Description: "启动冰蓝桌面"; Flags: nowait postinstall skipifsilent
-Filename: "{app}\BingLan.exe"; Flags: nowait; Check: RelaunchAfterUpdate
+Filename: "{app}\BingLan.exe"; Description: "启动冰蓝桌面"; Flags: nowait postinstall skipifsilent; Check: IsVerifiedInstallation
 
 [Code]
 const
   RunKey = 'Software\Microsoft\Windows\CurrentVersion\Run';
+  FileAttributeReparsePoint = $400;
 
 var
   RestoreFailed: Boolean;
   IsUpdate: Boolean;
   UpdateBackupDir: String;
+  FailedUninstallerName: String;
+  PackageFiles: TArrayOfString;
+  PackageFilesVerified: Boolean;
+  InstallStarted: Boolean;
   InstallSucceeded: Boolean;
+
+function IsObsoleteRuntimeFile(const Name, FirstHash, SecondHash: String): Boolean;
+var
+  Path, Digest: String;
+begin
+  Result := False;
+  if not IsUpdate or (UpdateBackupDir = '') then exit;
+  Path := ExpandConstant('{app}\') + Name;
+  if not FileExists(Path) then exit;
+  try
+    Digest := GetSHA256OfFile(Path);
+    Result := (CompareText(Digest, FirstHash) = 0) or
+      ((SecondHash <> '') and (CompareText(Digest, SecondHash) = 0));
+  except
+    Log('Skipped unreadable runtime file: ' + Name);
+  end;
+end;
 
 // Text as a single-quoted PowerShell string.
 function PowerShellLiteral(const Value: String): String;
@@ -88,11 +127,64 @@ begin
     '', SW_HIDE, ewWaitUntilTerminated, ResultCode) and (ResultCode = 0);
 end;
 
-// The app starts a downloaded update silently with /UPDATE=1 and exits; the new version
-// is opened again once the files are in place.
-function RelaunchAfterUpdate(): Boolean;
+function IsVerifiedInstallation(): Boolean;
 begin
-  Result := (ExpandConstant('{param:UPDATE|0}') = '1') and FileExists(ExpandConstant('{app}\BingLan.exe'));
+  Result := InstallSucceeded and (ExpandConstant('{param:UPDATE|0}') <> '1');
+end;
+
+function ArePackageFilesVerified(): Boolean;
+begin
+  Result := PackageFilesVerified;
+end;
+
+procedure LoadPackageManifest();
+var
+  Entry, RelativeName, Segments: String;
+  I: Integer;
+begin
+  ExtractTemporaryFile('publish-sha256.txt');
+  if not LoadStringsFromFile(ExpandConstant('{tmp}\publish-sha256.txt'), PackageFiles) or
+    (GetArrayLength(PackageFiles) = 0) then
+    RaiseException('Could not read the packaged file hashes.');
+  for I := 0 to GetArrayLength(PackageFiles) - 1 do
+  begin
+    Entry := PackageFiles[I];
+    RelativeName := Copy(Entry, 67, Length(Entry));
+    Segments := '\' + RelativeName + '\';
+    if (Copy(Entry, 65, 2) <> '  ') or (Pos('\\', Segments) <> 0) or
+      (Pos('\..\', Segments) <> 0) or (Pos('\.\', Segments) <> 0) or
+      (Pos(':', RelativeName) <> 0) or (Pos('/', RelativeName) <> 0) or
+      (Pos('*', RelativeName) <> 0) or (Pos('?', RelativeName) <> 0) then
+      RaiseException('Invalid packaged file hash entry.');
+  end;
+end;
+
+procedure VerifyInstalledFile(const Name, Digest: String);
+var
+  Path: String;
+begin
+  Path := ExpandConstant('{app}\') + Name;
+  if not FileExists(Path) then
+    RaiseException('Missing installed file: ' + Name);
+  if CompareText(GetSHA256OfFile(Path), Digest) <> 0 then
+    RaiseException('Installed file hash mismatch: ' + Name);
+end;
+
+procedure VerifyInstalledFiles();
+var
+  Entry: String;
+  I: Integer;
+begin
+  try
+    for I := 0 to GetArrayLength(PackageFiles) - 1 do
+    begin
+      Entry := PackageFiles[I];
+      VerifyInstalledFile(Copy(Entry, 67, Length(Entry)), Copy(Entry, 1, 64));
+    end;
+    PackageFilesVerified := True;
+  except
+    Log(GetExceptionMessage);
+  end;
 end;
 
 // Signals any running production BingLan instance via its documented exit event so it
@@ -186,6 +278,59 @@ begin
     '}');
 end;
 
+function HasReparsePoint(const AppDir, RelativeName: String): Boolean;
+var
+  Name: String;
+  Attributes: TFindRec;
+  IsReparsePoint: Boolean;
+begin
+  Result := True;
+  Name := AppDir + '\' + RelativeName;
+  repeat
+    if FindFirst(Name, Attributes) then
+    begin
+      IsReparsePoint := (Attributes.Attributes and FileAttributeReparsePoint) <> 0;
+      FindClose(Attributes);
+      if IsReparsePoint then exit;
+    end;
+    if CompareText(Name, AppDir) = 0 then break;
+    Name := ExtractFileDir(Name);
+  until Name = '';
+  Result := False;
+end;
+
+function RemoveNewInstalledFile(const BackupDir, AppDir, Name: String): Boolean;
+var
+  Path: String;
+begin
+  Result := True;
+  Path := AppDir + '\' + Name;
+  if FileExists(Path) and not FileExists(BackupDir + '\' + Name) then
+  begin
+    if HasReparsePoint(AppDir, Name) then Result := False
+    else Result := DeleteFile(Path);
+    if not Result then Log('Could not remove the newly installed file: ' + Name);
+  end;
+end;
+
+function RemoveInstallAdditions(const BackupDir, AppDir: String): Boolean;
+var
+  I: Integer;
+  Entry: String;
+begin
+  Result := True;
+  for I := 0 to GetArrayLength(PackageFiles) - 1 do
+  begin
+    Entry := PackageFiles[I];
+    if not RemoveNewInstalledFile(BackupDir, AppDir, Copy(Entry, 67, Length(Entry))) then
+      Result := False;
+  end;
+  if FailedUninstallerName = '' then exit;
+  if not RemoveNewInstalledFile(BackupDir, AppDir, FailedUninstallerName) then Result := False;
+  if not RemoveNewInstalledFile(BackupDir, AppDir, ChangeFileExt(FailedUninstallerName, '.dat')) then Result := False;
+  if not RemoveNewInstalledFile(BackupDir, AppDir, ChangeFileExt(FailedUninstallerName, '.msg')) then Result := False;
+end;
+
 procedure RemoveBackupDir(const BackupDir: String);
 begin
   if (BackupDir <> '') and DirExists(BackupDir) then
@@ -201,8 +346,18 @@ var
   ResultCode: Integer;
 begin
   Result := '';
+  PackageFilesVerified := False;
+  InstallStarted := False;
   InstallSucceeded := False;
   UpdateBackupDir := '';
+  FailedUninstallerName := '';
+  try
+    LoadPackageManifest();
+  except
+    Log(GetExceptionMessage);
+    Result := '无法读取安装包的文件校验清单。';
+    exit;
+  end;
   AppDir := ExpandConstant('{app}');
   ExePath := ExpandConstant('{app}\BingLan.exe');
   IsUpdate := FileExists(ExePath);
@@ -232,27 +387,57 @@ begin
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
+var
+  ResultCode: Integer;
+  UninstallerPath: String;
 begin
-  if CurStep = ssPostInstall then
+  if CurStep = ssInstall then InstallStarted := True;
+  if CurStep <> ssPostInstall then exit;
+  if not PackageFilesVerified then
   begin
-    if FileExists(ExpandConstant('{app}\BingLan.exe')) then
-    begin
-      InstallSucceeded := True;
-      RemoveBackupDir(UpdateBackupDir);
-      UpdateBackupDir := '';
-    end;
+    // Inno can allocate a new uninstaller slot when updating a portable copy.
+    UninstallerPath := ExpandConstant('{uninstallexe}');
+    if CompareText(ExtractFileDir(UninstallerPath), ExpandConstant('{app}')) = 0 then
+      FailedUninstallerName := ExtractFileName(UninstallerPath);
+    exit;
   end;
+  InstallSucceeded := True;
+  RemoveBackupDir(UpdateBackupDir);
+  UpdateBackupDir := '';
+  if ExpandConstant('{param:UPDATE|0}') = '1' then
+    if not Exec(ExpandConstant('{app}\BingLan.exe'), '', ExpandConstant('{app}'),
+      SW_SHOWNORMAL, ewNoWait, ResultCode) then
+      Log('Could not reopen BingLan: ' + SysErrorMessage(ResultCode));
+end;
+
+procedure CurPageChanged(CurPageID: Integer);
+begin
+  if (CurPageID <> wpFinished) or PackageFilesVerified then exit;
+  WizardForm.FinishedHeadingLabel.Caption := '安装未完成';
+  if IsUpdate then
+    WizardForm.FinishedLabel.Caption := '程序文件校验失败。关闭安装程序后将恢复原版本。'
+  else
+    WizardForm.FinishedLabel.Caption := '程序文件校验失败。请重新运行安装程序。';
+end;
+
+function GetCustomSetupExitCode(): Integer;
+begin
+  if PackageFilesVerified then Result := 0 else Result := 10;
 end;
 
 procedure DeinitializeSetup();
 var
-  ExePath: String;
+  AppDir, ExePath: String;
   ResultCode: Integer;
   RestoreError: String;
+  Restored: Boolean;
 begin
   if IsUpdate and (not InstallSucceeded) and (UpdateBackupDir <> '') and DirExists(UpdateBackupDir) then
   begin
-    if not RestoreBackupApp(UpdateBackupDir, ExpandConstant('{app}')) then
+    AppDir := ExpandConstant('{app}');
+    Restored := RestoreBackupApp(UpdateBackupDir, AppDir);
+    if Restored and InstallStarted then Restored := RemoveInstallAdditions(UpdateBackupDir, AppDir);
+    if not Restored then
     begin
       RestoreError := '无法完整恢复旧版本。旧版本备份位置' + #13#10 + UpdateBackupDir;
       Log(RestoreError);
@@ -273,7 +458,7 @@ end;
 // while it is still there.
 function KeepsStartupChoice(): Boolean;
 begin
-  Result := (not IsUpdate) or RegValueExists(HKCU, RunKey, 'BingLan');
+  Result := PackageFilesVerified and ((not IsUpdate) or RegValueExists(HKCU, RunKey, 'BingLan'));
 end;
 
 // Personal data is only removed on an explicit "Yes" (the default is "No"), and it goes
