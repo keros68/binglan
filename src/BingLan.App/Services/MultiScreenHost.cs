@@ -53,7 +53,8 @@ internal sealed class MultiScreenHost : IDisposable
         DesktopComponentKind.TimeDate,
         DesktopComponentKind.Greeting,
         DesktopComponentKind.Weather,
-        DesktopComponentKind.Performance
+        DesktopComponentKind.Performance,
+        DesktopComponentKind.AudioVisualizer
     ];
 
     private readonly AppState _state;
@@ -543,7 +544,8 @@ internal sealed class MultiScreenHost : IDisposable
                 profile.Experience.ActivePreset,
                 monitor.WorkingArea,
                 monitor.Dpi,
-                layoutKey);
+                layoutKey,
+                profile.Experience.GetComponent(DesktopComponentKind.AudioVisualizer).IsVisible);
             if (presets.TryGetValue(componentKind, out var preset))
             {
                 profile.Experience.GetComponent(componentKind).Placement = preset.Placement;
@@ -1356,8 +1358,7 @@ internal sealed class MultiScreenHost : IDisposable
     {
         var screenKey = profile.MonitorKey;
         var experience = profile.Experience;
-        // 1. Information built-in cards (TimeDate, Greeting, Weather, Performance).
-        // Shared InformationWidgets[0] metadata, performance sampler, and weather service.
+        // Built-in information surfaces share metadata; only weather and performance cards use their services.
         foreach (var kind in InformationComponentKinds)
         {
             var component = experience.GetComponent(kind);

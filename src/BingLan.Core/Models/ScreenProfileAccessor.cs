@@ -316,12 +316,14 @@ public static class ScreenProfileAccessor
             DesktopLayoutPreset preset,
             PixelRect targetWorkAreaPx,
             uint targetDpi,
-            string? currentLayoutKey = null)
+            string? currentLayoutKey = null,
+            bool audioSpectrumVisible = false)
     {
         var scale = ResolveScale(targetDpi);
         var localWidthDip = targetWorkAreaPx.HasArea ? Math.Max(1d, targetWorkAreaPx.Width / scale) : 1920d;
         var localHeightDip = targetWorkAreaPx.HasArea ? Math.Max(1d, targetWorkAreaPx.Height / scale) : 1040d;
-        var localPresets = DesktopExperienceRules.PresetPlacements(preset, 0d, 0d, localWidthDip, localHeightDip);
+        var localPresets = DesktopExperienceRules.PresetPlacements(
+            preset, 0d, 0d, localWidthDip, localHeightDip, audioSpectrumVisible);
 
         var result = new Dictionary<DesktopComponentKind, (WindowPlacement Placement, PixelRect PixelBounds)>(localPresets.Count);
         foreach (var (kind, local) in localPresets)
@@ -455,7 +457,8 @@ public static class ScreenProfileAccessor
             experience.GetComponent(DesktopComponentKind.Greeting).Appearance.TextColor = "#FFFFFF";
         }
 
-        var computed = ComputePresetPlacementsForMonitor(preset, targetWorkAreaPx, targetDpi, currentLayoutKey);
+        var computed = ComputePresetPlacementsForMonitor(preset, targetWorkAreaPx, targetDpi, currentLayoutKey,
+            experience.GetComponent(DesktopComponentKind.AudioVisualizer).IsVisible);
         var pixelMap = new Dictionary<DesktopComponentKind, PixelRect>(computed.Count);
         foreach (var (kind, entry) in computed)
         {

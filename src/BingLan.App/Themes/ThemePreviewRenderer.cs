@@ -91,7 +91,8 @@ internal static class ThemePreviewRenderer
             System.Text.Json.JsonSerializer.Serialize(current))!;
         state.DesktopExperience.ActivePreset = preset;
         foreach (var (kind, placement) in DesktopExperienceRules.PresetPlacements(
-                     preset, area.Left, area.Top, area.Right, area.Bottom))
+                     preset, area.Left, area.Top, area.Right, area.Bottom,
+                     state.DesktopExperience.GetComponent(DesktopComponentKind.AudioVisualizer).IsVisible))
         {
             state.DesktopExperience.GetComponent(kind).Placement = placement;
         }
@@ -124,6 +125,20 @@ internal static class ThemePreviewRenderer
                 placement.Y * height,
                 Math.Max(4d, placement.Width * width),
                 Math.Max(4d, placement.Height * height));
+
+            if (placement.Kind == DesktopComponentKind.AudioVisualizer)
+            {
+                ReadOnlySpan<double> levels = [0.38, 0.65, 0.92, 0.76, 0.49, 0.56, 0.71, 0.43, 0.34, 0.5, 0.31, 0.22];
+                var ink = new SolidColorBrush(ParseColor(tokens.Appearance.TextColor, Colors.White));
+                var step = bounds.Width / levels.Length;
+                for (var i = 0; i < levels.Length; i++)
+                {
+                    var barHeight = bounds.Height * levels[i];
+                    context.DrawRoundedRectangle(ink, null,
+                        new Rect(bounds.X + i * step, bounds.Bottom - barHeight, step * 0.7, barHeight), 1, 1);
+                }
+                continue;
+            }
 
             var fill = ParseColor(tokens.Appearance.BackgroundColor, Colors.White);
             fill.A = (byte)Math.Clamp(tokens.Appearance.BackgroundOpacity * 255d, 0d, 255d);
@@ -184,7 +199,6 @@ internal static class ThemePreviewRenderer
         DesktopComponentKind.Weather => "天气",
         DesktopComponentKind.Performance => "性能",
         DesktopComponentKind.Todo => "待办",
-        DesktopComponentKind.AudioVisualizer => "音频",
         DesktopComponentKind.QuickLaunch => "快捷",
         _ => string.Empty
     };

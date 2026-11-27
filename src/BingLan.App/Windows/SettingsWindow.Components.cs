@@ -303,9 +303,12 @@ public partial class SettingsWindow
         var isTodo = kind == DesktopComponentKind.Todo;
         var canRename = isTodo && entry.Window is TodoWidgetWindow;
 
-        SelectedComponentCaptionText.Text = canRename
-            ? "待办卡片 · 未锁定时可直接拖动空白区，改名立即同步到桌面卡片。"
-            : "未锁定时可直接拖动桌面空白区。";
+        SelectedComponentCaptionText.Text = kind switch
+        {
+            DesktopComponentKind.Todo when canRename => "待办卡片 · 未锁定时可直接拖动空白区，改名立即同步到桌面卡片。",
+            DesktopComponentKind.AudioVisualizer => "随默认扬声器或耳机的声音跳动，从左到右依次显示低音到高音。",
+            _ => "未锁定时可直接拖动桌面空白区。"
+        };
 
         BuiltInComponentTitleRow.Visibility = canRename ? Visibility.Visible : Visibility.Collapsed;
         _loadingTitleEditor = true;

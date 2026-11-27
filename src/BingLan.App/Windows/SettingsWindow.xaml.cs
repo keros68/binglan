@@ -25,15 +25,7 @@ namespace BingLan.App.Windows;
 
 public partial class SettingsWindow : Window
 {
-    private static readonly DesktopComponentKind[] CurrentComponentKinds =
-    [
-        DesktopComponentKind.TimeDate,
-        DesktopComponentKind.Greeting,
-        DesktopComponentKind.Weather,
-        DesktopComponentKind.Performance,
-        DesktopComponentKind.Todo,
-        DesktopComponentKind.QuickLaunch
-    ];
+    private static IReadOnlyList<DesktopComponentKind> CurrentComponentKinds => DesktopExperienceRules.ComponentOrder;
 
     private readonly CityLookupService _citySearchService;
     private readonly Action<string, bool> _applyDisplaySettings;
@@ -616,7 +608,17 @@ public partial class SettingsWindow : Window
                 : Visibility.Collapsed;
             // Quick launch shows only icon glyphs, and only the weather and performance
             // cards lay out by density, so the other components hide options that do nothing.
-            SelectedComponentFontRow.Visibility = kind == DesktopComponentKind.QuickLaunch
+            var isSpectrum = kind == DesktopComponentKind.AudioVisualizer;
+            var materialVisibility = isSpectrum ? Visibility.Collapsed : Visibility.Visible;
+            ComponentMaterialRow.Visibility = materialVisibility;
+            ComponentFontScaleRow.Visibility = materialVisibility;
+            ComponentPaletteRow.Visibility = materialVisibility;
+            ComponentBackgroundColorRow.Visibility = materialVisibility;
+            ComponentOpacityRow.Visibility = materialVisibility;
+            ComponentCornerRadiusRow.Visibility = materialVisibility;
+            ComponentTextColorRow.Header = isSpectrum ? "频谱颜色" : "文字颜色";
+            AutomationProperties.SetName(SelectedComponentTextColorEditor, ComponentTextColorRow.Header);
+            SelectedComponentFontRow.Visibility = isSpectrum || kind == DesktopComponentKind.QuickLaunch
                 ? Visibility.Collapsed
                 : Visibility.Visible;
             SelectedComponentDensityRow.Visibility = kind is DesktopComponentKind.Weather or

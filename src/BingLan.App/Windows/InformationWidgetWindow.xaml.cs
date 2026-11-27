@@ -26,6 +26,7 @@ public partial class InformationWidgetWindow : WidgetWindowBase
     private long _lastClockMinuteKey = long.MinValue;
     private bool _weatherInFlight;
     private bool _systemEventsHooked;
+    private AudioSpectrumView? _spectrumView;
 
     public InformationWidgetWindow(
         InformationWidgetState state,
@@ -68,6 +69,11 @@ public partial class InformationWidgetWindow : WidgetWindowBase
                 SystemEvents.PowerModeChanged -= OnPowerModeChanged;
             }
         };
+
+        if (_componentKind == DesktopComponentKind.AudioVisualizer)
+        {
+            return;
+        }
 
         UpdateClock(force: true);
         UpdatePerformance(new PerformanceSnapshot(0d, 0d, 0d, 0d, DateTimeOffset.Now));
@@ -116,6 +122,12 @@ public partial class InformationWidgetWindow : WidgetWindowBase
 
     protected override void ApplyEffectiveCardShadow(CardShadow shadow)
     {
+        if (_componentKind == DesktopComponentKind.AudioVisualizer)
+        {
+            base.ApplyEffectiveCardShadow(CardShadow.None);
+            return;
+        }
+
         if (_componentKind is DesktopComponentKind.TimeDate or DesktopComponentKind.Greeting
             && (_experience?.GetComponent(_componentKind.Value).Appearance.BackgroundOpacity
                 ?? WidgetAppearance.BackgroundOpacity) <= WidgetAppearanceRules.MinimumBackgroundOpacity + 0.005d)
@@ -162,6 +174,12 @@ public partial class InformationWidgetWindow : WidgetWindowBase
     {
         DesktopExperienceRules.Normalize(experience);
         _experience = experience;
+
+        if (_componentKind == DesktopComponentKind.AudioVisualizer)
+        {
+            ApplyAudioSpectrum(experience.GetComponent(DesktopComponentKind.AudioVisualizer));
+            return;
+        }
 
         var timeDate = experience.GetComponent(DesktopComponentKind.TimeDate);
         var greeting = experience.GetComponent(DesktopComponentKind.Greeting);
@@ -319,6 +337,38 @@ public partial class InformationWidgetWindow : WidgetWindowBase
         UpdateClock();
         RefreshMinimumSizeFloor();
     }
+
+    private void ApplyAudioSpectrum(DesktopComponentState component)
+    {
+        ClockPanel.Visibility = Visibility.Collapsed;
+        PerformanceCard.Visibility = Visibility.Collapsed;
+        WeatherCard.Visibility = Visibility.Collapsed;
+        SpectrumHost.Visibility = component.IsVisible ? Visibility.Visible : Visibility.Collapsed;
+        _spectrumView ??= new AudioSpectrumView();
+        SpectrumHost.Content = _spectrumView;
+        _spectrumView.SpectrumBrush = GetComponentTextBrush(component);
+        Title = DesktopExperienceRules.GetComponentName(component.Kind);
+        MinWidth = 180d;
+        MinHeight = 72d;
+        ApplySpectrumHitSurface();
+        Surface.BorderBrush = Brushes.Transparent;
+        Surface.BorderThickness = new Thickness(0);
+        WidgetCornerRadius = 0d;
+        ApplyEffectiveCardShadow(CardShadow.None);
+        SettingsButton.Foreground = _spectrumView.SpectrumBrush;
+        RefreshMinimumSizeFloor();
+    }
+
+    private void ApplySpectrumHitSurface()
+    {
+        // A zero-alpha layered window cannot receive pointer input during silence.
+        // The unlocked surface keeps the smallest nonzero alpha for dragging; locked gaps pass through.
+        BodySurface.Background = IsWidgetLocked
+            ? Brushes.Transparent
+            : new SolidColorBrush(Color.FromArgb(1, 0, 0, 0));
+    }
+
+    public void SetAudioSpectrumSuspended(bool suspended) => _spectrumView?.SetSuspended(suspended);
 
     private void ApplyClockLayout(
         DesktopComponentState timeDate,
@@ -607,6 +657,10 @@ public partial class InformationWidgetWindow : WidgetWindowBase
     protected override void OnLockChanged(bool locked)
     {
         State.IsLocked = locked;
+        if (_componentKind == DesktopComponentKind.AudioVisualizer && BodySurface is not null)
+        {
+            ApplySpectrumHitSurface();
+        }
     }
 
     public void CaptureState()
