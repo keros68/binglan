@@ -108,6 +108,16 @@ public partial class SettingsWindow
                 TopBarVisualHiddenHost.Children.Add(BuildZonePlaceholder("全部模块均已在顶栏显示"));
             }
 
+            if (TopBarResetOrderButton is not null)
+            {
+                TopBarResetOrderButton.IsEnabled = !TopBarRules.IsDefaultOrder(state);
+            }
+            TopBarSearchInlineCheckBox.IsChecked = state.SearchInline == true;
+            SelectTopBarSearchEngine(state.SearchEngine);
+            TopBarSearchCustomUrlTextBox.Text = state.SearchCustomUrl ?? string.Empty;
+            SetTopBarSearchCustomUrlError(null);
+            UpdateTopBarSearchEngineUi(state);
+
             LoadSelectedTopBarModuleDetails(state);
         }
         finally
@@ -447,7 +457,6 @@ public partial class SettingsWindow
         state.SearchPlacement = TopBarSearchPlacement.CenterBar;
         TopBarRules.Normalize(state);
         LoadTopBarVisualEditor();
-        LoadTopBarOrderList();
         ApplyTopBarChange("已将“搜索”设回居中搜索条");
     }
 
@@ -483,7 +492,6 @@ public partial class SettingsWindow
 
         TopBarRules.PlaceModule(state, dragged, targetSide, insertIndex);
         LoadTopBarVisualEditor();
-        LoadTopBarOrderList();
         ApplyTopBarChange($"已调整“{TopBarRules.ModuleLabel(dragged)}”位置");
     }
 
@@ -498,7 +506,6 @@ public partial class SettingsWindow
         TopBarRules.SetModule(state.Modules, dragged, true);
         TopBarRules.PlaceModule(state, dragged, targetSide, int.MaxValue);
         LoadTopBarVisualEditor();
-        LoadTopBarOrderList();
         var sideText = targetSide == TopBarModuleSide.Left ? "左侧" : "右侧";
         ApplyTopBarChange($"已将“{TopBarRules.ModuleLabel(dragged)}”放到{sideText}");
     }
@@ -513,7 +520,6 @@ public partial class SettingsWindow
         _selectedTopBarModule = kind;
         TopBarRules.SetModule(state.Modules, kind, enabled);
         LoadTopBarVisualEditor(focusModule: restoreFocus ? kind : null);
-        LoadTopBarOrderList();
         ApplyTopBarChange(enabled
             ? $"已显示“{TopBarRules.ModuleLabel(kind)}”"
             : $"已隐藏“{TopBarRules.ModuleLabel(kind)}”");
@@ -640,11 +646,6 @@ public partial class SettingsWindow
             case TopBarModuleKind.Search:
                 TopBarSelectedSearchPanel.Visibility = Visibility.Visible;
                 SelectComboByTag(TopBarSearchPlacementComboBox, TopBarRules.EffectiveSearchPlacement(state).ToString());
-                TopBarSearchInlineCheckBox.IsChecked = state.SearchInline == true;
-                SelectTopBarSearchEngine(state.SearchEngine);
-                TopBarSearchCustomUrlTextBox.Text = state.SearchCustomUrl ?? string.Empty;
-                SetTopBarSearchCustomUrlError(null);
-                UpdateTopBarSearchEngineUi(state);
                 break;
             case TopBarModuleKind.Clock:
                 PopulateStyleCombo(
@@ -732,7 +733,6 @@ public partial class SettingsWindow
         TopBarRules.ApplyDensityPreset(state, preset);
         TopBarRules.Normalize(state);
         LoadTopBarVisualEditor();
-        LoadTopBarOrderList();
         ApplyTopBarChange($"已切换顶栏为“{name}”风格");
     }
 
@@ -847,7 +847,6 @@ public partial class SettingsWindow
         }
         TopBarRules.Normalize(state);
         LoadTopBarVisualEditor();
-        LoadTopBarOrderList();
         ApplyTopBarChange("已更新搜索入口设置");
     }
 

@@ -333,6 +333,7 @@ public partial class IceBlueDockWindow : Window
     internal Func<Guid, string, Task<string>>? SendToFileBox { get; init; }
     internal Func<nint, nint>? ResolvePanelForeground { get; init; }
     internal Func<MonitorSnapshot, int?>? ResolveTopBarReservedBottomPx { get; init; }
+    internal Func<Task<bool>>? OpenTrayOverflowRequested { get; init; }
 
     internal bool HasAttention => _attention.Count > 0;
 
@@ -1813,9 +1814,11 @@ public partial class IceBlueDockWindow : Window
         _revealPending = true;
         try
         {
-            Report(await WindowCommandService.RevealOrLaunchAsync(
-                item.Pinned,
-                launchCooldown: _launchCooldown));
+            await ReportCommandResultAsync(
+                await WindowCommandService.RevealOrLaunchAsync(
+                    item.Pinned,
+                    launchCooldown: _launchCooldown),
+                item.DisplayName);
         }
         finally
         {
@@ -1867,7 +1870,7 @@ public partial class IceBlueDockWindow : Window
                     RefreshWindows();
                 }
             }
-            Report(result);
+            await ReportCommandResultAsync(result, targetPin.DisplayName);
         }
         finally
         {
@@ -2403,6 +2406,25 @@ public partial class IceBlueDockWindow : Window
         {
             CommandFailed?.Invoke(result.Message);
         }
+    }
+
+    private async Task ReportCommandResultAsync(WindowCommandResult result, string? displayName)
+    {
+        if (result.Succeeded)
+        {
+            return;
+        }
+
+        var message = result.Message;
+        if (result.OpenSystemTrayRecommended
+            && OpenTrayOverflowRequested is { } openTray
+            && await openTray())
+        {
+            message = TrayAppRevealRules.FormatMultiInstanceTrayOpenedHint(
+                string.IsNullOrWhiteSpace(displayName) ? "该应用" : displayName);
+        }
+
+        CommandFailed?.Invoke(message);
     }
 
     private void OpenItemMenu(DockItem item, string name, UIElement? anchor = null)

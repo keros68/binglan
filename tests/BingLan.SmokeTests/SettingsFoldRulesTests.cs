@@ -6,18 +6,15 @@ internal static class SettingsFoldRulesTests
 {
     public static void Run()
     {
-        Check(SettingsFoldRules.Folds.Count == 11, "应登记全部 11 个设置页折叠区（含顶部信息条模块顺序）");
+        Check(SettingsFoldRules.Folds.Count == 10, "应登记全部 10 个设置页折叠区（模块顺序已并入模拟顶栏编辑器）");
         Check(SettingsFoldRules.Folds.Select(fold => fold.FoldKey).Distinct(StringComparer.Ordinal).Count()
                 == SettingsFoldRules.Folds.Count,
             "折叠区 Key 不得重复");
 
         var dockFold = SettingsFoldRules.Folds.Single(fold => fold.FoldKey == SettingsFoldRules.DockAdvancedFold);
-        var topBarOrderFold = SettingsFoldRules.Folds.Single(fold => fold.FoldKey == SettingsFoldRules.TopBarOrderFold);
         var topBarFold = SettingsFoldRules.Folds.Single(fold => fold.FoldKey == SettingsFoldRules.TopBarAdvancedFold);
         Check(dockFold.Title == "尺寸与高级" && !dockFold.Title.Contains("外观", StringComparison.Ordinal),
             "Dock 高级折叠区标题不应再含“外观”");
-        Check(topBarOrderFold.Title == "模块顺序",
-            "顶部信息条模块顺序折叠区标题应为“模块顺序”");
         Check(topBarFold.Title == "高度" && !topBarFold.Title.Contains("外观", StringComparison.Ordinal),
             "顶部信息条高级折叠区标题不应再含“外观”");
 
@@ -89,8 +86,6 @@ internal static class SettingsFoldRulesTests
             ("DockLauncherButtonCheckBox", SettingsFoldRules.DockAdvancedFold),
             ("DockShowDesktopButtonCheckBox", SettingsFoldRules.DockAdvancedFold),
             ("DockBottomGapSlider", SettingsFoldRules.DockAdvancedFold),
-            ("TopBarOrderPanel", SettingsFoldRules.TopBarOrderFold),
-            ("TopBarResetOrderButton", SettingsFoldRules.TopBarOrderFold),
             ("ToggleWidgetsHotkeyButton", SettingsFoldRules.GeneralMoreFold),
             ("QuickTodoHotkeyButton", SettingsFoldRules.GeneralMoreFold),
             ("ToggleDesktopIconsHotkeyButton", SettingsFoldRules.GeneralMoreFold),
@@ -109,8 +104,10 @@ internal static class SettingsFoldRulesTests
                 && !SettingsFoldRules.TryGetFoldForSetting("DockHoverMagnificationCheckBox", out _)
                 && !SettingsFoldRules.TryGetFoldForSetting("DockRevealModeComboBox", out _)
                 && !SettingsFoldRules.TryGetFoldForSetting("DockMaximizeReleaseRow", out _)
-                && !SettingsFoldRules.TryGetFoldForSetting("DockMaximizeReleaseCheckBox", out _),
-            "上提到 Dock 常驻区的图标大小、悬停放大、唤出方式与最大化让出空间不应映射到折叠区");
+                && !SettingsFoldRules.TryGetFoldForSetting("DockMaximizeReleaseCheckBox", out _)
+                && !SettingsFoldRules.TryGetFoldForSetting("TopBarResetOrderButton", out _)
+                && !SettingsFoldRules.TryGetFoldForSetting("TopBarSearchInlineCheckBox", out _),
+            "上提到常驻区的设置（含顶栏恢复默认顺序与内联搜索开关）不应映射到折叠区");
 
         // 移出「更多选项」上提到桌面组件详情顶部固定操作栏的按钮不应继续归属折叠区。
         Check(!SettingsFoldRules.TryGetFoldForSetting("DeleteComponentButton", out _)

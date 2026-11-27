@@ -47,6 +47,7 @@ internal sealed class DockHost : IDisposable
 
     internal Func<nint, nint>? ResolvePanelForeground { get; set; }
     internal Func<MonitorSnapshot, int?>? ResolveTopBarReservedBottomPx { get; set; }
+    internal Func<Task<bool>>? OpenTrayOverflowRequested { get; set; }
     internal Func<bool> IsLauncherEnabled { get; set; } = () => true;
     internal Func<IReadOnlyDictionary<string, ScreenSurfacePreferences>?>? ReadScreenPreferences { get; set; }
     internal Func<string, ScreenSurfacePreferences?>? GetOrCreateScreenPreferences { get; set; }
@@ -165,6 +166,7 @@ internal sealed class DockHost : IDisposable
             SendToFileBox = SendToFileBox,
             ResolvePanelForeground = ResolvePanelForeground,
             ResolveTopBarReservedBottomPx = ResolveTopBarReservedBottomPx,
+            OpenTrayOverflowRequested = OpenTrayOverflowRequested,
             LauncherEnabled = IsLauncherEnabled()
         };
         if (LauncherRequested is not null)

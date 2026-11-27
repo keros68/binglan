@@ -246,6 +246,9 @@ public static class TrayAppRevealRules
     public static string FormatMultiInstanceTrayHint(string displayName) =>
         $"检测到多个 {displayName} 驻留托盘，请从系统托盘点对应图标";
 
+    public static string FormatMultiInstanceTrayOpenedHint(string displayName) =>
+        $"检测到多个 {displayName} 驻留托盘，已为你打开系统托盘，请点对应图标";
+
     public static string FormatTrayHotkeyHint(string displayName) =>
         $"{displayName} 已驻留托盘，请用其快捷键或从系统托盘打开（需多开请右键“启动新实例”）";
 }

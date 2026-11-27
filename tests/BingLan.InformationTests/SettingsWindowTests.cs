@@ -396,18 +396,20 @@ internal static class SettingsWindowTests
             Pump();
             Assert(topBar.VisibilityMode == TopBarVisibilityMode.SmartHide, "显示方式应写入状态");
 
-            var topBarOrderFold = Require<Expander>(window, "TopBarOrderFold");
-            Assert(!topBarOrderFold.IsExpanded, "顶端信息条模块顺序默认收起");
-            topBarOrderFold.IsExpanded = true;
-            Pump();
+            var searchInline = Require<CheckBox>(window, "TopBarSearchInlineCheckBox");
+            Assert(searchInline.IsVisible, "顶栏内联搜索开关应直接在页面可见，无需先点选搜索胶囊");
+
             var resetOrderButton = Require<Button>(window, "TopBarResetOrderButton");
             Assert(!resetOrderButton.IsEnabled, "默认顺序下恢复默认顺序按钮应禁用");
-            var orderPanel = Require<Panel>(window, "TopBarOrderPanel");
-            Click(FindButtonByAutomationName(orderPanel, "把天气向左移"));
+            window.SelectTopBarModule(TopBarModuleKind.Weather);
+            Pump();
+            Click(Require<Button>(window, "TopBarSelectedMoveLeftButton"));
             var (reorderedLeft, _) = TopBarRules.ResolveOrder(topBar);
             Assert(reorderedLeft[0] == TopBarModuleKind.Weather && resetOrderButton.IsEnabled,
                 "点击左移按钮应立即更新顶栏模块顺序并启用恢复按钮");
-            Click(FindButtonByAutomationName(orderPanel, "把时钟与日期移到左侧"));
+            window.SelectTopBarModule(TopBarModuleKind.Clock);
+            Pump();
+            Click(Require<Button>(window, "TopBarSelectedSwitchSideButton"));
             var (clockMovedLeft, clockMovedRight) = TopBarRules.ResolveOrder(topBar);
             Assert(clockMovedLeft.Contains(TopBarModuleKind.Clock) && !clockMovedRight.Contains(TopBarModuleKind.Clock),
                 "点击移到左侧应将时钟从右侧移到左侧");

@@ -31,10 +31,14 @@ public partial class App : System.Windows.Application
             base.OnStartup(e);
             UseSoftwareRendering();
             AccessibilityThemeManager.EnsureInitialized();
-            // Every window shows the app icon in the taskbar and Alt+Tab instead of a blank one.
-            var appIcon = new System.Windows.Media.Imaging.BitmapImage(
+            // Use BitmapFrame.Create so IconBitmapDecoder keeps all ICO frames (16–256 px)
+            // and WPF sets both ICON_BIG (taskbar/Alt+Tab) and ICON_SMALL (title bar) cleanly.
+            var appIcon = System.Windows.Media.Imaging.BitmapFrame.Create(
                 new Uri("pack://application:,,,/BingLan;component/Assets/Brand/BingLan.ico", UriKind.Absolute));
-            appIcon.Freeze();
+            if (appIcon.CanFreeze)
+            {
+                appIcon.Freeze();
+            }
             EventManager.RegisterClassHandler(
                 typeof(Window),
                 FrameworkElement.LoadedEvent,

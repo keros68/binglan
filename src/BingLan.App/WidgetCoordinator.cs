@@ -176,6 +176,7 @@ public sealed partial class WidgetCoordinator : IDisposable
         _topBar.ExplorerNotified += _cornerReveal.ScheduleZOrderCheck;
         _topBar.ReadScreenPreferences = ReadScreenSurfacePreferences;
         _dock.ResolveTopBarReservedBottomPx = _topBar.GetReservedBottomForMonitor;
+        _dock.OpenTrayOverflowRequested = TryOpenTrayOverflowAsync;
         StartupLog.Open(_store.DataDirectory);
         UiDiagnostics.Start(
             Dispatcher.CurrentDispatcher,
@@ -3614,6 +3615,36 @@ public sealed partial class WidgetCoordinator : IDisposable
         }
     }
 
+    internal async Task<bool> TryOpenTrayOverflowAsync()
+    {
+        if (!TrayOverflowController.IsSupported || _exitRequested || _isExiting || _closingTrayOverflow is not null)
+        {
+            return false;
+        }
+
+        try
+        {
+            if (_trayOverflow is { IsStopping: true }
+                && await CloseTrayOverflowAsync() != "closed")
+            {
+                return false;
+            }
+            if (_exitRequested || _isExiting)
+            {
+                return false;
+            }
+
+            var controller = _trayOverflow ??= new TrayOverflowController();
+            var result = await controller.OpenAsync();
+            return result is "opened" or "already-open";
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            Debug.WriteLine($"系统托盘入口自动唤起失败：{exception}");
+            return false;
+        }
+    }
+
     internal Task<string> CloseTrayOverflowAsync()
     {
         if (_closingTrayOverflow is { } pending) return pending;
@@ -4309,9 +4340,18 @@ public sealed partial class WidgetCoordinator : IDisposable
                     ExecutablePath = executablePath
                 };
             var result = await WindowCommandService.RevealOrLaunchAsync(pinned, preferredProcessId: processId);
-            if (!result.Succeeded && !owner._isExiting && !string.IsNullOrWhiteSpace(result.Message))
+            if (!result.Succeeded && !owner._isExiting)
             {
-                owner._trayIcon.ShowBalloonTip(3000, pinned.DisplayName, result.Message, TrayTipKind.Info);
+                var message = result.Message;
+                if (result.OpenSystemTrayRecommended
+                    && await owner.TryOpenTrayOverflowAsync())
+                {
+                    message = TrayAppRevealRules.FormatMultiInstanceTrayOpenedHint(pinned.DisplayName);
+                }
+                if (!string.IsNullOrWhiteSpace(message))
+                {
+                    owner._trayIcon.ShowBalloonTip(3000, pinned.DisplayName, message, TrayTipKind.Info);
+                }
             }
         }
 

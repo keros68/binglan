@@ -3004,6 +3004,13 @@
                                                            Margin="0,2,0,0"
                                                            Text="拖拽胶囊即可自由排序或左右互移，拖到下方可隐藏；点击任意胶囊单独调整该模块样式"/>
                                             </StackPanel>
+                                            <Button x:Name="TopBarResetOrderButton"
+                                                    Grid.Column="1"
+                                                    VerticalAlignment="Center"
+                                                    Style="{StaticResource GhostButtonStyle}"
+                                                    Content="恢复默认顺序"
+                                                    AutomationProperties.Name="恢复顶部信息条默认模块顺序"
+                                                    Click="TopBarResetOrder_Click"/>
                                         </Grid>
 
                                         <!-- 所见即所得模拟顶栏条 -->
@@ -3196,79 +3203,9 @@
                                                                 <ComboBoxItem Content="居中搜索条" Tag="CenterBar"/>
                                                             </ComboBox>
                                                         </Grid>
-                                                        <Grid x:Name="TopBarSearchInlineRow"
-                                                              Margin="0,4,0,8"
-                                                              local:SettingsSearch.EntryName="搜索入口直接弹出搜索框"
-                                                              local:SettingsSearch.Keywords="内联 搜索框 搜索引擎 浏览器 必应 Google 百度">
-                                                            <Grid.ColumnDefinitions>
-                                                                <ColumnDefinition Width="*"/>
-                                                                <ColumnDefinition Width="Auto"/>
-                                                            </Grid.ColumnDefinitions>
-                                                            <StackPanel VerticalAlignment="Center" Margin="0,0,12,0">
-                                                                <TextBlock FontSize="13" Foreground="{DynamicResource IceInkBrush}" Text="搜索入口直接弹出搜索框"/>
-                                                                <TextBlock Style="{StaticResource CaptionStyle}" Margin="0,2,0,0" Text="开启后在顶栏下方弹出磨砂玻璃搜索框（本机应用/文件优先，无匹配时用默认浏览器搜索）；关闭时打开冰蓝总览卡"/>
-                                                            </StackPanel>
-                                                            <CheckBox x:Name="TopBarSearchInlineCheckBox"
-                                                                      Grid.Column="1"
-                                                                      VerticalAlignment="Center"
-                                                                      AutomationProperties.Name="搜索入口直接弹出搜索框"
-                                                                      Style="{StaticResource ToggleSwitchStyle}"
-                                                                      Checked="TopBarSearchOptions_Changed"
-                                                                      Unchecked="TopBarSearchOptions_Changed"/>
-                                                        </Grid>
-                                                        <Grid x:Name="TopBarSearchEngineRow"
-                                                              Margin="0,4,0,8"
-                                                              Visibility="Collapsed"
-                                                              local:SettingsSearch.EntryName="网页搜索引擎"
-                                                              local:SettingsSearch.Keywords="搜索 引擎 必应 Bing Google 百度 自定义网址">
-                                                            <Grid.ColumnDefinitions>
-                                                                <ColumnDefinition Width="*"/>
-                                                                <ColumnDefinition Width="Auto"/>
-                                                            </Grid.ColumnDefinitions>
-                                                            <StackPanel VerticalAlignment="Center" Margin="0,0,12,0">
-                                                                <TextBlock FontSize="13" Foreground="{DynamicResource IceInkBrush}" Text="网页搜索引擎"/>
-                                                                <TextBlock Style="{StaticResource CaptionStyle}" Margin="0,2,0,0" Text="本机无匹配时按 Enter 通过默认浏览器打开搜索；输入网址时直达网页"/>
-                                                            </StackPanel>
-                                                            <ComboBox x:Name="TopBarSearchEngineComboBox"
-                                                                      Grid.Column="1"
-                                                                      Width="180"
-                                                                      VerticalAlignment="Center"
-                                                                      AutomationProperties.Name="顶栏网页搜索引擎"
-                                                                      SelectionChanged="TopBarSearchOptions_Changed">
-                                                                <ComboBoxItem Content="必应（默认）" Tag="bing"/>
-                                                                <ComboBoxItem Content="Google" Tag="google"/>
-                                                                <ComboBoxItem Content="百度" Tag="baidu"/>
-                                                                <ComboBoxItem Content="自定义网址" Tag="custom"/>
-                                                            </ComboBox>
-                                                        </Grid>
-                                                        <Grid x:Name="TopBarSearchCustomUrlRow"
-                                                              Margin="0,4,0,0"
-                                                              Visibility="Collapsed"
-                                                              local:SettingsSearch.EntryName="自定义搜索网址"
-                                                              local:SettingsSearch.Keywords="自定义 搜索 网址 URL 模板 占位符">
-                                                            <Grid.ColumnDefinitions>
-                                                                <ColumnDefinition Width="*"/>
-                                                                <ColumnDefinition Width="Auto"/>
-                                                            </Grid.ColumnDefinitions>
-                                                            <StackPanel VerticalAlignment="Center" Margin="0,0,12,0">
-                                                                <TextBlock FontSize="13" Foreground="{DynamicResource IceInkBrush}" Text="自定义搜索网址"/>
-                                                                <TextBlock Style="{StaticResource CaptionStyle}" Margin="0,2,0,0" Text="填写含 {0} 关键词占位符的 http/https 网址，例如 https://duckduckgo.com/?q={0}"/>
-                                                            </StackPanel>
-                                                            <StackPanel Grid.Column="1" Width="260">
-                                                                <TextBox x:Name="TopBarSearchCustomUrlTextBox"
-                                                                         Width="260"
-                                                                         AutomationProperties.Name="自定义搜索网址模板"
-                                                                         ToolTip="例如：https://duckduckgo.com/?q={0}；按回车或离开输入框后生效"
-                                                                         LostFocus="TopBarSearchCustomUrl_Commit"
-                                                                         KeyDown="TopBarSearchCustomUrl_KeyDown"/>
-                                                                <TextBlock x:Name="TopBarSearchCustomUrlErrorText"
-                                                                           Margin="2,4,0,0"
-                                                                           FontSize="11.5"
-                                                                           Foreground="#C42B1C"
-                                                                           TextWrapping="Wrap"
-                                                                           Visibility="Collapsed"/>
-                                                            </StackPanel>
-                                                        </Grid>
+                                                        <TextBlock Style="{StaticResource CaptionStyle}"
+                                                                   Margin="0,2,0,0"
+                                                                   Text="点击后的弹出方式（内联搜索框 / 冰蓝总览卡）与网页搜索引擎可在下方「搜索入口行为」直接切换"/>
                                                     </StackPanel>
 
                                                     <!-- 无额外样式时的简短说明（时钟/待办/消息提示） -->
@@ -3283,7 +3220,85 @@
                                 </StackPanel>
                             </local:SettingsGroup>
 
-                            <local:SettingsGroup Margin="0,14,0,4" local:SettingsSearch.Exclude="True">
+                            <local:SettingsGroup x:Name="TopBarSearchBehaviorGroup" Margin="0,12,0,4">
+                                <StackPanel Margin="18,12,18,12">
+                                    <Grid x:Name="TopBarSearchInlineRow"
+                                          Margin="0,0,0,0"
+                                          local:SettingsSearch.EntryName="搜索入口直接弹出搜索框"
+                                          local:SettingsSearch.Keywords="内联 搜索框 顶栏搜索 切换搜索 搜索引擎 浏览器 必应 Google 百度 总览卡">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel VerticalAlignment="Center" Margin="0,0,12,0">
+                                            <TextBlock FontSize="13.5" FontWeight="SemiBold" Foreground="{DynamicResource IceInkBrush}" Text="搜索入口直接弹出搜索框"/>
+                                            <TextBlock Style="{StaticResource CaptionStyle}" Margin="0,2,0,0" Text="开启后在顶栏下方弹出磨砂玻璃搜索框（本机应用/文件优先，无匹配时用默认浏览器搜索）；关闭时打开冰蓝总览卡"/>
+                                        </StackPanel>
+                                        <CheckBox x:Name="TopBarSearchInlineCheckBox"
+                                                  Grid.Column="1"
+                                                  VerticalAlignment="Center"
+                                                  AutomationProperties.Name="搜索入口直接弹出搜索框"
+                                                  Style="{StaticResource ToggleSwitchStyle}"
+                                                  Checked="TopBarSearchOptions_Changed"
+                                                  Unchecked="TopBarSearchOptions_Changed"/>
+                                    </Grid>
+                                    <Grid x:Name="TopBarSearchEngineRow"
+                                          Margin="0,12,0,0"
+                                          Visibility="Collapsed"
+                                          local:SettingsSearch.EntryName="网页搜索引擎"
+                                          local:SettingsSearch.Keywords="搜索 引擎 必应 Bing Google 百度 自定义网址">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel VerticalAlignment="Center" Margin="0,0,12,0">
+                                            <TextBlock FontSize="13" Foreground="{DynamicResource IceInkBrush}" Text="网页搜索引擎"/>
+                                            <TextBlock Style="{StaticResource CaptionStyle}" Margin="0,2,0,0" Text="本机无匹配时按 Enter 通过默认浏览器打开搜索；输入网址时直达网页"/>
+                                        </StackPanel>
+                                        <ComboBox x:Name="TopBarSearchEngineComboBox"
+                                                  Grid.Column="1"
+                                                  Width="180"
+                                                  VerticalAlignment="Center"
+                                                  AutomationProperties.Name="顶栏网页搜索引擎"
+                                                  SelectionChanged="TopBarSearchOptions_Changed">
+                                            <ComboBoxItem Content="必应（默认）" Tag="bing"/>
+                                            <ComboBoxItem Content="Google" Tag="google"/>
+                                            <ComboBoxItem Content="百度" Tag="baidu"/>
+                                            <ComboBoxItem Content="自定义网址" Tag="custom"/>
+                                        </ComboBox>
+                                    </Grid>
+                                    <Grid x:Name="TopBarSearchCustomUrlRow"
+                                          Margin="0,10,0,0"
+                                          Visibility="Collapsed"
+                                          local:SettingsSearch.EntryName="自定义搜索网址"
+                                          local:SettingsSearch.Keywords="自定义 搜索 网址 URL 模板 占位符">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel VerticalAlignment="Center" Margin="0,0,12,0">
+                                            <TextBlock FontSize="13" Foreground="{DynamicResource IceInkBrush}" Text="自定义搜索网址"/>
+                                            <TextBlock Style="{StaticResource CaptionStyle}" Margin="0,2,0,0" Text="填写含 {0} 关键词占位符的 http/https 网址，例如 https://duckduckgo.com/?q={0}"/>
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="1" Width="260">
+                                            <TextBox x:Name="TopBarSearchCustomUrlTextBox"
+                                                     Width="260"
+                                                     AutomationProperties.Name="自定义搜索网址模板"
+                                                     ToolTip="例如：https://duckduckgo.com/?q={0}；按回车或离开输入框后生效"
+                                                     LostFocus="TopBarSearchCustomUrl_Commit"
+                                                     KeyDown="TopBarSearchCustomUrl_KeyDown"/>
+                                            <TextBlock x:Name="TopBarSearchCustomUrlErrorText"
+                                                       Margin="2,4,0,0"
+                                                       FontSize="11.5"
+                                                       Foreground="#C42B1C"
+                                                       TextWrapping="Wrap"
+                                                       Visibility="Collapsed"/>
+                                        </StackPanel>
+                                    </Grid>
+                                </StackPanel>
+                            </local:SettingsGroup>
+
+                            <local:SettingsGroup Margin="0,12,0,4" local:SettingsSearch.Exclude="True">
                                 <local:SettingsRow x:Name="TopBarLookSummaryRow" Header="外观：跟随全局">
                                     <Button x:Name="TopBarLookJumpButton"
                                             Style="{StaticResource GhostButtonStyle}"
@@ -3293,31 +3308,6 @@
                                             Click="AppearanceSummaryJump_Click"/>
                                 </local:SettingsRow>
                             </local:SettingsGroup>
-
-                            <Expander x:Name="TopBarOrderFold"
-                                      Margin="0,12,0,4"
-                                      IsExpanded="False"
-                                      Style="{StaticResource SettingsFoldStyle}"
-                                      AutomationProperties.Name="模块顺序">
-                                <Expander.Header>
-                                    <StackPanel>
-                                        <TextBlock Style="{StaticResource FoldTitleStyle}" Text="模块顺序"/>
-                                        <TextBlock Style="{StaticResource CaptionStyle}" Text="调整左右两侧模块的排列顺序与位置；搜索入口保持居中"/>
-                                    </StackPanel>
-                                </Expander.Header>
-                                <StackPanel x:Name="TopBarOrderBehaviorPanel">
-                                    <local:SettingsRow Header="模块顺序"
-                                                       Description="同一侧按从左到右排列，也可以把模块切到另一侧"
-                                                       local:SettingsSearch.Keywords="顶栏排序 状态条排序 模块顺序 左右顺序 排列 恢复默认顺序">
-                                        <Button x:Name="TopBarResetOrderButton"
-                                                Style="{StaticResource GhostButtonStyle}"
-                                                Content="恢复默认顺序"
-                                                AutomationProperties.Name="恢复顶部信息条默认模块顺序"
-                                                Click="TopBarResetOrder_Click"/>
-                                    </local:SettingsRow>
-                                    <StackPanel x:Name="TopBarOrderPanel" Margin="18,4,18,12"/>
-                                </StackPanel>
-                            </Expander>
 
                             <Expander x:Name="TopBarAdvancedFold"
                                       Margin="0,12,0,4"

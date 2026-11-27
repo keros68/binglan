@@ -10,7 +10,11 @@ using BingLan.Core.TopBar;
 
 namespace BingLan.App.Dock;
 
-internal sealed record WindowCommandResult(bool Succeeded, string Message, bool NoLiveWindows = false);
+internal sealed record WindowCommandResult(
+    bool Succeeded,
+    string Message,
+    bool NoLiveWindows = false,
+    bool OpenSystemTrayRecommended = false);
 
 internal static class WindowCommandService
 {
@@ -388,7 +392,10 @@ internal static class WindowCommandService
         switch (decision)
         {
             case TrayRevealAction.NotifyMultiInstanceInTray:
-                return new WindowCommandResult(false, TrayAppRevealRules.FormatMultiInstanceTrayHint(app.DisplayName));
+                return new WindowCommandResult(
+                    false,
+                    TrayAppRevealRules.FormatMultiInstanceTrayHint(app.DisplayName),
+                    OpenSystemTrayRecommended: true);
             case TrayRevealAction.NotifyHotkeyUnavailable:
                 return new WindowCommandResult(false, TrayAppRevealRules.FormatTrayHotkeyHint(app.DisplayName));
             case TrayRevealAction.LaunchNewProcess:
