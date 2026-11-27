@@ -71,6 +71,14 @@ public static class WindowGrouping
         IReadOnlyList<string> previousOrder)
     {
         ArgumentNullException.ThrowIfNull(groups);
+        return OrderByFirstSeen(groups, previousOrder, group => group.Key);
+    }
+
+    internal static IReadOnlyList<T> OrderByFirstSeen<T>(
+        IReadOnlyList<T> items,
+        IReadOnlyList<string> previousOrder,
+        Func<T, string> keyOf)
+    {
         ArgumentNullException.ThrowIfNull(previousOrder);
 
         var rank = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
@@ -79,11 +87,9 @@ public static class WindowGrouping
             rank.TryAdd(previousOrder[index], index);
         }
 
-        return groups
-            .Select((group, index) => (Group: group, Index: index))
-            .OrderBy(entry => rank.TryGetValue(entry.Group.Key, out var known) ? known : int.MaxValue)
-            .ThenBy(entry => entry.Index)
-            .Select(entry => entry.Group)
+        // LINQ OrderBy keeps the input order for items that have no previous rank.
+        return items
+            .OrderBy(item => rank.TryGetValue(keyOf(item), out var known) ? known : int.MaxValue)
             .ToArray();
     }
 

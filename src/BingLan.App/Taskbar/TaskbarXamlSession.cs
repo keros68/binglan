@@ -6,6 +6,14 @@ using System.Security.Cryptography;
 
 namespace BingLan.App.Taskbar;
 
+internal enum TaskbarXamlRestoreResult
+{
+    Restored,
+    Missing,
+    Unconfirmed,
+    Failed
+}
+
 /// <summary>A short lease on the taskbar background, restored by Explorer if this host exits.</summary>
 internal sealed class TaskbarXamlSession : IDisposable
 {
@@ -17,6 +25,8 @@ internal sealed class TaskbarXamlSession : IDisposable
     private const int StoppedOffset = 16;
     private const int ErrorOffset = 20;
     private const int HeartbeatOffset = 24;
+    // The Explorer worker can spend up to 3.5 seconds draining its XAML targets.
+    private static readonly TimeSpan RestoreTimeout = TimeSpan.FromSeconds(4);
     private readonly MemoryMappedFile _mapping;
     private readonly MemoryMappedViewAccessor _view;
     private readonly System.Threading.Timer _heartbeat;
@@ -24,13 +34,17 @@ internal sealed class TaskbarXamlSession : IDisposable
     private readonly string _cacheDirectory;
     private bool _disposed;
     private bool _stopping;
+    private bool _nativeConnectionStarted;
+    private Task<int>? _connection;
+    private volatile uint _explorerProcessId;
 
     [UnmanagedFunctionPointer(CallingConvention.StdCall, CharSet = CharSet.Unicode)]
     private delegate int ConnectDelegate([MarshalAs(UnmanagedType.LPWStr)] string mappingName);
 
-    internal TaskbarXamlSession(string dataDirectory)
+    internal TaskbarXamlSession(string dataDirectory, uint explorerProcessId = 0)
     {
         MappingName = MappingPrefix + Guid.NewGuid().ToString("N");
+        _explorerProcessId = explorerProcessId;
         _cacheDirectory = Path.Combine(dataDirectory, "Native");
         _mapping = MemoryMappedFile.CreateNew(MappingName, 32);
         _view = _mapping.CreateViewAccessor(0, 32);
@@ -57,6 +71,7 @@ internal sealed class TaskbarXamlSession : IDisposable
     private static extern bool QueryUnbiasedInterruptTime(out ulong unbiasedTime);
 
     internal string MappingName { get; }
+    internal uint ExplorerProcessId => _explorerProcessId;
 
     internal bool IsActive
     {
@@ -70,12 +85,20 @@ internal sealed class TaskbarXamlSession : IDisposable
         }
     }
 
-    internal async Task StartAsync(int expectedTaskbars, CancellationToken cancellationToken)
+    internal async Task StartAsync(
+        int expectedTaskbars, CancellationToken cancellationToken, Func<int>? connectForTests = null)
     {
+        Task<int> connection;
+        lock (_sync)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            connection = _connection = Task.Run(() => connectForTests is null
+                ? Connect(cancellationToken)
+                : InvokeConnection(connectForTests, cancellationToken), cancellationToken);
+        }
         try
         {
-            var result = await Task.Run(() => Connect(cancellationToken), cancellationToken)
-                .WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
+            var result = await connection.WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
             Marshal.ThrowExceptionForHR(result);
             var watch = Stopwatch.StartNew();
             while (watch.Elapsed < TimeSpan.FromSeconds(5))
@@ -94,6 +117,10 @@ internal sealed class TaskbarXamlSession : IDisposable
         catch
         {
             RequestStop();
+            // Cancelling the wait does not cancel an in-progress native call.
+            _ = connection.ContinueWith(static task => { _ = task.Exception; },
+                CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default);
             throw;
         }
     }
@@ -127,47 +154,122 @@ internal sealed class TaskbarXamlSession : IDisposable
         {
             var connect = Marshal.GetDelegateForFunctionPointer<ConnectDelegate>(
                 NativeLibrary.GetExport(library, "BingLanConnect"));
-            return connect(MappingName);
+            return InvokeConnection(() => connect(MappingName), cancellationToken);
         }
         finally { NativeLibrary.Free(library); }
+    }
+
+    private int InvokeConnection(Func<int> connect, CancellationToken cancellationToken)
+    {
+        lock (_sync)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (_stopping) throw new OperationCanceledException(cancellationToken);
+            if (_explorerProcessId != 0 && TaskbarAdapter.ReadTaskbarIdentity().ProcessId != _explorerProcessId)
+                throw new InvalidOperationException("资源管理器正在重建任务栏");
+            _nativeConnectionStarted = true;
+        }
+        try { return connect(); }
+        finally
+        {
+            if (_explorerProcessId != 0)
+            {
+                var current = TaskbarAdapter.ReadTaskbarIdentity().ProcessId;
+                if (current != 0) _explorerProcessId = current;
+            }
+        }
     }
 
     internal void RequestStop()
     {
         lock (_sync)
         {
-            if (_disposed) return;
+            if (_disposed || _stopping) return;
             _stopping = true;
             _view.Write(RequestedOffset, 0);
+            _heartbeat.Change(Timeout.Infinite, Timeout.Infinite);
         }
     }
+
+    internal bool HasPendingConnection
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return _nativeConnectionStarted && _connection?.IsCompleted == false;
+            }
+        }
+    }
+
+    internal TaskbarXamlRestoreResult Restore(Func<uint, bool>? isExplorerRunning = null)
+    {
+        RequestStop();
+        var watch = Stopwatch.StartNew();
+        var checkedExplorer = false;
+        while (watch.Elapsed < RestoreTimeout)
+        {
+            lock (_sync)
+            {
+                if (!_nativeConnectionStarted) return TaskbarXamlRestoreResult.Restored;
+                if (_disposed) return TaskbarXamlRestoreResult.Unconfirmed;
+                if (_connection?.IsCompleted == true)
+                {
+                    if (!checkedExplorer)
+                    {
+                        checkedExplorer = true;
+                        if (ExplorerProcessId != 0 && isExplorerRunning?.Invoke(ExplorerProcessId) == false)
+                            return TaskbarXamlRestoreResult.Restored;
+                    }
+                    if (ReadRestoreResult(_view) is { } restored) return restored;
+                }
+            }
+            Thread.Sleep(50);
+        }
+        lock (_sync)
+        {
+            return !_disposed && ReadRestoreResult(_view) == TaskbarXamlRestoreResult.Failed
+                ? TaskbarXamlRestoreResult.Failed
+                : TaskbarXamlRestoreResult.Unconfirmed;
+        }
+    }
+
+    private static TaskbarXamlRestoreResult? ReadRestoreResult(MemoryMappedViewAccessor view) => view.ReadInt32(StoppedOffset) switch
+    {
+        1 when view.ReadInt32(ActiveTargetsOffset) == 0 => TaskbarXamlRestoreResult.Restored,
+        2 => TaskbarXamlRestoreResult.Failed,
+        _ => null
+    };
 
     internal static bool IsValidMappingName(string name) => name.StartsWith(MappingPrefix, StringComparison.Ordinal)
         && Guid.TryParseExact(name[MappingPrefix.Length..], "N", out _);
 
-    internal static bool Restore(string mappingName)
+    internal static TaskbarXamlRestoreResult Restore(string mappingName)
     {
-        if (!IsValidMappingName(mappingName)) return false;
+        if (!IsValidMappingName(mappingName)) return TaskbarXamlRestoreResult.Unconfirmed;
         try
         {
             using var mapping = MemoryMappedFile.OpenExisting(mappingName);
             using var view = mapping.CreateViewAccessor(0, 32);
-            if (view.ReadInt32(0) != Protocol) return false;
+            if (view.ReadInt32(0) != Protocol) return TaskbarXamlRestoreResult.Unconfirmed;
             view.Write(RequestedOffset, 0);
             var watch = Stopwatch.StartNew();
-            while (watch.Elapsed < TimeSpan.FromSeconds(3))
+            while (watch.Elapsed < RestoreTimeout)
             {
-                if (view.ReadInt32(StoppedOffset) == 1)
-                    return view.ReadInt32(ActiveTargetsOffset) == 0;
-                if (view.ReadInt32(StoppedOffset) == 2) return false;
+                if (ReadRestoreResult(view) is { } restored) return restored;
                 Thread.Sleep(50);
             }
-            return false;
+            return TaskbarXamlRestoreResult.Unconfirmed;
         }
-        catch (FileNotFoundException) { return true; }
+        catch (FileNotFoundException)
+        {
+            // Explorer must hold this mapping for the lifetime of a lease. A late
+            // SetSite also needs to open this exact name before it can start one.
+            return TaskbarXamlRestoreResult.Missing;
+        }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException)
         {
-            return false;
+            return TaskbarXamlRestoreResult.Unconfirmed;
         }
     }
 

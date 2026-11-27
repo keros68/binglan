@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using BingLan.Core.Dock;
 
 namespace BingLan.Core.Models;
 
@@ -505,18 +506,15 @@ public static class DesktopStyleRules
     }
 
     /// <summary>
-    /// Whether the dark frosted scrim (blurred wallpaper) may sit under the top bar:
-    /// the user has not turned the frosted look off and the material is dark enough
-    /// for the scrim to belong — a light or nearly clear surface shows the scrim
-    /// through as mud, so it yields to the plain brush.
+    /// Whether the top bar uses the dark frosted scrim. Only visible dark tints
+    /// qualify when frosting is enabled.
     /// </summary>
-    public static bool TopBarFrostedScrim(TopBarState? topBar, string surfaceWithAlpha) =>
-        topBar is { FrostedGlass: true } && IsDarkSurface(surfaceWithAlpha);
-
-    private static bool IsDarkSurface(string surfaceWithAlpha)
+    public static bool TopBarFrostedScrim(TopBarState? topBar, string surfaceWithAlpha)
     {
-        // "#AARRGGBB" as produced by WithAlpha.
-        if (surfaceWithAlpha.Length < 9)
+        // The bar's invisible hit-test fill follows the same alpha threshold as Composition.
+        if (topBar is not { FrostedGlass: true }
+            || surfaceWithAlpha.Length != 9
+            || Convert.ToInt32(surfaceWithAlpha.Substring(1, 2), 16) < DockGlassRules.MinimumBackdropSurfaceAlpha)
         {
             return false;
         }

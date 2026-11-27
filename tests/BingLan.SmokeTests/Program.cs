@@ -34,6 +34,7 @@ Run("文件映射去重与移除", TestMappings);
 Run("桌面项目导入去重、排序与持久化", TestDesktopGrouping);
 Run("桌面软件、文件夹和文件安全分类", TestDesktopClassification);
 Run("文件盒系统入口、失效判定与重新定位", FileBoxRuleTests.Run);
+Run("文件收纳盒向上展开、DPI 几何与保存隔离", FileBoxExpansionTests.Run);
 Run("位置、尺寸和内容重启保留", TestPersistence);
 Run("启动面板外观 v48 迁移与独立设置保存", TestLauncherAppearancePersistence);
 Run("启动面板总开关迁移、保存与独立 Dock 偏好", TestLauncherEnabledPersistence);
@@ -2369,8 +2370,17 @@ static void TestTaskbarCompatibility()
     Assert(TaskbarCompatibility.Assess(TaskbarMode.Transparent, ready).IsSupported, "Windows 11 应支持透明");
     Assert(TaskbarCompatibility.Assess(TaskbarMode.SmartHide, ready).IsSupported, "Windows 11 应支持自动隐藏");
     Assert(TaskbarCompatibility.Assess(TaskbarMode.Blur, ready).IsSupported, "Windows 11 应支持模糊");
-    Assert(TaskbarCompatibility.Assess(TaskbarMode.Transparent, ready with { WindowsBuild = 26300 }).IsSupported,
-        "已验证的 26300 应支持透明");
+    Assert(TaskbarCompatibility.Assess(TaskbarMode.Transparent,
+        ready with { WindowsBuild = 26300, WindowsUpdateRevision = 9711 }) is { IsSupported: true, SubstituteMode: null },
+        "已验证的 26300.9711 应支持 XAML 透明");
+    var affected = ready with { WindowsBuild = 26300, WindowsUpdateRevision = 9974 };
+    Assert(TaskbarCompatibility.Assess(TaskbarMode.Transparent, affected).SubstituteMode == TaskbarMode.Blur
+        && TaskbarCompatibility.Assess(TaskbarMode.Transparent, affected with { WindowsUpdateRevision = null }).SubstituteMode == TaskbarMode.Blur
+        && TaskbarCompatibility.Assess(TaskbarMode.Transparent, affected with { WindowsUpdateRevision = 9975 }).SubstituteMode == TaskbarMode.Blur,
+        "26300.9974、未验证或无法确认的 26300 修订号应使用窗口模糊");
+    Assert(TaskbarCompatibility.Assess(TaskbarMode.SmartHide, affected).SubstituteMode is null
+        && TaskbarCompatibility.Assess(TaskbarMode.SystemDefault, affected).SubstituteMode is null,
+        "原生任务栏的其他模式不需要 XAML 会话");
     foreach (var build in new[] { 22631, 26100, 30000 })
     {
         var substituted = TaskbarCompatibility.Assess(TaskbarMode.Transparent, ready with { WindowsBuild = build });

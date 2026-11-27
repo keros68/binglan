@@ -21,6 +21,8 @@ internal static class FileBoxRuleTests
         TestGoneMappingSnapshotPreservesRelinkedItems();
         TestAddSystemEntryDedupe();
         TestPreparedImportPreservesMappingsAndDoesNotRecheckFiles();
+        TestAutomaticCollectionPreservesManualCuration();
+        TestAutomaticCollectionExclusionsPersist();
         TestRelinkKeepsIdAndOrder();
         TestRelinkRejectsShellEntriesAndMissingTargets();
         TestRenameChangesOnlyTheDisplayName();
@@ -119,6 +121,117 @@ internal static class FileBoxRuleTests
                 "重叠导入应保留已有映射的标识、名称和顺序");
             Assert(box.Items.Select(item => item.Order).SequenceEqual([0, 1]), "导入后顺序应连续");
             Assert(File.ReadAllText(existing) == "保留", "提交映射不得改动原文件");
+        }
+        finally
+        {
+            Directory.Delete(temp, true);
+        }
+    }
+
+    private static void TestAutomaticCollectionPreservesManualCuration()
+    {
+        var temp = Path.Combine(Path.GetTempPath(), $"BingLan-automatic-curation-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(temp);
+        try
+        {
+            var removed = Path.Combine(temp, "手动移除.txt");
+            var curated = Path.Combine(temp, "另盒保留.txt");
+            var fresh = Path.Combine(temp, "新文件.txt");
+            foreach (var path in new[] { removed, curated, fresh })
+            {
+                File.WriteAllText(path, "原文件保留");
+            }
+            var collector = new FileBoxState { CollectExtensions = [".txt"] };
+            var manual = new FileBoxState();
+            FileBoxState[] boxes = [collector, manual];
+            FileMappingService.AddExisting(collector, [removed]);
+            FileMappingService.AddExisting(manual, [curated]);
+            var retained = manual.Items.Single();
+            retained.Title = "自定分类";
+            Assert(FileMappingService.Remove(collector, collector.Items.Single().Id), "应能手动移除映射");
+
+            var automatic = FileMappingService.DistributeAutomatically([removed, curated, fresh], boxes);
+            Assert(automatic.ByBox[collector.Id].SequenceEqual([fresh]),
+                "自动刷新只应收纳新路径，保留手动移除与其他盒中的分类");
+            Assert(FileMappingService.Distribute([removed, curated, fresh], boxes).ByBox[collector.Id].Count == 3,
+                "用户主动整理仍应处理所请求的现存桌面项目");
+            Assert(FileMappingService.AddPreparedAutomatically(collector, [removed.ToUpperInvariant(), curated, fresh], boxes) == 1,
+                "自动提交应再次忽略手动移除、其他盒已有和大小写相同的路径");
+            Assert(ReferenceEquals(manual.Items.Single(), retained) && retained.Title == "自定分类",
+                "自动收纳不得改动手动分类的映射标识与名称");
+
+            var prepared = collector.Items.Single();
+            Assert(FileMappingService.Remove(collector, prepared.Id), "后台准备期间也应能手动移除");
+            Assert(FileMappingService.AddPreparedAutomatically(collector, [fresh], boxes) == 0,
+                "后台准备结束后应根据当前移除记录决定是否提交");
+            FileMappingService.AddExisting(manual, [fresh]);
+            Assert(FileMappingService.AddPreparedAutomatically(collector, [fresh], boxes) == 0,
+                "后台准备期间被手动加入其他盒的路径不能重复收纳");
+            Assert(FileMappingService.AddPreparedAutomatically(collector, [fresh], [manual]) == 0,
+                "后台准备期间删除的目标盒不能接收迟到结果");
+
+            Assert(FileMappingService.AddPrepared(collector, [removed]) == 1
+                && !collector.AutoCollectExcludedPaths.Contains(removed, StringComparer.OrdinalIgnoreCase),
+                "明确重新添加应成功并清除目标盒排除记录");
+            var readded = collector.Items.Single();
+            File.Delete(removed);
+            Assert(FileMappingService.RemoveGone(collector,
+                new Dictionary<Guid, string> { [readded.Id] = readded.Path }) == 1,
+                "原文件消失应通过独立失效清理移除");
+            File.WriteAllText(removed, "重新出现");
+            Assert(FileMappingService.AddPreparedAutomatically(collector, [removed], boxes) == 1,
+                "失效清理不能产生手动排除，原文件重新出现后应能自动收纳");
+
+            var moving = collector.Items.Single();
+            Assert(FileMappingService.Transfer(collector, manual, moving.Id), "映射应能转移到另一个盒");
+            Assert(FileMappingService.Remove(manual, moving.Id), "转移后映射应能移除");
+            Assert(FileMappingService.AddPreparedAutomatically(collector, [removed], boxes) == 0,
+                "转移后的路径不能在后续刷新中返回来源盒");
+            Assert(File.ReadAllText(curated) == "原文件保留" && File.ReadAllText(fresh) == "原文件保留",
+                "移除、重新添加与自动分类只操作映射，不得修改原文件");
+        }
+        finally
+        {
+            Directory.Delete(temp, true);
+        }
+    }
+
+    private static void TestAutomaticCollectionExclusionsPersist()
+    {
+        var temp = Path.Combine(Path.GetTempPath(), $"BingLan-automatic-curation-state-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(temp);
+        try
+        {
+            var store = new LocalStateStore(temp);
+            var path = Path.Combine(temp, "保留.txt");
+            File.WriteAllText(path, "原文件");
+            var state = LocalStateStore.CreateDefault();
+            var collector = state.FileBoxes[0];
+            collector.CollectExtensions = [".txt"];
+            FileMappingService.AddExisting(collector, [path]);
+            FileMappingService.Remove(collector, collector.Items.Single().Id);
+            store.Save(state);
+            var loaded = store.Load();
+            var loadedBox = loaded.FileBoxes.Single(box => box.Id == collector.Id);
+            Assert(loadedBox.AutoCollectExcludedPaths.SequenceEqual([path])
+                && FileMappingService.AddPreparedAutomatically(loadedBox, [path], loaded.FileBoxes) == 0,
+                "手动移除记录应保存重载，并继续阻止自动收纳");
+
+            // Old profiles preserve their hand-curated cross-box mappings without an exclusion list.
+            File.WriteAllText(store.StatePath, JsonSerializer.Serialize(new
+            {
+                SchemaVersion = 67,
+                FileBoxes = new object[]
+                {
+                    new { CollectExtensions = new[] { ".txt" }, AutoCollectExcludedPaths = (string[]?)null },
+                    new { Items = new[] { new { Path = path, Title = "手动分类" } } }
+                }
+            }));
+            var legacy = store.Load();
+            Assert(legacy.FileBoxes.All(box => box.AutoCollectExcludedPaths.Count == 0),
+                "旧配置缺少或为 null 的排除列表应规范为可用空列表");
+            Assert(FileMappingService.DistributeAutomatically([path], legacy.FileBoxes).ByBox.Count == 0,
+                "旧配置已经手动分类到其他盒的路径不能被自动刷新重复添加");
         }
         finally
         {

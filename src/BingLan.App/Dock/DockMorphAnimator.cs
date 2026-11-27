@@ -29,6 +29,7 @@ internal sealed class DockMorphAnimator
 {
     private readonly Border _surface;
     private readonly ScaleTransform _scale = new(1, 1);
+    private readonly DockFrameDiagnostics? _frames;
     private DockMorphKind _active;
     // Replacing or removing an animation clock still raises its Completed, so every
     // completion is tagged with the flight it belongs to; stale ones are ignored.
@@ -38,6 +39,10 @@ internal sealed class DockMorphAnimator
     {
         _surface = surface;
         surface.RenderTransform = _scale;
+        if (DockFrameDiagnostics.CanStart)
+        {
+            _frames = new DockFrameDiagnostics(() => _scale.ScaleX);
+        }
     }
 
     /// <summary>Raised once when a collapse flight finishes; the owner hides the window then.</summary>
@@ -55,6 +60,7 @@ internal sealed class DockMorphAnimator
     /// </summary>
     internal void BeginExpand(Point center, MotionLevel motion)
     {
+        _frames?.Begin("dock-expand", useOwnRendering: true);
         _active = DockMorphKind.Expand;
         ApplyCenter(center);
         // The base values are the fresh-start state; a replaced animation snapshots
@@ -75,6 +81,7 @@ internal sealed class DockMorphAnimator
     /// <summary>Shrinks the row into the handle; <see cref="CollapseCompleted"/> fires at the end.</summary>
     internal void BeginCollapse(Point center, MotionLevel motion)
     {
+        _frames?.Begin("dock-collapse", useOwnRendering: true);
         _active = DockMorphKind.Collapse;
         ApplyCenter(center);
         var duration = new Duration(DockMorphMotion.CollapseDuration(motion));
@@ -104,6 +111,7 @@ internal sealed class DockMorphAnimator
     /// </summary>
     internal void BeginYield(Point center, MotionLevel motion)
     {
+        _frames?.Begin("dock-yield", useOwnRendering: true);
         _active = DockMorphKind.Collapse;
         ApplyCenter(center);
         var duration = new Duration(DockMorphMotion.YieldDuration(motion));
@@ -127,6 +135,7 @@ internal sealed class DockMorphAnimator
     /// </summary>
     internal void BeginReappear(Point center, MotionLevel motion)
     {
+        _frames?.Begin("dock-reappear", useOwnRendering: true);
         _active = DockMorphKind.Reappear;
         _surface.Opacity = 0d;
         var grow = DockMorphMotion.ReappearScale(motion);
@@ -154,6 +163,7 @@ internal sealed class DockMorphAnimator
     /// </summary>
     internal void Snap()
     {
+        _frames?.Finish(completed: false);
         _active = DockMorphKind.None;
         _flight++;
         _scale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
@@ -186,6 +196,7 @@ internal sealed class DockMorphAnimator
         // Rest at full size: the end values equal the base we restore to, so this is
         // invisible, but it clears the held animation clocks and the shrunken base
         // values a fresh expand had set.
+        _frames?.Finish(completed: true);
         Snap();
     }
 
@@ -198,6 +209,7 @@ internal sealed class DockMorphAnimator
 
         // Retire the flight first: removing the clocks below can itself raise a
         // stale Completed, which must not raise CollapseCompleted twice.
+        _frames?.Finish(completed: true);
         _flight++;
         _active = DockMorphKind.None;
         // The owner hides the window while the surface is still fully collapsed. Restoring

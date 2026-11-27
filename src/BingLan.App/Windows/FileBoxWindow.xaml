@@ -387,7 +387,6 @@
             <Grid.RowDefinitions>
                 <RowDefinition Height="48"/>
                 <RowDefinition Height="*"/>
-                <RowDefinition Height="44"/>
             </Grid.RowDefinitions>
 
             <Border x:Name="TitleBarSurface"
@@ -546,7 +545,12 @@
                 </Grid>
             </Border>
 
-            <Grid Grid.Row="1">
+            <Grid x:Name="ExpandedBodyHost" Grid.Row="1" ClipToBounds="True">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="44"/>
+                </Grid.RowDefinitions>
+            <Grid>
                 <ScrollViewer Margin="14,6,6,2"
                               Style="{StaticResource CardScrollViewerStyle}"
                               VerticalScrollBarVisibility="Auto"
@@ -581,7 +585,7 @@
                         IsHitTestVisible="False"/>
             </Grid>
 
-            <Grid Grid.Row="2" Margin="17,0,17,7">
+            <Grid Grid.Row="1" Margin="17,0,17,7">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
@@ -611,6 +615,7 @@
                         FontSize="{StaticResource CardFont.Caption}"
                         ToolTip="把桌面项目放进分类盒，并清除已失效项"
                         Click="AutoOrganize_Click"/>
+            </Grid>
             </Grid>
             </Grid>
             </Grid>

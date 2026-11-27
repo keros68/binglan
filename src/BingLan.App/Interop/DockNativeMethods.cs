@@ -425,6 +425,14 @@ internal static class DockNativeMethods
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool GetMonitorInfoW(nint monitor, ref MonitorInfo monitorInfo);
 
+    [DllImport("kernel32.dll", ExactSpelling = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool K32EnumProcesses([Out] uint[] ids, uint bufferBytes, out uint bytesWritten);
+
+    [DllImport("kernel32.dll", ExactSpelling = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool ProcessIdToSessionId(uint processId, out uint sessionId);
+
     [DllImport("kernel32.dll", SetLastError = true)]
     internal static extern nint OpenProcess(
         uint desiredAccess,

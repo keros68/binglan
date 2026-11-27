@@ -12,13 +12,12 @@ using BingLan.App.Interop;
 using BingLan.App.Services;
 using BingLan.App.TopBar;
 using BingLan.Core.Dock;
-using BingLan.Core.Models;
 using BingLan.Core.TopBar;
 
 namespace BingLan.App.Windows;
 
 /// <summary>
-/// The top bar's inline search: a compact frosted-glass activatable window dropped under the bar.
+/// The information bar's inline search: a compact activatable window opening towards the work area.
 /// The bar itself is <c>WS_EX_NOACTIVATE</c> and can never own a focused text box, so typing needs
 /// a real window. Searches local apps, desktop/FileBox/recent entries, Everything IPC, and Windows
 /// Search index first; only when nothing local matches (or an explicit URL is entered) does it
@@ -39,6 +38,7 @@ internal sealed class TopBarSearchWindow : Window
     private readonly TopBarSearchEngineInfo _engine;
     private readonly int _anchorX;
     private readonly int _anchorY;
+    private readonly bool _opensUpward;
     private readonly MonitorSnapshot? _monitor;
     private readonly bool _everythingEnabled;
     private readonly Func<Task<LauncherPanelSnapshot?>>? _readSnapshot;
@@ -87,12 +87,14 @@ internal sealed class TopBarSearchWindow : Window
         MonitorSnapshot? monitor,
         bool everythingEnabled,
         Func<Task<LauncherPanelSnapshot?>>? readSnapshot = null,
-        Action<LauncherPanelEntry>? openEntry = null)
+        Action<LauncherPanelEntry>? openEntry = null,
+        bool opensUpward = false)
     {
         _look = look;
         _engine = engine ?? TopBarSearchRowRules.BingEngine;
         _anchorX = anchorX;
         _anchorY = anchorY;
+        _opensUpward = opensUpward;
         _monitor = monitor;
         _everythingEnabled = everythingEnabled;
         _readSnapshot = readSnapshot;
@@ -251,6 +253,16 @@ internal sealed class TopBarSearchWindow : Window
             StartSnapshotPreload();
             FocusInput();
         };
+        if (_opensUpward)
+        {
+            SizeChanged += (_, args) =>
+            {
+                if (args.HeightChanged && _handle != 0)
+                {
+                    PositionFromAnchor();
+                }
+            };
+        }
         Closed += OnClosed;
     }
 
@@ -329,7 +341,7 @@ internal sealed class TopBarSearchWindow : Window
         {
             textShadow = new System.Windows.Media.Effects.DropShadowEffect
             {
-                Color = Colors.Black,
+                Color = _look.UseDarkInk ? Colors.White : Colors.Black,
                 Opacity = 0.65d,
                 BlurRadius = 8d,
                 ShadowDepth = 1d,
@@ -430,21 +442,20 @@ internal sealed class TopBarSearchWindow : Window
             if (source.Handle != 0)
             {
                 _handle = source.Handle;
-                var dpi = VisualTreeHelper.GetDpi(this);
-                var targetScale = _monitor is { Dpi: > 0 } ? _monitor.Dpi / 96d : dpi.DpiScaleX;
-                var placement = ComputePlacement(targetScale);
-                MaxHeight = placement.MaxHeightDip;
-                _list.MaxHeight = Math.Max(0d, placement.MaxHeightDip - ChromeHeightReserve);
-                NativeMethods.SetWindowPos(
-                    source.Handle,
-                    DockNativeMethods.HwndTopmost,
-                    placement.LeftPx,
-                    placement.TopPx,
-                    0,
-                    0,
-                    NativeMethods.SwpNoSize | NativeMethods.SwpNoActivate);
+                PositionFromAnchor();
             }
         }
+    }
+
+    private void PositionFromAnchor()
+    {
+        var scale = _monitor is { Dpi: > 0 } ? _monitor.Dpi / 96d : VisualTreeHelper.GetDpi(this).DpiScaleX;
+        var placement = ComputePlacement(scale);
+        MaxHeight = placement.MaxHeightDip;
+        _list.MaxHeight = Math.Max(0d, placement.MaxHeightDip - ChromeHeightReserve);
+        NativeMethods.SetWindowPos(
+            _handle, DockNativeMethods.HwndTopmost, placement.LeftPx, placement.TopPx, 0, 0,
+            NativeMethods.SwpNoSize | NativeMethods.SwpNoActivate);
     }
 
     private (int LeftPx, int TopPx, double MaxHeightDip) ComputePlacement(double scale)
@@ -474,6 +485,15 @@ internal sealed class TopBarSearchWindow : Window
         }
 
         var leftPx = TopBarSearchRowRules.ClampHorizontalPixels(_anchorX, cardWidthPx, workArea.Left, workArea.Right, marginPx);
+        if (_opensUpward)
+        {
+            var upperLimit = Math.Min(workArea.Top + marginPx, workArea.Bottom - 1);
+            var bottomPx = Math.Clamp(_anchorY - gapPx, upperLimit + 1, workArea.Bottom);
+            var maxHeight = Math.Min(SurfaceMaxHeight, (bottomPx - upperLimit) / safeScale);
+            var measuredHeight = ActualHeight > 0d ? ActualHeight : ChromeHeightReserve;
+            var height = (int)Math.Round(Math.Min(maxHeight, measuredHeight) * safeScale);
+            return (leftPx, bottomPx - Math.Max(1, height), maxHeight);
+        }
         var desiredTopPx = _anchorY + gapPx;
         var minVisiblePx = (int)Math.Round((ChromeHeightReserve + 56d) * safeScale);
         var maxTopPx = Math.Max(workArea.Top, workArea.Bottom - minVisiblePx - marginPx);
@@ -1073,14 +1093,7 @@ internal sealed class TopBarSearchWindow : Window
         {
             return;
         }
-        _closing = true;
-        Dispatcher.BeginInvoke(DispatcherPriority.Normal, () =>
-        {
-            if (!_closed)
-            {
-                Close();
-            }
-        });
+        Dispatcher.BeginInvoke(DispatcherPriority.Normal, (Action)RequestClose);
     }
 
     private void CancelSearch()
@@ -1135,8 +1148,7 @@ internal sealed class TopBarSearchWindow : Window
 }
 
 /// <summary>
-/// Resolved frosted-glass palette for the top bar's inline search popup, aligned with the
-/// top bar's own surface, adaptive wallpaper ink, and Windows 11 Composition blur.
+/// Resolved palette for the top bar's inline search popup.
 /// </summary>
 internal sealed record TopBarSearchLook(
     bool UseDarkInk,
@@ -1155,13 +1167,6 @@ internal sealed record TopBarSearchLook(
     Color HoverRowBackground,
     Color SelectionBrush)
 {
-    internal static TopBarSearchLook Resolve(
-        DesktopStyleState? style,
-        LauncherAppearanceState? launcherAppearance = null,
-        TopBarState? topBar = null,
-        bool? useClearGlass = null) =>
-        FromPalette(TopBarSearchLookRules.Resolve(style, launcherAppearance, topBar, useClearGlass));
-
     internal static TopBarSearchLook FromPalette(TopBarSearchPalette palette)
     {
         ArgumentNullException.ThrowIfNull(palette);

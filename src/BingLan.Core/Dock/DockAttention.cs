@@ -291,18 +291,18 @@ public sealed class DockAttention
             return false;
         }
 
-        if (item.Pinned is { } pinned)
+        if (item.LaunchTarget is { } target)
         {
-            if (DockPinRules.MatchesExecutablePath(pinned, candidateExecutablePath))
+            if (DockPinRules.MatchesExecutablePath(target, candidateExecutablePath))
             {
                 return true;
             }
 
-            if (!string.IsNullOrWhiteSpace(pinned.ExecutablePath)
-                && !string.IsNullOrWhiteSpace(pinned.AppUserModelId)
-                && !DockQuitRules.IsBrowserHostExecutable(pinned.ExecutablePath)
-                && !DockFileDropRules.IsFrameHostPath(pinned.ExecutablePath)
-                && DockQuitRules.MatchesExecutableOrVersionSibling(pinned.ExecutablePath, candidateExecutablePath))
+            if (!string.IsNullOrWhiteSpace(target.ExecutablePath)
+                && !string.IsNullOrWhiteSpace(target.AppUserModelId)
+                && !DockQuitRules.IsBrowserHostExecutable(target.ExecutablePath)
+                && !DockFileDropRules.IsFrameHostPath(target.ExecutablePath)
+                && DockQuitRules.MatchesExecutableOrVersionSibling(target.ExecutablePath, candidateExecutablePath))
             {
                 return true;
             }

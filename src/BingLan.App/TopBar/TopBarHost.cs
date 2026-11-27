@@ -50,6 +50,8 @@ internal sealed class TopBarHost : IDisposable
 
     internal Func<IReadOnlyDictionary<string, ScreenSurfacePreferences>?>? ReadScreenPreferences { get; set; }
 
+    internal Func<MonitorSnapshot, int?>? ResolveBottomDockTop { get; set; }
+
     internal bool HasWindow => _windows.Count > 0;
 
     internal bool IsRunningOnMonitor(string monitorKey) => _windows.ContainsKey(monitorKey);
@@ -191,7 +193,10 @@ internal sealed class TopBarHost : IDisposable
     private void Open(SurfaceMonitorSelection target)
     {
         var window = new TopBarWindow(_state, _style, _environment, _sampler,
-            screenTarget: target, ownsGlobalEvents: false);
+            screenTarget: target, ownsGlobalEvents: false)
+        {
+            ResolveBottomDockTop = ResolveBottomDockTop
+        };
         window.SearchRequested = () =>
         {
             foreach (var peer in _windows.Values)

@@ -196,7 +196,8 @@ internal sealed class CardFoldAnimator
     internal void BeginCollapse(
         double collapsedHeight,
         IReadOnlyList<UIElement> bodyElements,
-        Action onCollapsedCommitted)
+        Action onCollapsedCommitted,
+        bool anchorBottom = false)
     {
         if (!CardMotionAnimator.IsAnimationEnabled)
         {
@@ -225,7 +226,7 @@ internal sealed class CardFoldAnimator
         _isAnimating = true;
         _trackedElements = bodyElements;
 
-        _bodySurface.VerticalAlignment = VerticalAlignment.Top;
+        _bodySurface.VerticalAlignment = anchorBottom ? VerticalAlignment.Bottom : VerticalAlignment.Top;
         _bodySurface.Height = startHeight;
         UpdateBodyClip(_bodySurface.ActualWidth > 0d ? _bodySurface.ActualWidth : _window.ActualWidth, startHeight);
 
@@ -260,7 +261,8 @@ internal sealed class CardFoldAnimator
     internal void BeginExpand(
         double collapsedHeight,
         double targetHeight,
-        IReadOnlyList<UIElement> bodyElements)
+        IReadOnlyList<UIElement> bodyElements,
+        bool anchorBottom = false)
     {
         if (!CardMotionAnimator.IsAnimationEnabled)
         {
@@ -289,7 +291,7 @@ internal sealed class CardFoldAnimator
         _isAnimating = true;
         _trackedElements = bodyElements;
 
-        _bodySurface.VerticalAlignment = VerticalAlignment.Top;
+        _bodySurface.VerticalAlignment = anchorBottom ? VerticalAlignment.Bottom : VerticalAlignment.Top;
         _bodySurface.Height = startHeight;
         UpdateBodyClip(_bodySurface.ActualWidth > 0d ? _bodySurface.ActualWidth : _window.ActualWidth, startHeight);
 

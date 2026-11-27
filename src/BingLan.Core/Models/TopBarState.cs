@@ -153,6 +153,9 @@ public sealed class TopBarState
 
     public TopBarVisibilityMode VisibilityMode { get; set; } = TopBarVisibilityMode.ReserveTopEdge;
 
+    /// <summary>Local screen-edge preference; existing configurations place the bar at the top.</summary>
+    public bool ShowAtBottom { get; set; }
+
     /// <summary>Machine-local layout; full width remains the default for existing profiles.</summary>
     public TopBarDisplayMode DisplayMode { get; set; }
 

@@ -627,10 +627,7 @@ public partial class SettingsWindow : Window
                 : Visibility.Collapsed;
             if (kind == DesktopComponentKind.QuickLaunch)
             {
-                _quickPlaces = GetActiveQuickPlaces()
-                    .Select(item => new QuickPlaceState { Icon = item.Icon, Name = item.Name, Target = item.Target })
-                    .ToList();
-                ShowQuickPlaces(0);
+                ReloadQuickPlaces();
             }
             UpdateMoveScreenControls(entry);
             ComponentDetailsScrollViewer.ScrollToTop();
@@ -977,6 +974,14 @@ public partial class SettingsWindow : Window
 
     private sealed record QuickPlaceRow(string Glyph, string Name, string Target);
 
+    private void ReloadQuickPlaces()
+    {
+        _quickPlaces = GetActiveQuickPlaces()
+            .Select(item => new QuickPlaceState { Icon = item.Icon, Name = item.Name, Target = item.Target })
+            .ToList();
+        ShowQuickPlaces(0);
+    }
+
     private void ShowQuickPlaces(int select)
     {
         QuickPlaceList.ItemsSource = _quickPlaces
@@ -1163,9 +1168,7 @@ public partial class SettingsWindow : Window
         {
             return;
         }
-        (_quickPlaces[index], _quickPlaces[target]) = (_quickPlaces[target], _quickPlaces[index]);
-        SaveQuickPlaces();
-        ShowQuickPlaces(target);
+        ReorderQuickPlace(index, target);
     }
 
     private void QuickPlaceReset_Click(object sender, RoutedEventArgs e)
@@ -1589,9 +1592,17 @@ public partial class SettingsWindow : Window
     /// </summary>
     public void ShowComponentSettings(DesktopComponentKind kind)
     {
+        var previousSelection = _selectedComponentEntry;
         SelectNavigationPage("Components");
         ShowPage("Components");
         RefreshComponentList(null, kind);
+        if (kind == DesktopComponentKind.QuickLaunch
+            && previousSelection?.Kind == kind
+            && ReferenceEquals(_selectedComponentEntry, previousSelection))
+        {
+            // The selector can retain an equal row when rebuilding the list.
+            ReloadQuickPlaces();
+        }
     }
 
     private bool _loadingCollect;
@@ -1680,6 +1691,8 @@ public partial class SettingsWindow : Window
             FileBoxAutoCollapseCheckBox.IsChecked = box.State.AutoCollapse;
             FileBoxHoverExpandCheckBox.IsChecked = box.State.HoverExpand;
             FileBoxHoverExpandCheckBox.IsEnabled = !box.IsEdgeDocked;
+            FileBoxExpandUpwardCheckBox.IsChecked = box.State.ExpandUpward;
+            FileBoxExpandUpwardCheckBox.IsEnabled = !box.IsEdgeDocked;
             FileBoxAutoCollapseDelayRow.Visibility = box.State.AutoCollapse ? Visibility.Visible : Visibility.Collapsed;
             var delaySeconds = FileBoxAutoCollapseRules.CoerceDelaySeconds(box.State.AutoCollapseDelaySeconds);
             FileBoxAutoCollapseDelayComboBox.SelectedItem = FileBoxAutoCollapseDelayComboBox.Items
@@ -2870,7 +2883,7 @@ public partial class SettingsWindow : Window
             RefreshBackupList();
             BackupStatusText.Text = $"已备份到 {path}";
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
         {
             BackupStatusText.Text = $"备份未完成：{exception.Message}";
         }
@@ -3044,7 +3057,7 @@ public partial class SettingsWindow : Window
                 LoadDockSettings();
             }
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException
             or System.Runtime.InteropServices.COMException)
         {
             ThemeStatusText.Text = $"导入未完成：{exception.Message}";
@@ -3349,6 +3362,8 @@ public partial class SettingsWindow : Window
             DockMaximizeReleaseCheckBox.IsChecked = _dockState.ReleaseWhenMaximized;
             DockMaximizeReleaseRow.IsEnabled =
                 _dockState.VisibilityMode == DockVisibilityMode.ReserveWorkArea;
+            DockBackgroundMaximizeCheckBox.IsChecked = _dockState.ReleaseForBackgroundMaximizedWindow;
+            DockBackgroundMaximizeRow.IsEnabled = DockMaximizeReleaseRow.IsEnabled && _dockState.ReleaseWhenMaximized;
             DockAutoHideAlwaysCheckBox.IsChecked = _dockState.AutoHideAlways;
             DockRevealOnAttentionCheckBox.IsChecked = _dockState.RevealOnAttention;
             DockBounceOnAttentionCheckBox.IsChecked = _dockState.BounceOnAttention;
@@ -3367,6 +3382,8 @@ public partial class SettingsWindow : Window
             DockLauncherButtonCheckBox.IsChecked = _dockState.ShowLauncherButton;
             DockShowDesktopButtonCheckBox.IsChecked = _dockState.ShowDesktopButton;
             DockTaskViewButtonCheckBox.IsChecked = _dockState.ShowTaskViewButton;
+            DockQuickSettingsButtonCheckBox.IsChecked = _dockState.ShowQuickSettingsButton;
+            DockShowRunningPinsSeparatelyCheckBox.IsChecked = _dockState.ShowRunningPinsSeparately;
             DockBottomGapSlider.Value = _dockState.BottomGapDip;
             DockBottomGapText.Text = $"{_dockState.BottomGapDip:0} DIP";
 
@@ -3486,7 +3503,9 @@ public partial class SettingsWindow : Window
     {
         if (_loadingDock || DockEnabledCheckBox is null || DockMonitorComboBox is null || DockMaximizeReleaseRow is null
             || DockAutoHideAlwaysCheckBox is null || DockRevealOnAttentionCheckBox is null
-            || DockBounceOnAttentionCheckBox is null)
+            || DockBounceOnAttentionCheckBox is null || DockShowRunningPinsSeparatelyCheckBox is null
+            || DockBackgroundMaximizeRow is null || DockBackgroundMaximizeCheckBox is null
+            || DockQuickSettingsButtonCheckBox is null)
         {
             return;
         }
@@ -3515,6 +3534,8 @@ public partial class SettingsWindow : Window
         _dockState.ReleaseWhenMaximized = DockMaximizeReleaseCheckBox.IsChecked == true;
         DockMaximizeReleaseRow.IsEnabled =
             _dockState.VisibilityMode == DockVisibilityMode.ReserveWorkArea;
+        _dockState.ReleaseForBackgroundMaximizedWindow = DockBackgroundMaximizeCheckBox.IsChecked == true;
+        DockBackgroundMaximizeRow.IsEnabled = DockMaximizeReleaseRow.IsEnabled && _dockState.ReleaseWhenMaximized;
         _dockState.AutoHideAlways = DockAutoHideAlwaysCheckBox.IsChecked == true;
         _dockState.RevealOnAttention = DockRevealOnAttentionCheckBox.IsChecked == true;
         _dockState.BounceOnAttention = DockBounceOnAttentionCheckBox.IsChecked == true;
@@ -3535,6 +3556,8 @@ public partial class SettingsWindow : Window
         _dockState.ShowLauncherButton = DockLauncherButtonCheckBox.IsChecked == true;
         _dockState.ShowDesktopButton = DockShowDesktopButtonCheckBox.IsChecked == true;
         _dockState.ShowTaskViewButton = DockTaskViewButtonCheckBox.IsChecked == true;
+        _dockState.ShowQuickSettingsButton = DockQuickSettingsButtonCheckBox.IsChecked == true;
+        _dockState.ShowRunningPinsSeparately = DockShowRunningPinsSeparatelyCheckBox.IsChecked == true;
         if (ReferenceEquals(sender, DockMonitorComboBox)
             && DockMonitorComboBox.SelectedItem is ComboBoxItem { Tag: SurfaceMonitorChoice choice })
         {
@@ -3669,6 +3692,8 @@ public partial class SettingsWindow : Window
             TopBarFrostedCheckBox.IsChecked = state.FrostedGlass;
             TopBarReserveRadio.IsChecked = state.VisibilityMode == TopBarVisibilityMode.ReserveTopEdge;
             TopBarSmartHideRadio.IsChecked = state.VisibilityMode == TopBarVisibilityMode.SmartHide;
+            TopBarPositionComboBox.SelectedIndex = state.ShowAtBottom ? 1 : 0;
+            ApplyTopBarPositionWording(state.ShowAtBottom);
             TopBarHeightSlider.Value = Math.Clamp(
                 double.IsFinite(state.Height) ? state.Height : TopBarState.DefaultHeightDip,
                 TopBarState.MinimumHeightDip,
@@ -3692,7 +3717,7 @@ public partial class SettingsWindow : Window
     private void TopBarSetting_Changed(object sender, RoutedEventArgs e)
     {
         if (_loadingTopBar || _topBarState is not { } state
-            || TopBarEnabledCheckBox is null || TopBarMonitorComboBox is null)
+            || TopBarEnabledCheckBox is null || TopBarMonitorComboBox is null || TopBarPositionComboBox is null)
         {
             return;
         }
@@ -3705,6 +3730,11 @@ public partial class SettingsWindow : Window
         state.VisibilityMode = TopBarSmartHideRadio.IsChecked == true
             ? TopBarVisibilityMode.SmartHide
             : TopBarVisibilityMode.ReserveTopEdge;
+        if (ReferenceEquals(sender, TopBarPositionComboBox) && TopBarPositionComboBox.SelectedIndex >= 0)
+        {
+            state.ShowAtBottom = TopBarPositionComboBox.SelectedIndex == 1;
+            ApplyTopBarPositionWording(state.ShowAtBottom);
+        }
         if (ReferenceEquals(sender, TopBarMonitorComboBox)
             && TopBarMonitorComboBox.SelectedItem is ComboBoxItem { Tag: SurfaceMonitorChoice choice })
         {
@@ -3714,6 +3744,12 @@ public partial class SettingsWindow : Window
         LoadTopBarVisualEditor();
         ApplyTopBarChange(state.IsEnabled ? "已应用" : "顶部信息条已关闭");
         RefreshAppearanceOverrides();
+    }
+
+    private void ApplyTopBarPositionWording(bool atBottom)
+    {
+        TopBarReserveRadio.Content = atBottom ? "始终显示，预留底部空间" : "始终显示，预留顶部空间";
+        AutomationProperties.SetName(TopBarReserveRadio, (string)TopBarReserveRadio.Content);
     }
 
     private void SelectTopBarSearchEngine(string? engineKey)

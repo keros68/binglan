@@ -1,5 +1,6 @@
-using System.Diagnostics.CodeAnalysis;
+using System.Runtime.ExceptionServices;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using BingLan.Core.Dock;
 using BingLan.Core.Models;
 
@@ -10,21 +11,29 @@ public sealed record BackupSummary(string PresetName, int CardCount, int DockApp
 public sealed class LocalStateStore
 {
     public const int MaximumAutomaticBackups = 15;
+    private const string NewerSchemaBackup = "widgets-newer-schema";
 
     private static readonly string[] AutomaticBackupPrefixes =
     [
         "widgets-before-migration-",
         "widgets-unreadable-",
-        "widgets-newer-schema-"
+        NewerSchemaBackup + "-"
     ];
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         WriteIndented = true,
-        PropertyNameCaseInsensitive = true
+        PropertyNameCaseInsensitive = true,
+        Converters = { new FiniteDoubleConverter() }
     };
 
     private readonly object _saveGate = new();
+    private readonly object _deferredSaveGate = new();
+    private byte[]? _deferredSnapshot;
+    private Task<Exception?>? _deferredWriter;
+    private byte[]? _lastSavedState;
+    private (byte[] Bytes, string Path)? _stateArchive;
+    private bool _loadedFromUnavailableState;
 
     public LocalStateStore(string? dataDirectory = null)
     {
@@ -37,52 +46,49 @@ public sealed class LocalStateStore
     public string StatePath => Path.Combine(DataDirectory, "widgets.json");
     public string BackupDirectory => Path.Combine(DataDirectory, "Backups");
     public string PendingRestorePath => Path.Combine(DataDirectory, "widgets.restore.json");
+    public bool RequiresReloadBeforeSaving => _loadedFromUnavailableState;
 
     public AppState Load()
     {
-        Directory.CreateDirectory(DataDirectory);
-        ApplyPendingRestore();
-        if (TryLoad(StatePath, out var state, out var storedVersion))
-        {
-            if (storedVersion > AppState.CurrentSchemaVersion)
-            {
-                // Keep an untouched snapshot of the newer file before this older version can save,
-                // while leaving StatePath itself unmodified during Load.
-                lock (_saveGate)
-                {
-                    CopyStateToBackup("widgets-newer-schema", StatePath);
-                }
-                return state;
-            }
-            // Persist this one-time migration before the next midnight. Otherwise an
-            // unstamped legacy entry could be assigned to a new "today" on each load.
-            if (MigrateLegacyTodoDates(state, DateTime.Today) > 0)
-            {
-                Save(state);
-            }
-            return state;
-        }
-
-        if (TryLoad(StatePath + ".bak", out state, out storedVersion))
-        {
-            if (storedVersion <= AppState.CurrentSchemaVersion
-                && MigrateLegacyTodoDates(state, DateTime.Today) > 0)
-            {
-                Save(state);
-            }
-            return state;
-        }
-
-        // Neither copy can be read (damaged JSON): the file is kept among the backups
-        // for restoring later, and the app starts from defaults instead of failing on start.
+        WaitForDeferredSave();
         lock (_saveGate)
         {
-            if (File.Exists(StatePath))
+            Directory.CreateDirectory(DataDirectory);
+            ApplyPendingRestore();
+            _loadedFromUnavailableState = false;
+
+            var primary = ReadStateFile(StatePath);
+            if (primary.State is { } state)
             {
-                CopyStateToBackup("widgets-unreadable");
+                if (primary.SchemaVersion > AppState.CurrentSchemaVersion)
+                {
+                    TryArchiveState(NewerSchemaBackup, primary.Bytes!);
+                }
+                SaveMigratedDates(state, primary);
+                return state;
             }
+
+            var backup = ReadStateFile(StatePath + ".bak");
+            // Data read from a fallback must not overwrite a temporarily hidden original,
+            // even when its lock is released later during this session.
+            _loadedFromUnavailableState =
+                primary.Status == StateFileStatus.Unavailable || backup.Status == StateFileStatus.Unavailable;
+            if (backup.State is { } recovered)
+            {
+                if (backup.SchemaVersion > AppState.CurrentSchemaVersion)
+                {
+                    TryArchiveState(NewerSchemaBackup, backup.Bytes!);
+                }
+                SaveMigratedDates(recovered, backup);
+                return recovered;
+            }
+
+            if (primary.Status == StateFileStatus.Invalid)
+            {
+                TryArchiveState("widgets-unreadable", primary.Bytes!);
+            }
+            return CreateDefault();
         }
-        return CreateDefault();
     }
 
     // A remembered view size is either unset (both 0) or two finite positive lengths.
@@ -90,98 +96,268 @@ public sealed class LocalStateStore
         (width == 0 && height == 0)
         || (double.IsFinite(width) && double.IsFinite(height) && width > 0 && height > 0);
 
-    private static bool TryLoad(string path, [NotNullWhen(true)] out AppState? state, out int storedVersion)
+    private void SaveMigratedDates(AppState state, StateFile file)
     {
-        state = null;
-        storedVersion = 0;
-        if (!File.Exists(path))
+        // Persist dates once so legacy entries without timestamps don't move to a different
+        // "today" on each load. A write failure must not discard a readable state.
+        if (file.MigratedDates && !_loadedFromUnavailableState)
         {
-            return false;
+            try
+            {
+                SaveCore(() => SerializeState(state));
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+            }
         }
+    }
+
+    private static StateFile ReadStateFile(string path, byte[]? knownState = null)
+    {
+        byte[] bytes;
         try
         {
-            state = DeserializeAndMigrate(File.ReadAllText(path), out storedVersion);
-            return true;
+            bytes = File.ReadAllBytes(path);
+        }
+        catch (Exception exception) when (exception is FileNotFoundException or DirectoryNotFoundException)
+        {
+            return new(StateFileStatus.Missing, Error: exception);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return new(StateFileStatus.Unavailable, Error: exception);
+        }
+
+        if (knownState is not null && bytes.AsSpan().SequenceEqual(knownState))
+        {
+            // Only bytes already written by this store can skip deserialization and validation.
+            return new(StateFileStatus.Valid, bytes, SchemaVersion: AppState.CurrentSchemaVersion);
+        }
+
+        try
+        {
+            var state = DeserializeState(bytes) ?? throw new JsonException("状态文件没有内容");
+            var version = state.SchemaVersion;
+            MigrateAndNormalize(state);
+            var migratedDates = version <= AppState.CurrentSchemaVersion
+                && MigrateLegacyTodoDates(state, DateTime.Today) > 0;
+            // A legacy backup is stored in the current schema. Validate that its normalized
+            // data can be written before considering the original a usable recovery source.
+            var migratedBytes = version < AppState.CurrentSchemaVersion ? SerializeNormalizedState(state) : null;
+            return new(StateFileStatus.Valid, bytes, state, version, migratedDates, MigratedBytes: migratedBytes);
         }
         catch (Exception exception) when (exception is JsonException or InvalidDataException)
         {
-            state = null;
-            return false;
+            return new(StateFileStatus.Invalid, bytes, Error: exception);
         }
+    }
+
+    private static AppState? DeserializeState(byte[] bytes)
+    {
+        ReadOnlySpan<byte> json = bytes;
+        if (json.StartsWith("\uFEFF"u8))
+        {
+            return JsonSerializer.Deserialize<AppState>(json[3..], JsonOptions);
+        }
+        if (json.StartsWith((ReadOnlySpan<byte>)[0xFF, 0xFE])
+            || json.StartsWith((ReadOnlySpan<byte>)[0xFE, 0xFF])
+            || json.StartsWith((ReadOnlySpan<byte>)[0x00, 0x00, 0xFE, 0xFF]))
+        {
+            // Keep support for state files edited in a tool that writes a UTF-16/32 BOM.
+            using var reader = new StreamReader(new MemoryStream(bytes));
+            return JsonSerializer.Deserialize<AppState>(reader.ReadToEnd(), JsonOptions);
+        }
+        return JsonSerializer.Deserialize<AppState>(json, JsonOptions);
     }
 
     public void Save(AppState state)
     {
+        WaitForDeferredSave();
+        SaveCore(() => SerializeState(state));
+    }
+
+    /// <summary>
+    /// Captures the state on the caller's thread and writes the latest pending snapshot in the background.
+    /// The state owner calls this and the synchronous save/backup operations in request order.
+    /// </summary>
+    public Task<Exception?> SaveDeferred(AppState state)
+    {
+        var snapshot = SerializeState(state);
+        lock (_deferredSaveGate)
+        {
+            _deferredSnapshot = snapshot;
+            return _deferredWriter ??= Task.Run(WriteDeferredSnapshots);
+        }
+    }
+
+    private Exception? WriteDeferredSnapshots()
+    {
+        Exception? error = null;
+        while (true)
+        {
+            byte[] snapshot;
+            lock (_deferredSaveGate)
+            {
+                if (_deferredSnapshot is null)
+                {
+                    _deferredWriter = null;
+                    return error;
+                }
+                snapshot = _deferredSnapshot;
+                _deferredSnapshot = null;
+            }
+
+            try
+            {
+                SaveCore(() => snapshot);
+                error = null;
+            }
+            catch (Exception exception)
+            {
+                // Report the write failure to the caller and leave the writer available for the next snapshot.
+                error = exception;
+            }
+        }
+    }
+
+    private void WaitForDeferredSave()
+    {
+        Task<Exception?>? writer;
+        lock (_deferredSaveGate)
+        {
+            writer = _deferredWriter;
+        }
+        // A failed background write must not prevent the next explicit save from retrying.
+        writer?.GetAwaiter().GetResult();
+    }
+
+    private void SaveCore(Func<byte[]> getSnapshot)
+    {
         lock (_saveGate)
         {
-            MigrateAndNormalize(state);
-            MigrateLegacyTodoDates(state, DateTime.Today);
-            state.SchemaVersion = AppState.CurrentSchemaVersion;
+            if (_loadedFromUnavailableState)
+            {
+                throw new IOException("启动时无法读取原设置。请在文件可访问后重新启动，然后再保存设置。");
+            }
 
-            Directory.CreateDirectory(DataDirectory);
+            var primary = ReadStateFile(StatePath, _lastSavedState);
+            ThrowIfUnavailable(primary);
+            var backupPath = StatePath + ".bak";
             var temporaryPath = StatePath + ".tmp";
-            var json = JsonSerializer.Serialize(state, JsonOptions);
-            File.WriteAllText(temporaryPath, json);
-
-            // Validate known field types before rotating, without running migrations on current-version saves.
-            if (TryReadCompatibleStateVersion(StatePath, out var existingVersion))
+            var rotateCurrentPrimary = primary.Status == StateFileStatus.Valid
+                && primary.SchemaVersion >= AppState.CurrentSchemaVersion;
+            if (primary.SchemaVersion > AppState.CurrentSchemaVersion)
             {
-                if (existingVersion >= AppState.CurrentSchemaVersion)
-                {
-                    var temporaryBackupPath = StatePath + ".bak.tmp";
-                    File.Copy(StatePath, temporaryBackupPath, true);
-                    File.Move(temporaryBackupPath, StatePath + ".bak", true);
-                }
-                else if (TryLoad(StatePath, out var previous, out _))
-                {
-                    CopyStateToBackup("widgets-before-migration", StatePath);
-                    var temporaryBackupPath = StatePath + ".bak.tmp";
-                    File.WriteAllText(temporaryBackupPath, JsonSerializer.Serialize(previous, JsonOptions));
-                    File.Move(temporaryBackupPath, StatePath + ".bak", true);
-                }
+                ArchiveState(NewerSchemaBackup, primary.Bytes!);
             }
-            else if (TryReadCompatibleStateVersion(StatePath + ".bak", out var backupVersion)
-                     && backupVersion < AppState.CurrentSchemaVersion
-                     && TryLoad(StatePath + ".bak", out var previousBackup, out _))
+            else if (primary.Status == StateFileStatus.Invalid)
             {
-                CopyStateToBackup("widgets-before-migration", StatePath + ".bak");
-                var temporaryBackupPath = StatePath + ".bak.tmp";
-                File.WriteAllText(temporaryBackupPath, JsonSerializer.Serialize(previousBackup, JsonOptions));
-                File.Move(temporaryBackupPath, StatePath + ".bak", true);
+                ArchiveState("widgets-unreadable", primary.Bytes!);
             }
 
-            File.Move(temporaryPath, StatePath, true);
+            StateFile migrationBackup = default;
+            if (!rotateCurrentPrimary)
+            {
+                migrationBackup = primary.Status == StateFileStatus.Valid ? primary : ReadStateFile(backupPath);
+                ThrowIfUnavailable(migrationBackup);
+            }
+
+            var bytes = getSnapshot();
+            Directory.CreateDirectory(DataDirectory);
+            File.WriteAllBytes(temporaryPath, bytes);
+
+            if (rotateCurrentPrimary)
+            {
+                File.Replace(temporaryPath, StatePath, backupPath, ignoreMetadataErrors: true);
+            }
+            else
+            {
+                if (migrationBackup.MigratedBytes is { } migrated)
+                {
+                    WriteBackup("widgets-before-migration", migrationBackup.Bytes!);
+                    var temporaryBackupPath = backupPath + ".tmp";
+                    File.WriteAllBytes(temporaryBackupPath, migrated);
+                    File.Move(temporaryBackupPath, backupPath, true);
+                }
+                else if (migrationBackup.Status == StateFileStatus.Invalid)
+                {
+                    WriteBackup("widgets-unreadable", migrationBackup.Bytes!);
+                }
+                else if (migrationBackup.SchemaVersion > AppState.CurrentSchemaVersion)
+                {
+                    ArchiveState(NewerSchemaBackup, migrationBackup.Bytes!);
+                }
+                File.Move(temporaryPath, StatePath, true);
+            }
+            _lastSavedState = bytes;
         }
     }
 
-    private static bool TryReadCompatibleStateVersion(string path, out int schemaVersion)
+    private static void ThrowIfUnavailable(StateFile file)
     {
-        schemaVersion = 0;
-        if (!File.Exists(path))
+        if (file.Status == StateFileStatus.Unavailable)
         {
-            return false;
+            throw new IOException("暂时无法读取状态文件。", file.Error);
         }
+    }
+
+    private static byte[] SerializeState(AppState state)
+    {
+        MigrateAndNormalize(state);
+        MigrateLegacyTodoDates(state, DateTime.Today);
+        return SerializeNormalizedState(state);
+    }
+
+    private static byte[] SerializeNormalizedState(AppState state)
+    {
         try
         {
-            using var stream = File.OpenRead(path);
-            var state = JsonSerializer.Deserialize<AppState>(stream, JsonOptions);
-            if (state is null || state.SchemaVersion <= 0)
-            {
-                return false;
-            }
-            schemaVersion = state.SchemaVersion;
-            return true;
+            return JsonSerializer.SerializeToUtf8Bytes(state, JsonOptions);
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException)
+        catch (ArgumentException exception)
         {
-            return false;
+            throw new InvalidDataException("设置包含无法保存的数值。", exception);
         }
     }
 
-    public string CreateBackup(AppState state)
+    private enum StateFileStatus { Missing, Unavailable, Invalid, Valid }
+
+    private sealed class FiniteDoubleConverter : JsonConverter<double>
     {
-        Save(state);
-        return CopyStateToBackup("widgets");
+        public override double Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+        {
+            if (reader.TokenType != JsonTokenType.Number || !reader.TryGetDouble(out var value) || !double.IsFinite(value))
+            {
+                throw new JsonException("设置数值必须是有限数字。");
+            }
+            return value;
+        }
+
+        public override void Write(Utf8JsonWriter writer, double value, JsonSerializerOptions options) =>
+            writer.WriteNumberValue(value);
+    }
+
+    private readonly record struct StateFile(
+        StateFileStatus Status,
+        byte[]? Bytes = null,
+        AppState? State = null,
+        int SchemaVersion = 0,
+        bool MigratedDates = false,
+        Exception? Error = null,
+        byte[]? MigratedBytes = null);
+
+    public string CreateBackup(AppState state, bool allowWhenReloadRequired = true)
+    {
+        WaitForDeferredSave();
+        lock (_saveGate)
+        {
+            if (_loadedFromUnavailableState && allowWhenReloadRequired)
+            {
+                return WriteBackup("widgets", SerializeState(state));
+            }
+            SaveCore(() => SerializeState(state));
+            return WriteBackup("widgets", _lastSavedState!);
+        }
     }
 
     public IReadOnlyList<string> ListBackups()
@@ -221,35 +397,45 @@ public sealed class LocalStateStore
     /// </summary>
     public static BackupSummary? DescribeBackup(string backupPath)
     {
-        try
-        {
-            var state = DeserializeAndMigrate(File.ReadAllText(backupPath), out _);
-            var informationCards = DesktopExperienceRules.ComponentOrder
-                .Where(kind => kind is DesktopComponentKind.TimeDate or DesktopComponentKind.Greeting
-                    or DesktopComponentKind.Weather or DesktopComponentKind.Performance)
-                .Count(kind => state.DesktopExperience.GetComponent(kind).IsVisible);
-            var cards = informationCards + state.TodoWidgets.Count + state.NoteWidgets.Count + state.FileBoxes.Count;
-            return new BackupSummary(
-                DesktopExperienceRules.GetPresetName(state.DesktopExperience.ActivePreset),
-                cards,
-                state.Dock.PinnedApps.Count);
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
-            or JsonException or InvalidOperationException or InvalidDataException)
+        if (ReadStateFile(backupPath).State is not { } state)
         {
             return null;
         }
+        var informationCards = DesktopExperienceRules.ComponentOrder
+            .Where(kind => kind is DesktopComponentKind.TimeDate or DesktopComponentKind.Greeting
+                or DesktopComponentKind.Weather or DesktopComponentKind.Performance)
+            .Count(kind => state.DesktopExperience.GetComponent(kind).IsVisible);
+        var cards = informationCards + state.TodoWidgets.Count + state.NoteWidgets.Count + state.FileBoxes.Count;
+        return new BackupSummary(
+            DesktopExperienceRules.GetPresetName(state.DesktopExperience.ActivePreset),
+            cards,
+            state.Dock.PinnedApps.Count);
     }
 
     /// <summary>
-    /// Validates a backup and queues it; it replaces the current state on the next
-    /// <see cref="Load"/>, after the running app has saved and exited.
+    /// Validates a backup and queues it for the next <see cref="Load"/>.
+    /// If supplied, the current state is backed up before the restore is queued.
     /// </summary>
-    public void ScheduleRestore(string backupPath)
+    public void ScheduleRestore(string backupPath, AppState? currentState = null)
     {
-        DeserializeAndMigrate(File.ReadAllText(backupPath), out _);
-        Directory.CreateDirectory(DataDirectory);
-        File.Copy(backupPath, PendingRestorePath, true);
+        WaitForDeferredSave();
+        lock (_saveGate)
+        {
+            var backup = ReadStateFile(backupPath);
+            ThrowIfUnavailable(backup);
+            if (backup.Error is { } error)
+            {
+                ExceptionDispatchInfo.Throw(error);
+            }
+            if (currentState is not null)
+            {
+                WriteBackup("widgets", SerializeState(currentState));
+            }
+            Directory.CreateDirectory(DataDirectory);
+            var temporaryPath = PendingRestorePath + ".tmp";
+            File.WriteAllBytes(temporaryPath, backup.Bytes!);
+            File.Move(temporaryPath, PendingRestorePath, true);
+        }
     }
 
     private void ApplyPendingRestore()
@@ -261,14 +447,22 @@ public sealed class LocalStateStore
 
         try
         {
-            if (!TryLoad(PendingRestorePath, out _, out _))
+            var pending = ReadStateFile(PendingRestorePath);
+            if (pending.Status == StateFileStatus.Invalid)
             {
                 File.Delete(PendingRestorePath);
                 return;
             }
-            if (File.Exists(StatePath))
+            if (pending.State is null)
             {
-                CopyStateToBackup("widgets-before-restore");
+                return;
+            }
+            // Before replacing the primary, prove the original can be archived.
+            var primary = ReadStateFile(StatePath);
+            ThrowIfUnavailable(primary);
+            if (primary.Bytes is { } bytes)
+            {
+                WriteBackup("widgets-before-restore", bytes);
             }
             File.Move(PendingRestorePath, StatePath, true);
         }
@@ -278,7 +472,28 @@ public sealed class LocalStateStore
         }
     }
 
-    private string CopyStateToBackup(string prefix, string? sourcePath = null)
+    private void TryArchiveState(string prefix, byte[] bytes)
+    {
+        try
+        {
+            ArchiveState(prefix, bytes);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            // Loading can continue. Saving over these bytes still requires a successful archive.
+        }
+    }
+
+    private void ArchiveState(string prefix, byte[] bytes)
+    {
+        if (_stateArchive is { } archive && bytes.AsSpan().SequenceEqual(archive.Bytes) && File.Exists(archive.Path))
+        {
+            return;
+        }
+        _stateArchive = (bytes, WriteBackup(prefix, bytes));
+    }
+
+    private string WriteBackup(string prefix, byte[] bytes)
     {
         Directory.CreateDirectory(BackupDirectory);
         var stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
@@ -287,26 +502,20 @@ public sealed class LocalStateStore
         {
             path = Path.Combine(BackupDirectory, $"{prefix}-{stamp}-{suffix}.json");
         }
-        File.Copy(sourcePath ?? StatePath, path);
-        // File.Copy preserves the source file's old timestamp; stamp creation time now so
-        // PruneAutomaticBackups never mistakes a fresh migration snapshot for the oldest file.
-        File.SetLastWriteTimeUtc(path, DateTime.UtcNow);
+        var temporaryPath = path + ".tmp";
+        File.WriteAllBytes(temporaryPath, bytes);
+        File.Move(temporaryPath, path);
         if (AutomaticBackupPrefixes.Any(autoPrefix =>
                 string.Equals(prefix + "-", autoPrefix, StringComparison.Ordinal)))
         {
-            PruneAutomaticBackups();
+            PruneAutomaticBackups(path);
         }
         return path;
     }
 
-    private void PruneAutomaticBackups()
+    private void PruneAutomaticBackups(string newBackup)
     {
-        if (!Directory.Exists(BackupDirectory))
-        {
-            return;
-        }
-
-        var stale = Directory.EnumerateFiles(BackupDirectory, "*.json")
+        var automatic = Directory.EnumerateFiles(BackupDirectory, "*.json")
             .Where(file =>
             {
                 var name = Path.GetFileName(file);
@@ -315,9 +524,22 @@ public sealed class LocalStateStore
             })
             .OrderByDescending(File.GetLastWriteTimeUtc)
             .ThenByDescending(file => file, StringComparer.OrdinalIgnoreCase)
-            .Skip(MaximumAutomaticBackups)
             .ToArray();
+        if (automatic.Length <= MaximumAutomaticBackups)
+        {
+            return;
+        }
 
+        // Keep the new archive even if the clock moved backwards, and one readable future
+        // original for opening again after upgrading.
+        var futureBackup = IsNewerSchemaBackup(newBackup) ? newBackup : automatic.FirstOrDefault(file =>
+            IsNewerSchemaBackup(file) && ReadStateFile(file).SchemaVersion > AppState.CurrentSchemaVersion);
+        var reserved = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { newBackup };
+        if (futureBackup is not null)
+        {
+            reserved.Add(futureBackup);
+        }
+        var stale = automatic.Where(file => !reserved.Contains(file)).Skip(MaximumAutomaticBackups - reserved.Count);
         foreach (var file in stale)
         {
             try
@@ -329,6 +551,9 @@ public sealed class LocalStateStore
             }
         }
     }
+
+    private static bool IsNewerSchemaBackup(string path) =>
+        Path.GetFileName(path).StartsWith(NewerSchemaBackup + "-", StringComparison.OrdinalIgnoreCase);
 
     public static AppState CreateDefault()
     {
@@ -364,13 +589,73 @@ public sealed class LocalStateStore
         ("#E8F7F2", "#1F4A40", "#16352D")
     ];
 
-    private static AppState DeserializeAndMigrate(string json, out int storedVersion)
+    private static void ValidateEntries<T>(List<T>? entries, string field) where T : class
     {
-        var state = JsonSerializer.Deserialize<AppState>(json, JsonOptions)
-            ?? throw new JsonException("状态文件没有内容");
-        storedVersion = state.SchemaVersion;
-        MigrateAndNormalize(state);
-        return state;
+        if (entries?.Contains(null!) == true)
+        {
+            throw new InvalidDataException($"设置中的 {field} 含有空条目。");
+        }
+    }
+
+    private static void ValidatePlacement(WindowPlacement? placement, string field)
+    {
+        if (placement is null)
+        {
+            throw new InvalidDataException($"设置中的 {field} 缺少位置数据。");
+        }
+        ValidateEntries(placement.DisplayLayouts, nameof(WindowPlacement.DisplayLayouts));
+        placement.DisplayLayouts ??= [];
+    }
+
+    private static void ValidateWidgetState(AppState state)
+    {
+        ValidateEntries(state.TodoWidgets, nameof(AppState.TodoWidgets));
+        ValidateEntries(state.NoteWidgets, nameof(AppState.NoteWidgets));
+        ValidateEntries(state.InformationWidgets, nameof(AppState.InformationWidgets));
+        ValidateEntries(state.FileBoxes, nameof(AppState.FileBoxes));
+        foreach (var todo in state.TodoWidgets)
+        {
+            ValidatePlacement(todo.Placement, nameof(AppState.TodoWidgets));
+            ValidateEntries(todo.Items, nameof(TodoWidgetState.Items));
+            todo.Items ??= [];
+            foreach (var item in todo.Items)
+            {
+                item.LinkedPaths ??= [];
+            }
+        }
+        foreach (var note in state.NoteWidgets)
+        {
+            ValidatePlacement(note.Placement, nameof(AppState.NoteWidgets));
+        }
+        foreach (var information in state.InformationWidgets)
+        {
+            ValidatePlacement(information.Placement, nameof(AppState.InformationWidgets));
+        }
+        foreach (var box in state.FileBoxes)
+        {
+            ValidatePlacement(box.Placement, nameof(AppState.FileBoxes));
+            ValidateEntries(box.Items, nameof(FileBoxState.Items));
+            box.Items ??= [];
+        }
+
+        ValidateEntries(state.DesktopExperience?.Components, nameof(DesktopExperienceState.Components));
+        foreach (var component in state.DesktopExperience?.Components ?? [])
+        {
+            if (component.Placement is { } placement)
+            {
+                ValidatePlacement(placement, nameof(DesktopExperienceState.Components));
+            }
+        }
+        foreach (var profile in state.MultiScreen?.Screens?.Values ?? Enumerable.Empty<ScreenProfileState>())
+        {
+            foreach (var component in profile?.Experience?.Components ?? [])
+            {
+                if (component?.Placement is { } placement)
+                {
+                    ValidatePlacement(placement, nameof(DesktopExperienceState.Components));
+                }
+            }
+        }
     }
 
     private static int MigrateLegacyTodoDates(AppState state, DateTime fallbackDate) =>
@@ -383,6 +668,7 @@ public sealed class LocalStateStore
         state.NoteWidgets ??= [];
         state.InformationWidgets ??= [];
         state.FileBoxes ??= [];
+        ValidateWidgetState(state);
 
         if (state.SchemaVersion < 2)
         {
@@ -912,6 +1198,10 @@ public sealed class LocalStateStore
                 box.DesktopCategory = DesktopGroupCategory.None;
             }
             box.CollectExtensions = FileMappingService.NormalizeExtensions(box.CollectExtensions);
+            box.AutoCollectExcludedPaths = (box.AutoCollectExcludedPaths ?? [])
+                .Where(path => !string.IsNullOrWhiteSpace(path))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
             if (box.EdgeDockSide is { } dockSide && !Enum.IsDefined(dockSide))
             {
                 box.EdgeDockSide = null;

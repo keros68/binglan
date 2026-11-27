@@ -1,3 +1,6 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
 namespace BingLan.Core.Models;
 
 public sealed class LauncherGroupState
@@ -5,10 +8,17 @@ public sealed class LauncherGroupState
     public Guid Id { get; set; } = Guid.NewGuid();
     public string Name { get; set; } = string.Empty;
     public List<LauncherGroupMember> Members { get; set; } = [];
+
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? ExtensionData { get; set; }
 }
 
 public sealed record LauncherGroupMember(
-    string Key, string? FallbackPath = null, string? FallbackName = null, DockPinnedApp? FallbackPin = null);
+    string Key, string? FallbackPath = null, string? FallbackName = null, DockPinnedApp? FallbackPin = null)
+{
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? ExtensionData { get; init; }
+}
 
 public static class LauncherGroupRules
 {

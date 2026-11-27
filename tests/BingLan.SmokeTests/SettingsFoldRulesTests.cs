@@ -85,6 +85,7 @@ internal static class SettingsFoldRulesTests
             ("DockStartMenuButtonCheckBox", SettingsFoldRules.DockAdvancedFold),
             ("DockLauncherButtonCheckBox", SettingsFoldRules.DockAdvancedFold),
             ("DockShowDesktopButtonCheckBox", SettingsFoldRules.DockAdvancedFold),
+            ("DockQuickSettingsButtonCheckBox", SettingsFoldRules.DockAdvancedFold),
             ("DockBottomGapSlider", SettingsFoldRules.DockAdvancedFold),
             ("ToggleWidgetsHotkeyButton", SettingsFoldRules.GeneralMoreFold),
             ("QuickTodoHotkeyButton", SettingsFoldRules.GeneralMoreFold),

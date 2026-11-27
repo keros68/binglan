@@ -9,7 +9,6 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using BingLan.App;
 using BingLan.App.Windows;
-using BingLan.Core.Dock;
 using BingLan.Core.Services;
 using Application = System.Windows.Application;
 using Button = System.Windows.Controls.Button;
@@ -446,14 +445,14 @@ internal static class LauncherPreviewCapture
         var dock = app.Windows.OfType<IceBlueDockWindow>().Single();
         var box = app.Windows.OfType<FileBoxWindow>().Single(window => window.State.Title == "预览验收盒");
         var row = (Panel)dock.FindName("ItemPanel");
-        Button? button = null;
+        IceBlueDockWindow.DockItemButton? button = null;
         until(() =>
         {
-            button = row.Children.OfType<Button>().FirstOrDefault(candidate =>
-                candidate.Tag is DockItem item && item.Pinned?.TargetPath?.EndsWith("-Dock验收.txt", StringComparison.Ordinal) == true);
+            button = row.Children.OfType<IceBlueDockWindow.DockItemButton>().FirstOrDefault(candidate =>
+                candidate.Item?.Pinned?.TargetPath?.EndsWith("-Dock验收.txt", StringComparison.Ordinal) == true);
             return button is not null;
         }, "Dock 验收固定项未载入");
-        var target = ((DockItem)button!.Tag).Pinned!.TargetPath!;
+        var target = button!.Item!.Pinned!.TargetPath!;
         var original = File.ReadAllBytes(target);
         if (box.State.Items.Any(item => item.Path == target))
         {

@@ -19,7 +19,7 @@ internal static class TaskbarEdgeGuard
     private const uint MonitorDefaultToNull = 0;
     private const uint MonitorDefaultToNearest = 2;
 
-    internal sealed record NativeTaskbarLayout(DockEdge Edge, CoreRect Bounds, bool AutoHidden);
+    internal sealed record NativeTaskbarLayout(DockEdge Edge, CoreRect Bounds, bool AutoHidden, nint Window = 0);
 
     // Shared by the top bar's placement and foreground checks. Half a second bounds
     // enumeration cost; owning layout notifications invalidate before repositioning.
@@ -47,7 +47,7 @@ internal static class TaskbarEdgeGuard
                 };
                 if (SHAppBarMessage(AbmGetAutoHideBarEx, ref data) == window)
                 {
-                    layout = new NativeTaskbarLayout((DockEdge)edge, bounds, true);
+                    layout = new NativeTaskbarLayout((DockEdge)edge, bounds, true, window);
                     break;
                 }
             }
@@ -61,7 +61,7 @@ internal static class TaskbarEdgeGuard
             if (TaskbarLayoutRules.GetEdge(bounds, monitor,
                 new CoreRect(workArea.Left, workArea.Top, workArea.Right, workArea.Bottom)) is { } confirmedEdge)
             {
-                layout = new NativeTaskbarLayout(confirmedEdge, bounds, false);
+                layout = new NativeTaskbarLayout(confirmedEdge, bounds, false, window);
                 break;
             }
         }
@@ -104,6 +104,37 @@ internal static class TaskbarEdgeGuard
 
         return null;
     }
+
+    internal static bool IsVisibleTaskbarOverlapping(MonitorSnapshot monitor, CoreRect bounds)
+    {
+        if (!bounds.HasArea)
+        {
+            return false;
+        }
+
+        // An auto-hide bar can slide across a neighboring monitor's bounds. Use its
+        // registered monitor when known, but read the moving rectangle on every check.
+        var window = GetNativeTaskbarLayout(monitor.Bounds)?.Window ?? 0;
+        if (window != 0 && DockNativeMethods.IsWindow(window))
+        {
+            return VisibleWindowOverlaps(window, bounds);
+        }
+
+        foreach (var taskbar in TaskbarAdapter.FindTaskbars())
+        {
+            if (DockNativeMethods.MonitorFromWindow(taskbar, MonitorDefaultToNearest) == monitor.MonitorHandle
+                && VisibleWindowOverlaps(taskbar, bounds))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static bool VisibleWindowOverlaps(nint window, CoreRect bounds) =>
+        DockNativeMethods.IsWindowVisible(window)
+        && DockNativeMethods.GetWindowRect(window, out var rect)
+        && new CoreRect(rect.Left, rect.Top, rect.Right, rect.Bottom).Intersects(bounds);
 
     internal static bool IsAutoHideTaskbarCollapsed(CoreRect taskbarBounds, CoreRect monitor, DockEdge edge) =>
         TaskbarAdapter.IsWindowsAutoHideOn()

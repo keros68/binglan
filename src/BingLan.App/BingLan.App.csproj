@@ -13,6 +13,21 @@
     <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
     <TieredPGO>false</TieredPGO>
   </PropertyGroup>
+  <PropertyGroup Condition="'$(TrayPanelPreview)' == 'true'">
+    <DefineConstants>$(DefineConstants);TRAY_PANEL_PREVIEW</DefineConstants>
+    <PlatformTarget>x64</PlatformTarget>
+    <TrayPanelPreviewSource>../../design-lab/BingLan.TrayPanelSpike</TrayPanelPreviewSource>
+    <TrayPanelPreviewNativeOutput>$(BaseIntermediateOutputPath)tray-panel-preview/$(Configuration)/$(RuntimeIdentifier)</TrayPanelPreviewNativeOutput>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(TrayPanelPreview)' == 'true'">
+    <Compile Include="$(TrayPanelPreviewSource)/Program.cs" Link="TrayPanelPreview/Program.cs" />
+    <Compile Include="$(TrayPanelPreviewSource)/OwnTrayIcon.cs" Link="TrayPanelPreview/OwnTrayIcon.cs" />
+    <Compile Include="$(TrayPanelPreviewSource)/TrayIconArtwork.cs" Link="TrayPanelPreview/TrayIconArtwork.cs" />
+    <Compile Include="$(TrayPanelPreviewSource)/PanelWindow.cs" Link="TrayPanelPreview/PanelWindow.cs" />
+    <Page Include="$(TrayPanelPreviewSource)/PanelWindow.xaml" Link="TrayPanelPreview/PanelWindow.xaml" />
+    <Content Include="$(TrayPanelPreviewNativeOutput)/BingLan.TrayContextNative.dll"
+             Link="BingLan.TrayContextNative.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
   <ItemGroup>
     <RuntimeHostConfigurationOption Include="System.GC.ConserveMemory" Value="5" />
     <ProjectReference Include="../BingLan.Core/BingLan.Core.csproj" />
@@ -37,5 +52,12 @@
           Inputs="..\BingLan.Composition\BackdropComposition.cpp;..\BingLan.Composition\build.ps1"
           Outputs="..\BingLan.Composition\bin\Release\BingLan.Composition.dll">
     <Exec Command="pwsh -NoProfile -File &quot;$(MSBuildProjectDirectory)\..\BingLan.Composition\build.ps1&quot;" />
+  </Target>
+  <Target Name="BuildTrayPanelPreviewNative" BeforeTargets="PrepareForBuild"
+          Condition="'$(TrayPanelPreview)' == 'true' and '$(DesignTimeBuild)' != 'true'"
+          Inputs="$(TrayPanelPreviewSource)/native/TrayContextNative.cpp;$(TrayPanelPreviewSource)/native/TrayContextNative.h;$(TrayPanelPreviewSource)/native/build.ps1"
+          Outputs="$(TrayPanelPreviewNativeOutput)/BingLan.TrayContextNative.dll">
+    <Exec Command="pwsh -NoProfile -File &quot;$(TrayPanelPreviewSource)/native/build.ps1&quot; -OutputDirectory &quot;$(TrayPanelPreviewNativeOutput)&quot;"
+          WorkingDirectory="$(MSBuildProjectDirectory)" />
   </Target>
 </Project>

@@ -2,7 +2,6 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
-using System.Text;
 using System.Windows;
 using System.Windows.Interop;
 using System.Windows.Threading;
@@ -33,7 +32,7 @@ internal sealed class TaskbarAdapter : IDisposable
     private const int AutoHideRecoveryAttemptCount = 5;
     private static readonly string[] CompetingCustomizers =
         ["TranslucentTB", "TaskbarX", "RoundedTB", "StartAllBack"];
-    private static readonly HashSet<string> TaskbarClasses =
+    private static readonly string[] TaskbarClasses =
         ["Shell_TrayWnd", "Shell_SecondaryTrayWnd"];
 
     private readonly string _checkpointPath;
@@ -55,7 +54,7 @@ internal sealed class TaskbarAdapter : IDisposable
     private CancellationTokenSource? _applyCancellation;
     private CancellationTokenSource? _reconcileCancellation;
     private volatile Task? _inFlightCompetitorRollback;
-    private TaskbarXamlSession? _xamlSession;
+    private volatile TaskbarXamlSession? _xamlSession;
     private int _requestVersion;
     private uint _explorerProcessId;
     private volatile int _heldAccent;
@@ -96,6 +95,18 @@ internal sealed class TaskbarAdapter : IDisposable
     /// <summary>The user turned auto-hide off in Windows while this app held it.</summary>
     internal event Action? AutoHideTakenOver;
 
+    private static readonly Lazy<int?> WindowsUpdateRevision = new(() =>
+    {
+        try
+        {
+            return Registry.GetValue(@"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion", "UBR", null) as int?;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)
+        {
+            return null;
+        }
+    });
+
     // Looking for other taskbar tools lists processes, so the keep-alive tick leaves it to
     // its less frequent competitor check.
     internal static TaskbarEnvironment ReadEnvironment(bool lookForCompetitors = true) => new(
@@ -103,7 +114,8 @@ internal sealed class TaskbarAdapter : IDisposable
         SystemParameters.HighContrast,
         TaskbarNativeMethods.GetSystemMetrics(TaskbarNativeMethods.SmRemoteSession) != 0,
         IsSystemTransparencyEnabled(),
-        lookForCompetitors ? CompetingCustomizers.FirstOrDefault(IsRunning) : null);
+        lookForCompetitors ? CompetingCustomizers.FirstOrDefault(IsRunning) : null,
+        Environment.OSVersion.Version.Build == 26300 ? WindowsUpdateRevision.Value : null);
 
     private static bool IsRunning(string processName)
     {
@@ -120,10 +132,14 @@ internal sealed class TaskbarAdapter : IDisposable
         RecoverFromCheckpoint(checkpointPath, TaskbarPlatformOps.Live);
 
     internal static bool RecoverFromCheckpoint(string checkpointPath, TaskbarPlatformOps ops)
+        => RecoverFromCheckpoint(checkpointPath, ops, null);
+
+    private static bool RecoverFromCheckpoint(
+        string checkpointPath, TaskbarPlatformOps ops, TaskbarXamlSession? liveSession)
     {
         if (!File.Exists(checkpointPath))
         {
-            return true;
+            return liveSession is null || liveSession.Restore() == TaskbarXamlRestoreResult.Restored;
         }
 
         TaskbarCheckpoint? checkpoint;
@@ -138,6 +154,7 @@ internal sealed class TaskbarAdapter : IDisposable
 
         if (checkpoint is null)
         {
+            if (liveSession is not null && liveSession.Restore() != TaskbarXamlRestoreResult.Restored) return false;
             // Unreadable or from a newer version: undo the one change that is always
             // safe to undo and keep the file aside instead of pretending success.
             // The file is only set aside once that undo worked, so a failed attempt is
@@ -149,7 +166,7 @@ internal sealed class TaskbarAdapter : IDisposable
             return false;
         }
 
-        var restored = Restore(checkpoint, ops);
+        var restored = Restore(checkpointPath, checkpoint, ops, liveSession);
         if (restored)
         {
             TryDelete(checkpointPath);
@@ -247,11 +264,23 @@ internal sealed class TaskbarAdapter : IDisposable
                     cancellationToken);
                 break;
             case TaskbarMode.Transparent:
-                var xamlSession = new TaskbarXamlSession(Path.GetDirectoryName(_checkpointPath)!);
+                var explorer = _ops.ReadTaskbarIdentity().ProcessId;
+                if (explorer == 0)
+                {
+                    SetStatus(TaskbarMode.SystemDefault, "尚未找到 Windows 任务栏，保持系统默认");
+                    return;
+                }
+                var xamlSession = new TaskbarXamlSession(Path.GetDirectoryName(_checkpointPath)!, explorer);
                 _xamlSession = xamlSession;
                 // The record says what to undo before the effect itself is turned on;
                 // the effect is only claimed when the app was the one switching it on.
                 var originalTransparency = _ops.IsSystemTransparencyEnabled() ? (bool?)null : false;
+                var checkpoint = new TaskbarCheckpoint
+                {
+                    XamlSessionName = xamlSession.MappingName,
+                    XamlExplorerProcessId = explorer,
+                    OriginalSystemTransparency = originalTransparency
+                };
                 var prepOutcome = await Task.Run(() =>
                 {
                     lock (_systemWriteLock)
@@ -260,11 +289,7 @@ internal sealed class TaskbarAdapter : IDisposable
                         {
                             return (Superseded: true, TransparencyOk: false);
                         }
-                        WriteCheckpoint(new TaskbarCheckpoint
-                        {
-                            XamlSessionName = xamlSession.MappingName,
-                            OriginalSystemTransparency = originalTransparency
-                        });
+                        WriteCheckpoint(checkpoint);
                         if (originalTransparency == false && !_ops.TryWriteSystemTransparency(true))
                         {
                             return (Superseded: false, TransparencyOk: false);
@@ -284,12 +309,15 @@ internal sealed class TaskbarAdapter : IDisposable
                 }
                 cancellationToken.ThrowIfCancellationRequested();
                 var taskbarCount = await Task.Run(() => _ops.FindTaskbars().Count, cancellationToken);
+                if (_ops.ReadTaskbarIdentity().ProcessId != explorer)
+                    throw new InvalidOperationException("资源管理器正在重建任务栏");
                 await xamlSession.StartAsync(taskbarCount, cancellationToken);
                 cancellationToken.ThrowIfCancellationRequested();
                 if (_disposed || version != Volatile.Read(ref _requestVersion)) return;
+                if (xamlSession.ExplorerProcessId != explorer || _ops.ReadTaskbarIdentity().ProcessId != explorer)
+                    throw new InvalidOperationException("资源管理器正在重建任务栏");
                 EnsureMessageWindow();
-                TaskbarNativeMethods.GetWindowThreadProcessId(
-                    TaskbarNativeMethods.FindWindowW("Shell_TrayWnd", null), out _explorerProcessId);
+                _explorerProcessId = explorer;
                 _keepAliveTimer.Start();
                 SetStatus(mode, string.Empty);
                 break;
@@ -476,32 +504,76 @@ internal sealed class TaskbarAdapter : IDisposable
     private bool RestoreActive()
     {
         StopReapplying();
-        _xamlSession?.Dispose();
-        _xamlSession = null;
         ActiveMode = TaskbarMode.SystemDefault;
+        return RestoreActiveCore();
+    }
+
+    private Task<bool> RestoreActiveAsync()
+    {
+        StopReapplying();
+        ActiveMode = TaskbarMode.SystemDefault;
+        return Task.Run(RestoreActiveCore);
+    }
+
+    private bool RestoreActiveCore()
+    {
         lock (_systemWriteLock)
         {
-            return RecoverFromCheckpoint(_checkpointPath, _ops);
+            var session = _xamlSession;
+            try
+            {
+                return RecoverFromCheckpoint(_checkpointPath, _ops, session);
+            }
+            finally
+            {
+                // Keep the stopped lease while this host's native connection is still
+                // in flight, so a later request also waits for that call to finish.
+                if (session?.HasPendingConnection != true || _disposed)
+                {
+                    session?.Dispose();
+                    _xamlSession = null;
+                }
+            }
         }
     }
 
-    private async Task<bool> RestoreActiveAsync()
+    private static bool Restore(string checkpointPath, TaskbarCheckpoint checkpoint,
+        TaskbarPlatformOps ops, TaskbarXamlSession? liveSession)
     {
-        StopReapplying();
-        _xamlSession?.Dispose();
-        _xamlSession = null;
-        ActiveMode = TaskbarMode.SystemDefault;
-        return await Task.Run(() =>
+        if (checkpoint.XamlSessionName is { } name)
         {
-            lock (_systemWriteLock)
+            TaskbarXamlRestoreResult result;
+            if (liveSession is not null && liveSession.MappingName == name)
             {
-                return RecoverFromCheckpoint(_checkpointPath, _ops);
+                result = liveSession.Restore(ops.IsProcessRunning);
             }
-        });
-    }
+            else if (checkpoint.XamlRestoreFailed && checkpoint.XamlExplorerProcessId is { } failedExplorer)
+            {
+                if (ops.IsProcessRunning(failedExplorer)) return false;
+                result = TaskbarXamlRestoreResult.Restored;
+            }
+            else
+            {
+                result = TaskbarXamlSession.Restore(name);
+            }
 
-    private static bool Restore(TaskbarCheckpoint checkpoint, TaskbarPlatformOps ops)
-    {
+            if (result == TaskbarXamlRestoreResult.Failed)
+            {
+                var explorer = liveSession?.ExplorerProcessId ?? checkpoint.XamlExplorerProcessId
+                    ?? ops.ReadTaskbarIdentity().ProcessId;
+                checkpoint.XamlExplorerProcessId = explorer != 0 ? explorer : null;
+                checkpoint.XamlRestoreFailed = true;
+                WriteCheckpoint(checkpointPath, checkpoint);
+                return false;
+            }
+            if (result == TaskbarXamlRestoreResult.Unconfirmed) return false;
+
+            // A later system transparency retry no longer depends on the XAML lease.
+            checkpoint.XamlExplorerProcessId = null;
+            checkpoint.XamlRestoreFailed = false;
+            checkpoint.XamlSessionName = null;
+            WriteCheckpoint(checkpointPath, checkpoint);
+        }
         var restored = true;
         if (checkpoint.AutoHideApplied && !ops.HasTaskbarWindow())
         {
@@ -510,8 +582,6 @@ internal sealed class TaskbarAdapter : IDisposable
             restored = false;
         }
         var plan = TaskbarRecovery.Plan(checkpoint, ops.GetAutoHide());
-        if (checkpoint.XamlSessionName is { } name)
-            restored &= TaskbarXamlSession.Restore(name);
         if (plan.ResetTransparency)
         {
             restored &= ops.TrySetAccent(ops.FindTaskbars(), TaskbarNativeMethods.AccentDisabled, out _);
@@ -638,10 +708,7 @@ internal sealed class TaskbarAdapter : IDisposable
             _applyCancellation?.Cancel();
             _reconcileCancellation?.Cancel();
             StopReapplying();
-            var usedXaml = _xamlSession is not null;
-            _xamlSession?.Dispose();
-            _xamlSession = null;
-            if (!usedXaml)
+            if (_xamlSession is null)
             {
                 // Only the effect this app switched on goes back; the other tool keeps the taskbar.
                 bool needsTransparencyRollback;
@@ -685,6 +752,13 @@ internal sealed class TaskbarAdapter : IDisposable
                     });
                 }
             }
+            else
+            {
+                _ = RestoreRuntimeAsync(
+                    $"{customizer} 正在调整任务栏，冰蓝桌面已停止调整",
+                    $"{customizer} 正在调整任务栏，冰蓝桌面已停止调整，等待任务栏恢复确认");
+                return;
+            }
             SetStatus(TaskbarMode.SystemDefault, $"{customizer} 正在调整任务栏，冰蓝桌面已停止调整");
             return;
         }
@@ -707,24 +781,18 @@ internal sealed class TaskbarAdapter : IDisposable
             if (!compatibility.IsSupported)
             {
                 StopReapplying();
-                _xamlSession?.Dispose();
-                _xamlSession = null;
-                SetStatus(TaskbarMode.SystemDefault, compatibility.Reason);
+                _ = RestoreRuntimeAsync(compatibility.Reason, "已停止调整，等待任务栏恢复确认");
                 return;
             }
-            TaskbarNativeMethods.GetWindowThreadProcessId(
-                TaskbarNativeMethods.FindWindowW("Shell_TrayWnd", null), out var explorer);
-            if (explorer != 0 && explorer != _explorerProcessId)
+            if (TryReconnectXaml())
             {
-                _ = ApplyAsync(TaskbarMode.Transparent);
                 return;
             }
             if (_xamlSession?.IsActive != true && _breaker.RecordFailure())
             {
                 StopReapplying();
-                _xamlSession?.Dispose();
-                _xamlSession = null;
-                SetStatus(TaskbarMode.SystemDefault, "任务栏背景不可用，已停止调整；下次启动时会核对恢复状态");
+                _ = RestoreRuntimeAsync("任务栏背景不可用，已恢复系统默认",
+                    "任务栏背景不可用，已停止调整；下次启动时会核对恢复状态");
             }
             else if (_xamlSession?.IsActive == true) _breaker.RecordSuccess();
             return;
@@ -829,7 +897,7 @@ internal sealed class TaskbarAdapter : IDisposable
             if (_xamlSession is not null && ActiveMode == TaskbarMode.Transparent
                 && (uint)message == _taskbarCreatedMessage)
             {
-                _ = ApplyAsync(TaskbarMode.Transparent);
+                TryReconnectXaml();
             }
             else if (HoldsAccent)
             {
@@ -850,6 +918,15 @@ internal sealed class TaskbarAdapter : IDisposable
             }
         }
         return 0;
+    }
+
+    private bool TryReconnectXaml()
+    {
+        var explorer = _ops.ReadTaskbarIdentity().ProcessId;
+        if (explorer == 0 || explorer == _explorerProcessId) return false;
+        _explorerProcessId = explorer;
+        _ = ApplyAsync(TaskbarMode.Transparent);
+        return true;
     }
 
     private void CheckAutoHideTakeover()
@@ -1028,6 +1105,20 @@ internal sealed class TaskbarAdapter : IDisposable
             ? (window, processId) : default;
     }
 
+    internal static bool IsProcessRunning(uint processId)
+    {
+        try
+        {
+            using var process = Process.GetProcessById((int)processId);
+            return !process.HasExited;
+        }
+        catch (ArgumentException) { return false; }
+        catch (Exception exception) when (exception is InvalidOperationException or Win32Exception)
+        {
+            return true;
+        }
+    }
+
     private void SetStatus(TaskbarMode mode, string problem)
     {
         ActiveMode = mode;
@@ -1035,12 +1126,14 @@ internal sealed class TaskbarAdapter : IDisposable
         StatusChanged?.Invoke();
     }
 
-    private void WriteCheckpoint(TaskbarCheckpoint checkpoint)
+    private void WriteCheckpoint(TaskbarCheckpoint checkpoint) => WriteCheckpoint(_checkpointPath, checkpoint);
+
+    private static void WriteCheckpoint(string checkpointPath, TaskbarCheckpoint checkpoint)
     {
-        Directory.CreateDirectory(Path.GetDirectoryName(_checkpointPath)!);
-        var temporaryPath = _checkpointPath + ".tmp";
+        Directory.CreateDirectory(Path.GetDirectoryName(checkpointPath)!);
+        var temporaryPath = checkpointPath + ".tmp";
         File.WriteAllText(temporaryPath, checkpoint.Serialize());
-        File.Move(temporaryPath, _checkpointPath, true);
+        File.Move(temporaryPath, checkpointPath, true);
     }
 
     private static TaskbarCheckpoint? ReadCheckpoint(string path)
@@ -1181,17 +1274,18 @@ internal sealed class TaskbarAdapter : IDisposable
     internal static List<nint> FindTaskbars()
     {
         var taskbars = new List<nint>();
-        TaskbarNativeMethods.EnumWindows((window, _) =>
+        var desktop = DockNativeMethods.GetDesktopWindow();
+        foreach (var className in TaskbarClasses)
         {
-            var className = new StringBuilder(64);
-            if (TaskbarNativeMethods.GetClassNameW(window, className, className.Capacity) > 0
-                && TaskbarClasses.Contains(className.ToString())
-                && IsExplorerWindow(window))
+            nint window = 0;
+            while ((window = NativeMethods.FindWindowExW(desktop, window, className, null)) != 0)
             {
-                taskbars.Add(window);
+                if (IsExplorerWindow(window))
+                {
+                    taskbars.Add(window);
+                }
             }
-            return true;
-        }, 0);
+        }
         return taskbars;
     }
 
@@ -1257,6 +1351,7 @@ internal sealed class TaskbarPlatformOps
     internal Func<bool, bool> SetAutoHide { get; init; } = TaskbarAdapter.SetAutoHide;
     internal Func<bool> HasTaskbarWindow { get; init; } = TaskbarAdapter.HasTaskbarWindow;
     internal Func<(nint Window, uint ProcessId)> ReadTaskbarIdentity { get; init; } = TaskbarAdapter.ReadTaskbarIdentity;
+    internal Func<uint, bool> IsProcessRunning { get; init; } = TaskbarAdapter.IsProcessRunning;
     internal Func<bool> IsSystemTransparencyEnabled { get; init; } = TaskbarAdapter.IsSystemTransparencyEnabled;
     internal Func<bool, bool> TryWriteSystemTransparency { get; init; } = TaskbarAdapter.TryWriteSystemTransparency;
     internal Func<bool, TaskbarEnvironment> ReadEnvironment { get; init; } = TaskbarAdapter.ReadEnvironment;

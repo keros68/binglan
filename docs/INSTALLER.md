@@ -9,7 +9,7 @@ git tag v0.6.0
 git push origin v0.6.0
 ```
 
-草稿的发布说明补写后转为正式发布：`gh release edit v0.6.0 --notes-file <说明文件> --draft=false`。在 Actions 页面手动运行“发布”并填写版本号只打包、把产物保存为构建附件，不建立 Release，用于试跑。本地构建仍可用下面的命令。
+标签构建的附件保留 30 天。重试发布作业会核对同标签草稿的附件并补齐缺失文件。补写发布说明后可运行 `gh release edit v0.6.0 --notes-file <说明文件> --draft=false` 正式发布。在 Actions 页面手动运行“发布”并填写版本号，可运行测试并生成试用包，构建附件保留 3 天。
 
 ## 构建
 
@@ -23,6 +23,14 @@ pwsh -NoProfile -File .\installer\build.ps1 -Version 0.6.0
 
 zip 版内容与安装后的程序目录一致（程序文件、`使用说明.md`、`字体许可`），解压到任意文件夹后运行其中的 `BingLan.exe` 即可，不需要管理员权限，不创建快捷方式。个人数据与安装版一样保存在 `%LOCALAPPDATA%\BingLanWidgets`，两种版本可互换使用、配置不丢；单实例门禁决定了免安装版和已安装版不能同时运行。应用内的“下载并安装”启动的是安装程序，会把免安装使用变成安装版；免安装版更新时到 Releases 重新下载、解压覆盖。没有卸载流程：删除文件夹前先退出程序，若开启了“登录时启动”先在设置里关闭；任务栏或桌面图标未恢复时运行一次 `BingLan.exe --restore-taskbar`，彻底清理个人数据时删除 `%LOCALAPPDATA%\BingLanWidgets`。
 
+### 轻量便携包
+
+```powershell
+pwsh -NoProfile -File .\installer\build.ps1 -Version 0.6.5 -FrameworkDependentPortable
+```
+
+生成 `installer\bin\BingLan-0.6.5-portable-framework-dependent.zip`。此构建使用 .NET 10 SDK 和原生组件的构建工具。安装 [.NET 10 Windows Desktop Runtime x64](https://dotnet.microsoft.com/download/dotnet/10.0) 后，可解压并运行 `BingLan.exe`。
+
 ## 安装程序行为
 
 - 安装到 `%LOCALAPPDATA%\Programs\BingLan`，不需要管理员权限，不写入 `Program Files` 或 `HKLM`；要求 Windows 11 x64，Windows 10 版本 2004（Build 19041）及以上也可安装，任务栏样式已接入但尚未经 Windows 10 真机验证。
@@ -31,6 +39,7 @@ zip 版内容与安装后的程序目录一致（程序文件、`使用说明.md
 - 安装目录附带面向用户的 `使用说明.md`，开始菜单提供“冰蓝桌面使用说明”入口。
 - 卸载入口有三处：设置中心“通用”页“退出”分组中的“卸载冰蓝桌面”、开始菜单“卸载冰蓝桌面”，以及 Windows 设置 > 应用 > 已安装的应用。设置中心的入口只在程序目录中有 `unins000.exe` 时显示（免安装版和测试模式不显示），点击后先打开卸载程序，再正常退出冰蓝桌面（保存状态并恢复任务栏和桌面图标）；卸载程序打开失败时在设置页说明原因并指向 Windows 设置。
 - 安装或覆盖安装（更新）前，除结束本安装位置运行中的冰蓝桌面外，还会结束当前用户下从其他路径运行的其他 `BingLan` 进程并逐个等待退出，避免单实例互斥锁阻止新版本启动；覆盖安装时再运行 `--restore-taskbar` 恢复任务栏和桌面图标后替换文件。恢复未完成时检查点保留，新版本启动时再次恢复。
+- 覆盖安装先备份原安装目录，再按文件名和 SHA-256 清理与 v0.2.63、v0.2.64 旧包一致的运行库。安装完成后校验全部程序文件。校验通过后可启动新版本，校验失败时恢复原版本。恢复失败时，备份保留在 `%LOCALAPPDATA%\BingLan-Rollback-*`。
 - 安装完成后可直接启动冰蓝桌面；升级安装时由安装程序先等待原实例完成保存与恢复，超时或仍有残留时强制结束并等待进程彻底退出后再替换文件。应用内更新以 `/SILENT /SUPPRESSMSGBOXES /NORESTART /NOCLOSEAPPLICATIONS /UPDATE=1` 启动安装程序，带 `/UPDATE=1` 时装完自动重新打开冰蓝桌面。
 - 卸载时先结束本安装位置的冰蓝桌面进程（按完整路径匹配，不影响同名程序），再运行 `BingLan.exe --restore-taskbar` 撤销任务栏和清爽桌面改动，然后删除程序文件、快捷方式和启动项；恢复失败时提示用户在 Windows 设置和桌面右键菜单中手动恢复，并且不再询问删除个人数据，保留其中的恢复记录。
 - 卸载最后询问是否删除个人数据 `%LOCALAPPDATA%\BingLanWidgets`（组件、待办、便签、文件映射、设置和备份），默认“否”；选择“是”时移到回收站。静默卸载（`/SILENT`、`/VERYSILENT`）始终保留数据。

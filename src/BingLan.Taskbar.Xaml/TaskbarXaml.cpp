@@ -9,6 +9,7 @@
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include <utility>
 
 using namespace winrt;
 using namespace Windows::UI::Xaml;
@@ -172,6 +173,7 @@ namespace
         std::mutex siteMutex;
         std::mutex targetsMutex;
         std::unordered_map<InstanceHandle, std::weak_ptr<Target>> targets;
+        bool retiring = false;
 
         HRESULT __stdcall SetSite(IUnknown* site) noexcept override
         {
@@ -183,7 +185,7 @@ namespace
                     if (session && session->state) InterlockedExchange(&session->state->requested, 0);
                     return S_OK;
                 }
-                if (session) return E_UNEXPECTED;
+                if (session || retiring) return E_UNEXPECTED;
                 check_hresult(site->QueryInterface(diagnostics.put()));
                 tree = diagnostics.as<IVisualTreeService>();
                 BSTR data = nullptr;
@@ -209,12 +211,19 @@ namespace
                 auto self = new com_ptr<Tap>(get_strong());
                 HANDLE thread = CreateThread(nullptr, 0, [](void* context) -> DWORD {
                     std::unique_ptr<com_ptr<Tap>> holder(static_cast<com_ptr<Tap>*>(context));
-                    auto tap = *holder;
+                    auto tap = std::move(*holder);
+                    holder.reset();
+                    std::shared_ptr<Session> lease;
+                    {
+                        std::scoped_lock siteLock(tap->siteMutex);
+                        lease = tap->session;
+                    }
                     bool advised = false;
+                    bool subscriptionCleared = true;
                     const auto apartment = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
                     const auto waitForTargets = [&](ULONGLONG timeoutMs) noexcept {
                         const auto start = UnbiasedNowMilliseconds();
-                        while (InterlockedCompareExchange(&tap->session->state->activeTargets, 0, 0) > 0
+                        while (InterlockedCompareExchange(&lease->state->activeTargets, 0, 0) > 0
                             && UnbiasedNowMilliseconds() - start < timeoutMs)
                         {
                             Sleep(100);
@@ -223,31 +232,47 @@ namespace
                     try
                     {
                         check_hresult(apartment);
-                        check_hresult(tap->tree->AdviseVisualTreeChange(tap.as<IVisualTreeServiceCallback2>().get()));
-                        advised = true;
-                        while (tap->session->IsRequested()) Sleep(250);
-                        // Each XAML thread restores its own objects; never access them from
-                        // this worker. Bound the wait so a destroyed monitor island cannot
-                        // leave this Explorer worker spinning forever before Unadvise.
-                        waitForTargets(RestoreWaitTimeoutMilliseconds);
+                        if (lease->IsRequested())
+                        {
+                            subscriptionCleared = false;
+                            check_hresult(tap->tree->AdviseVisualTreeChange(tap.as<IVisualTreeServiceCallback2>().get()));
+                            advised = true;
+                            while (lease->IsRequested()) Sleep(250);
+                        }
                     }
-                    catch (...) { tap->session->Fail(to_hresult()); }
+                    catch (...) { lease->Fail(to_hresult()); }
+                    {
+                        std::scoped_lock siteLock(tap->siteMutex);
+                        tap->retiring = true;
+                        InterlockedExchange(&lease->state->requested, 0);
+                    }
+                    // Each XAML thread restores its own objects. Bound the wait so a
+                    // destroyed monitor island cannot keep the worker from detaching.
+                    waitForTargets(RestoreWaitTimeoutMilliseconds);
                     if (advised)
                     {
                         const auto hr = tap->tree->UnadviseVisualTreeChange(tap.as<IVisualTreeServiceCallback2>().get());
-                        if (FAILED(hr)) tap->session->Fail(hr);
+                        subscriptionCleared = SUCCEEDED(hr);
+                        if (!subscriptionCleared) lease->Fail(hr);
                     }
                     waitForTargets(PostUnadviseWaitTimeoutMilliseconds);
-                    InterlockedCompareExchange(&tap->session->state->stopped, 1, 0);
                     {
-                        std::scoped_lock siteLock(tap->siteMutex);
-                        std::scoped_lock targetsLock(tap->targetsMutex);
-                        tap->targets.clear();
-                        tap->tree = nullptr;
-                        tap->diagnostics = nullptr;
-                        tap->session.reset();
+                        com_ptr<IXamlDiagnostics> diagnostics;
+                        com_ptr<IVisualTreeService> tree;
+                        {
+                            std::scoped_lock siteLock(tap->siteMutex);
+                            std::scoped_lock targetsLock(tap->targetsMutex);
+                            tap->targets.clear();
+                            diagnostics = std::move(tap->diagnostics);
+                            tree = std::move(tap->tree);
+                            tap->session.reset();
+                        }
                     }
+                    tap = nullptr;
                     if (SUCCEEDED(apartment)) CoUninitialize();
+                    const bool restored = InterlockedCompareExchange(&lease->state->activeTargets, 0, 0) == 0;
+                    if (!restored) lease->Fail(HRESULT_FROM_WIN32(ERROR_TIMEOUT));
+                    InterlockedCompareExchange(&lease->state->stopped, subscriptionCleared && restored ? 1 : 2, 0);
                     return 0;
                 }, self, 0, nullptr);
                 if (!thread)
@@ -288,7 +313,7 @@ namespace
                     }
                     return S_OK;
                 }
-                if (!session->IsRequested() || !element.Type || !element.Name
+                if (retiring || !session->IsRequested() || !element.Type || !element.Name
                     || std::wstring_view(element.Type) != L"Taskbar.TaskbarBackground"
                     || std::wstring_view(element.Name) != L"BackgroundControl") return S_OK;
                 com_ptr<::IInspectable> object;

@@ -1,3 +1,6 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
 namespace BingLan.Core.Models;
 
 public sealed class LauncherAppearanceState
@@ -13,6 +16,9 @@ public sealed class LauncherAppearanceState
 
     public bool FollowCardLook { get; set; } = true;
     public bool UseClearGlass { get; set; }
+
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? ExtensionData { get; set; }
 
     public string SurfaceColor
     {

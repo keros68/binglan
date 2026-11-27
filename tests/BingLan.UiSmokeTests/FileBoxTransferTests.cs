@@ -54,7 +54,12 @@ internal static class FileBoxTransferTests
             Assert(Status(target) == "所选项目已在此收纳盒中",
                 "全部重复的批量转移不应显示转入成功");
 
+            var sourceIcons = (FileBoxTabIconCache)typeof(FileBoxWindow)
+                .GetField("_tabIconCache", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+                .GetValue(source)!;
+            sourceIcons.Store(moved, new System.Windows.Media.DrawingImage(), false);
             source.TransferMappingsByIdsTo([first.Id, moved.Id], target);
+            Assert(sourceIcons.Get(moved) is null, "跨盒移动后，来源应释放已移出映射的旧图标");
             pump();
             Assert(sourceState.Items.Count == 3 && sourceState.Items.Contains(first)
                 && !sourceState.Items.Contains(moved) && targetState.Items.Count == 3,

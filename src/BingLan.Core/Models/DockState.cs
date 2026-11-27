@@ -83,6 +83,8 @@ public sealed class DockState
     public bool ShowDesktopButton { get; set; } = true;
     /// <summary>Whether to show the Windows Task View button. Machine-local.</summary>
     public bool ShowTaskViewButton { get; set; }
+    /// <summary>Whether to show the Windows Quick Settings button. Machine-local.</summary>
+    public bool ShowQuickSettingsButton { get; set; }
     /// <summary>Persistent physical display identity; null follows Windows primary.</summary>
     public string? MonitorKey { get; set; }
     /// <summary>Display name retained for compatibility with older configurations.</summary>
@@ -91,6 +93,9 @@ public sealed class DockState
     public DockEdge Edge { get; set; } = DockEdge.Bottom;
     public DockVisibilityMode VisibilityMode { get; set; } = DockVisibilityMode.ReserveWorkArea;
     public List<DockPinnedApp> PinnedApps { get; set; } = [];
+
+    /// <summary>Show running pinned apps together with other running apps. Machine-local.</summary>
+    public bool ShowRunningPinsSeparately { get; set; }
 
     /// <summary>
     /// Apps whose running windows the dock leaves out, for windows that keep themselves
@@ -125,6 +130,9 @@ public sealed class DockState
     /// maximized on the dock's monitor, letting the window use the full height.
     /// </summary>
     public bool ReleaseWhenMaximized { get; set; }
+
+    /// <summary>Include background maximized windows on the Dock's monitor when releasing reserved space.</summary>
+    public bool ReleaseForBackgroundMaximizedWindow { get; set; }
 
     /// <summary>
     /// Whether smart hide keeps the dock tucked away until the pointer reaches its edge

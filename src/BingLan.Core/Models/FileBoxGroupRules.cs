@@ -175,6 +175,7 @@ public static class FileBoxGroupRules
             member.ExpandedHeight = source.ExpandedHeight;
             member.AutoCollapse = source.AutoCollapse;
             member.HoverExpand = source.HoverExpand;
+            member.ExpandUpward = source.ExpandUpward;
             member.AutoCollapseDelaySeconds = source.AutoCollapseDelaySeconds;
             member.HideWhenIdle = source.HideWhenIdle;
             member.IdleHideDelaySeconds = source.IdleHideDelaySeconds;

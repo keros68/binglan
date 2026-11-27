@@ -136,6 +136,7 @@ public static class SettingsFoldRules
         ["DockLauncherButtonCheckBox"] = DockAdvancedFold,
         ["DockShowDesktopButtonCheckBox"] = DockAdvancedFold,
         ["DockTaskViewButtonCheckBox"] = DockAdvancedFold,
+        ["DockQuickSettingsButtonCheckBox"] = DockAdvancedFold,
         ["DockAutoIconSizeCheckBox"] = DockAdvancedFold,
         ["DockHoverMagnificationScaleRow"] = DockAdvancedFold,
         ["DockHoverMagnificationScaleSlider"] = DockAdvancedFold,

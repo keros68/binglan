@@ -191,20 +191,6 @@ public static class DockQuitRules
         "exe"
     };
 
-    private static readonly string[] AuxiliaryRoleTokens =
-    [
-        "tray",
-        "helper",
-        "daemon",
-        "launcher",
-        "crashpad",
-        "crashhandler",
-        "webhelper",
-        "appex",
-        "cloudsvr",
-        "protect"
-    ];
-
     private static readonly HashSet<string> ProtectedAumids = new(StringComparer.OrdinalIgnoreCase)
     {
         "Microsoft.Windows.Explorer",
@@ -248,29 +234,16 @@ public static class DockQuitRules
     public static bool IsSharedBrowserPwa(DockItem item)
     {
         ArgumentNullException.ThrowIfNull(item);
-        var exe = PrimaryExecutableOf(item);
-        if (!IsBrowserHostExecutable(exe))
-        {
-            return false;
-        }
-        if (item.Pinned is { Arguments: { Length: > 0 } args }
-            && (args.Contains("--app-id=", StringComparison.OrdinalIgnoreCase)
-                || args.Contains("--app=", StringComparison.OrdinalIgnoreCase)))
-        {
-            return true;
-        }
-        if (item.Key.StartsWith("aumid:", StringComparison.OrdinalIgnoreCase))
-        {
-            var aumid = item.Key["aumid:".Length..];
-            if (aumid.Contains("_crx_", StringComparison.OrdinalIgnoreCase)
-                || aumid.Contains("Chrome._crx_", StringComparison.OrdinalIgnoreCase)
-                || aumid.Contains("MSEdge._crx_", StringComparison.OrdinalIgnoreCase))
-            {
-                return true;
-            }
-        }
-        return false;
+        return IsBrowserWebApp(PrimaryExecutableOf(item),
+            item.Key.StartsWith("aumid:", StringComparison.OrdinalIgnoreCase) ? item.Key["aumid:".Length..] : null,
+            item.LaunchTarget?.Arguments);
     }
+
+    internal static bool IsBrowserWebApp(string? executable, string? appId, string? arguments) =>
+        (appId?.Contains("_crx_", StringComparison.OrdinalIgnoreCase) == true
+            || arguments?.Contains("--app-id=", StringComparison.OrdinalIgnoreCase) == true
+            || arguments?.Contains("--app=", StringComparison.OrdinalIgnoreCase) == true)
+        && IsBrowserHostExecutable(executable);
 
     /// <summary>
     /// Whether another distinct Dock item shares the same executable path as <paramref name="item"/>,
@@ -307,7 +280,7 @@ public static class DockQuitRules
 
     private static string? PrimaryExecutableOf(DockItem item)
     {
-        var candidate = item.Pinned?.ExecutablePath
+        var candidate = item.LaunchTarget?.ExecutablePath
             ?? item.Group?.Windows
                 .Select(window => window.ExecutablePath)
                 .FirstOrDefault(path => !string.IsNullOrWhiteSpace(path));
@@ -369,7 +342,7 @@ public static class DockQuitRules
             return hasNonProtectedExe || hasNonProtectedAumid;
         }
 
-        return item.Pinned is { ExecutablePath: { Length: > 0 } exe }
+        return item.LaunchTarget is { ExecutablePath: { Length: > 0 } exe }
             && !IsProtectedExecutable(exe);
     }
 
@@ -606,20 +579,18 @@ public static class DockQuitRules
     /// Selects all processes belonging to the target Dock item — including direct matches,
     /// parent tray hosts and child helpers inside the same dedicated app install directory,
     /// and detached same-app helper/tray siblings — ordered parents-first to prevent respawn.
-    /// Unconditionally excludes protected system processes, Windows directories, shared
-    /// containers, unrelated browser hosts, and executables belonging to other Dock items.
+    /// Excludes protected processes and executables claimed by other Dock items before
+    /// matching. Expansion requires a dedicated app layout and excludes unrelated browser hosts.
     /// </summary>
     public static IReadOnlyList<uint> SelectProcessesToTerminate(
         DockPinnedApp? pinned,
         IReadOnlySet<string> groupExecutablePaths,
         IReadOnlySet<string> groupAumids,
-        IReadOnlySet<uint> groupProcessIds,
         IReadOnlyList<ProcessQuitCandidate> runningProcesses,
         IReadOnlySet<string>? otherItemExecutablePaths = null)
     {
         ArgumentNullException.ThrowIfNull(groupExecutablePaths);
         ArgumentNullException.ThrowIfNull(groupAumids);
-        ArgumentNullException.ThrowIfNull(groupProcessIds);
         ArgumentNullException.ThrowIfNull(runningProcesses);
 
         var candidatesByPid = new Dictionary<uint, (ProcessQuitCandidate Candidate, string? NormalizedExe)>(runningProcesses.Count);
@@ -635,6 +606,10 @@ public static class DockQuitRules
             var normalizedExe = string.IsNullOrWhiteSpace(candidate.ExecutablePath)
                 ? null
                 : WindowGrouping.NormalizeExecutablePath(candidate.ExecutablePath);
+            if (normalizedExe is not null && otherItemExecutablePaths?.Contains(normalizedExe) == true)
+            {
+                continue;
+            }
             candidatesByPid[candidate.ProcessId] = (candidate, normalizedExe);
         }
 
@@ -701,17 +676,19 @@ public static class DockQuitRules
             }
         }
 
-        // Step 1: direct seed matches (exact exe, launcher stub, Squirrel target, AUMID, or group PID).
+        // Window snapshots can outlive their PIDs, so a direct match requires executable or AUMID evidence.
         foreach (var (pid, (candidate, normalizedExe)) in candidatesByPid)
         {
-            var directMatch = groupProcessIds.Contains(pid)
-                || MatchesProcess(pinned, groupExecutablePaths, groupAumids, normalizedExe, candidate.AppUserModelId);
-            if (directMatch)
+            if (MatchesProcess(pinned, groupExecutablePaths, groupAumids, normalizedExe, candidate.AppUserModelId))
             {
                 matchedPids.Add(pid);
                 RecordSeedMetadata(normalizedExe);
             }
         }
+
+        bool IsSharedRoot(string root) =>
+            SharedSuiteFolderNames.Contains(Path.GetFileName(root))
+            || otherItemExecutablePaths?.Any(exe => IsUnderRoot(exe, root)) == true;
 
         bool IsExpansionEligible(string? normalizedExe)
         {
@@ -725,13 +702,8 @@ public static class DockQuitRules
             {
                 return false;
             }
-            if (otherItemExecutablePaths is not null
-                && otherItemExecutablePaths.Contains(normalizedExe)
-                && !ownNormalizedExes.Contains(normalizedExe))
-            {
-                return false;
-            }
-            return IsUnderAnyRoot(normalizedExe, seedAppRoots);
+            return seedAppRoots.Any(root => IsInAppLayout(normalizedExe, root)
+                && (!IsSharedRoot(root) || HasMatchingAppStem(normalizedExe, seedStems)));
         }
 
         void ExpandProcessTreeWithinAppRoots()
@@ -794,7 +766,11 @@ public static class DockQuitRules
                     continue;
                 }
 
-                if (IsDetachedSameAppSibling(normalizedExe!, seedAppRoots, seedStems))
+                // A process detached from a shared installation has no process-tree evidence
+                // to corroborate its name.
+                var root = ResolveDedicatedAppRoot(normalizedExe);
+                if (root is not null && seedAppRoots.Contains(root) && !IsSharedRoot(root)
+                    && HasMatchingAppStem(normalizedExe!, seedStems))
                 {
                     matchedPids.Add(pid);
                     addedDetached = true;
@@ -845,20 +821,18 @@ public static class DockQuitRules
         }
 
         var pinnedDir = Path.GetDirectoryName(WindowGrouping.NormalizeExecutablePath(pinned.ExecutablePath));
-        if (string.IsNullOrEmpty(pinnedDir) || IsUnderWindowsDirectory(pinnedDir))
-        {
-            return false;
-        }
-
-        var prefix = TrimTrailingSeparators(pinnedDir) + Path.DirectorySeparatorChar;
-        return normalizedCandidate.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
-            && string.Equals(Path.GetFileName(normalizedCandidate), targetFileName, StringComparison.OrdinalIgnoreCase);
+        return !string.IsNullOrEmpty(pinnedDir) && MatchesSquirrelTarget(pinnedDir, targetFileName, normalizedCandidate);
     }
 
-    private static bool IsSubfolderStubPair(string stubPath, string deepPath)
+    internal static bool MatchesSquirrelTarget(string launcherDirectory, string targetFileName, string normalizedCandidate) =>
+        IsUnderRoot(normalizedCandidate, launcherDirectory)
+        && !IsUnderWindowsDirectory(launcherDirectory)
+        && string.Equals(Path.GetFileName(normalizedCandidate), targetFileName, StringComparison.OrdinalIgnoreCase);
+
+    internal static bool IsSubfolderStubPair(string stubPath, string deepPath)
     {
         var stubDirectory = Path.GetDirectoryName(stubPath);
-        if (string.IsNullOrEmpty(stubDirectory) || IsUnsafeAppRoot(TrimTrailingSeparators(stubDirectory)))
+        if (string.IsNullOrEmpty(stubDirectory))
         {
             return false;
         }
@@ -869,18 +843,33 @@ public static class DockQuitRules
         {
             return false;
         }
+        var root = ResolveDedicatedAppRoot(stubPath);
+        if (root is null || !string.Equals(ResolveDedicatedAppRoot(deepPath), root, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
 
-        var stubName = Path.GetFileName(stubPath);
-        var looksLikeLauncher = Path.GetFileNameWithoutExtension(stubName)
-            .Contains("launcher", StringComparison.OrdinalIgnoreCase);
-        return looksLikeLauncher
-            || string.Equals(Path.GetFileName(deepPath), stubName, StringComparison.OrdinalIgnoreCase);
+        var stubStem = Path.GetFileNameWithoutExtension(stubPath);
+        var deepStem = Path.GetFileNameWithoutExtension(deepPath);
+        if (string.Equals(deepStem, stubStem, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        const string launcherSuffix = "launcher";
+        var folderName = Path.GetFileName(root);
+        if (!stubStem.EndsWith(launcherSuffix, StringComparison.OrdinalIgnoreCase)
+            || SharedSuiteFolderNames.Contains(folderName))
+        {
+            return false;
+        }
+
+        var launcherStem = stubStem[..^launcherSuffix.Length].TrimEnd(' ', '-', '_', '.');
+        return (IsSpecificAppStem(launcherStem) && string.Equals(deepStem, launcherStem, StringComparison.OrdinalIgnoreCase))
+            || string.Equals(deepStem, folderName, StringComparison.OrdinalIgnoreCase);
     }
 
-    private static bool IsDetachedSameAppSibling(
-        string normalizedExe,
-        HashSet<string> seedAppRoots,
-        HashSet<string> seedStems)
+    private static bool HasMatchingAppStem(string normalizedExe, HashSet<string> seedStems)
     {
         var stem = Path.GetFileNameWithoutExtension(normalizedExe);
         if (string.IsNullOrWhiteSpace(stem))
@@ -898,20 +887,6 @@ public static class DockQuitRules
             }
         }
 
-        // Auxiliary roles (tray/helper/daemon/launcher/crashpad) match inside a non-suite
-        // dedicated app root even when the helper exe drops the brand prefix.
-        var matchingRoot = FindMatchingRoot(normalizedExe, seedAppRoots);
-        if (matchingRoot is not null && !SharedSuiteFolderNames.Contains(Path.GetFileName(matchingRoot)))
-        {
-            foreach (var token in AuxiliaryRoleTokens)
-            {
-                if (stem.Contains(token, StringComparison.OrdinalIgnoreCase))
-                {
-                    return true;
-                }
-            }
-        }
-
         return false;
     }
 
@@ -921,20 +896,17 @@ public static class DockQuitRules
         && !GenericExecutableStems.Contains(value)
         && !SharedContainerFolderNames.Contains(value);
 
-    private static bool IsUnderAnyRoot(string normalizedExe, HashSet<string> roots) =>
-        FindMatchingRoot(normalizedExe, roots) is not null;
+    private static bool IsUnderRoot(string normalizedExe, string root) =>
+        normalizedExe.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
 
-    private static string? FindMatchingRoot(string normalizedExe, HashSet<string> roots)
+    private static bool IsInAppLayout(string normalizedExe, string root)
     {
-        foreach (var root in roots)
+        if (!IsUnderRoot(normalizedExe, root))
         {
-            var prefix = TrimTrailingSeparators(root) + Path.DirectorySeparatorChar;
-            if (normalizedExe.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
-            {
-                return root;
-            }
+            return false;
         }
-        return null;
+        var subfolderEnd = normalizedExe.IndexOf(Path.DirectorySeparatorChar, root.Length + 1);
+        return subfolderEnd < 0 || IsVersionOrInternalFolderName(normalizedExe[(root.Length + 1)..subfolderEnd]);
     }
 
     private static bool IsVersionOrInternalFolderName(string folderName)

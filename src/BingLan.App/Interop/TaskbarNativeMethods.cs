@@ -1,5 +1,4 @@
 using System.Runtime.InteropServices;
-using System.Text;
 
 namespace BingLan.App.Interop;
 
@@ -111,9 +110,6 @@ internal static class TaskbarNativeMethods
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool EnumWindows(EnumWindowsProc callback, nint parameter);
-
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-    internal static extern int GetClassNameW(nint window, StringBuilder className, int maxCount);
 
     [DllImport("user32.dll")]
     internal static extern uint GetWindowThreadProcessId(nint window, out uint processId);

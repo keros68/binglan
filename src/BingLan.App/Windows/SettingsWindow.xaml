@@ -921,7 +921,7 @@
                                 <local:SettingsRow x:Name="TopBarFrostedRow"
                                                    Style="{StaticResource NestedSettingsRowStyle}"
                                                    Header="顶部信息条磨砂玻璃"
-                                                   Description="深色表面下对壁纸做真实模糊（接近 macOS 菜单栏质感）；关闭后用半透明纯色。浅色材质不受影响"
+                                                   Description="深色底板可模糊背后的画面，弹层同步使用磨砂。关闭后保留原色和透明度。不透明度为 0% 时完全清透。"
                                                    local:SettingsSearch.Keywords="顶端信息条磨砂玻璃 顶端信息条 顶栏磨砂 顶栏外观">
                                     <CheckBox x:Name="TopBarFrostedCheckBox"
                                               AutomationProperties.Name="磨砂玻璃"
@@ -1753,6 +1753,11 @@
                                             <ListBox x:Name="QuickPlaceList"
                                                      MaxHeight="210"
                                                      AutomationProperties.Name="快捷入口列表"
+                                                     AllowDrop="True"
+                                                     PreviewMouseLeftButtonDown="QuickPlaceList_PreviewMouseLeftButtonDown"
+                                                     PreviewMouseMove="QuickPlaceList_PreviewMouseMove"
+                                                     DragOver="QuickPlaceList_DragOver"
+                                                     Drop="QuickPlaceList_Drop"
                                                      SelectionChanged="QuickPlaceList_SelectionChanged">
                                                 <ListBox.ItemTemplate>
                                                     <DataTemplate>
@@ -2228,6 +2233,15 @@
                                                       Checked="FileBoxHoverExpand_Changed"
                                                       Unchecked="FileBoxHoverExpand_Changed"/>
                                         </local:SettingsRow>
+                                        <local:SettingsRow Header="向上展开（标题栏在底部）"
+                                                           Description="折叠和展开时，标题栏保持在同一位置"
+                                                           local:SettingsSearch.Keywords="收纳盒 展开方向 向上 底部标题 抽屉">
+                                            <CheckBox x:Name="FileBoxExpandUpwardCheckBox"
+                                                      AutomationProperties.Name="向上展开（标题栏在底部）"
+                                                      Style="{StaticResource ToggleSwitchStyle}"
+                                                      Checked="FileBoxExpandUpward_Changed"
+                                                      Unchecked="FileBoxExpandUpward_Changed"/>
+                                        </local:SettingsRow>
                                         <local:SettingsRow Header="平时全透明（移入显示）"
                                                            Description="开启后平时整个文件收纳盒完全透明，鼠标移入或拖入文件时平滑显示；按“临时浮起文件收纳盒”快捷键或在设置中选中时也会显现"
                                                            local:SettingsSearch.Keywords="桌面分组盒 文件收纳盒 全透明 透明 平时隐藏 移入显示 悬停显示 酷呆">
@@ -2645,6 +2659,16 @@
                                                   Checked="DockSetting_Changed"
                                                   Unchecked="DockSetting_Changed"/>
                                     </local:SettingsRow>
+                                    <local:SettingsRow x:Name="DockBackgroundMaximizeRow"
+                                                       Header="后台有最大化窗口时也收起 Dock"
+                                                       Description="开启最大化时临时隐藏后，只要 Dock 所在屏幕有最大化窗口，切到其他窗口时 Dock 也会保持收起"
+                                                       local:SettingsSearch.Keywords="后台 失焦 最大化 保持收起 混合模式">
+                                        <CheckBox x:Name="DockBackgroundMaximizeCheckBox"
+                                                  AutomationProperties.Name="后台有最大化窗口时也收起 Dock"
+                                                  Style="{StaticResource ToggleSwitchStyle}"
+                                                  Checked="DockSetting_Changed"
+                                                  Unchecked="DockSetting_Changed"/>
+                                    </local:SettingsRow>
                                     <local:SettingsRow x:Name="DockRevealModeRow"
                                                        Header="唤出方式"
                                                        Description="仅控制冰蓝 Dock 隐藏后如何重新显示（控制 Windows 原生任务栏请到「Windows 任务栏 → 鼠标触边唤出」）。不想右下角出现小把手时，选“只用屏幕底边（不显示把手）”"
@@ -2687,6 +2711,15 @@
                                                        local:SettingsSearch.Keywords="弹跳 跳动 弹弹乐 新消息 通知 提醒 闪烁">
                                         <CheckBox x:Name="DockBounceOnAttentionCheckBox"
                                                   AutomationProperties.Name="有新消息时图标弹跳"
+                                                  Style="{StaticResource ToggleSwitchStyle}"
+                                                  Checked="DockSetting_Changed"
+                                                  Unchecked="DockSetting_Changed"/>
+                                    </local:SettingsRow>
+                                    <local:SettingsRow Header="固定应用运行时移到运行区"
+                                                       Description="开启后，固定应用运行时移到分隔线另一侧，退出后回到原来的固定位置。适用于所有屏幕的 Dock。"
+                                                       local:SettingsSearch.Keywords="分隔线 固定区 运行区 运行应用 Dock 排序">
+                                        <CheckBox x:Name="DockShowRunningPinsSeparatelyCheckBox"
+                                                  AutomationProperties.Name="固定应用运行时移到运行区"
                                                   Style="{StaticResource ToggleSwitchStyle}"
                                                   Checked="DockSetting_Changed"
                                                   Unchecked="DockSetting_Changed"/>
@@ -2788,6 +2821,15 @@
                                                            local:SettingsSearch.Keywords="任务视图 虚拟桌面 多桌面 窗口切换 Win+Tab">
                                             <CheckBox x:Name="DockTaskViewButtonCheckBox"
                                                       AutomationProperties.Name="显示任务视图按钮"
+                                                      Style="{StaticResource ToggleSwitchStyle}"
+                                                      Checked="DockSetting_Changed"
+                                                      Unchecked="DockSetting_Changed"/>
+                                        </local:SettingsRow>
+                                        <local:SettingsRow Header="显示快速设置按钮"
+                                                           Description="从 Dock 打开 Windows 快速设置，调节音量、网络和蓝牙"
+                                                           local:SettingsSearch.Keywords="快速设置 音量 网络 蓝牙 Wi-Fi Win+A">
+                                            <CheckBox x:Name="DockQuickSettingsButtonCheckBox"
+                                                      AutomationProperties.Name="显示快速设置按钮"
                                                       Style="{StaticResource ToggleSwitchStyle}"
                                                       Checked="DockSetting_Changed"
                                                       Unchecked="DockSetting_Changed"/>
@@ -2940,6 +2982,17 @@
                                                   Width="280"
                                                   AutomationProperties.Name="顶部信息条所在显示器"
                                                   SelectionChanged="TopBarSetting_Changed"/>
+                                    </local:SettingsRow>
+                                    <local:SettingsRow Header="信息条位置"
+                                                       Description="底部信息条与 Windows 任务栏、冰蓝 Dock 分开显示"
+                                                       local:SettingsSearch.Keywords="顶栏 底栏 信息条 位置 屏幕底部 顶部">
+                                        <ComboBox x:Name="TopBarPositionComboBox"
+                                                  Width="200"
+                                                  AutomationProperties.Name="信息条位置"
+                                                  SelectionChanged="TopBarSetting_Changed">
+                                            <ComboBoxItem Content="屏幕顶部"/>
+                                            <ComboBoxItem Content="屏幕底部"/>
+                                        </ComboBox>
                                     </local:SettingsRow>
                                     <local:SettingsRow Header="显示方式"
                                                        Description="始终显示时预留顶部空间，全屏应用优先显示。顶边被 Windows 任务栏占用时改为智能隐藏，并让开任务栏的唤出区域"
@@ -3243,7 +3296,7 @@
                                         </Grid.ColumnDefinitions>
                                         <StackPanel VerticalAlignment="Center" Margin="0,0,12,0">
                                             <TextBlock FontSize="13.5" FontWeight="SemiBold" Foreground="{DynamicResource IceInkBrush}" Text="搜索入口直接弹出搜索框"/>
-                                            <TextBlock Style="{StaticResource CaptionStyle}" Margin="0,2,0,0" Text="开启后在顶栏下方弹出磨砂玻璃搜索框（本机应用/文件优先，无匹配时用默认浏览器搜索）；关闭时打开冰蓝总览卡"/>
+                                            <TextBlock Style="{StaticResource CaptionStyle}" Margin="0,2,0,0" Text="开启后在顶栏下方弹出同材质的搜索框（本机应用/文件优先，无匹配时用默认浏览器搜索）；关闭时打开冰蓝总览卡"/>
                                         </StackPanel>
                                         <CheckBox x:Name="TopBarSearchInlineCheckBox"
                                                   Grid.Column="1"

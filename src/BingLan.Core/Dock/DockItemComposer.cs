@@ -15,8 +15,24 @@ public sealed record DockItem(
     DockPinnedApp? Pinned,
     WindowGroup? Group)
 {
+    public DockPinnedApp? TrayApp { get; init; }
+    public bool IsRunningInBackground { get; init; }
+    public bool IsInRunningSection { get; init; } = Pinned is null;
     public bool IsPinned => Pinned is not null;
-    public bool IsRunning => Group is not null;
+    public bool IsRunning => Group is not null || IsRunningInBackground || TrayApp is not null;
+    public DockPinnedApp? LaunchTarget => Pinned ?? TrayApp;
+    public string RunningOrderKey
+    {
+        get
+        {
+            // Tray-only entries know the executable path and may have no window app ID.
+            var trayExecutable = Group?.Key.StartsWith("aumid:", StringComparison.OrdinalIgnoreCase) == true
+                ? Group.Windows.Select(window => window.ExecutablePath)
+                    .FirstOrDefault(TrayAppRevealRules.PreventsRelaunchWhenRunning)
+                : null;
+            return trayExecutable is null ? Key : $"exe:{WindowGrouping.NormalizeExecutablePath(trayExecutable)}";
+        }
+    }
     public int WindowCount => Group?.Windows.Count ?? 0;
     public bool HasMultipleWindows => WindowCount > 1;
     public bool IsActive => Group?.Windows.Any(window => window.IsForeground) ?? false;
@@ -29,16 +45,23 @@ public sealed record DockItem(
                 : DockItemState.Pinned;
 }
 
+public readonly record struct RunningAppProcess(string? ExecutablePath, string? AppUserModelId);
+
 public static class DockItemComposer
 {
     public static IReadOnlyList<DockItem> Compose(
         IReadOnlyList<DockPinnedApp> pinnedApps,
         IReadOnlyList<WindowGroup> runningGroups,
-        IReadOnlyList<DockPinnedApp>? hiddenApps = null)
+        IReadOnlyList<DockPinnedApp>? hiddenApps = null,
+        IReadOnlySet<DockBackgroundPinMatch>? backgroundMatches = null,
+        IReadOnlyCollection<string>? runningTrayExecutables = null,
+        IReadOnlyList<string>? previousRunningOrder = null,
+        bool showRunningPinsSeparately = false)
     {
         ArgumentNullException.ThrowIfNull(pinnedApps);
         ArgumentNullException.ThrowIfNull(runningGroups);
 
+        var allGroups = runningGroups;
         if (hiddenApps is { Count: > 0 })
         {
             runningGroups = runningGroups
@@ -49,46 +72,10 @@ public static class DockItemComposer
         var items = new List<DockItem>();
         var matchedGroups = new HashSet<WindowGroup>();
         var pinnedGroups = new WindowGroup?[pinnedApps.Count];
-        for (var index = 0; index < pinnedApps.Count; index++)
-        {
-            var pinned = pinnedApps[index];
-            // Prefer the group with the pinned identity itself; an executable pin only
-            // falls back to a group that carries its own app model ID (for example a
-            // browser web app) when no plain group of that executable is running.
-            var group = runningGroups
-                .Where(candidate => !matchedGroups.Contains(candidate)
-                    && DockPinRules.Matches(pinned, candidate))
-                .OrderBy(candidate => string.Equals(
-                    candidate.Key,
-                    DockPinRules.IdentityKey(pinned),
-                    StringComparison.OrdinalIgnoreCase) ? 0 : 1)
-                .FirstOrDefault();
-            if (group is not null)
-            {
-                matchedGroups.Add(group);
-                pinnedGroups[index] = group;
-            }
-        }
-
-        // A pin of a launcher stub (the app's launcher exe, or its unversioned exe) never
-        // runs windows itself; the app's windows come from an exe in a folder below it.
-        // Only groups no exact pin claimed are offered, so exact pins always win.
-        for (var index = 0; index < pinnedApps.Count; index++)
-        {
-            if (pinnedGroups[index] is not null)
-            {
-                continue;
-            }
-
-            var stubGroup = runningGroups.FirstOrDefault(candidate =>
-                !matchedGroups.Contains(candidate)
-                && DockPinRules.MatchesLauncherStub(pinnedApps[index], candidate));
-            if (stubGroup is not null)
-            {
-                matchedGroups.Add(stubGroup);
-                pinnedGroups[index] = stubGroup;
-            }
-        }
+        // Reserve every exact identity before offering executable and launcher fallbacks.
+        MatchPins(DockPinRules.MatchesExactIdentity);
+        MatchPins(DockPinRules.Matches);
+        MatchPins(DockPinRules.MatchesLauncherStub);
 
         for (var index = 0; index < pinnedApps.Count; index++)
         {
@@ -99,23 +86,140 @@ public static class DockItemComposer
             }
             else
             {
-                items.Add(new DockItem(
-                    DockPinRules.IdentityKey(pinned),
-                    pinned.DisplayName,
-                    pinned,
-                    null));
+                items.Add(new DockItem(DockPinRules.IdentityKey(pinned), pinned.DisplayName, pinned, null));
             }
         }
 
+        var runningItems = new List<DockItem>();
         foreach (var group in runningGroups)
         {
             if (!matchedGroups.Contains(group))
             {
-                items.Add(new DockItem(group.Key, group.DisplayName, null, group));
+                runningItems.Add(new DockItem(group.Key, group.DisplayName, null, group));
             }
         }
 
+        var trayApps = new Dictionary<string, DockPinnedApp>(StringComparer.OrdinalIgnoreCase);
+        if (runningTrayExecutables is { Count: > 0 })
+        {
+            var visiblePaths = allGroups.SelectMany(group => group.Windows)
+                .Where(window => !string.IsNullOrWhiteSpace(window.ExecutablePath))
+                .Select(window => WindowGrouping.NormalizeExecutablePath(window.ExecutablePath!))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            foreach (var path in runningTrayExecutables)
+            {
+                if (TrayAppRevealRules.PreventsRelaunchWhenRunning(path)
+                    && DockPinRules.CreateFromExecutable(path) is { ExecutablePath: { } executable } app
+                    && !visiblePaths.Contains(executable))
+                {
+                    trayApps.TryAdd(executable, app);
+                }
+            }
+        }
+
+        if (backgroundMatches is { Count: > 0 })
+        {
+            var verifiedKeys = DockBackgroundPinMatcher.VerifyMatches(items, allGroups, backgroundMatches);
+            if (trayApps.Count > 0)
+            {
+                // A process AUMID takes precedence over a path-only match for the same
+                // tray executable, such as when the snapshot also includes its helpers.
+                var identifiedPaths = backgroundMatches
+                    .Where(match => match.ProcessExecutable is null
+                        && verifiedKeys.Contains(match.PinKey))
+                    .Select(match => match.IdentityExecutablePath)
+                    .OfType<string>()
+                    .Where(trayApps.ContainsKey)
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                if (identifiedPaths.Count > 0)
+                {
+                    var distinctMatches = backgroundMatches
+                        .Where(match => match.ProcessExecutable is not { } path || !identifiedPaths.Contains(path))
+                        .ToHashSet();
+                    if (distinctMatches.Count != backgroundMatches.Count)
+                    {
+                        backgroundMatches = distinctMatches;
+                        verifiedKeys = DockBackgroundPinMatcher.VerifyMatches(items, allGroups, backgroundMatches);
+                    }
+                }
+
+                foreach (var match in backgroundMatches)
+                {
+                    if (verifiedKeys.Contains(match.PinKey)
+                        && (match.ProcessExecutable ?? match.IdentityExecutablePath) is { } path)
+                    {
+                        trayApps.Remove(path);
+                    }
+                }
+            }
+
+            for (var index = 0; index < pinnedApps.Count; index++)
+            {
+                var item = items[index];
+                if (item.Group is null && verifiedKeys.Contains(item.Key))
+                {
+                    items[index] = item with { IsRunningInBackground = true };
+                }
+            }
+        }
+
+        foreach (var (executable, app) in trayApps)
+        {
+            var key = DockPinRules.IdentityKey(app);
+            var exactOwner = items.FindIndex(item => item.Pinned is { } pin
+                && StringComparer.OrdinalIgnoreCase.Equals(DockPinRules.IdentityKey(pin), key));
+            if (exactOwner >= 0)
+            {
+                var item = items[exactOwner];
+                if (item.Group is null)
+                {
+                    items[exactOwner] = item with { IsRunningInBackground = true };
+                }
+            }
+            else if (hiddenApps?.Any(hidden => hidden.ExecutablePath is { Length: > 0 } hiddenPath
+                && StringComparer.OrdinalIgnoreCase.Equals(
+                    WindowGrouping.NormalizeExecutablePath(hiddenPath), executable)) != true)
+            {
+                app.DisplayName = AppDisplayNameRules.Normalize(app.DisplayName, executable) ?? app.DisplayName;
+                runningItems.Add(new DockItem(key, app.DisplayName, null, null)
+                {
+                    TrayApp = app,
+                    IsRunningInBackground = true
+                });
+            }
+        }
+
+        if (showRunningPinsSeparately)
+        {
+            runningItems.InsertRange(0, items.Where(item => item.IsRunning)
+                .Select(item => item with { IsInRunningSection = true }));
+            items.RemoveAll(item => item.IsRunning);
+        }
+
+        items.AddRange(previousRunningOrder is { Count: > 0 }
+            ? WindowGrouping.OrderByFirstSeen(runningItems, previousRunningOrder, item => item.RunningOrderKey)
+            : runningItems);
         return items;
+
+        void MatchPins(Func<DockPinnedApp, WindowGroup, bool> matches)
+        {
+            for (var index = 0; index < pinnedApps.Count; index++)
+            {
+                if (pinnedGroups[index] is not null)
+                {
+                    continue;
+                }
+
+                var pinned = pinnedApps[index];
+                var group = runningGroups.FirstOrDefault(candidate =>
+                    !matchedGroups.Contains(candidate) && matches(pinned, candidate));
+                if (group is not null)
+                {
+                    matchedGroups.Add(group);
+                    pinnedGroups[index] = group;
+                }
+            }
+        }
     }
 }
 
@@ -231,7 +335,7 @@ public static class DockPinRules
         ArgumentNullException.ThrowIfNull(pinned);
         ArgumentNullException.ThrowIfNull(group);
 
-        if (string.Equals(group.Key, IdentityKey(pinned), StringComparison.OrdinalIgnoreCase))
+        if (MatchesExactIdentity(pinned, group))
         {
             return true;
         }
@@ -245,22 +349,23 @@ public static class DockPinRules
         }
 
         var pinnedPath = WindowGrouping.NormalizeExecutablePath(pinned.ExecutablePath);
+        var isWebAppShortcut = DockQuitRules.IsBrowserWebApp(pinnedPath, null, pinned.Arguments);
         return group.Windows.Any(window =>
             !string.IsNullOrWhiteSpace(window.ExecutablePath)
             && string.Equals(
                 WindowGrouping.NormalizeExecutablePath(window.ExecutablePath),
                 pinnedPath,
-                StringComparison.OrdinalIgnoreCase));
+                StringComparison.OrdinalIgnoreCase)
+            && DockQuitRules.IsBrowserWebApp(pinnedPath, window.AppUserModelId, null) == isWebAppShortcut);
     }
+
+    internal static bool MatchesExactIdentity(DockPinnedApp pinned, WindowGroup group) =>
+        string.Equals(group.Key, IdentityKey(pinned), StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Whether a pin of a launcher stub stands for the running group: the pin has no
-    /// app model ID, and a window of the group comes from an exe in a folder below the
-    /// pin's own folder — either the same exe name (an unversioned stub next to
-    /// <c>app-1.2.3\app.exe</c>) or a pin named like a launcher whose real app lives in a
-    /// subfolder (<c>Launcher.exe</c> beside <c>main\current\App.exe</c>). Exes in the
-    /// same folder and anything under the Windows folder never match, so a pinned Excel
-    /// does not take Word's windows and a pinned cmd does not take PowerShell's.
+    /// app model ID, and a window comes from a related exe in a version or internal
+    /// subfolder of the same installation.
     /// </summary>
     public static bool MatchesLauncherStub(DockPinnedApp pinned, WindowGroup group)
     {
@@ -274,14 +379,15 @@ public static class DockPinRules
         }
 
         var pinnedPath = WindowGrouping.NormalizeExecutablePath(pinned.ExecutablePath);
-        var pinnedDirectory = Path.GetDirectoryName(pinnedPath);
-        if (string.IsNullOrEmpty(pinnedDirectory) || IsUnderWindowsFolder(pinnedDirectory))
-        {
-            return false;
-        }
-
+        var squirrelTarget = DockQuitRules.ExtractSquirrelStartExecutable(pinned);
         return group.Windows.Any(window => !string.IsNullOrWhiteSpace(window.ExecutablePath)
-            && IsLauncherStubTarget(pinnedPath, pinnedDirectory, WindowGrouping.NormalizeExecutablePath(window.ExecutablePath)));
+            && !DockQuitRules.IsBrowserWebApp(window.ExecutablePath, window.AppUserModelId, null)
+            && MatchesLaunchTarget(WindowGrouping.NormalizeExecutablePath(window.ExecutablePath)));
+
+        bool MatchesLaunchTarget(string executable) => squirrelTarget is null
+            ? DockQuitRules.IsSubfolderStubPair(pinnedPath, executable)
+            : Path.GetDirectoryName(pinnedPath) is { Length: > 0 } directory
+                && DockQuitRules.MatchesSquirrelTarget(directory, squirrelTarget, executable);
     }
 
     /// <summary>
@@ -305,37 +411,7 @@ public static class DockPinRules
             return true;
         }
 
-        var pinnedDirectory = Path.GetDirectoryName(pinnedPath);
-        return !string.IsNullOrEmpty(pinnedDirectory)
-            && !IsUnderWindowsFolder(pinnedDirectory)
-            && IsLauncherStubTarget(pinnedPath, pinnedDirectory, path);
-    }
-
-    private static bool IsLauncherStubTarget(string pinnedPath, string pinnedDirectory, string path)
-    {
-        var pinnedName = Path.GetFileName(pinnedPath);
-        var looksLikeLauncher = Path.GetFileNameWithoutExtension(pinnedName)
-            .Contains("launcher", StringComparison.OrdinalIgnoreCase);
-        var prefix = pinnedDirectory.TrimEnd('\\', '/') + Path.DirectorySeparatorChar;
-        // Strictly below the pin's folder: a separator must follow the prefix.
-        if (!path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
-            || path.IndexOf(Path.DirectorySeparatorChar, prefix.Length) < 0)
-        {
-            return false;
-        }
-
-        return looksLikeLauncher
-            || string.Equals(Path.GetFileName(path), pinnedName, StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static bool IsUnderWindowsFolder(string directory)
-    {
-        var windows = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
-        return !string.IsNullOrEmpty(windows)
-            && (string.Equals(directory, windows, StringComparison.OrdinalIgnoreCase)
-                || directory.StartsWith(
-                    windows.TrimEnd('\\', '/') + Path.DirectorySeparatorChar,
-                    StringComparison.OrdinalIgnoreCase));
+        return DockQuitRules.IsSubfolderStubPair(pinnedPath, path);
     }
 
     public static DockPinnedApp? CreateFromGroup(WindowGroup group, string displayName)

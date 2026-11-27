@@ -1,3 +1,6 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
 namespace BingLan.Core.Models;
 
 public enum LauncherMainTab
@@ -92,6 +95,9 @@ public sealed class LauncherPreferencesState
     public List<string> FavoriteKeys { get; set; } = [];
     public List<string> PinnedFolders { get; set; } = [];
     public Dictionary<string, int> OpenCounts { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? ExtensionData { get; set; }
 
     public void Normalize()
     {

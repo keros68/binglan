@@ -26,19 +26,18 @@ public static class TopBarRevealRules
         bool inRevealZone,
         bool overlapIsMaximizedOrCovering,
         bool isCurrentlyShown,
-        long? enteredRevealZoneSinceTickMs,
+        ref long? enteredRevealZoneSinceTickMs,
+        bool leftButtonDown,
         long nowTickMs)
     {
-        if (!inRevealZone)
+        if (!inRevealZone || leftButtonDown)
         {
+            enteredRevealZoneSinceTickMs = null;
             return false;
         }
-        if (isCurrentlyShown || !overlapIsMaximizedOrCovering)
-        {
-            return true;
-        }
-        return enteredRevealZoneSinceTickMs is { } since
-            && nowTickMs - since >= MaximizedOverlapRevealDelayMs;
+        enteredRevealZoneSinceTickMs ??= nowTickMs;
+        return isCurrentlyShown || !overlapIsMaximizedOrCovering
+            || nowTickMs - enteredRevealZoneSinceTickMs.Value >= MaximizedOverlapRevealDelayMs;
     }
 
     public static bool IsInRevealZone(
@@ -53,11 +52,14 @@ public static class TopBarRevealRules
         int cursorY,
         PixelRect zoneBounds,
         int revealDepth,
-        (int Left, int Right)? excludedHorizontalSpan)
+        (int Left, int Right)? excludedHorizontalSpan,
+        DockEdge edge = DockEdge.Top)
     {
         var depth = Math.Max(1, revealDepth);
-        if (cursorY < zoneBounds.Top
-            || cursorY >= zoneBounds.Top + depth
+        var triggerTop = edge == DockEdge.Bottom ? Math.Max(zoneBounds.Top, zoneBounds.Bottom - depth) : zoneBounds.Top;
+        var triggerBottom = edge == DockEdge.Bottom ? zoneBounds.Bottom : Math.Min(zoneBounds.Bottom, zoneBounds.Top + depth);
+        if (cursorY < triggerTop
+            || cursorY >= triggerBottom
             || cursorX < zoneBounds.Left
             || cursorX >= zoneBounds.Right)
         {
@@ -162,6 +164,11 @@ public static class TopBarReserveRules
     public static PixelRect ResolveUnreservedHostArea(PixelRect monitorBounds, PixelRect nativeTaskbarSafeArea) =>
         nativeTaskbarSafeArea.HasArea ? nativeTaskbarSafeArea : monitorBounds;
 
+    public static PixelRect ResolveBottomHostArea(PixelRect nativeTaskbarSafeArea, int? bottomDockTop) =>
+        bottomDockTop is { } top && top > nativeTaskbarSafeArea.Top && top < nativeTaskbarSafeArea.Bottom
+            ? nativeTaskbarSafeArea with { Bottom = top }
+            : nativeTaskbarSafeArea;
+
     /// <summary>
     /// Verifies that a top AppBar reservation actually anchored at the monitor's top edge
     /// instead of being pushed downward by a stale or hidden foreign top AppBar.
@@ -180,10 +187,10 @@ public static class TopBarReserveRules
     /// at least the bottom of the reserved strip. ABM_QUERYPOS / ABM_SETPOS often return
     /// TRUE even when a shared interior edge or shell state prevented shrinking the work area.
     /// </summary>
-    public static bool IsWorkAreaReserved(PixelRect liveWorkArea, PixelRect reservedStrip) =>
+    public static bool IsWorkAreaReserved(PixelRect liveWorkArea, PixelRect reservedStrip, DockEdge edge = DockEdge.Top) =>
         liveWorkArea.HasArea
         && reservedStrip.HasArea
-        && liveWorkArea.Top >= reservedStrip.Bottom;
+        && (edge == DockEdge.Bottom ? liveWorkArea.Bottom <= reservedStrip.Top : liveWorkArea.Top >= reservedStrip.Bottom);
 
     /// <summary>
     /// Bottom-edge tolerance in physical pixels so the intentional 1-pixel tuck at the bar's
@@ -196,7 +203,8 @@ public static class TopBarReserveRules
     /// bottom-seam tolerance (e.g. a borderless window, a restored window opening at Y=0,
     /// or a maximized window that ignored the work-area change).
     /// </summary>
-    public static bool IsWindowCoveringReservedBar(PixelRect foregroundBounds, PixelRect barBounds)
+    public static bool IsWindowCoveringReservedBar(
+        PixelRect foregroundBounds, PixelRect barBounds, DockEdge edge = DockEdge.Top)
     {
         if (!foregroundBounds.HasArea || !barBounds.HasArea)
         {
@@ -208,6 +216,11 @@ public static class TopBarReserveRules
             return false;
         }
 
+        if (edge == DockEdge.Bottom)
+        {
+            var intrusionTop = Math.Min(barBounds.Bottom - 1, barBounds.Top + SeamTolerancePixels);
+            return foregroundBounds.Bottom > intrusionTop && foregroundBounds.Top < barBounds.Bottom;
+        }
         var intrusionBottom = Math.Max(barBounds.Top + 1, barBounds.Bottom - SeamTolerancePixels);
         return foregroundBounds.Top < intrusionBottom && foregroundBounds.Bottom > barBounds.Top;
     }

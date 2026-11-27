@@ -11,14 +11,13 @@ using BingLan.Core.TopBar;
 namespace BingLan.App.TopBar;
 
 /// <summary>
-/// Places a full-width strip at the top edge of a monitor and optionally reserves the
+/// Places a strip at the top or bottom of a monitor and optionally reserves the
 /// work area through the documented AppBar API, mirroring what the dock's bottom
 /// controller does. Registration is released on dispose and replayed after Explorer
 /// recreates the taskbar.
 /// </summary>
 internal sealed class TopBarAppBarController : IDisposable
 {
-    private const DockEdge Edge = DockEdge.Top;
     private const int ExplorerRecoveryAttemptCount = 5;
     private const int MaxTransientReserveFailures = 3;
     private static readonly TimeSpan ExplorerRecoveryDelay = TimeSpan.FromMilliseconds(400);
@@ -33,6 +32,8 @@ internal sealed class TopBarAppBarController : IDisposable
     private readonly AppBarWorkAreaCheck _workAreaCheck = new();
     private readonly DispatcherTimer _deferredPosition;
     private readonly DispatcherTimer _reserveRetryTimer;
+    private DockEdge _edge = DockEdge.Top;
+    private int? _bottomDockTop;
     private PixelRect _reservedStrip;
     private MonitorSnapshot? _monitor;
     private double _heightDip;
@@ -105,9 +106,13 @@ internal sealed class TopBarAppBarController : IDisposable
 
     internal event Action? ReservationFallbackTriggered;
 
+    internal Func<MonitorSnapshot, int?>? ResolveBottomDockTop { get; set; }
+
     internal PixelRect Bounds { get; private set; }
 
     internal bool IsReserved => _reservation.IsRegistered;
+
+    internal DockEdge Edge => _edge;
 
     internal bool IsFullScreenDetected => _fullScreenDetected;
 
@@ -126,7 +131,8 @@ internal sealed class TopBarAppBarController : IDisposable
         UpdateWindowLayer();
     }
 
-    internal void Apply(MonitorSnapshot monitor, bool reserveWorkArea, double heightDip, double? compactWidthDip = null)
+    internal void Apply(MonitorSnapshot monitor, bool reserveWorkArea, double heightDip,
+        double? compactWidthDip = null, DockEdge edge = DockEdge.Top)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         var monitorChanged = _monitor is not null
@@ -141,14 +147,16 @@ internal sealed class TopBarAppBarController : IDisposable
         {
             TaskbarEdgeGuard.InvalidateNativeTaskbarLayout(monitor.Bounds);
         }
+        var targetChanged = monitorChanged || _edge != edge;
         var clampedHeightDip = Math.Max(1d, heightDip);
         var heightChanged = Math.Abs(_heightDip - clampedHeightDip) > 0.01d;
         _monitor = monitor;
+        _edge = edge;
         _reserveWorkArea = reserveWorkArea;
         _heightDip = clampedHeightDip;
         _compactWidthDip = compactWidthDip;
 
-        if (!reserveWorkArea || monitorChanged || heightChanged)
+        if (!reserveWorkArea || targetChanged || heightChanged)
         {
             _consecutiveReserveFailures = 0;
             _transientRecovering = false;
@@ -158,9 +166,21 @@ internal sealed class TopBarAppBarController : IDisposable
             _setPositionApplied = false;
         }
 
-        var nativeTopTaskbar = TaskbarEdgeGuard.GetNativeTaskbarLayout(monitor.Bounds)?.Edge == DockEdge.Top;
-        Dispatch(_reservation.Apply(reserveWorkArea && !nativeTopTaskbar && !_reserveFallbackLatched, monitorChanged));
+        Dispatch(_reservation.Apply(reserveWorkArea && !NativeTopTaskbarBlocksReservation(monitor)
+            && !_reserveFallbackLatched, targetChanged));
         Position();
+    }
+
+    internal bool RefreshBottomDockOffset()
+    {
+        if (_edge == DockEdge.Bottom && !_reservation.IsRegistered && _monitor is { } monitor
+            && ResolveBottomDockTop?.Invoke(monitor) != _bottomDockTop)
+        {
+            var previousBounds = Bounds;
+            Position();
+            return previousBounds != Bounds;
+        }
+        return false;
     }
 
     public void Dispose()
@@ -223,7 +243,7 @@ internal sealed class TopBarAppBarController : IDisposable
             // The native taskbar may move to or away from the top edge after Apply.
             // Yield the reservation while a native top taskbar is present, while keeping
             // _reserveWorkArea intact so the reservation restores once it leaves.
-            var nativeTopTaskbar = TaskbarEdgeGuard.GetNativeTaskbarLayout(_monitor.Bounds)?.Edge == DockEdge.Top;
+            var nativeTopTaskbar = NativeTopTaskbarBlocksReservation(_monitor);
             if (nativeTopTaskbar)
             {
                 if (_reservation.IsRegistered)
@@ -241,6 +261,11 @@ internal sealed class TopBarAppBarController : IDisposable
             // tucks its top edge under the bar's last row, so the two meet without a
             // visible seam.
             var reservePixels = Math.Max(1, thicknessPixels - 1);
+            var nativeSafeArea = TaskbarEdgeGuard.AvoidNativeTaskbar(_monitor.Bounds, _monitor.Bounds);
+            _bottomDockTop = _edge == DockEdge.Bottom ? ResolveBottomDockTop?.Invoke(_monitor) : null;
+            var hostArea = _edge == DockEdge.Bottom
+                ? TopBarReserveRules.ResolveBottomHostArea(nativeSafeArea, _bottomDockTop)
+                : TopBarReserveRules.ResolveUnreservedHostArea(_monitor.Bounds, nativeSafeArea);
 
             PixelRect strip;
             if (_reservation.IsRegistered && TryReserveStrip(_monitor, reservePixels) is { } reserved)
@@ -257,9 +282,9 @@ internal sealed class TopBarAppBarController : IDisposable
             {
                 _consecutiveReserveFailures++;
                 _transientRecovering = true;
-                strip = AppBarReservationState.IsValidStrip(_reservedStrip, _monitor.Bounds, reservePixels, Edge)
+                strip = AppBarReservationState.IsValidStrip(_reservedStrip, _monitor.Bounds, reservePixels, _edge)
                     ? _reservedStrip
-                    : DockGeometry.Calculate(_monitor.Bounds, Edge, Math.Min(reservePixels, _monitor.Bounds.Height));
+                    : DockGeometry.Calculate(hostArea, _edge, Math.Min(reservePixels, hostArea.Height));
                 if (!_reserveRetryTimer.IsEnabled)
                 {
                     _reserveRetryTimer.Start();
@@ -281,18 +306,15 @@ internal sealed class TopBarAppBarController : IDisposable
                 if (fellBackFromReserve)
                 {
                     _reserveFallbackLatched = true;
-                    StartupLog.Write("顶部信息条未能确认顶边工作区预留，已临时切换为智能隐藏");
+                    StartupLog.Write("信息条未能确认工作区预留，已临时切换为智能隐藏");
                     _window.Dispatcher.BeginInvoke(
                         DispatcherPriority.Background,
                         () => ReservationFallbackTriggered?.Invoke());
                 }
 
-                var hostArea = TopBarReserveRules.ResolveUnreservedHostArea(
-                    _monitor.Bounds,
-                    TaskbarEdgeGuard.AvoidNativeTaskbar(_monitor.Bounds, _monitor.Bounds));
                 strip = DockGeometry.Calculate(
                     hostArea,
-                    Edge,
+                    _edge,
                     Math.Min(reservePixels, hostArea.Height));
                 if (_compactWidthDip is { } compactWidth)
                 {
@@ -305,10 +327,9 @@ internal sealed class TopBarAppBarController : IDisposable
             }
 
             Bounds = strip;
-            var windowRect = strip with
-            {
-                Bottom = Math.Min(strip.Top + thicknessPixels, _monitor.Bounds.Bottom)
-            };
+            var windowRect = _edge == DockEdge.Bottom
+                ? strip with { Top = Math.Max(strip.Bottom - thicknessPixels, _monitor.Bounds.Top) }
+                : strip with { Bottom = Math.Min(strip.Top + thicknessPixels, _monitor.Bounds.Bottom) };
             if (!DockNativeMethods.GetWindowRect(_handle, out var actualRect)
                 || ToPixel(actualRect) != windowRect)
             {
@@ -330,10 +351,13 @@ internal sealed class TopBarAppBarController : IDisposable
 
     private PixelRect? TryReserveStrip(MonitorSnapshot monitor, int reservePixels)
     {
-        var requestedThickness = Math.Min(reservePixels, monitor.Bounds.Height);
-        var requested = DockGeometry.Calculate(monitor.Bounds, Edge, requestedThickness);
+        var reserveArea = _edge == DockEdge.Bottom
+            ? TaskbarEdgeGuard.AvoidNativeTaskbar(monitor.Bounds, monitor.Bounds)
+            : monitor.Bounds;
+        var requestedThickness = Math.Min(reservePixels, reserveArea.Height);
+        var requested = DockGeometry.Calculate(reserveArea, _edge, requestedThickness);
         var data = CreateData();
-        data.Edge = (uint)Edge;
+        data.Edge = (uint)_edge;
         data.Rectangle = ToNative(requested);
         if (DockNativeMethods.SHAppBarMessage(DockNativeMethods.AbmQueryPos, ref data) == 0)
         {
@@ -345,7 +369,7 @@ internal sealed class TopBarAppBarController : IDisposable
             }
 
             data = CreateData();
-            data.Edge = (uint)Edge;
+            data.Edge = (uint)_edge;
             data.Rectangle = ToNative(requested);
             if (DockNativeMethods.SHAppBarMessage(DockNativeMethods.AbmQueryPos, ref data) == 0)
             {
@@ -353,14 +377,16 @@ internal sealed class TopBarAppBarController : IDisposable
             }
         }
 
-        // Keep the strip at the top of whatever the system allows: other bars at
-        // the same edge push it down rather than off the monitor.
-        var adjusted = ToPixel(data.Rectangle) with
+        var queried = ToPixel(data.Rectangle);
+        if (_edge == DockEdge.Bottom)
         {
-            Bottom = data.Rectangle.Top + requestedThickness
-        };
-        if (!AppBarReservationState.IsValidStrip(adjusted, monitor.Bounds, requestedThickness, Edge)
-            || !TopBarReserveRules.IsStripAnchoredAtTop(adjusted, monitor.Bounds))
+            queried = queried with { Bottom = Math.Min(queried.Bottom, reserveArea.Bottom) };
+        }
+        var adjusted = DockEdgeRules.AdjustQueriedAppBarStrip(queried, _edge, requestedThickness);
+        bool IsValid(PixelRect strip) => AppBarReservationState.IsValidStrip(strip, monitor.Bounds, requestedThickness, _edge)
+            && (_edge == DockEdge.Bottom ? strip.Bottom <= reserveArea.Bottom
+                : TopBarReserveRules.IsStripAnchoredAtTop(strip, monitor.Bounds));
+        if (!IsValid(adjusted))
         {
             return null;
         }
@@ -370,9 +396,10 @@ internal sealed class TopBarAppBarController : IDisposable
         // and the live work area already reflects it, but resubmit once if another app or
         // display transition reset the work area.
         var liveWorkArea = DockAppBarController.GetLiveWorkingArea(monitor);
+        var (workAreaEdge, stripInnerEdge) = DockEdgeRules.WorkAreaEdgesForCheck(liveWorkArea, adjusted, _edge);
         if (!_setPositionApplied
             || adjusted != _reservedStrip
-            || _workAreaCheck.NeedsResubmit(liveWorkArea.Top, adjusted.Bottom))
+            || _workAreaCheck.NeedsResubmit(workAreaEdge, stripInnerEdge))
         {
             data.Rectangle = ToNative(adjusted);
             if (DockNativeMethods.SHAppBarMessage(DockNativeMethods.AbmSetPos, ref data) == 0)
@@ -382,15 +409,14 @@ internal sealed class TopBarAppBarController : IDisposable
             }
 
             var actual = ToPixel(data.Rectangle);
-            if (!AppBarReservationState.IsValidStrip(actual, monitor.Bounds, requestedThickness, Edge)
-                || !TopBarReserveRules.IsStripAnchoredAtTop(actual, monitor.Bounds))
+            if (!IsValid(actual))
             {
                 _setPositionApplied = false;
                 return null;
             }
 
             liveWorkArea = DockAppBarController.GetLiveWorkingArea(monitor);
-            if (!TopBarReserveRules.IsWorkAreaReserved(liveWorkArea, actual))
+            if (!TopBarReserveRules.IsWorkAreaReserved(liveWorkArea, actual, _edge))
             {
                 _setPositionApplied = false;
                 return null;
@@ -400,14 +426,12 @@ internal sealed class TopBarAppBarController : IDisposable
             _reservedStrip = actual;
             ExplorerNotified?.Invoke();
         }
-        else if (!TopBarReserveRules.IsWorkAreaReserved(liveWorkArea, _reservedStrip))
+        else if (!TopBarReserveRules.IsWorkAreaReserved(liveWorkArea, _reservedStrip, _edge))
         {
             return null;
         }
 
-        return AppBarReservationState.IsValidStrip(_reservedStrip, monitor.Bounds, requestedThickness, Edge)
-            ? _reservedStrip
-            : null;
+        return IsValid(_reservedStrip) ? _reservedStrip : null;
     }
 
     private nint WindowProc(nint hwnd, int message, nint wParam, nint lParam, ref bool handled)
@@ -530,9 +554,7 @@ internal sealed class TopBarAppBarController : IDisposable
                 return;
             }
 
-            if (!_reserveWorkArea
-                || (_monitor is not null
-                    && TaskbarEdgeGuard.GetNativeTaskbarLayout(_monitor.Bounds)?.Edge == DockEdge.Top))
+            if (!_reserveWorkArea || (_monitor is { } monitor && NativeTopTaskbarBlocksReservation(monitor)))
             {
                 break;
             }
@@ -566,6 +588,9 @@ internal sealed class TopBarAppBarController : IDisposable
             TaskbarEdgeGuard.InvalidateNativeTaskbarLayout(_monitor.Bounds);
         }
     }
+
+    private bool NativeTopTaskbarBlocksReservation(MonitorSnapshot monitor) =>
+        _edge == DockEdge.Top && TaskbarEdgeGuard.GetNativeTaskbarLayout(monitor.Bounds)?.Edge == DockEdge.Top;
 
     private void NotifyEnvironmentChanged()
     {

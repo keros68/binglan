@@ -72,6 +72,9 @@ internal interface ITopBarEnvironment
     /// <summary>Opens a Windows Settings ms-settings: URI directly without popping up the taskbar.</summary>
     void OpenSystemSettings(string settingsUri) => OpenQuickSettings(TopBarModuleKind.Volume);
 
+    /// <summary>Opens Windows' shutdown/restart selection dialog without confirming an action.</summary>
+    void OpenShutdownDialog() { }
+
     Task<TopBarAudioSnapshot> ReadAudioSnapshotAsync() => Task.FromResult(TopBarAudioSnapshot.Unavailable);
 
     Task<bool> SetMasterVolumeAsync(int percent) => Task.FromResult(false);
@@ -122,8 +125,6 @@ internal interface ITopBarEnvironment
     /// <summary>Whether file results may come from the running Everything instance.</summary>
     bool IsEverythingSearchEnabled { get; }
 
-    LauncherAppearanceState LauncherAppearance => new();
-
     Task<LauncherPanelSnapshot?> ReadSearchSnapshotAsync() => Task.FromResult<LauncherPanelSnapshot?>(null);
 
     void OpenSearchEntry(LauncherPanelEntry entry) { }
@@ -166,8 +167,12 @@ public sealed partial class TopBarWindow : Window
     private TextBlock? _capsuleChevron;
     private TopBarDisplayMode? _appliedDisplayMode;
     private readonly bool _enableExperimentalCapsule;
-    private TopBarDisplayMode DisplayMode => _enableExperimentalCapsule ? _state.DisplayMode : TopBarDisplayMode.FullWidth;
+    private TopBarDisplayMode DisplayMode => _enableExperimentalCapsule && !_state.ShowAtBottom
+        ? _state.DisplayMode : TopBarDisplayMode.FullWidth;
     private bool IsCapsule => DisplayMode == TopBarDisplayMode.Capsule;
+    private DockEdge BarEdge => _state.ShowAtBottom ? DockEdge.Bottom : DockEdge.Top;
+    private PlacementMode InwardPlacement => _state.ShowAtBottom ? PlacementMode.Top : PlacementMode.Bottom;
+    private double InwardFlyoutOffset => _state.ShowAtBottom ? -4 : 4;
     private long _lastCountdownMinute = -1;
 
     private readonly TopBarState _state;
@@ -314,7 +319,11 @@ public sealed partial class TopBarWindow : Window
             (_, _) => ScheduleBackdropSample(),
             Dispatcher);
         _backdropTimer.Stop();
-        IsVisibleChanged += (_, _) => UpdateBackdropSampling(immediate: IsVisible);
+        IsVisibleChanged += (_, _) =>
+        {
+            if (!IsVisible) CloseTrayPanelPreview();
+            UpdateBackdropSampling(immediate: IsVisible);
+        };
         AccessibilityThemeManager.HighContrastChanged += OnHighContrastChanged;
         _nudgeRecheckTimer = new DispatcherTimer(DispatcherPriority.Background, Dispatcher)
         {
@@ -392,17 +401,19 @@ public sealed partial class TopBarWindow : Window
                     ? "搜索应用、文件"
                     : $"搜索应用、文件（{_state.SearchHotkey}）");
         }
+        RefreshPopupAppearance();
         ApplySurface();
         var wasReserved = _appBar?.IsReserved == true;
         _nativeTaskbar = TaskbarEdgeGuard.GetNativeTaskbarLayout(_monitor.Bounds);
         // The top edge is taken (a taskbar moved to the top on Windows 10): behave as
         // smart-hide instead of fighting over the space. A bar that already holds the
         // edge keeps it — its own reservation is not a foreign occupier.
-        var reserve = TopBarReserveRules.ShouldReserve(
-            !IsCapsule && VisibilityMode == TopBarVisibilityMode.ReserveTopEdge,
-            _appBar?.IsReserved == true,
+        var requestsReservation = !IsCapsule && VisibilityMode == TopBarVisibilityMode.ReserveTopEdge;
+        var reserve = _state.ShowAtBottom ? requestsReservation : TopBarReserveRules.ShouldReserve(
+            requestsReservation,
+            _appBar is { IsReserved: true, Edge: DockEdge.Top },
             _monitor.Bounds,
-            BingLan.App.Dock.DockAppBarController.GetLiveWorkingArea(_monitor),
+            DockAppBarController.GetLiveWorkingArea(_monitor),
             nativeTopEdgeOccupied: _nativeTaskbar?.Edge == DockEdge.Top);
         if (reserve || wasReserved)
         {
@@ -411,13 +422,11 @@ public sealed partial class TopBarWindow : Window
         var previousBounds = _appBar?.Bounds;
         _appBar?.Apply(_monitor, reserve,
             IsCapsule ? (_capsuleExpanded ? _capsuleExpandedHeight : CapsuleHeight) : BarHeight,
-            IsCapsule ? (_capsuleExpanded ? CapsuleExpandedWidth : _capsuleCompactWidth) : null);
+            IsCapsule ? (_capsuleExpanded ? CapsuleExpandedWidth : _capsuleCompactWidth) : null, BarEdge);
         if (previousBounds is { } before && _appBar is { } afterBar && before != afterBar.Bounds)
         {
-            CloseTodoFlyout(animate: false);
-            CloseClockFlyout();
-            CloseInputMethodFlyout();
-            CloseSystemFlyouts();
+            CloseFlyoutsBeforeOpening();
+            CloseTrayPanelPreview();
         }
         // While a flyout is open the fast interval keeps its outside-click watch
         // prompt even in reserve mode.
@@ -444,7 +453,7 @@ public sealed partial class TopBarWindow : Window
     }
 
     internal int? GetReservedBottomForMonitor(MonitorSnapshot monitor) =>
-        !_closing && _appBar is { IsReserved: true } bar
+        !_closing && _appBar is { IsReserved: true, Edge: DockEdge.Top } bar
             && bar.Monitor?.MonitorHandle == monitor.MonitorHandle
             && bar.Bounds.Bottom > monitor.Bounds.Top
             && TopBarReserveRules.IsWorkAreaReserved(DockAppBarController.GetLiveWorkingArea(monitor), bar.Bounds)
@@ -522,7 +531,7 @@ public sealed partial class TopBarWindow : Window
 
         RegisterShellHook();
 
-        _appBar = new TopBarAppBarController(this, BarHeight);
+        _appBar = new TopBarAppBarController(this, BarHeight) { ResolveBottomDockTop = ResolveBottomDockTop };
         _appBar.EnvironmentChanged += OnEnvironmentChanged;
         _appBar.ExplorerNotified += () => ExplorerNotified?.Invoke();
         _appBar.ExplorerRestarted += RenderModules;
@@ -538,6 +547,8 @@ public sealed partial class TopBarWindow : Window
     internal event Action? ExplorerNotified;
 
     internal event Action? EnvironmentChanged;
+
+    internal Func<MonitorSnapshot, int?>? ResolveBottomDockTop { get; init; }
 
     internal event Action<int, nint>? ShellEventReceived;
 
@@ -1116,6 +1127,9 @@ public sealed partial class TopBarWindow : Window
             case TopBarModuleKind.TrayOverflow:
                 if (TrayOverflowController.IsSupported)
                 {
+#if TRAY_PANEL_PREVIEW
+                    AddTrayPanelPreviewModule(panel);
+#else
                     var visibleOnPress = false;
                     AddModule(TopBarModuleKind.TrayOverflow, panel, "托盘", () =>
                     {
@@ -1143,6 +1157,7 @@ public sealed partial class TopBarWindow : Window
                             visibleOnPress = TrayOverflowController.IsVisible;
                         trayButton.MouseLeave += (_, _) => visibleOnPress = false;
                     }
+#endif
                 }
                 break;
             case TopBarModuleKind.Search:
@@ -1488,16 +1503,13 @@ public sealed partial class TopBarWindow : Window
             return;
         }
 
-        CloseTodoFlyout(animate: false);
-        CloseClockFlyout();
-        CloseSystemFlyouts();
-        CloseAllHoverToolTips();
+        CloseFlyoutsBeforeOpening();
         _inputMethodTargetForeground = DockNativeMethods.GetForegroundWindow();
 
         var highContrast = AccessibilityThemeManager.IsHighContrastEnabled || SystemParameters.HighContrast;
         var look = ResolveSystemFlyoutLook(highContrast);
         var flyoutPalette = look.Palette;
-        var card = new Border
+        var card = new FlyoutCard(look)
         {
             Background = highContrast ? SystemColors.WindowBrush : FrozenBrush(flyoutPalette.Background),
             BorderBrush = highContrast ? SystemColors.WindowTextBrush : FrozenBrush(flyoutPalette.Border),
@@ -1506,15 +1518,14 @@ public sealed partial class TopBarWindow : Window
             Padding = new Thickness(10, 10, 10, 10),
             Child = BuildInputMethodCard(highContrast, flyoutPalette)
         };
-        ApplyFlyoutContentShadow(card, look);
         var onRight = ReferenceEquals(button.Parent, RightModules);
         var hostPanel = button.Parent as Panel ?? RightModules;
         var flyout = new Popup
         {
             PlacementTarget = button,
-            Placement = PlacementMode.Bottom,
+            Placement = InwardPlacement,
             HorizontalOffset = onRight ? -110 : -6,
-            VerticalOffset = 4,
+            VerticalOffset = InwardFlyoutOffset,
             StaysOpen = true,
             AllowsTransparency = true,
             Child = card
@@ -1894,32 +1905,29 @@ public sealed partial class TopBarWindow : Window
             return;
         }
 
-        CloseTodoFlyout(animate: false);
-        CloseInputMethodFlyout();
-        CloseSystemFlyouts();
-        CloseAllHoverToolTips();
+        CloseFlyoutsBeforeOpening();
 
         _clockMonth = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
         var highContrast = AccessibilityThemeManager.IsHighContrastEnabled || SystemParameters.HighContrast;
         var look = ResolveSystemFlyoutLook(highContrast);
         var flyoutPalette = look.Palette;
-        var card = new Border
+        var inkBrush = highContrast ? SystemColors.WindowTextBrush : FrozenBrush(flyoutPalette.Foreground);
+        var card = new FlyoutCard(look)
         {
             Background = highContrast ? SystemColors.WindowBrush : FrozenBrush(flyoutPalette.Background),
             BorderBrush = highContrast ? SystemColors.WindowTextBrush : FrozenBrush(flyoutPalette.Border),
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(14),
             Padding = new Thickness(16, 12, 16, 14),
-            Child = BuildClockCard(flyoutPalette)
+            Child = BuildClockCard(inkBrush)
         };
-        ApplyFlyoutContentShadow(card, look);
         var onRight = ReferenceEquals(button.Parent, RightModules);
         var flyout = new Popup
         {
             PlacementTarget = button,
-            Placement = PlacementMode.Bottom,
+            Placement = InwardPlacement,
             HorizontalOffset = onRight ? -156 : -6,
-            VerticalOffset = 4,
+            VerticalOffset = InwardFlyoutOffset,
             StaysOpen = true,
             AllowsTransparency = true,
             Child = card
@@ -1945,11 +1953,8 @@ public sealed partial class TopBarWindow : Window
         OnFlyoutOpened();
     }
 
-    private FrameworkElement BuildClockCard(TopBarFlyoutPalette? paletteOverride = null)
+    private FrameworkElement BuildClockCard(Brush inkBrush)
     {
-        var highContrast = AccessibilityThemeManager.IsHighContrastEnabled || SystemParameters.HighContrast;
-        var flyoutPalette = paletteOverride ?? ResolveSystemFlyoutLook(highContrast).Palette;
-        var inkBrush = highContrast ? SystemColors.WindowTextBrush : FrozenBrush(flyoutPalette.Foreground);
         var panel = new StackPanel { Width = 268 };
         var now = DateTime.Now;
         panel.Children.Add(new TextBlock
@@ -2105,16 +2110,16 @@ public sealed partial class TopBarWindow : Window
             Padding = new Thickness(4, 0, 4, 0)
         };
         System.Windows.Automation.AutomationProperties.SetName(button, automationName);
-        button.Click += (_, _) => ShiftMonth(months);
+        button.Click += (_, _) => ShiftMonth(months, inkBrush);
         return button;
     }
 
-    private void ShiftMonth(int months)
+    private void ShiftMonth(int months, Brush inkBrush)
     {
         _clockMonth = _clockMonth.AddMonths(months);
         if (_clockFlyout?.Child is Border card)
         {
-            card.Child = BuildClockCard();
+            card.Child = BuildClockCard(inkBrush);
         }
     }
 
@@ -2151,10 +2156,7 @@ public sealed partial class TopBarWindow : Window
             return;
         }
 
-        CloseClockFlyout();
-        CloseInputMethodFlyout();
-        CloseSystemFlyouts();
-        CloseAllHoverToolTips();
+        CloseFlyoutsBeforeOpening();
 
         var highContrast = AccessibilityThemeManager.IsHighContrastEnabled || SystemParameters.HighContrast;
         var look = ResolveSystemFlyoutLook(highContrast);
@@ -2188,7 +2190,7 @@ public sealed partial class TopBarWindow : Window
             }
         }
 
-        var card = new Border
+        var card = new FlyoutCard(look)
         {
             Background = highContrast ? SystemColors.WindowBrush : FrozenBrush(flyoutPalette.Background),
             BorderBrush = highContrast ? SystemColors.WindowTextBrush : FrozenBrush(flyoutPalette.Border),
@@ -2197,7 +2199,6 @@ public sealed partial class TopBarWindow : Window
             Padding = new Thickness(14, 10, 14, 12),
             Child = panel
         };
-        ApplyFlyoutContentShadow(card, look);
         // The flyout owns its closing: a StaysOpen popup drops cross-process clicks
         // silently and swallows in-thread ones through capture, so the bar closes it
         // from its own poll instead.
@@ -2205,9 +2206,9 @@ public sealed partial class TopBarWindow : Window
         var flyout = new Popup
         {
             PlacementTarget = button,
-            Placement = PlacementMode.Bottom,
+            Placement = InwardPlacement,
             HorizontalOffset = onRight ? -140 : -6,
-            VerticalOffset = 4,
+            VerticalOffset = InwardFlyoutOffset,
             StaysOpen = true,
             AllowsTransparency = true,
             Child = card
@@ -2378,8 +2379,8 @@ public sealed partial class TopBarWindow : Window
             }
             ApplyToolTipStyle(toolTip);
             toolTip.PlacementTarget = host;
-            toolTip.Placement = PlacementMode.Bottom;
-            toolTip.VerticalOffset = 4;
+            toolTip.Placement = InwardPlacement;
+            toolTip.VerticalOffset = InwardFlyoutOffset;
             toolTip.IsOpen = true;
         };
         host.MouseEnter += (_, _) =>
@@ -2442,6 +2443,7 @@ public sealed partial class TopBarWindow : Window
             CloseTodoFlyout();
             return;
         }
+        CloseFlyoutsBeforeOpening();
         var now = DateTime.Now;
         var todoList = _environment.ReadTodoList();
         var carryOver = todoList?.CarryOverIncomplete == true;
@@ -2591,9 +2593,16 @@ public sealed partial class TopBarWindow : Window
         TopBarNativeMethods.ConsumeMouseButtonDown(TopBarNativeMethods.EscapeKey);
     }
 
-    private void CloseAllOpenFlyouts()
+    private void CloseFlyoutsBeforeOpening()
     {
-        if (_capsuleExpanded || _todoFlyout?.IsOpen == true) CloseTodoFlyout();
+        CloseAllOpenFlyouts(animateTodo: false);
+        CloseSearchPopup();
+        CloseAllHoverToolTips();
+    }
+
+    private void CloseAllOpenFlyouts(bool animateTodo = true)
+    {
+        if (_capsuleExpanded || _todoFlyout?.IsOpen == true) CloseTodoFlyout(animateTodo);
         if (_clockFlyout?.IsOpen == true) CloseClockFlyout();
         if (_inputMethodFlyout?.IsOpen == true) CloseInputMethodFlyout();
         if (HasOpenSystemFlyout) CloseSystemFlyouts();
@@ -2619,6 +2628,11 @@ public sealed partial class TopBarWindow : Window
     private void CloseFlyoutOnOutsideClick()
     {
         CheckSearchPopupAutoDismiss();
+        CheckTrayPanelPreviewDismissal();
+        if (HasOpenTrayPanelPreview)
+        {
+            return;
+        }
         if (!HasAnyOpenFlyout && !_capsuleExpanded)
         {
             _flyoutPointerLeftSinceTick = null;
@@ -2931,10 +2945,12 @@ public sealed partial class TopBarWindow : Window
             UpdateForForeground();
             if (_trueFullScreenForeground) return;
         }
-        CloseTodoFlyout(animate: false);
-        CloseClockFlyout();
-        CloseInputMethodFlyout();
-        CloseSystemFlyouts();
+        if (_state.SearchInline == true && _searchPopup is not null)
+        {
+            CloseSearchPopup();
+            return;
+        }
+        CloseFlyoutsBeforeOpening();
         if (_state.SearchInline == true)
         {
             OpenSearchPopup();
@@ -2944,26 +2960,19 @@ public sealed partial class TopBarWindow : Window
     }
 
     /// <summary>
-    /// Drops the search popup under the centered entry. A second invocation closes it, so
-    /// the button and the global hotkey behave the same way.
+    /// Opens the search popup on the work-area side of the entry.
     /// </summary>
     private void OpenSearchPopup()
     {
-        if (_searchPopup is { } open)
-        {
-            open.RequestClose();
-            return;
-        }
-
         System.Windows.Point anchorPixels;
         if (_searchButton is { ActualWidth: > 0d } button)
         {
             anchorPixels = button.PointToScreen(
-                new System.Windows.Point(button.ActualWidth / 2d, button.ActualHeight));
+                new System.Windows.Point(button.ActualWidth / 2d, _state.ShowAtBottom ? 0d : button.ActualHeight));
         }
         else if (ActualWidth > 0d && ActualHeight > 0d)
         {
-            anchorPixels = PointToScreen(new System.Windows.Point(ActualWidth / 2d, ActualHeight));
+            anchorPixels = PointToScreen(new System.Windows.Point(ActualWidth / 2d, _state.ShowAtBottom ? 0d : ActualHeight));
         }
         else
         {
@@ -2981,7 +2990,8 @@ public sealed partial class TopBarWindow : Window
             monitor,
             _environment.IsEverythingSearchEnabled,
             _environment.ReadSearchSnapshotAsync,
-            _environment.OpenSearchEntry);
+            _environment.OpenSearchEntry,
+            opensUpward: _state.ShowAtBottom);
         popup.Closed += (_, _) =>
         {
             if (ReferenceEquals(_searchPopup, popup))
@@ -3715,6 +3725,7 @@ public sealed partial class TopBarWindow : Window
             return;
         }
 
+        RefreshPopupAppearance();
         ApplySurface();
         UpdateBackdropSampling(immediate: true);
     }
@@ -3745,19 +3756,19 @@ public sealed partial class TopBarWindow : Window
             && DesktopStyleRules.TopBarFrostedScrim(_state, glass.Surface);
         if (needsTemporaryOverlapBacking)
         {
-            // When a transparent/low-opacity smart-hidden bar temporarily pops out over a
-            // maximized/overlapping app (e.g. browser tabs), give it a clean frosted backing
-            // matching the user's global light/dark style so text never collides with tabs
-            // and bright app chrome never poisons wallpaper adaptive-ink hysteresis.
-            var unified = ResolveTopBarPopupPalette();
-            if (!unified.UseDarkInk)
+            // A low-opacity bar needs a readable temporary backing when it opens over app chrome.
+            if (!_palette.UseDarkInk)
             {
                 effectiveGlass = glass with { Surface = "#D8162230", Border = "#38FFFFFF" };
                 acrylic = _acrylicAvailable && _state.FrostedGlass;
             }
             else
             {
-                effectiveGlass = glass with { Surface = unified.FallbackSurface, Border = unified.Border };
+                effectiveGlass = glass with
+                {
+                    Surface = BarAdaptiveInkRules.ClearLightFlyoutBackground,
+                    Border = BarAdaptiveInkRules.LightFlyoutBorder
+                };
                 acrylic = false;
             }
         }
@@ -3968,7 +3979,14 @@ public sealed partial class TopBarWindow : Window
             }
         }
 
+        if (_appBar.RefreshBottomDockOffset())
+        {
+            CloseFlyoutsBeforeOpening();
+            CloseTrayPanelPreview();
+        }
         var bounds = _appBar.Bounds;
+        var taskbarOverlaps = _state.ShowAtBottom && liveTaskbar is { Edge: DockEdge.Bottom, AutoHidden: true }
+            && TaskbarEdgeGuard.IsVisibleTaskbarOverlapping(monitor, bounds);
         var foreground = ForegroundWindowRect(out var foregroundBounds, out var foregroundWindow);
         var hasBacking = TransientForegroundResolver.TryResolveBackingWindow(foregroundWindow, _handle, out var backing);
         // The keyboard layout follows the focused window, and the IME's own
@@ -4025,13 +4043,13 @@ public sealed partial class TopBarWindow : Window
 
         if (_appBar.IsReserved)
         {
-            if (!_observedWindowsSeeded)
+            if (!_state.ShowAtBottom && !_observedWindowsSeeded)
             {
                 SeedObservedTopWindows();
             }
 
             var nudgedAsynchronously = false;
-            if (foreground && foregroundWindow != 0)
+            if (!_state.ShowAtBottom && foreground && foregroundWindow != 0)
             {
                 nudgedAsynchronously = TryNudgeNewlyOpenedWindow(
                     foregroundWindow,
@@ -4047,11 +4065,13 @@ public sealed partial class TopBarWindow : Window
             // (such as a borderless, elevated, or user-dragged window).
             var coveredByForeground = fullScreen
                 || trueFullScreen
+                || taskbarOverlaps
                 || (!nudgedAsynchronously
-                    && ((foreground && TopBarReserveRules.IsWindowCoveringReservedBar(foregroundBounds, bounds))
-                        || (hasBacking && TopBarReserveRules.IsWindowCoveringReservedBar(backing.Bounds, bounds))));
+                    && ((foreground && TopBarReserveRules.IsWindowCoveringReservedBar(foregroundBounds, bounds, BarEdge))
+                        || (hasBacking && TopBarReserveRules.IsWindowCoveringReservedBar(backing.Bounds, bounds, BarEdge))));
             _appBar.SetFullScreenDetected(coveredByForeground);
-            if (coveredByForeground)
+            // A partially covered bar can still receive clicks on its exposed modules.
+            if (trueFullScreen || taskbarOverlaps)
             {
                 CloseTodoFlyout(animate: false);
                 CloseClockFlyout();
@@ -4101,7 +4121,7 @@ public sealed partial class TopBarWindow : Window
             : hasBacking && backingOverlaps
                 ? backing.Bounds
                 : monitorCoveringBounds;
-        var captionExclusionPx = !IsCapsule && captionSourceBounds.HasArea
+        var captionExclusionPx = !_state.ShowAtBottom && !IsCapsule && captionSourceBounds.HasArea
             ? (int)Math.Round(TopBarRevealRules.CaptionButtonsExclusionDip * monitor.Dpi / 96d)
             : 0;
         var excludedCaptionSpan = captionExclusionPx > 0
@@ -4118,25 +4138,21 @@ public sealed partial class TopBarWindow : Window
             cursor.Y,
             revealBounds,
             IsCapsule ? bounds.Top - revealBounds.Top + revealDepth : revealDepth,
-            excludedCaptionSpan);
+            excludedCaptionSpan,
+            BarEdge);
         var nowTick = Environment.TickCount64;
-        if (inRawRevealZone)
-        {
-            _revealZoneEnteredTick ??= nowTick;
-        }
-        else
-        {
-            _revealZoneEnteredTick = null;
-        }
+        var leftButtonDown = TopBarNativeMethods.IsKeyCurrentlyDown(TopBarNativeMethods.LeftMouseButton);
         var pointerInRevealZone = TopBarRevealRules.ShouldTriggerRevealAfterDwell(
             inRawRevealZone,
             overlaps || effectiveZoomed,
             IsVisible,
-            _revealZoneEnteredTick,
+            ref _revealZoneEnteredTick,
+            leftButtonDown,
             nowTick);
         var input = new DockAutoHideInput(
-            WindowOverlapsDock: overlaps || effectiveZoomed,
-            ForegroundIsFullScreen: trueFullScreen,
+            // Keep a hidden bar out of the way if the dragged window moves off the top strip.
+            WindowOverlapsDock: overlaps || effectiveZoomed || (leftButtonDown && !IsVisible),
+            ForegroundIsFullScreen: trueFullScreen || taskbarOverlaps,
             PointerInRevealZone: pointerInRevealZone,
             PointerOverDock: pointerOverBar,
             InteractionActive: _menuOpen || _capsuleExpanded
@@ -4202,7 +4218,8 @@ public sealed partial class TopBarWindow : Window
     {
         bounds = default;
         window = DockNativeMethods.GetForegroundWindow();
-        if (window == 0 || window == _handle || window == (_barMenu?.PopupHandle ?? 0) || DockNativeMethods.IsIconic(window))
+        if (window == 0 || window == _handle || window == (_barMenu?.PopupHandle ?? 0)
+            || IsTrayPanelPreviewWindow(window) || DockNativeMethods.IsIconic(window))
         {
             return false;
         }
@@ -4372,6 +4389,7 @@ public sealed partial class TopBarWindow : Window
         {
             existing.IsOpen = false;
         }
+        CloseTrayPanelPreview();
         var highContrast = AccessibilityThemeManager.IsHighContrastEnabled || SystemParameters.HighContrast;
         var darkSurface = !ResolveSystemFlyoutLook(highContrast).Palette.UseDarkInk;
         var menu = new NonActivatingPopupMenu(Surface, PlacementMode.Mouse, darkSurface);
@@ -4491,6 +4509,9 @@ public sealed partial class TopBarWindow : Window
                 });
                 break;
             case TopBarModuleKind.TrayOverflow:
+#if TRAY_PANEL_PREVIEW
+                menu.AddItem("打开 Windows 托盘", _environment.OpenTrayOverflow);
+#endif
                 var trayIconOnly = TopBarRules.EffectiveTrayIconOnly(_state);
                 menu.AddItem(trayIconOnly ? "托盘：显示文字" : "托盘：仅显示图标", () =>
                 {

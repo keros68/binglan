@@ -29,8 +29,35 @@ internal static class MemoryOptimizationTests
     {
         TestDynamicDragBitmapCacheAndFrozenShadows(show, pump, until);
         TestShellIconDeduplicationWeakCacheArrayPoolAndCacheEviction();
+        TestRemovedFileBoxIconLifetime();
         TestTodoSharedContextMenuDisconnectedViewsAndSelectionRoundTrip(show, pump, until);
         TestLazySettingsFontPreservationOverlaysBackdropAndGcPolicy(show, pump, until);
+    }
+
+    internal static void TestRemovedFileBoxIconLifetime()
+    {
+        var cache = new FileBoxTabIconCache();
+        var live = new FileMappingState();
+        var liveIcon = new DrawingImage();
+        liveIcon.Freeze();
+        cache.Store(live, liveIcon, false);
+        var removedIcon = CacheTransientMapping(cache);
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        GC.Collect();
+        Check(!removedIcon.IsAlive, "已经移除的映射不能继续保留其标签页图标");
+        Check(ReferenceEquals(cache.Get(live)?.Icon, liveIcon), "仍在标签页中的映射应保留图标");
+        cache.Store(live, null, true);
+        Check(cache.Get(live) is { Icon: null, IsMissing: true }, "同一映射应更新失效状态");
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static WeakReference CacheTransientMapping(FileBoxTabIconCache cache)
+    {
+        var icon = new DrawingImage();
+        icon.Freeze();
+        cache.Store(new FileMappingState(), icon, false);
+        return new WeakReference(icon);
     }
 
     private static void TestDynamicDragBitmapCacheAndFrozenShadows(

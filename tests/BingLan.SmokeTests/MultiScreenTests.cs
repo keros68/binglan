@@ -82,8 +82,8 @@ internal static class MultiScreenTests
                 File.WriteAllText(store.StatePath, legacyJson);
 
                 var loaded = store.Load();
-                Check(loaded.SchemaVersion == AppState.CurrentSchemaVersion && AppState.CurrentSchemaVersion == 67,
-                    $"v{legacyVersion} 状态应平滑迁移到 v67，实际 {loaded.SchemaVersion}");
+                Check(loaded.SchemaVersion == AppState.CurrentSchemaVersion,
+                    $"v{legacyVersion} 状态应平滑迁移到 v{AppState.CurrentSchemaVersion}，实际 {loaded.SchemaVersion}");
                 Check(loaded.MultiScreen is null, "单屏旧状态迁移后 MultiScreen 应保持 null 零分配");
                 Check(loaded.InformationWidgets.Any(i => i.ClockAlignment == ClockHorizontalAlignment.Center),
                     "迁移后应保留 v0.4.9 的 ClockAlignment 设置");

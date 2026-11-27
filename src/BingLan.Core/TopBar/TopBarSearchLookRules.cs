@@ -3,8 +3,7 @@ using BingLan.Core.Models;
 namespace BingLan.Core.TopBar;
 
 /// <summary>
-/// Resolved colours and glass behaviour for the top bar's inline search popup,
-/// aligned with the top bar's own material, adaptive wallpaper ink, and readability rules.
+/// Resolved colours and glass behaviour for the top bar's popups.
 /// </summary>
 public sealed record TopBarSearchPalette(
     bool UseDarkInk,
@@ -24,27 +23,10 @@ public sealed record TopBarSearchPalette(
     string SelectionBrush);
 
 /// <summary>
-/// Pure colour and contrast rules for the top bar's inline search popup. Keeps the popup
-/// visually unified with the top bar and its system flyouts across dark, light, custom,
-/// palette, and transparent wallpaper-adaptive configurations.
+/// Shares the top bar's material across search and system flyouts.
 /// </summary>
 public static class TopBarSearchLookRules
 {
-    public const double TransparentTopBarOpacityThreshold = 0.12d;
-    public const string DefaultLightSurfaceRgb = "#ECF6FF";
-    public const string DefaultDarkSurfaceRgb = "#162230";
-    public const string ClearGlassIceTintRgb = "#D8F3FF";
-
-    public const string ClearGlassWhiteForeground = "#FFFFFF";
-    public const string ClearGlassMutedForeground = "#F0F8FF";
-    public const string ClearGlassPlaceholderForeground = "#E8F4FF";
-    public const string ClearGlassBorder = "#66FFFFFF";
-    public const string ClearGlassDivider = "#34FFFFFF";
-    public const string ClearGlassBadgeBackground = "#2CFFFFFF";
-    public const string ClearGlassBadgeBorder = "#54FFFFFF";
-    public const string ClearGlassHoverRow = "#34FFFFFF";
-    public const string ClearGlassDefaultActiveRow = "#5C1EA9FF";
-
     public const string DarkSurfaceForeground = "#F2F6FC";
     public const string DarkSurfaceMutedForeground = "#C4D5E6";
     public const string DarkSurfacePlaceholderForeground = "#B0C4D8";
@@ -73,251 +55,119 @@ public static class TopBarSearchLookRules
     public const string LightSurfaceStrongLightenActiveRow = "#70FFFFFF";
     public const string LightSurfaceDefaultSelection = "#5C1EA9FF";
 
-    public static TopBarSearchPalette Resolve(
+    public static TopBarSearchPalette ResolveForTopBar(
         DesktopStyleState? style,
-        LauncherAppearanceState? launcherAppearance = null,
         TopBarState? topBar = null,
-        bool? useClearGlass = null)
+        bool? adaptiveUseDarkInk = null)
     {
         var effectiveStyle = style ?? new DesktopStyleState();
-        var effectiveLauncher = launcherAppearance ?? new LauncherAppearanceState();
         var effectiveTopBar = topBar ?? new TopBarState();
+        var glass = DesktopStyleRules.TopBar(effectiveStyle, effectiveTopBar);
+        var allowBackdropBlur = DesktopStyleRules.TopBarFrostedScrim(effectiveTopBar, glass.Surface);
+        var opacity = ColorContrastRules.ParseHex(glass.Surface).A;
+        var baseRgb = "#" + glass.Surface[3..];
         var accentRgb = WidgetAppearanceRules.CoerceColorOrDefault(
             effectiveStyle.AccentColor,
             DesktopStyleRules.DefaultAccentColor);
-        var clearGlass = useClearGlass ?? effectiveLauncher.UseClearGlass;
-        var allowBackdropBlur = effectiveTopBar.FrostedGlass && !clearGlass;
-
-        bool darkSurface;
-        bool sheerClearGlass = false;
-        string baseRgb;
-        double density;
-        double? guaranteedFallbackOpacity = null;
-        string? customForeground = null;
-
-        // Follow the user's global style (material, palette, and TextInk) or explicit
-        // launcher appearance override so inline search matches cards & the top bar pill.
-        if (!effectiveLauncher.FollowCardLook)
+        var readability = LauncherReadabilityRules.Resolve(baseRgb, opacity);
+        var samplesBackdrop = BarAdaptiveInkRules.NeedsBackdropSampling(glass.Surface, allowBackdropBlur);
+        var useAdaptiveInk = samplesBackdrop && adaptiveUseDarkInk.HasValue;
+        var useDarkInk = useAdaptiveInk ? adaptiveUseDarkInk.GetValueOrDefault() : readability.DarkInk;
+        var foreground = useDarkInk
+            ? LightSurfaceForeground
+            : samplesBackdrop ? BarAdaptiveInkRules.LightInkColor : DarkSurfaceForeground;
+        if (!useAdaptiveInk && ColorContrastRules.ContrastRatio(foreground, baseRgb) < ColorContrastRules.MinimumNormalTextContrast)
         {
-            var customRgb = WidgetAppearanceRules.CoerceColorOrDefault(
-                effectiveLauncher.SurfaceColor,
-                LauncherAppearanceState.DefaultSurfaceColor);
-            var readability = LauncherReadabilityRules.Resolve(customRgb, effectiveLauncher.SurfaceOpacity);
-            baseRgb = customRgb;
-            darkSurface = !readability.DarkInk;
-            density = readability.SurfaceOpacity;
-            guaranteedFallbackOpacity = readability.PlateOpacity;
-        }
-        else
-        {
-            var wantsLightInk = ResolveWantsLightInk(effectiveStyle, out customForeground);
-            if (wantsLightInk)
-            {
-                darkSurface = true;
-                sheerClearGlass = effectiveStyle.Glass == GlassMode.Clear
-                    || (effectiveStyle.Glass == GlassMode.Light && effectiveStyle.GlassDensity < 0.20d);
-                if (sheerClearGlass)
-                {
-                    var palette = DesktopStyleRules.GetPalette(effectiveStyle.Palette);
-                    baseRgb = palette.Key == DesktopStyleRules.DefaultPalette
-                        ? ClearGlassIceTintRgb
-                        : WidgetAppearanceRules.CoerceColorOrDefault(palette.Body, ClearGlassIceTintRgb);
-                    density = 0.22d;
-                }
-                else
-                {
-                    baseRgb = DefaultDarkSurfaceRgb;
-                    density = effectiveStyle.GlassDensity;
-                }
-            }
-            else
-            {
-                darkSurface = false;
-                var palette = DesktopStyleRules.GetPalette(effectiveStyle.Palette);
-                baseRgb = palette.Key == DesktopStyleRules.DefaultPalette
-                    ? DefaultLightSurfaceRgb
-                    : WidgetAppearanceRules.CoerceColorOrDefault(palette.Body, DefaultLightSurfaceRgb);
-                density = effectiveStyle.Glass == GlassMode.Clear
-                    ? 0.48d
-                    : effectiveStyle.GlassDensity;
-            }
+            useDarkInk = ColorContrastRules.ContrastRatio("#000000", baseRgb)
+                >= ColorContrastRules.ContrastRatio("#FFFFFF", baseRgb);
+            foreground = useDarkInk ? "#000000" : "#FFFFFF";
         }
 
-        if (sheerClearGlass)
+        var glassTint = glass.Surface;
+        var fallbackSurface = glass.Surface;
+        if (allowBackdropBlur)
         {
-            var foreground = customForeground ?? ClearGlassWhiteForeground;
-            var activeRow = IsDefaultAccent(accentRgb)
-                ? ClearGlassDefaultActiveRow
-                : WithAlphaByte(accentRgb, 0x5C);
-            var selection = IsDefaultAccent(accentRgb)
-                ? DarkSurfaceDefaultSelection
-                : WithAlphaByte(accentRgb, 0x66);
-            return new TopBarSearchPalette(
-                UseDarkInk: false,
-                AllowBackdropBlur: allowBackdropBlur,
-                UseTextShadow: true,
-                GlassTint: WithAlphaByte(baseRgb, 0x38),
-                FallbackSurface: WithAlphaByte(baseRgb, 0x52),
-                Border: ClearGlassBorder,
-                Foreground: foreground,
-                MutedForeground: ClearGlassMutedForeground,
-                PlaceholderForeground: ClearGlassPlaceholderForeground,
-                Divider: ClearGlassDivider,
-                BadgeBackground: ClearGlassBadgeBackground,
-                BadgeBorder: ClearGlassBadgeBorder,
-                ActiveRowBackground: activeRow,
-                HoverRowBackground: ClearGlassHoverRow,
-                SelectionBrush: selection);
+            var readableOpacity = readability.SurfaceOpacity;
+            var fallbackOpacity = useDarkInk
+                ? BarAdaptiveInkRules.MinimumLightFlyoutOpacity
+                : BarAdaptiveInkRules.MinimumDarkFlyoutOpacity;
+            glassTint = WithAlphaByte(baseRgb, OpacityByte(readableOpacity));
+            fallbackSurface = WithAlphaByte(baseRgb, OpacityByte(Math.Max(readableOpacity, fallbackOpacity)));
         }
 
-        if (darkSurface)
-        {
-            var blurAlpha = guaranteedFallbackOpacity is not null
-                ? (byte)Math.Clamp((int)Math.Ceiling(Math.Max(density, 0.72d) * 255d - 1e-9), 0xB8, 0xFF)
-                : (byte)Math.Clamp((int)Math.Round((0.64d + (density - 0.25d) * 0.24d) * 255d), 0x9C, 0xD6);
-            var fallbackAlpha = guaranteedFallbackOpacity is { } minPlate
-                ? (byte)Math.Clamp((int)Math.Ceiling(Math.Max(minPlate, 0.88d) * 255d - 1e-9), 0xE0, 0xFF)
-                : (byte)Math.Clamp((int)Math.Round((0.88d + (density - 0.25d) * 0.10d) * 255d), 0xE0, 0xF2);
+        // Plain glass retains the bar's actual opacity, including its invisible hit-test fill.
+        // Shadow separates the text where that fill cannot provide contrast on its own.
+        var useTextShadow = !HasContrast(foreground, glassTint);
+        var mutedCandidate = useDarkInk ? LightSurfaceMutedForeground : DarkSurfaceMutedForeground;
+        var placeholderCandidate = useDarkInk ? LightSurfacePlaceholderForeground : DarkSurfacePlaceholderForeground;
+        var muted = HasContrast(mutedCandidate, glassTint) ? mutedCandidate : foreground;
+        var placeholder = HasContrast(placeholderCandidate, glassTint) ? placeholderCandidate : muted;
+        var activeRow = ResolveActiveRowBackground(accentRgb, useDarkInk, glassTint, foreground, useTextShadow);
+        var selection = IsDefaultAccent(accentRgb)
+            ? (useDarkInk ? LightSurfaceDefaultSelection : DarkSurfaceDefaultSelection)
+            : WithAlphaByte(accentRgb, useDarkInk ? (byte)0x52 : (byte)0x66);
 
-            var glassTint = WithAlphaByte(baseRgb, blurAlpha);
-            var fallbackSurface = WithAlphaByte(baseRgb, fallbackAlpha);
-            var foreground = customForeground ?? DarkSurfaceForeground;
-            var muted = EnsureReadableSecondaryInk(DarkSurfaceMutedForeground, foreground, fallbackSurface);
-            var placeholder = EnsureReadableSecondaryInk(DarkSurfacePlaceholderForeground, muted, fallbackSurface);
-            var activeRow = ResolveActiveRowBackground(
-                accentRgb,
-                darkSurface: true,
-                sheerClearGlass: false,
-                fallbackSurface,
-                foreground);
-            var selection = IsDefaultAccent(accentRgb)
-                ? DarkSurfaceDefaultSelection
-                : WithAlphaByte(accentRgb, 0x66);
-
-            return new TopBarSearchPalette(
-                UseDarkInk: false,
-                AllowBackdropBlur: allowBackdropBlur,
-                UseTextShadow: false,
-                GlassTint: glassTint,
-                FallbackSurface: fallbackSurface,
-                Border: DarkSurfaceBorder,
-                Foreground: foreground,
-                MutedForeground: muted,
-                PlaceholderForeground: placeholder,
-                Divider: DarkSurfaceDivider,
-                BadgeBackground: DarkSurfaceBadgeBackground,
-                BadgeBorder: DarkSurfaceBadgeBorder,
-                ActiveRowBackground: activeRow,
-                HoverRowBackground: DarkSurfaceHoverRow,
-                SelectionBrush: selection);
-        }
-        else
-        {
-            var blurAlpha = guaranteedFallbackOpacity is not null
-                ? (byte)Math.Clamp((int)Math.Ceiling(Math.Max(density, 0.74d) * 255d - 1e-9), 0xBD, 0xFF)
-                : (byte)Math.Clamp((int)Math.Round((0.64d + (density - 0.25d) * 0.22d) * 255d), 0x9E, 0xD4);
-            var fallbackAlpha = guaranteedFallbackOpacity is { } minPlate
-                ? (byte)Math.Clamp((int)Math.Ceiling(Math.Max(minPlate, 0.90d) * 255d - 1e-9), 0xE6, 0xFF)
-                : (byte)Math.Clamp((int)Math.Round((0.90d + (density - 0.25d) * 0.08d) * 255d), 0xE6, 0xF4);
-
-            var glassTint = WithAlphaByte(baseRgb, blurAlpha);
-            var fallbackSurface = WithAlphaByte(baseRgb, fallbackAlpha);
-            var foreground = customForeground ?? LightSurfaceForeground;
-            var muted = EnsureReadableSecondaryInk(LightSurfaceMutedForeground, foreground, fallbackSurface);
-            var placeholder = EnsureReadableSecondaryInk(LightSurfacePlaceholderForeground, muted, fallbackSurface);
-            var activeRow = ResolveActiveRowBackground(
-                accentRgb,
-                darkSurface: false,
-                sheerClearGlass: false,
-                fallbackSurface,
-                foreground);
-            var selection = IsDefaultAccent(accentRgb)
-                ? LightSurfaceDefaultSelection
-                : WithAlphaByte(accentRgb, 0x52);
-
-            return new TopBarSearchPalette(
-                UseDarkInk: true,
-                AllowBackdropBlur: allowBackdropBlur,
-                UseTextShadow: false,
-                GlassTint: glassTint,
-                FallbackSurface: fallbackSurface,
-                Border: LightSurfaceBorder,
-                Foreground: foreground,
-                MutedForeground: muted,
-                PlaceholderForeground: placeholder,
-                Divider: LightSurfaceDivider,
-                BadgeBackground: LightSurfaceBadgeBackground,
-                BadgeBorder: LightSurfaceBadgeBorder,
-                ActiveRowBackground: activeRow,
-                HoverRowBackground: LightSurfaceHoverRow,
-                SelectionBrush: selection);
-        }
+        return new TopBarSearchPalette(
+            UseDarkInk: useDarkInk,
+            AllowBackdropBlur: allowBackdropBlur,
+            UseTextShadow: useTextShadow,
+            GlassTint: glassTint,
+            FallbackSurface: fallbackSurface,
+            Border: useDarkInk ? LightSurfaceBorder : DarkSurfaceBorder,
+            Foreground: foreground,
+            MutedForeground: muted,
+            PlaceholderForeground: placeholder,
+            Divider: useDarkInk ? LightSurfaceDivider : DarkSurfaceDivider,
+            BadgeBackground: useDarkInk ? LightSurfaceBadgeBackground : DarkSurfaceBadgeBackground,
+            BadgeBorder: useDarkInk ? LightSurfaceBadgeBorder : DarkSurfaceBadgeBorder,
+            ActiveRowBackground: activeRow,
+            HoverRowBackground: useDarkInk ? LightSurfaceHoverRow : DarkSurfaceHoverRow,
+            SelectionBrush: selection);
     }
 
-    private static bool ResolveWantsLightInk(DesktopStyleState style, out string? customForeground)
-    {
-        customForeground = null;
-        switch (style.TextInk)
-        {
-            case TextInk.White:
-                return true;
-            case TextInk.Dark:
-                return false;
-            case TextInk.Custom:
-                var custom = WidgetAppearanceRules.CoerceTextColor(style.CustomTextColor);
-                customForeground = custom;
-                return ColorContrastRules.RelativeLuminance(ColorContrastRules.ParseHex(custom)) > 0.45d;
-            default:
-                // TextInk.Follow matches DesktopStyleRules: white on Dark and Clear glass, dark on Light glass.
-                return style.Glass is GlassMode.Dark or GlassMode.Clear;
-        }
-    }
+    private static bool HasContrast(string inkHex, string surfaceHex) =>
+        HasContrast(ColorContrastRules.ParseHex(inkHex), ColorContrastRules.ParseHex(surfaceHex));
 
-    private static string EnsureReadableSecondaryInk(
-        string candidateHex,
-        string fallbackHex,
-        string fallbackSurface)
+    private static bool HasContrast(
+        ColorContrastRules.SrgbColor ink,
+        ColorContrastRules.SrgbColor surface,
+        ColorContrastRules.SrgbColor row = default)
     {
-        var candidate = ColorContrastRules.ParseHex(candidateHex);
-        var surfaceLayer = ColorContrastRules.ParseHex(fallbackSurface);
-        var overDark = ColorContrastRules.CompositeLayers(ColorContrastRules.DarkWallpaper, surfaceLayer);
-        var overBright = ColorContrastRules.CompositeLayers(ColorContrastRules.BrightWallpaper, surfaceLayer);
-        if (ColorContrastRules.ContrastRatio(candidate, overDark) >= ColorContrastRules.MinimumNormalTextContrast
-            && ColorContrastRules.ContrastRatio(candidate, overBright) >= ColorContrastRules.MinimumNormalTextContrast)
-        {
-            return candidateHex;
-        }
-
-        return fallbackHex;
+        var black = new ColorContrastRules.SrgbColor(0d, 0d, 0d);
+        var white = new ColorContrastRules.SrgbColor(1d, 1d, 1d);
+        var overBlack = ColorContrastRules.CompositeOver(row, ColorContrastRules.CompositeOver(surface, black));
+        var overWhite = ColorContrastRules.CompositeOver(row, ColorContrastRules.CompositeOver(surface, white));
+        return ColorContrastRules.ContrastRatio(ink, overBlack) >= ColorContrastRules.MinimumNormalTextContrast
+            && ColorContrastRules.ContrastRatio(ink, overWhite) >= ColorContrastRules.MinimumNormalTextContrast;
     }
 
     private static string ResolveActiveRowBackground(
         string accentRgb,
-        bool darkSurface,
-        bool sheerClearGlass,
-        string fallbackSurface,
-        string foreground)
+        bool useDarkInk,
+        string surfaceHex,
+        string foreground,
+        bool useTextShadow)
     {
-        var preferred = IsDefaultAccent(accentRgb)
-            ? (darkSurface
-                ? (sheerClearGlass ? ClearGlassDefaultActiveRow : DarkSurfaceDefaultActiveRow)
-                : LightSurfaceDefaultActiveRow)
-            : WithAlphaByte(accentRgb, darkSurface ? (byte)0x48 : (byte)0x34);
+        var subtle = useDarkInk ? LightSurfaceFallbackActiveRow : DarkSurfaceFallbackActiveRow;
+        var defaultAccent = IsDefaultAccent(accentRgb);
+        var preferred = defaultAccent
+            ? (useDarkInk ? LightSurfaceDefaultActiveRow : DarkSurfaceDefaultActiveRow)
+            : WithAlphaByte(accentRgb, useDarkInk ? (byte)0x34 : (byte)0x48);
+        if (useTextShadow)
+        {
+            return defaultAccent ? subtle : preferred;
+        }
 
-        string[] candidates = darkSurface
-            ? [preferred, DarkSurfaceFallbackActiveRow, DarkSurfaceDarkenActiveRow, DarkSurfaceStrongDarkenActiveRow]
-            : [preferred, LightSurfaceFallbackActiveRow, LightSurfaceLightenActiveRow, LightSurfaceStrongLightenActiveRow];
+        string[] candidates = useDarkInk
+            ? [preferred, subtle, LightSurfaceLightenActiveRow, LightSurfaceStrongLightenActiveRow]
+            : [preferred, subtle, DarkSurfaceDarkenActiveRow, DarkSurfaceStrongDarkenActiveRow];
 
         var ink = ColorContrastRules.ParseHex(foreground);
-        var surfaceLayer = ColorContrastRules.ParseHex(fallbackSurface);
+        var surface = ColorContrastRules.ParseHex(surfaceHex);
 
         foreach (var candidate in candidates)
         {
-            var rowLayer = ColorContrastRules.ParseHex(candidate);
-            var overDark = ColorContrastRules.CompositeLayers(ColorContrastRules.DarkWallpaper, surfaceLayer, rowLayer);
-            var overBright = ColorContrastRules.CompositeLayers(ColorContrastRules.BrightWallpaper, surfaceLayer, rowLayer);
-            if (ColorContrastRules.ContrastRatio(ink, overDark) >= ColorContrastRules.MinimumNormalTextContrast
-                && ColorContrastRules.ContrastRatio(ink, overBright) >= ColorContrastRules.MinimumNormalTextContrast)
+            if (HasContrast(ink, surface, ColorContrastRules.ParseHex(candidate)))
             {
                 return candidate;
             }
@@ -328,6 +178,8 @@ public static class TopBarSearchLookRules
 
     private static bool IsDefaultAccent(string accentRgb) =>
         string.Equals(accentRgb, DesktopStyleRules.DefaultAccentColor, StringComparison.OrdinalIgnoreCase);
+
+    private static byte OpacityByte(double opacity) => (byte)Math.Ceiling(opacity * 255d - 1e-9);
 
     private static string WithAlphaByte(string rgb, byte alpha) =>
         $"#{alpha:X2}{rgb.TrimStart('#')}";

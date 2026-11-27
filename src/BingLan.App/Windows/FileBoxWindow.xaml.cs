@@ -87,6 +87,7 @@ public partial class FileBoxWindow : WidgetWindowBase
         ApplyViewMode();
         ApplyPlacement(state.Placement, state.IsLocked);
         WidgetCornerRadius = state.CornerRadius;
+        RefreshExpansionLayout();
         InitializeGroups();
         RefreshCount();
         if (state.IsCollapsed)
@@ -306,7 +307,7 @@ public partial class FileBoxWindow : WidgetWindowBase
 
     protected override bool SuppressLayeredClip => IsEdgeDocked && !IsEdgeDockExpanded;
 
-    internal override bool PreferClampHeightAtBottomEdge => true;
+    internal override bool PreferClampHeightAtBottomEdge => !ExpandsUpward;
 
     protected override bool IsHitTestPointInside(System.Windows.Point point)
     {
@@ -328,6 +329,8 @@ public partial class FileBoxWindow : WidgetWindowBase
 
     internal void EnterEdgeDockedHiddenVisual(FileBoxEdgeDockSide side, BingLan.Core.Dock.PixelRect tabBounds)
     {
+        _foldAnimator.Snap();
+        RefreshExpansionLayout();
         IsEdgeDockSuspended = false;
         IsEdgeDockExpanded = false;
         _autoCollapseTimer.Stop();
@@ -362,6 +365,7 @@ public partial class FileBoxWindow : WidgetWindowBase
 
     internal void EnterEdgeDockedExpandedVisual(FileBoxEdgeDockSide side, BingLan.Core.Dock.PixelRect expandedBounds, bool animate)
     {
+        RefreshExpansionLayout();
         IsEdgeDockSuspended = false;
         IsEdgeDockExpanded = true;
         _autoCollapseTimer.Stop();
@@ -440,6 +444,7 @@ public partial class FileBoxWindow : WidgetWindowBase
         UpdateEdgeDockPosition(restoredBounds);
         UpdateEdgeDockPosition(restoredBounds);
         RefreshLayeredClip();
+        RefreshExpansionLayout();
         RefreshTabStripLayout();
         RefreshAutoCollapseTimer();
         RefreshHoverExpandTimer();
@@ -735,138 +740,6 @@ public partial class FileBoxWindow : WidgetWindowBase
         NotifyStateChanged();
     }
 
-    private UIElement[] FoldBodyElements() =>
-        BoxLayout.Children.OfType<FrameworkElement>()
-            .Where(element => System.Windows.Controls.Grid.GetRow(element) > 0)
-            .Append<UIElement>(TitleDivider)
-            .ToArray();
-
-    /// <summary>
-    /// Folds the box up to its title bar, or unfolds it to the height it had. A folded box
-    /// keeps its width and can still be dragged; only its height is fixed.
-    /// </summary>
-    internal void SetCollapsed(bool collapsed, bool animate = false)
-    {
-        if (collapsed && !State.IsCollapsed)
-        {
-            if (!_expandedHeightTemporarilyClamped || State.ExpandedHeight <= 0)
-            {
-                State.ExpandedHeight = Height;
-            }
-            _expandedHeightTemporarilyClamped = false;
-        }
-        if (collapsed)
-        {
-            _pinnedOpenForSession = false;
-        }
-        else
-        {
-            _suppressHoverExpandUntilLeave = false;
-        }
-        State.IsCollapsed = collapsed;
-        CollapseButton.Content = collapsed ? "\uE70D" : "\uE70E";
-        CollapseButton.ToolTip = collapsed ? "展开文件收纳盒" : "折叠成标题条";
-        AddButton.Visibility = collapsed ? Visibility.Collapsed : Visibility.Visible;
-        SortButton.Visibility = collapsed ? Visibility.Collapsed : Visibility.Visible;
-        CollapsedSummaryText.Visibility = collapsed ? Visibility.Visible : Visibility.Collapsed;
-        RefreshPinOpenButton();
-        RefreshCollapsedSummary();
-        SyncGroupSharedProperties();
-
-        var bodyElements = FoldBodyElements();
-        if (collapsed)
-        {
-            TabStripHost.Visibility = Visibility.Collapsed;
-            FileBoxMotionOverlay.Children.Clear();
-            void CommitCollapsedLayout()
-            {
-                foreach (var element in bodyElements)
-                {
-                    element.Visibility = Visibility.Collapsed;
-                }
-                MinHeight = CollapsedHeight;
-                MaxHeight = CollapsedHeight;
-                Height = CollapsedHeight;
-            }
-
-            if (animate && IsLoaded && CardMotionAnimator.IsAnimationEnabled)
-            {
-                _foldAnimator.BeginCollapse(CollapsedHeight, bodyElements, CommitCollapsedLayout);
-            }
-            else
-            {
-                _foldAnimator.Snap();
-                CommitCollapsedLayout();
-            }
-        }
-        else
-        {
-            foreach (var element in bodyElements)
-            {
-                element.Visibility = Visibility.Visible;
-            }
-            MaxHeight = double.PositiveInfinity;
-            MinHeight = DefaultMinHeight;
-            var desiredHeight = Math.Max(DefaultMinHeight, State.ExpandedHeight > 0 ? State.ExpandedHeight : 306d);
-            var clampedHeight = ClampExpandedHeightToWorkArea(desiredHeight);
-            _expandedHeightTemporarilyClamped = clampedHeight < desiredHeight - 0.5d;
-            Height = clampedHeight;
-            // 展开向下长高，等原生矩形反映新尺寸后确认不越界（优先收缩高度，不把顶边往上顶）。
-            Dispatcher.BeginInvoke(
-                System.Windows.Threading.DispatcherPriority.Loaded, EnsureFullyOnScreen);
-
-            if (animate && IsLoaded && CardMotionAnimator.IsAnimationEnabled)
-            {
-                _foldAnimator.BeginExpand(CollapsedHeight, Height, bodyElements);
-            }
-            else
-            {
-                _foldAnimator.Snap();
-            }
-        }
-        RefreshTabStripLayout();
-        RefreshAutoCollapseTimer();
-        RefreshHoverExpandTimer();
-        RefreshHoverRevealState();
-    }
-
-    private double ClampExpandedHeightToWorkArea(double desiredHeight)
-    {
-        if (!IsLoaded || WindowHandle is var handle && handle == 0
-            || !DockNativeMethods.GetWindowRect(handle, out var native))
-        {
-            return desiredHeight;
-        }
-
-        var monitors = BingLan.App.Dock.MonitorCatalog.GetAll();
-        if (monitors.Count == 0)
-        {
-            return desiredHeight;
-        }
-
-        var centerX = (native.Left + native.Right) / 2;
-        var centerY = (native.Top + native.Bottom) / 2;
-        var monitor = monitors.FirstOrDefault(candidate =>
-                centerX >= candidate.Bounds.Left && centerX < candidate.Bounds.Right
-                && centerY >= candidate.Bounds.Top && centerY < candidate.Bounds.Bottom)
-            ?? monitors.FirstOrDefault(candidate => candidate.IsPrimary)
-            ?? monitors[0];
-        var scaleY = VisualTreeHelper.GetDpi(this).DpiScaleY;
-        if (scaleY <= 0d || !monitor.WorkingArea.HasArea)
-        {
-            return desiredHeight;
-        }
-
-        var safeWork = TaskbarEdgeGuard.AvoidNativeTaskbar(monitor.WorkingArea, monitor.Bounds);
-        var availableDip = (safeWork.Bottom - native.Top) / scaleY;
-        if (availableDip >= DefaultMinHeight && desiredHeight > availableDip)
-        {
-            return Math.Max(DefaultMinHeight, Math.Floor(availableDip));
-        }
-
-        return desiredHeight;
-    }
-
     private async void FileBoxWindow_Loaded(object sender, RoutedEventArgs e)
     {
         if (State.IsCollapsed)
@@ -993,6 +866,7 @@ public partial class FileBoxWindow : WidgetWindowBase
             CopyPlacementTo(State.Placement);
             if (State.IsCollapsed)
             {
+                CaptureCollapsedExpansionPlacement();
                 State.Placement.Height = CollapsedHeight;
             }
         }
@@ -1518,6 +1392,7 @@ public partial class FileBoxWindow : WidgetWindowBase
             StatusText.Text = $"“{target.State.Title}”中已有这个项目";
             return;
         }
+        _tabIconCache.Remove(tile.Mapping);
 
         _items.Remove(tile);
         _selectedIds.Remove(tile.Mapping.Id);
@@ -1676,7 +1551,7 @@ public partial class FileBoxWindow : WidgetWindowBase
         {
             if (icon is not null)
             {
-                _tabIconCache[mapping.Id] = (icon, isMissing);
+                _tabIconCache.Store(mapping, icon, isMissing);
             }
             RefreshTabStripItems();
             NotifyStateChanged();
@@ -1935,6 +1810,7 @@ public partial class FileBoxWindow : WidgetWindowBase
                 skipped++;
                 continue;
             }
+            _tabIconCache.Remove(tile.Mapping);
 
             _items.Remove(tile);
             _selectedIds.Remove(tile.Mapping.Id);
@@ -2023,7 +1899,7 @@ public partial class FileBoxWindow : WidgetWindowBase
             _items.Remove(tile);
             _selectedIds.Remove(tile.Mapping.Id);
         }
-        FileMappingService.Remove(targetTab, tile.Mapping.Id);
+        FileMappingService.Remove(targetTab, tile.Mapping.Id, excludeFromAutomaticCollection: false);
         CaptureState();
         if (targetTab.Id == State.Id)
         {
@@ -2111,7 +1987,7 @@ public partial class FileBoxWindow : WidgetWindowBase
                         _items.Remove(tile);
                         _selectedIds.Remove(tile.Mapping.Id);
                     }
-                    FileMappingService.Remove(targetTab, tile.Mapping.Id);
+                    FileMappingService.Remove(targetTab, tile.Mapping.Id, excludeFromAutomaticCollection: false);
                     recycled++;
                 }
                 else if (result == RecycleResult.Cancelled)
@@ -2257,7 +2133,8 @@ public partial class FileBoxWindow : WidgetWindowBase
         FileBoxState targetTab,
         IEnumerable<string> paths,
         bool countInvalid,
-        Func<string, ImageSource?>? iconLoader = null)
+        Func<string, ImageSource?>? iconLoader = null,
+        Func<IReadOnlyList<FileBoxState>?>? automaticBoxes = null)
     {
         var knownPaths = (targetTab.Id == State.Id
                 ? _items.Select(tile => tile.Path)
@@ -2291,7 +2168,11 @@ public partial class FileBoxWindow : WidgetWindowBase
 
         CaptureState();
         var existingIds = targetTab.Items.Select(item => item.Id).ToHashSet();
-        var added = FileMappingService.AddPrepared(targetTab, existingCandidates);
+        var added = automaticBoxes is null
+            ? FileMappingService.AddPrepared(targetTab, existingCandidates)
+            : automaticBoxes() is { } boxes
+                ? FileMappingService.AddPreparedAutomatically(targetTab, existingCandidates, boxes)
+                : 0;
         if (added == 0)
         {
             return (0, invalid, normalized.Length);
@@ -2324,7 +2205,7 @@ public partial class FileBoxWindow : WidgetWindowBase
             {
                 if (preparedIcons.TryGetValue(mapping.Path, out var icon) && icon is not null)
                 {
-                    _tabIconCache[mapping.Id] = (icon, false);
+                    _tabIconCache.Store(mapping, icon, false);
                 }
             }
             RefreshTabStripItems();

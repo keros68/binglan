@@ -42,20 +42,20 @@ public static class DockFileDropRules
             return false;
         }
 
-        if (item.Pinned is { } pinned)
+        if (item.LaunchTarget is { } target)
         {
-            if (DockPinRules.IsPathPin(pinned))
+            if (DockPinRules.IsPathPin(target))
             {
                 return false;
             }
 
-            if (!string.IsNullOrWhiteSpace(pinned.AppUserModelId))
+            if (!string.IsNullOrWhiteSpace(target.AppUserModelId))
             {
                 return true;
             }
 
-            if (!string.IsNullOrWhiteSpace(pinned.ExecutablePath)
-                && !IsFrameHostPath(pinned.ExecutablePath))
+            if (!string.IsNullOrWhiteSpace(target.ExecutablePath)
+                && !IsFrameHostPath(target.ExecutablePath))
             {
                 return true;
             }

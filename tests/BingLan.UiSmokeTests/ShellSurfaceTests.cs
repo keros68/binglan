@@ -149,8 +149,23 @@ internal static class ShellSurfaceTests
             state.ShowLauncherButton = false;
             state.ShowDesktopButton = false;
             apply.Invoke(dock, [apps]);
-            Assert(panel.Children.Count == 1 && panel.Children[0] is Button appButton && appButton.Tag is DockItem,
+            Assert(panel.Children.Count == 1 && panel.Children[0] is IceBlueDockWindow.DockItemButton { Item: not null },
                 "隐藏三个入口后只显示应用，不留分隔线");
+
+            state.ShowQuickSettingsButton = true;
+            apply.Invoke(dock, [apps]);
+            Assert(panel.Children[0] is Button quickSettings
+                && AutomationProperties.GetName(quickSettings) == "打开 Windows 快速设置"
+                && quickSettings.Tag is null
+                && new ButtonAutomationPeer(quickSettings).GetPattern(PatternInterface.Invoke) is not null,
+                "快速设置应是可访问的独立功能按钮，固定在应用之前");
+            Assert((double)length.Invoke(dock, null)!
+                    == DockLayoutMetrics.ContentLengthForItems(2, state.IconSize) + DockLayoutMetrics.DividerDip,
+                "快速设置按钮应计入 Dock 宽度与分隔线");
+            state.ShowQuickSettingsButton = false;
+            apply.Invoke(dock, [apps]);
+            Assert(panel.Children.Count == 1 && panel.Children[0] is IceBlueDockWindow.DockItemButton,
+                "关闭快速设置后同一应用快照应移除按钮和分隔线");
         }
         finally
         {
@@ -220,6 +235,19 @@ internal static class ShellSurfaceTests
             Assert(appBar.Bounds == expectedBounds
                 && TaskbarEdgeGuard.GetNativeTaskbarLayout(monitor.Bounds) == nativeLayout,
                 "Explorer 重建后智能隐藏 Dock 应使用新读取的原生任务栏位置");
+
+            if (!dock.IsVisible) dock.Show();
+            var fixture = new System.Windows.Interop.WindowInteropHelper(dock).Handle;
+            Assert(DockNativeMethods.GetWindowRect(fixture, out var liveRect), "应能读取已显示 Dock 的 HWND 矩形");
+            var liveBounds = new PixelRect(liveRect.Left, liveRect.Top, liveRect.Right, liveRect.Bottom);
+            var staleBounds = new PixelRect(monitor.Bounds.Right + 100, monitor.Bounds.Bottom + 100,
+                monitor.Bounds.Right + 200, monitor.Bounds.Bottom + 200);
+            cache[monitor.Bounds] = (Environment.TickCount64,
+                new TaskbarEdgeGuard.NativeTaskbarLayout(DockEdge.Bottom, staleBounds, true, fixture));
+            Assert(TaskbarEdgeGuard.IsVisibleTaskbarOverlapping(monitor, liveBounds),
+                "Dock 让位恢复应读取当前显示器已登记窗口的实时矩形");
+            Assert(!TaskbarEdgeGuard.IsVisibleTaskbarOverlapping(monitor, staleBounds),
+                "缓存的布局矩形即使相交也不能阻止 Dock 恢复");
         }
         finally
         {

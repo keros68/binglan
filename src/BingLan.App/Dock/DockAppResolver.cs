@@ -36,7 +36,7 @@ internal static class DockAppResolver
             return ResolvePath(pathPin.TargetPath!);
         }
 
-        var appUserModelId = item.Pinned?.AppUserModelId ?? GetGroupAppUserModelId(item.Group);
+        var appUserModelId = item.LaunchTarget?.AppUserModelId ?? GetGroupAppUserModelId(item.Group);
         if (appUserModelId is not null)
         {
             var packaged = FromAppsFolder(appUserModelId);
@@ -46,7 +46,7 @@ internal static class DockAppResolver
             }
         }
 
-        var executablePath = item.Pinned?.ExecutablePath
+        var executablePath = item.LaunchTarget?.ExecutablePath
             ?? item.Group?.Windows
                 .Select(window => window.ExecutablePath)
                 .FirstOrDefault(path => !string.IsNullOrWhiteSpace(path));
@@ -273,6 +273,13 @@ internal static class DockAppResolver
 
     internal static DockPinnedApp? CreatePin(DockItem item, string displayName)
     {
+        if (item.TrayApp is { } trayApp)
+        {
+            var trayPin = DockPinRules.Copy(trayApp);
+            trayPin.DisplayName = displayName;
+            return trayPin;
+        }
+
         if (item.Group is null)
         {
             return null;

@@ -34,12 +34,17 @@ Run("应用闪烁提醒在激活或关闭窗口后清除", TestDockAttention);
 Run("底部与顶部水平居中几何", TestHorizontalCentering);
 Run("左右垂直几何", TestVerticalGeometry);
 Run("固定/运行/活动/分组状态映射", TestDockItemStateMapping);
+Run("固定应用关窗后保留后台运行指示，退出后清除", TestDockBackgroundRunning);
+Run("固定应用可在运行时移入运行区，退出后恢复固定顺序", TestSeparateRunningPins);
 Run("AppBar 预留、释放与重建路径", TestAppBarReservation);
 Run("AppBar 位置通知不与其他贴边工具栏互相抢占", TestAppBarPositionGuard);
 Run("最大化让出预留空间的判定规则", TestDockVacateRules);
 Run("固定应用身份键规则", TestDockPinIdentityKey);
 Run("固定应用与运行分组匹配规则", TestDockPinMatches);
 Run("可执行文件固定项优先匹配普通窗口分组", TestExecutablePinPrefersPlainGroup);
+Run("Chrome 与网页应用按独立身份显示运行状态", TestBrowserAndWebAppDockPlacement);
+Run("ChatGPT 固定与取消固定时在 Dock 两区间移动", TestPackagedAppDockPlacement);
+Run("微信在窗口与托盘间切换时只显示一个运行项", TestTrayAppDockPlacement);
 Run("从运行分组创建固定项", TestDockPinCreateFromGroup);
 Run("从可执行文件创建固定项", TestDockPinCreateFromExecutable);
 Run("固定操作去重、插入与钳制", TestDockPin);
@@ -275,6 +280,22 @@ static void TestDockVacateRules()
     Assert(
         !new DockState().ReleaseWhenMaximized,
         "DockState.ReleaseWhenMaximized 默认应关闭，避免始终显示模式下最大化窗口时误隐藏");
+    Assert(
+        DockVacateRules.ShouldReleaseForMaximized(DockVisibilityMode.ReserveWorkArea, true, false,
+            releaseForBackgroundMaximizedWindow: true, backgroundMaximizedOnDockMonitor: true),
+        "启用后台选项后，焦点切到小窗口仍应为同屏后台最大化窗口让出空间");
+    Assert(
+        !DockVacateRules.ShouldReleaseForMaximized(DockVisibilityMode.ReserveWorkArea, true, false,
+            releaseForBackgroundMaximizedWindow: false, backgroundMaximizedOnDockMonitor: true),
+        "旧设置应在焦点切到小窗口后恢复预留，即便后台仍有最大化窗口");
+    Assert(
+        !DockVacateRules.ShouldReleaseForMaximized(DockVisibilityMode.ReserveWorkArea, true, false,
+            releaseForBackgroundMaximizedWindow: true, backgroundMaximizedOnDockMonitor: false),
+        "同屏最后一个最大化窗口还原后应恢复预留，其他屏幕最大化不影响 Dock");
+    Assert(
+        !DockVacateRules.ShouldReleaseForMaximized(DockVisibilityMode.ReserveWorkArea, false, false,
+            releaseForBackgroundMaximizedWindow: true, backgroundMaximizedOnDockMonitor: true),
+        "最大化让出总开关关闭时不采用后台选项");
     Assert(
         DockVacateRules.IsTrueFullScreen(true, false),
         "几何铺满且未最大化应视为真全屏");
@@ -1137,6 +1158,116 @@ static void TestDockItemStateMapping()
     Assert(!unpinnedOnly[0].IsPinned, "纯运行项不应有固定身份");
 }
 
+static void TestDockBackgroundRunning()
+{
+    var launcher = DockPinRules.CreateFromExecutable(@"C:\Apps\GRP\DingtalkLauncher.exe")!;
+    var actualPath = @"C:\Apps\GRP\main\current\GRP.exe";
+    var exact = DockPinRules.CreateFromExecutable(actualPath)!;
+    var editor = DockPinRules.CreateFromExecutable(@"C:\Apps\Editor.exe")!;
+    var explorer = DockPinRules.CreateFromExecutable(@"C:\Windows\explorer.exe")!;
+    var folder = DockPinRules.CreateFromPath(@"C:\Apps")!;
+    var webApp = new DockPinnedApp { AppUserModelId = "WebApp.Id", ExecutablePath = editor.ExecutablePath };
+    var pinned = new[] { launcher, editor, explorer, folder, webApp };
+    RunningAppProcess[] processes =
+    [
+        new(actualPath, null),
+        new(editor.ExecutablePath, null),
+        new(explorer.ExecutablePath, null),
+        new(@"C:\Unrelated\Other.exe", null)
+    ];
+
+    static IReadOnlyList<DockItem> ComposeRunning(
+        IReadOnlyList<DockPinnedApp> pins,
+        IReadOnlyList<WindowGroup> groups,
+        IReadOnlyList<RunningAppProcess> live) =>
+        DockItemComposer.Compose(pins, groups, backgroundMatches: new DockBackgroundPinMatcher(pins).MatchProcesses(live));
+
+    var matcher = new DockBackgroundPinMatcher(pinned);
+    var foreground = WindowGrouping.Group([Window(42, 90, "地智通", null, actualPath, isForeground: true)]);
+    var liveMatches = matcher.MatchProcesses(processes);
+    var visible = DockItemComposer.Compose(pinned, foreground, backgroundMatches: liveMatches);
+    Assert(visible[0].IsActive && visible[0].WindowCount == 1 && !visible[0].IsRunningInBackground,
+        "存在地智通窗口时应使用原窗口分组和活动状态");
+
+    var background = DockItemComposer.Compose(pinned, [], backgroundMatches: liveMatches);
+    AssertEqual(pinned.Length, background.Count, "未固定的后台进程不应生成新图标");
+    Assert(background[0].State == DockItemState.Running && background[0].Group is null
+        && background[0].WindowCount == 0 && !background[0].IsActive,
+        "地智通关窗后，启动器固定项应显示后台运行且没有可切换窗口");
+    Assert(background[1].IsRunning && background.Skip(2).All(item => !item.IsRunning),
+        "同路径应用应显示白点，资源管理器常驻进程、文件夹和仅共享程序路径的应用 ID 不应误亮");
+
+    var withExactPin = ComposeRunning([launcher, exact], [], processes);
+    Assert(!withExactPin[0].IsRunning && withExactPin[1].IsRunning, "同一后台进程优先匹配精确固定项");
+    var withExactWindow = ComposeRunning([launcher, exact], foreground, processes);
+    Assert(!withExactWindow[0].IsRunning && withExactWindow[1].IsActive,
+        "精确固定项的窗口不应让启动器重复显示白点");
+
+    var afterExit = DockItemComposer.Compose(pinned, [],
+        backgroundMatches: matcher.MatchProcesses([new(@"C:\Unrelated\GRP.exe", null)]));
+    Assert(!afterExit[0].IsRunning && afterExit[0].State == DockItemState.Pinned,
+        "进程退出后应清除白点，其他目录的同名进程不应被认成地智通");
+    const string nestedEditor = @"C:\Apps\GRP\main\current\IndependentEditor.exe";
+    var independent = WindowGrouping.Group([Window(43, 91, "独立编辑器", null, nestedEditor)]);
+    var withIndependentWindow = DockItemComposer.Compose([launcher], independent);
+    Assert(withIndependentWindow.Count == 2 && !withIndependentWindow[0].IsRunning
+        && withIndependentWindow[1].IsRunning, "启动器子目录里的独立应用应保留自己的 Dock 项");
+    Assert(!ComposeRunning([launcher], [], [new(nestedEditor, null)])[0].IsRunning,
+        "独立应用的后台进程不应点亮同安装目录的启动器");
+    Assert(ComposeRunning([webApp], [], [new(editor.ExecutablePath, "webapp.id")])[0].IsRunning,
+        "带应用 ID 的固定项可通过同一进程应用 ID 识别");
+
+    var win32 = new DockPinnedApp
+    {
+        DisplayName = "飞书",
+        AppUserModelId = "com.bytedance.feishu",
+        ExecutablePath = @"C:\Apps\Feishu\Feishu.exe"
+    };
+    const string win32Version = @"C:\Apps\Feishu\app\Feishu.exe";
+    Assert(ComposeRunning([win32], [], [new(win32.ExecutablePath, null)])[0].IsRunning
+        && ComposeRunning([win32], [], [new(win32Version, null)])[0].IsRunning,
+        "带自定义窗口应用 ID 的 Win32 应用可由准确的后台进程路径识别");
+    var win32Group = WindowGrouping.Group([Window(46, 94, "飞书", win32.AppUserModelId, win32Version)]);
+    Assert(new DockBackgroundPinMatcher([win32]).Match(win32Group, [new(win32Version, null)])
+        .Contains(DockPinRules.IdentityKey(win32)), "本应用仍有窗口时也应缓存 Win32 后台运行键");
+    Assert(!ComposeRunning([win32], [], [new(win32Version, "other.app")])[0].IsRunning,
+        "明确的不同进程应用 ID 不应回退到路径推定");
+    var otherOwner = WindowGrouping.Group([Window(44, 92, "另一个应用", "other.app", win32Version)]);
+    Assert(!ComposeRunning([win32], otherOwner, [new(win32Version, null)])[0].IsRunning,
+        "另一个窗口分组认领的路径不应点亮当前应用");
+    var sameExecutable = new DockPinnedApp { AppUserModelId = "other.app", ExecutablePath = win32.ExecutablePath };
+    Assert(ComposeRunning([win32, sameExecutable], [], [new(win32.ExecutablePath, null)]).All(item => !item.IsRunning),
+        "多个应用 ID 共享一条路径时，不应用无 ID 进程推定后台归属");
+
+    var discord = new DockPinnedApp
+    {
+        DisplayName = "Discord",
+        ExecutablePath = @"C:\Apps\Discord\Update.exe",
+        Arguments = "--processStart Discord.exe"
+    };
+    const string discordVersion = @"C:\Apps\Discord\app-1.0.9165\Discord.exe";
+    var discordGroup = WindowGrouping.Group([Window(45, 93, "Discord", null, discordVersion)]);
+    var discordMatcher = new DockBackgroundPinMatcher([discord]);
+    var discordMatches = discordMatcher.MatchProcesses([new(discordVersion, null)]);
+    Assert(DockItemComposer.Compose([discord], discordGroup, backgroundMatches: discordMatches).Single().WindowCount == 1
+        && DockItemComposer.Compose([discord], [], backgroundMatches: discordMatches).Single().IsRunningInBackground,
+        "Squirrel 应识别参数指定的版本进程，关掉最后窗口时无须等下一轮扫描");
+    Assert(discordMatcher.Match([], [new(discord.ExecutablePath, null), new(@"C:\OtherApps\Discord.exe", null)]).Count == 0,
+        "更新器自身和另一个安装目录中的同名进程不应点亮 Squirrel 固定项");
+    discord.Arguments = "--processStart Other.exe";
+    Assert(discordMatcher.Match([], [new(discordVersion, null)]).Contains(DockPinRules.IdentityKey(discord)),
+        "后台匹配器应持有固定项快照");
+    Assert(!DockItemComposer.Compose([discord], [], backgroundMatches: discordMatches).Single().IsRunningInBackground,
+        "同一个固定项更换启动目标后不应继续采用旧进程证据");
+
+    const string browserExe = @"C:\Apps\Edge\msedge.exe";
+    var pwa = new DockPinnedApp { AppUserModelId = "MSEdge._crx_example", ExecutablePath = browserExe, Arguments = "--app-id=example" };
+    var browser = DockPinRules.CreateFromExecutable(browserExe)!;
+    var browserItems = ComposeRunning([pwa, browser], [], [new(browserExe, null)]);
+    Assert(!browserItems[0].IsRunning && browserItems[1].IsRunning,
+        "无应用 ID 的浏览器进程只应点亮浏览器自己的固定项");
+}
+
 static void TestAppBarPositionGuard()
 {
     var guard = new AppBarPositionGuard();
@@ -1351,6 +1482,144 @@ static void TestExecutablePinPrefersPlainGroup()
 
     var onlyWebApp = DockItemComposer.Compose([pinned], WindowGrouping.Group([webApp]));
     AssertEqual(1, onlyWebApp.Count, "没有普通浏览器窗口时仍可回退匹配同一可执行文件");
+
+    var windowWithAppId = browser with { AppUserModelId = "Contoso.Browser" };
+    var webAppPin = new DockPinnedApp { AppUserModelId = webApp.AppUserModelId, DisplayName = "网页应用" };
+    var bothFixed = DockItemComposer.Compose([pinned, webAppPin], WindowGrouping.Group([webApp, windowWithAppId]));
+    AssertEqual(2, bothFixed.Count, "固定应用应先按精确身份分配，再回退到可执行文件路径");
+    AssertEqual(WindowGrouping.IdentityKey(windowWithAppId), bothFixed[0].Group?.Key, "浏览器回退匹配剩余窗口");
+    AssertEqual(WindowGrouping.IdentityKey(webApp), bothFixed[1].Group?.Key, "应用 ID 固定项保留自己的窗口");
+}
+
+static void TestBrowserAndWebAppDockPlacement()
+{
+    const string path = @"C:\Program Files\Google\Chrome\Application\chrome.exe";
+    const string webAppId = "Chrome._crx_abcdefghijklmnop";
+    var chromePin = new DockPinnedApp { DisplayName = "Chrome", ExecutablePath = path };
+    var webAppPin = new DockPinnedApp { DisplayName = "网页应用", AppUserModelId = webAppId, ExecutablePath = path };
+    var webApp = Window(1, 100, "网页应用", webAppId, path);
+    var chrome = Window(2, 100, "Chrome", "Chrome", path);
+
+    var both = DockItemComposer.Compose([chromePin, webAppPin], WindowGrouping.Group([webApp, chrome]));
+    AssertEqual(2, both.Count, "两个固定应用各有一个图标");
+    AssertEqual(WindowGrouping.IdentityKey(chrome), both[0].Group?.Key, "Chrome 固定项只接普通窗口");
+    AssertEqual(WindowGrouping.IdentityKey(webApp), both[1].Group?.Key, "独立网页应用保留自己的窗口");
+
+    var matcher = new DockBackgroundPinMatcher([chromePin]);
+    var lateBackground = matcher.MatchProcesses([new(path, null)]);
+    var onlyWebApp = DockItemComposer.Compose([chromePin], WindowGrouping.Group([webApp]), backgroundMatches: lateBackground);
+    AssertEqual(2, onlyWebApp.Count, "固定 Chrome 和未固定网页应用各保留一个图标");
+    Assert(!onlyWebApp[0].IsRunning, "只有网页应用打开时 Chrome 不采用浏览器宿主的后台路径证据");
+    Assert(!onlyWebApp[1].IsPinned && onlyWebApp[1].IsRunning, "未固定网页应用继续显示在运行区");
+}
+
+static void TestPackagedAppDockPlacement()
+{
+    const string appId = "OpenAI.ChatGPT_2p2nqsd0c76g0!App";
+    var chatGpt = Window(1, 100, "ChatGPT", appId, @"C:\Program Files\WindowsApps\OpenAI.ChatGPT\app\ChatGPT.exe");
+    var groups = WindowGrouping.Group([chatGpt]);
+    var state = new DockState();
+    var pin = DockPinRules.CreateFromGroup(groups[0], "ChatGPT")!;
+
+    Assert(!DockItemComposer.Compose(state.PinnedApps, groups).Single().IsPinned, "未固定的 ChatGPT 显示在运行区");
+    Assert(DockPinRules.Pin(state, pin), "可以固定 ChatGPT");
+    var pinned = DockItemComposer.Compose(state.PinnedApps, groups).Single();
+    Assert(pinned.IsPinned && pinned.IsRunning, "固定后运行指示跟随唯一图标");
+    Assert(DockPinRules.Unpin(state, DockPinRules.IdentityKey(pin)), "可以取消固定 ChatGPT");
+    Assert(!DockItemComposer.Compose(state.PinnedApps, groups).Single().IsPinned, "应用仍打开时回到运行区");
+}
+
+static void TestSeparateRunningPins()
+{
+    const string everythingPath = @"D:\Apps\Everything\Everything.exe";
+    const string wechatPath = @"D:\Apps\Weixin\Weixin.exe";
+    const string chromePath = @"C:\Program Files\Google\Chrome\Application\chrome.exe";
+    var everything = DockPinRules.CreateFromExecutable(everythingPath)!;
+    var wechat = DockPinRules.CreateFromExecutable(wechatPath)!;
+    var chrome = DockPinRules.CreateFromExecutable(chromePath)!;
+    var folder = DockPinRules.CreateFromPath(@"D:\Work")!;
+    DockPinnedApp[] pins = [everything, folder, wechat, chrome];
+    var background = new DockBackgroundPinMatcher(pins).MatchProcesses([new(everythingPath, null)]);
+    var chromeWindow = Window(1, 100, "Chrome", "Chrome", chromePath);
+    var secondChromeWindow = Window(2, 100, "Chrome - Downloads", "Chrome", chromePath);
+    var editorWindow = Window(3, 200, "编辑器", null, @"D:\Apps\Editor.exe");
+    var groups = WindowGrouping.Group([chromeWindow, editorWindow, secondChromeWindow]);
+
+    var items = DockItemComposer.Compose(pins, groups, backgroundMatches: background,
+        runningTrayExecutables: [wechatPath]);
+    Assert(items.Select(item => item.IsInRunningSection).SequenceEqual([false, false, false, false, true]),
+        "默认布局只将未固定的应用放在运行区");
+    Assert(items[0].IsRunningInBackground, "Everything 无窗口时应匹配后台进程");
+
+    var separated = DockItemComposer.Compose(pins, groups, backgroundMatches: background,
+        runningTrayExecutables: [wechatPath], previousRunningOrder: [WindowGrouping.IdentityKey(editorWindow)],
+        showRunningPinsSeparately: true);
+    AssertEqual(5, separated.Count, "移动布局应为每个应用保留一个图标");
+    Assert(separated.Skip(1).All(item => item.IsInRunningSection) && !separated[0].IsInRunningSection
+        && ReferenceEquals(folder, separated[0].Pinned), "只有未运行的固定项留在固定区");
+    Assert(separated[1].Pinned is null && separated[1].Key == WindowGrouping.IdentityKey(editorWindow),
+        "已有运行项的顺序应保持稳定");
+    Assert(ReferenceEquals(everything, separated[2].Pinned) && separated[2].IsRunningInBackground
+        && ReferenceEquals(wechat, separated[3].Pinned) && separated[3].IsRunningInBackground
+        && ReferenceEquals(chrome, separated[4].Pinned) && separated[4].WindowCount == 2,
+        "后台与窗口分组项应进入运行区并保留固定身份和分组窗口");
+
+    var exited = DockItemComposer.Compose(pins, WindowGrouping.Group([editorWindow]), showRunningPinsSeparately: true);
+    Assert(exited.Take(4).Select(item => item.Pinned).SequenceEqual(pins)
+        && exited.Take(4).All(item => !item.IsInRunningSection), "退出后应按原固定顺序归位");
+    Assert(exited[4].IsInRunningSection && !exited[4].IsPinned, "未固定的运行项继续留在运行区");
+}
+
+static void TestTrayAppDockPlacement()
+{
+    const string path = @"D:\Apps\Weixin\Weixin.exe";
+    const string helper = @"D:\Apps\Weixin\WeChatAppEx.exe";
+    const string appId = "Tencent.Weixin";
+    var weixin = Window(1, 100, "微信", appId, path);
+    var editor = Window(2, 200, "编辑器", null, @"D:\Apps\Editor.exe");
+    var groups = WindowGrouping.Group([weixin, editor]);
+    var trayExecutables = new[] { path, path.ToLowerInvariant(), helper };
+    var pathPin = new DockPinnedApp { DisplayName = "微信", ExecutablePath = path };
+    var idPin = new DockPinnedApp { DisplayName = "微信", AppUserModelId = appId };
+
+    var visible = DockItemComposer.Compose([], groups, runningTrayExecutables: trayExecutables);
+    AssertEqual(2, visible.Count, "有窗口时托盘进程不重复添加图标");
+    var tray = DockItemComposer.Compose([], WindowGrouping.Group([editor]), runningTrayExecutables: trayExecutables,
+        previousRunningOrder: visible.Select(item => item.RunningOrderKey).ToArray());
+    AssertEqual(2, tray.Count, "未固定的微信缩到托盘后保留一个图标");
+    Assert(tray[0].IsRunning && !tray[0].IsPinned && tray[0].WindowCount == 0, "微信在托盘中保留原位置");
+    AssertEqual(path, tray[0].LaunchTarget?.ExecutablePath, "托盘项使用原程序身份唤回和固定");
+    var revealed = DockItemComposer.Compose([], WindowGrouping.Group([editor, weixin]),
+        runningTrayExecutables: trayExecutables, previousRunningOrder: tray.Select(item => item.RunningOrderKey).ToArray());
+    AssertEqual(WindowGrouping.IdentityKey(weixin), revealed[0].Group?.Key, "应用 ID 窗口恢复后保持原来的运行区位置");
+    Assert(DockQuitRules.CanOfferQuit(tray[0]), "托盘项仍可通过现有退出规则退出");
+    const string document = @"D:\Files\photo.png";
+    AssertEqual(DockFileDropAction.OpenWithApp,
+        DockFileDropRules.Decide(tray[0], [new(document, document, IsDirectory: false, IsProgram: false)]),
+        "拖普通文件到无窗口的微信图标按应用打开");
+
+    var pinned = DockItemComposer.Compose([pathPin], [], runningTrayExecutables: trayExecutables).Single();
+    Assert(pinned.IsPinned && pinned.IsRunningInBackground && pinned.WindowCount == 0, "固定微信缩到托盘后原位亮点");
+    Assert(!DockItemComposer.Compose([pathPin], []).Single().IsRunning, "退出微信后固定项熄灭运行指示");
+    AssertEqual(0, DockItemComposer.Compose([], []).Count, "退出微信后运行区移除图标");
+    AssertEqual(0, DockItemComposer.Compose([], [], [pathPin], runningTrayExecutables: trayExecutables).Count,
+        "手动隐藏也适用于托盘项");
+
+    var idWithPath = new DockPinnedApp { DisplayName = "微信", AppUserModelId = appId, ExecutablePath = path };
+    AssertEqual(0, DockItemComposer.Compose([], [], [idWithPath], runningTrayExecutables: trayExecutables).Count,
+        "按应用 ID 隐藏的微信缩到托盘后继续隐藏");
+    var justId = DockItemComposer.Compose([idPin], [],
+        backgroundMatches: new DockBackgroundPinMatcher([idPin]).MatchProcesses([new(path, appId)]),
+        runningTrayExecutables: trayExecutables).Single();
+    Assert(justId.IsPinned && justId.IsRunningInBackground,
+        "没有存储路径的应用 ID 固定项使用同一进程的路径接管托盘运行状态");
+
+    var pinsSharingPath = new[] { pathPin, idPin };
+    var matchBoth = new DockBackgroundPinMatcher(pinsSharingPath).MatchProcesses([new(path, appId), new(path, null)]);
+    var deduplicated = DockItemComposer.Compose(pinsSharingPath, [], backgroundMatches: matchBoth,
+        runningTrayExecutables: trayExecutables);
+    Assert(deduplicated.Count == 2 && !deduplicated[0].IsRunning && deduplicated[1].IsRunningInBackground,
+        "同一微信托盘路径的固定项与应用 ID 固定项由精确应用 ID 接管");
 }
 
 static void TestDockHiddenApps()
@@ -2059,6 +2328,9 @@ static void TestStartMenuMigration()
         Assert(state.Dock.ShowLauncherButton, "旧版本数据中没有的启动面板入口默认开启");
         Assert(state.Dock.ShowDesktopButton, "旧版本数据中没有的“显示桌面”按钮默认开启");
         Assert(!state.Dock.ShowTaskViewButton, "旧配置的任务视图按钮应默认关闭");
+        Assert(!state.Dock.ShowQuickSettingsButton, "旧配置的快速设置按钮应默认关闭");
+        Assert(!state.Dock.ReleaseForBackgroundMaximizedWindow, "旧配置的后台最大化让出应默认关闭");
+        Assert(!state.Dock.ShowRunningPinsSeparately, "旧配置应保留固定应用在原位亮点的布局");
         AssertEqual(DockRevealMode.EdgeAndHandle, state.Dock.RevealMode, "旧版本迁移后唤出方式应为底边和把手");
         AssertEqual(48d, state.Dock.IconSize, "图标大小应保留");
         AssertEqual("C:\\Apps\\Example.exe", state.Dock.PinnedApps.Single().ExecutablePath!, "应用绑定应保留");
@@ -2082,10 +2354,13 @@ static void TestDockStateRoundTrip()
         state.Dock.ShowLauncherButton = false;
         state.Dock.ShowDesktopButton = false;
         state.Dock.ShowTaskViewButton = true;
+        state.Dock.ShowQuickSettingsButton = true;
+        state.Dock.ShowRunningPinsSeparately = true;
         state.Dock.MonitorDeviceName = @"\\.\DISPLAY1";
         state.Dock.VisibilityMode = DockVisibilityMode.SmartHide;
         state.Dock.BottomGapDip = 52;
         state.Dock.ReleaseWhenMaximized = true;
+        state.Dock.ReleaseForBackgroundMaximizedWindow = true;
         state.Dock.RevealMode = DockRevealMode.EdgeOnly;
         state.Dock.HiddenHandleLeftDip = 120;
         state.Dock.HiddenHandleTopDip = 88;
@@ -2112,12 +2387,22 @@ static void TestDockStateRoundTrip()
         Assert(!loaded.Dock.ShowLauncherButton, "关闭启动面板入口的个人设置应保留");
         Assert(!loaded.Dock.ShowDesktopButton, "关闭“显示桌面”按钮的个人设置应保留");
         Assert(loaded.Dock.ShowTaskViewButton, "开启任务视图按钮的个人设置应保留");
+        Assert(loaded.Dock.ShowQuickSettingsButton, "开启快速设置按钮的个人设置应保留");
+        Assert(loaded.Dock.ShowRunningPinsSeparately, "运行中的固定应用分组应保留");
+        var theme = ThemeRules.Export(loaded, "测试", new ThemeArea(0, 0, 1920, 1040), new Version(0, 1, 0));
+        var themeJson = System.Text.Json.JsonSerializer.Serialize(theme);
+        Assert(!themeJson.Contains(nameof(DockState.ShowRunningPinsSeparately), StringComparison.Ordinal),
+            "运行中的固定应用分组是本机设置，不进入主题包");
+        Assert(!themeJson.Contains(nameof(DockState.ShowQuickSettingsButton), StringComparison.Ordinal)
+            && !themeJson.Contains(nameof(DockState.ReleaseForBackgroundMaximizedWindow), StringComparison.Ordinal),
+            "快速设置按钮和后台最大化让出是本机设置，不进入主题包");
 
         Assert(loaded.Dock.IsEnabled, "Dock 启用状态未保留");
         AssertEqual(@"\\.\DISPLAY1", loaded.Dock.MonitorDeviceName, "显示器名称未保留");
         AssertEqual(DockVisibilityMode.SmartHide, loaded.Dock.VisibilityMode, "可见性模式未保留");
         AssertEqual(52d, loaded.Dock.BottomGapDip, "距底高度未保留");
         Assert(loaded.Dock.ReleaseWhenMaximized, "最大化让出开关未保留");
+        Assert(loaded.Dock.ReleaseForBackgroundMaximizedWindow, "后台最大化让出开关未保留");
         AssertEqual(DockRevealMode.EdgeOnly, loaded.Dock.RevealMode, "唤出方式未保留");
         AssertEqual(120d, loaded.Dock.HiddenHandleLeftDip, "把手横坐标未保留");
         AssertEqual(88d, loaded.Dock.HiddenHandleTopDip, "把手纵坐标未保留");
@@ -3530,7 +3815,6 @@ static void TestDockQuitProcessTreeAndSafety()
     Assert(DockQuitRules.ResolveDedicatedAppRoot(@"C:\Standalone.exe") is null, "盘符根目录不得作为专用应用根目录");
 
     var emptyStrings = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-    var emptyPids = new HashSet<uint>();
 
     // 2. 托盘宿主拉起 UI 子窗（PowerToys / Steam）：结束应用必须向上命中托盘宿主并父先子后结束。
     var powerToysProcesses = new ProcessQuitCandidate[]
@@ -3546,7 +3830,6 @@ static void TestDockQuitProcessTreeAndSafety()
         groupExecutablePaths: new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             { @"C:\Program Files\PowerToys\WinUI3Apps\PowerToys.Settings.exe" },
         groupAumids: emptyStrings,
-        groupProcessIds: new HashSet<uint> { 1001 },
         runningProcesses: powerToysProcesses);
     AssertEqual(3, ptTargets.Count, "结束 PowerToys 设置窗应一并结束托盘宿主与模块子进程");
     AssertEqual(1000u, ptTargets[0], "必须先结束父托盘宿主 PowerToys.exe，防止子进程被拉起");
@@ -3565,7 +3848,6 @@ static void TestDockQuitProcessTreeAndSafety()
         pinned: null,
         groupExecutablePaths: new HashSet<string>(StringComparer.OrdinalIgnoreCase) { @"D:\Tools\v2rayN\v2rayN.exe" },
         groupAumids: emptyStrings,
-        groupProcessIds: new HashSet<uint> { 3000 },
         runningProcesses: proxyProcesses);
     Assert(proxyTargets.SequenceEqual([3000u, 3001u]), "应结束 v2rayN 及其子目录内核进程，且不波及同在 D:\\Tools 下的其他应用");
 
@@ -3584,7 +3866,6 @@ static void TestDockQuitProcessTreeAndSafety()
         pinned: new DockPinnedApp { DisplayName = "微信", ExecutablePath = @"C:\Program Files\Tencent\Weixin\Weixin.exe" },
         groupExecutablePaths: emptyStrings,
         groupAumids: emptyStrings,
-        groupProcessIds: emptyPids,
         runningProcesses: weixinProcesses);
     Assert(weixinTargets.SequenceEqual([4000u, 4001u]), "微信结束应用应清理主进程和 AppEx，绝不误杀同厂商 QQ、打开的浏览器、cmd 或冰蓝自身");
 
@@ -3604,7 +3885,6 @@ static void TestDockQuitProcessTreeAndSafety()
         pinned: feishuPin,
         groupExecutablePaths: emptyStrings,
         groupAumids: emptyStrings,
-        groupProcessIds: emptyPids,
         runningProcesses: feishuProcesses);
     Assert(feishuTargets.ToHashSet().SetEquals([5000u, 5001u]), "带 Win32 窗口 AUMID 的固定项在后台驻留时应匹配真实进程与 Helper");
 
@@ -3620,7 +3900,6 @@ static void TestDockQuitProcessTreeAndSafety()
         pinned: discordPin,
         groupExecutablePaths: emptyStrings,
         groupAumids: emptyStrings,
-        groupProcessIds: emptyPids,
         runningProcesses: [new(6000, 500, @"C:\Users\demo\AppData\Local\Discord\app-1.0.9165\Discord.exe", null)]);
     Assert(discordTargets.SequenceEqual([6000u]), "Squirrel 固定项应匹配版本子目录里的真实托盘进程");
 
@@ -3629,7 +3908,6 @@ static void TestDockQuitProcessTreeAndSafety()
         pinned: null,
         groupExecutablePaths: new HashSet<string>(StringComparer.OrdinalIgnoreCase) { @"D:\App\DingDing\main\current\DingTalk.exe" },
         groupAumids: emptyStrings,
-        groupProcessIds: new HashSet<uint> { 7001 },
         runningProcesses:
         [
             new(7000, 500, @"D:\App\DingDing\DingtalkLauncher.exe", null),
@@ -3643,7 +3921,6 @@ static void TestDockQuitProcessTreeAndSafety()
         groupExecutablePaths: new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             { @"C:\Program Files\Microsoft Office\root\Office16\EXCEL.EXE" },
         groupAumids: emptyStrings,
-        groupProcessIds: new HashSet<uint> { 8001 },
         runningProcesses:
         [
             new(8001, 500, @"C:\Program Files\Microsoft Office\root\Office16\EXCEL.EXE", null),
@@ -3656,7 +3933,6 @@ static void TestDockQuitProcessTreeAndSafety()
         groupExecutablePaths: new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             { @"D:\Program Files\WPS Office\12.1.0.15990\office6\wps.exe" },
         groupAumids: emptyStrings,
-        groupProcessIds: new HashSet<uint> { 8101 },
         runningProcesses:
         [
             new(8101, 500, @"D:\Program Files\WPS Office\12.1.0.15990\office6\wps.exe", null),
@@ -3670,7 +3946,6 @@ static void TestDockQuitProcessTreeAndSafety()
         pinned: null,
         groupExecutablePaths: new HashSet<string>(StringComparer.OrdinalIgnoreCase) { @"C:\Windows\System32\notepad.exe" },
         groupAumids: emptyStrings,
-        groupProcessIds: new HashSet<uint> { 9001 },
         runningProcesses:
         [
             new(9001, 500, @"C:\Windows\System32\notepad.exe", null),
@@ -3685,7 +3960,6 @@ static void TestDockQuitProcessTreeAndSafety()
         pinned: null,
         groupExecutablePaths: new HashSet<string>(StringComparer.OrdinalIgnoreCase) { @"C:\Program Files\SuiteApp\SuiteApp.exe" },
         groupAumids: emptyStrings,
-        groupProcessIds: new HashSet<uint> { 9101 },
         runningProcesses:
         [
             new(9101, 500, @"C:\Program Files\SuiteApp\SuiteApp.exe", null),
@@ -3693,6 +3967,35 @@ static void TestDockQuitProcessTreeAndSafety()
         ],
         otherItemExecutablePaths: otherDockItemExe);
     Assert(otherProtectedTargets.SequenceEqual([9101u]), "属于其他独立 Dock 项的可执行文件不得被连带结束");
+
+    const string suiteLauncher = @"D:\Apps\Suite\SuiteLauncher.exe";
+    const string nestedApp = @"D:\Apps\Suite\main\current\Suite.exe";
+    ProcessQuitCandidate[] sharedInstallation =
+    [
+        new(9201, 500, suiteLauncher, null),
+        new(9202, 9201, nestedApp, null),
+        new(9203, 9202, @"D:\Apps\Suite\main\current\SuiteHelper.exe", null),
+        new(9204, 9201, @"D:\Apps\Suite\IndependentEditor\Editor.exe", null),
+        new(9205, 500, @"D:\Apps\Suite\main\current\OtherAppHelper.exe", null),
+        new(9206, 9201, @"D:\Apps\Suite\main\current\RandomEditor.exe", null)
+    ];
+    var launcherTargets = DockQuitRules.SelectProcessesToTerminate(
+        pinned: null,
+        groupExecutablePaths: new HashSet<string>(StringComparer.OrdinalIgnoreCase) { suiteLauncher },
+        groupAumids: emptyStrings,
+        runningProcesses: sharedInstallation,
+        otherItemExecutablePaths: new HashSet<string>(StringComparer.OrdinalIgnoreCase) { nestedApp });
+    Assert(launcherTargets.SequenceEqual([9201u]),
+        "启动器不应结束另一个 Dock 项、其子进程、独立子目录应用或共用目录的无主后台程序");
+
+    var nestedAppTargets = DockQuitRules.SelectProcessesToTerminate(
+        pinned: null,
+        groupExecutablePaths: new HashSet<string>(StringComparer.OrdinalIgnoreCase) { nestedApp },
+        groupAumids: emptyStrings,
+        runningProcesses: sharedInstallation,
+        otherItemExecutablePaths: new HashSet<string>(StringComparer.OrdinalIgnoreCase) { suiteLauncher });
+    Assert(nestedAppTargets.SequenceEqual([9202u, 9203u]),
+        "结束子目录应用时应保留另一个 Dock 项，并清理有直接从属关系的后台进程");
 }
 
 static void AssertEqual<T>(T expected, T actual, string message)

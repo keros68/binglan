@@ -14,10 +14,15 @@ public static class DockVacateRules
     public static bool ShouldReleaseForMaximized(
         DockVisibilityMode visibilityMode,
         bool releaseWhenMaximized,
-        bool foregroundMaximizedOnDockMonitor) =>
+        bool foregroundMaximizedOnDockMonitor,
+        bool releaseForBackgroundMaximizedWindow = false,
+        bool backgroundMaximizedOnDockMonitor = false) =>
+        CanReleaseForMaximized(visibilityMode, releaseWhenMaximized)
+        && (foregroundMaximizedOnDockMonitor || (releaseForBackgroundMaximizedWindow && backgroundMaximizedOnDockMonitor));
+
+    public static bool CanReleaseForMaximized(DockVisibilityMode visibilityMode, bool releaseWhenMaximized) =>
         visibilityMode == DockVisibilityMode.ReserveWorkArea
-        && releaseWhenMaximized
-        && foregroundMaximizedOnDockMonitor;
+        && releaseWhenMaximized;
 
     /// <summary>
     /// Per-edge tolerance in physical pixels when deciding whether a foreground window covers a

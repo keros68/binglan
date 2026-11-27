@@ -23,6 +23,7 @@ internal static class ShellSurfaceService
     private static int _openingTray;
     private static int _openingKeyboardSurface;
     private static int _openingStart;
+    private static int _openingShutdownDialog;
     private static int _watchingQuickSettings;
     private static long _quickSettingsClosedAt;
 
@@ -113,6 +114,40 @@ internal static class ShellSurfaceService
 
     internal static Task<ShellSurfaceResult> OpenTaskViewAsync() =>
         OpenKeyboardSurfaceAsync(ShellSurfaceNativeMethods.OpenTaskView);
+
+    /// <summary>Opens the Windows action picker; Windows waits for the user's confirmation.</summary>
+    internal static async Task<bool> OpenShutdownDialogAsync()
+    {
+        if (Interlocked.CompareExchange(ref _openingShutdownDialog, 1, 0) != 0) return true;
+        try
+        {
+            // Shell may keep this COM call active while its dialog is open.
+            return await Task.Run(() =>
+            {
+                object? shell = null;
+                try
+                {
+                    var type = Type.GetTypeFromProgID("Shell.Application");
+                    if (type is null || (shell = Activator.CreateInstance(type)) is null) return false;
+                    type.InvokeMember("ShutdownWindows", System.Reflection.BindingFlags.InvokeMethod, null, shell, null);
+                    return true;
+                }
+                catch (Exception exception) when (exception is not OutOfMemoryException)
+                {
+                    Debug.WriteLine($"Shell.Application 关机对话框打开失败：{exception.Message}");
+                    return false;
+                }
+                finally
+                {
+                    if (shell is not null) Marshal.FinalReleaseComObject(shell);
+                }
+            });
+        }
+        finally
+        {
+            Volatile.Write(ref _openingShutdownDialog, 0);
+        }
+    }
 
     private static async Task<ShellSurfaceResult> OpenKeyboardSurfaceAsync(Func<bool> open)
     {

@@ -314,6 +314,58 @@ internal sealed class WindowCatalog
         }
     }
 
+    internal static IReadOnlyList<RunningAppProcess> CaptureRunningProcesses()
+    {
+        var currentPid = (uint)Environment.ProcessId;
+        if (!DockNativeMethods.ProcessIdToSessionId(currentPid, out var currentSession))
+        {
+            return [];
+        }
+
+        // Only PIDs are needed here. Materializing Process objects also captures thread
+        // metadata for the entire machine on each refresh.
+        var pids = new uint[1024];
+        uint bytes;
+        while (true)
+        {
+            var capacity = checked((uint)pids.Length * sizeof(uint));
+            if (!DockNativeMethods.K32EnumProcesses(pids, capacity, out bytes))
+            {
+                return [];
+            }
+            if (bytes < capacity) break;
+            pids = new uint[checked(pids.Length * 2)];
+        }
+
+        var identities = new HashSet<RunningAppProcess>();
+        var pathBuffer = new StringBuilder(512);
+        for (var index = 0; index < bytes / sizeof(uint); index++)
+        {
+            var pid = pids[index];
+            if (pid == 0 || pid == currentPid) continue;
+            var handle = DockNativeMethods.OpenProcess(DockNativeMethods.ProcessQueryLimitedInformation, false, pid);
+            if (handle == 0) continue;
+            try
+            {
+                if (!DockNativeMethods.ProcessIdToSessionId(pid, out var session) || session != currentSession)
+                {
+                    continue;
+                }
+                var path = TryGetExecutablePath(handle, pathBuffer);
+                var appId = TryGetAppUserModelId(handle);
+                if (path is not null || appId is not null)
+                {
+                    identities.Add(new RunningAppProcess(path, appId));
+                }
+            }
+            finally
+            {
+                DockNativeMethods.CloseHandle(handle);
+            }
+        }
+        return identities.ToArray();
+    }
+
     internal static string? AppUserModelIdOf(uint processId)
     {
         var process = DockNativeMethods.OpenProcess(
@@ -335,9 +387,11 @@ internal sealed class WindowCatalog
         }
     }
 
-    internal static string? TryGetExecutablePath(nint process)
+    internal static string? TryGetExecutablePath(nint process) => TryGetExecutablePath(process, new StringBuilder(512));
+
+    private static string? TryGetExecutablePath(nint process, StringBuilder buffer)
     {
-        var buffer = new StringBuilder(512);
+        buffer.Clear();
         var size = (uint)buffer.Capacity;
         if (DockNativeMethods.QueryFullProcessImageNameW(process, 0, buffer, ref size))
         {

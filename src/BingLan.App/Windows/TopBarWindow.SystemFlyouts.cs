@@ -6,6 +6,7 @@ using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Markup;
 using System.Windows.Media;
+using System.Windows.Media.Effects;
 using System.Windows.Shapes;
 using System.Windows.Threading;
 using BingLan.App.Dock;
@@ -53,12 +54,14 @@ public partial class TopBarWindow
     private bool HasOpenSystemFlyout =>
         _volumeFlyout?.IsOpen == true
         || _batteryFlyout?.IsOpen == true
-        || _networkFlyout?.IsOpen == true;
+        || _networkFlyout?.IsOpen == true
+        || HasOpenTrayPanelPreview;
 
     private bool HasAnySystemFlyoutRef =>
         _volumeFlyout is not null
         || _batteryFlyout is not null
-        || _networkFlyout is not null;
+        || _networkFlyout is not null
+        || HasOpenTrayPanelPreview;
 
     private bool IsSystemFlyoutBusy => _networkBusyCount > 0;
 
@@ -85,6 +88,7 @@ public partial class TopBarWindow
 
     private void CloseSystemFlyouts()
     {
+        CloseTrayPanelPreview();
         CloseVolumeFlyout();
         CloseBatteryFlyout();
         CloseNetworkFlyout();
@@ -187,12 +191,23 @@ public partial class TopBarWindow
         bool AllowBackdropBlur,
         bool UseTextShadow);
 
+    private TopBarSearchPalette? _appliedPopupAppearance;
+
     private TopBarSearchPalette ResolveTopBarPopupPalette() =>
-        TopBarSearchLookRules.Resolve(
-            _style,
-            launcherAppearance: null,
-            topBar: _state,
-            useClearGlass: _environment.LauncherAppearance.UseClearGlass);
+        TopBarSearchLookRules.ResolveForTopBar(_style, _state, _palette.UseDarkInk);
+
+    private void RefreshPopupAppearance()
+    {
+        // Adaptive ink can change on every backdrop sample. Only settings changes
+        // invalidate the look captured by an open module flyout.
+        var appearance = TopBarSearchLookRules.ResolveForTopBar(_style, _state);
+        if (_appliedPopupAppearance is { } previous && previous != appearance)
+        {
+            CloseAllOpenFlyouts(animateTodo: false);
+            CloseAllHoverToolTips();
+        }
+        _appliedPopupAppearance = appearance;
+    }
 
     private SystemFlyoutLook ResolveSystemFlyoutLook(bool highContrast)
     {
@@ -223,30 +238,35 @@ public partial class TopBarWindow
             UseTextShadow: !highContrast && unified.UseTextShadow);
     }
 
-    private static void ApplyFlyoutContentShadow(Border card, SystemFlyoutLook look)
+    private sealed class FlyoutCard : Border
     {
-        if (!look.UseTextShadow)
+        private readonly DropShadowEffect? _contentShadow;
+
+        internal FlyoutCard(SystemFlyoutLook look)
         {
-            return;
-        }
-        void Apply()
-        {
-            if (card.Child is UIElement content && content.Effect is null)
+            if (look.UseTextShadow)
             {
-                var shadow = new System.Windows.Media.Effects.DropShadowEffect
+                var shadow = new DropShadowEffect
                 {
-                    Color = Colors.Black,
+                    Color = look.Palette.UseDarkInk ? Colors.White : Colors.Black,
                     Opacity = 0.65d,
                     BlurRadius = 8d,
                     ShadowDepth = 1d,
                     Direction = 270d
                 };
                 shadow.Freeze();
+                _contentShadow = shadow;
+            }
+        }
+
+        protected override void OnVisualChildrenChanged(DependencyObject visualAdded, DependencyObject visualRemoved)
+        {
+            base.OnVisualChildrenChanged(visualAdded, visualRemoved);
+            if (_contentShadow is { } shadow && visualAdded is UIElement { Effect: null } content)
+            {
                 content.Effect = shadow;
             }
         }
-        Apply();
-        card.Loaded += (_, _) => Apply();
     }
 
     private static Color ParseColorOrDefault(string hex, Color fallback)
@@ -268,7 +288,10 @@ public partial class TopBarWindow
 
     private sealed class PopupGlassBackdrop : IDisposable
     {
-        private readonly Popup _popup;
+        private readonly Popup? _popup;
+#if TRAY_PANEL_PREVIEW
+        private readonly Window? _window;
+#endif
         private readonly Border _card;
         private readonly SystemFlyoutLook _look;
         private HwndSource? _hookedSource;
@@ -277,16 +300,34 @@ public partial class TopBarWindow
         private bool _failed;
         private bool _usingGlassFill;
 
-        internal PopupGlassBackdrop(Popup popup, Border card, SystemFlyoutLook look)
+        private PopupGlassBackdrop(Border card, SystemFlyoutLook look)
         {
-            _popup = popup;
             _card = card;
             _look = look;
-            _popup.Opened += OnTrigger;
             _card.Loaded += OnTrigger;
             _card.SizeChanged += OnTrigger;
-            _popup.Closed += OnClosed;
         }
+
+        internal PopupGlassBackdrop(Popup popup, Border card, SystemFlyoutLook look) : this(card, look)
+        {
+            _popup = popup;
+            popup.Opened += OnTrigger;
+            popup.Closed += OnClosed;
+        }
+
+#if TRAY_PANEL_PREVIEW
+        internal PopupGlassBackdrop(Window window, Border card, SystemFlyoutLook look) : this(card, look)
+        {
+            _window = window;
+            window.Closed += OnClosed;
+        }
+#endif
+
+        private bool IsSurfaceOpen => _popup?.IsOpen == true
+#if TRAY_PANEL_PREVIEW
+            || _window?.IsVisible == true
+#endif
+            ;
 
         private void OnTrigger(object? sender, EventArgs e)
         {
@@ -327,7 +368,7 @@ public partial class TopBarWindow
 
         internal void Sync(bool reorder = false)
         {
-            if (_disposed || _failed || !_popup.IsOpen || !_look.AllowBackdropBlur)
+            if (_disposed || _failed || !IsSurfaceOpen || !_look.AllowBackdropBlur)
             {
                 return;
             }
@@ -468,10 +509,19 @@ public partial class TopBarWindow
                 return;
             }
             _disposed = true;
-            _popup.Opened -= OnTrigger;
+            if (_popup is { } popup)
+            {
+                popup.Opened -= OnTrigger;
+                popup.Closed -= OnClosed;
+            }
+#if TRAY_PANEL_PREVIEW
+            if (_window is { } window)
+            {
+                window.Closed -= OnClosed;
+            }
+#endif
             _card.Loaded -= OnTrigger;
             _card.SizeChanged -= OnTrigger;
-            _popup.Closed -= OnClosed;
             DetachHook();
             ReleaseBackdrop();
         }
@@ -492,9 +542,9 @@ public partial class TopBarWindow
         var flyout = new Popup
         {
             PlacementTarget = anchor,
-            Placement = PlacementMode.Bottom,
+            Placement = InwardPlacement,
             HorizontalOffset = horizontalOffset,
-            VerticalOffset = 4,
+            VerticalOffset = InwardFlyoutOffset,
             StaysOpen = true,
             AllowsTransparency = true,
             Child = card
@@ -517,7 +567,7 @@ public partial class TopBarWindow
 
     private Border CreateSystemFlyoutCard(bool highContrast, SystemFlyoutLook look, double width)
     {
-        var card = new Border
+        return new FlyoutCard(look)
         {
             Width = width,
             Background = highContrast ? SystemColors.WindowBrush : FrozenBrush(look.Palette.Background),
@@ -527,8 +577,6 @@ public partial class TopBarWindow
             Padding = new Thickness(12, 12, 12, 10),
             SnapsToDevicePixels = true
         };
-        ApplyFlyoutContentShadow(card, look);
-        return card;
     }
 
     // ---------------------------------------------------------------- 音量控制浮层
@@ -541,12 +589,7 @@ public partial class TopBarWindow
             return;
         }
 
-        CloseTodoFlyout(animate: false);
-        CloseClockFlyout();
-        CloseInputMethodFlyout();
-        CloseBatteryFlyout();
-        CloseNetworkFlyout();
-        CloseAllHoverToolTips();
+        CloseFlyoutsBeforeOpening();
 
         var highContrast = AccessibilityThemeManager.IsHighContrastEnabled || SystemParameters.HighContrast;
         var look = ResolveSystemFlyoutLook(highContrast);
@@ -943,12 +986,7 @@ public partial class TopBarWindow
             return;
         }
 
-        CloseTodoFlyout(animate: false);
-        CloseClockFlyout();
-        CloseInputMethodFlyout();
-        CloseVolumeFlyout();
-        CloseNetworkFlyout();
-        CloseAllHoverToolTips();
+        CloseFlyoutsBeforeOpening();
 
         var highContrast = AccessibilityThemeManager.IsHighContrastEnabled || SystemParameters.HighContrast;
         var look = ResolveSystemFlyoutLook(highContrast);
@@ -959,7 +997,7 @@ public partial class TopBarWindow
         var completedSync = task.IsCompletedSuccessfully;
         card.Child = completedSync
             ? BuildBatteryFlyoutContent(task.Result, card, highContrast, look, generation)
-            : BuildFlyoutLoadingContent("电池与电源", highContrast, look.Palette);
+            : BuildBatteryFlyoutLoadingContent(highContrast, look.Palette);
 
         var flyout = CreateSystemFlyoutPopup(button, card, look, 286, closed =>
         {
@@ -1244,7 +1282,33 @@ public partial class TopBarWindow
             root.Children.Add(brightRow);
         }
 
+        AddBatteryFlyoutActions(root, highContrast, flyoutPalette);
+        return root;
+    }
+
+    private FrameworkElement BuildBatteryFlyoutLoadingContent(bool highContrast, TopBarFlyoutPalette flyoutPalette)
+    {
+        var root = new StackPanel();
+        root.Children.Add(BuildFlyoutLoadingContent("电池与电源", highContrast, flyoutPalette));
+        AddBatteryFlyoutActions(root, highContrast, flyoutPalette);
+        return root;
+    }
+
+    private void AddBatteryFlyoutActions(Panel root, bool highContrast, TopBarFlyoutPalette flyoutPalette)
+    {
+        var inkBrush = highContrast ? SystemColors.WindowTextBrush : FrozenBrush(flyoutPalette.Foreground);
         root.Children.Add(CreateFlyoutDivider(highContrast, flyoutPalette));
+        root.Children.Add(CreateFlyoutFooterButton(
+            "关机或重启…",
+            "打开 Windows 关机或重启对话框",
+            highContrast,
+            flyoutPalette,
+            inkBrush,
+            () =>
+            {
+                CloseBatteryFlyout();
+                _environment.OpenShutdownDialog();
+            }));
         root.Children.Add(CreateFlyoutFooterButton(
             "电源与电池设置…",
             "打开 Windows 电源与电池设置",
@@ -1256,7 +1320,6 @@ public partial class TopBarWindow
                 CloseBatteryFlyout();
                 _environment.OpenSystemSettings("ms-settings:powersleep");
             }));
-        return root;
     }
 
     // ---------------------------------------------------------------- 网络与 Wi-Fi 浮层
@@ -1269,12 +1332,7 @@ public partial class TopBarWindow
             return;
         }
 
-        CloseTodoFlyout(animate: false);
-        CloseClockFlyout();
-        CloseInputMethodFlyout();
-        CloseVolumeFlyout();
-        CloseBatteryFlyout();
-        CloseAllHoverToolTips();
+        CloseFlyoutsBeforeOpening();
 
         var highContrast = AccessibilityThemeManager.IsHighContrastEnabled || SystemParameters.HighContrast;
         var look = ResolveSystemFlyoutLook(highContrast);

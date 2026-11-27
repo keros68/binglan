@@ -40,6 +40,7 @@ public static class TopBarTests
         var state = new TopBarState();
         Assert(!state.IsEnabled, "顶栏默认关闭");
         Assert(state.VisibilityMode == TopBarVisibilityMode.ReserveTopEdge, "默认预留顶边");
+        Assert(!state.ShowAtBottom, "信息条位置默认在屏幕顶部");
         Assert(state.DisplayMode == TopBarDisplayMode.FullWidth, "默认整条布局");
         Assert(state.MonitorDeviceName is null, "默认主屏");
         Assert(Math.Abs(state.SurfaceOpacity - 0.82d) < 0.001d, "默认不透明度");
@@ -96,6 +97,7 @@ public static class TopBarTests
             state.TopBar.IsEnabled = true;
             state.TopBar.MonitorDeviceName = "\\\\.\\DISPLAY2";
             state.TopBar.VisibilityMode = TopBarVisibilityMode.SmartHide;
+            state.TopBar.ShowAtBottom = true;
             state.TopBar.DisplayMode = TopBarDisplayMode.Capsule;
             TopBarRules.SetModule(state.TopBar.Modules, TopBarModuleKind.Network, false);
             state.TodoWidgets.Add(new TodoWidgetState
@@ -112,8 +114,18 @@ public static class TopBarTests
             Assert(reloaded.TopBar.IsEnabled, "顶栏开关持久化");
             Assert(reloaded.TopBar.MonitorDeviceName == "\\\\.\\DISPLAY2", "显示器持久化");
             Assert(reloaded.TopBar.VisibilityMode == TopBarVisibilityMode.SmartHide, "显示方式持久化");
+            Assert(reloaded.TopBar.ShowAtBottom, "底部信息条位置持久化");
             Assert(reloaded.TopBar.DisplayMode == TopBarDisplayMode.Capsule, "胶囊布局持久化");
             Assert(!TopBarRules.IsModuleOn(reloaded.TopBar.Modules, TopBarModuleKind.Network), "模块开关持久化");
+
+            var v67 = JsonSerializer.SerializeToNode(state)!;
+            v67["SchemaVersion"] = 67;
+            v67["TopBar"]!.AsObject().Remove(nameof(TopBarState.ShowAtBottom));
+            File.WriteAllText(store.StatePath, v67.ToJsonString());
+            var oldPlacement = store.Load();
+            Assert(oldPlacement.SchemaVersion == AppState.CurrentSchemaVersion
+                && oldPlacement.TopBar.IsEnabled && !oldPlacement.TopBar.ShowAtBottom,
+                "旧配置升级保留信息条开关，位置在顶部");
 
             var v32 = JsonSerializer.SerializeToNode(state)!;
             v32["SchemaVersion"] = 32;
@@ -598,34 +610,54 @@ public static class TopBarTests
         Assert(TopBarRevealRules.ComputeCaptionButtonExclusion(new PixelRect(0, 40, 1920, 1040), fullBar, 160) is null,
             "未与顶栏重叠的窗口不产生排除区");
 
-        // 最大化/重叠窗口下顶边唤出需要短暂停留，避免快速切换浏览器标签时误触发顶栏；离开重叠窗口后无延迟。
+        // 最大化窗口下先短暂停留。按住左键经过顶边时从松手后重新计时。
+        long? revealSince = null;
         Assert(!TopBarRevealRules.ShouldTriggerRevealAfterDwell(
                 inRevealZone: true,
                 overlapIsMaximizedOrCovering: true,
                 isCurrentlyShown: false,
-                enteredRevealZoneSinceTickMs: 1000,
-                nowTickMs: 1200),
-            "重叠最大化窗口下在顶边停留不足阈值不应误唤出顶栏");
+                enteredRevealZoneSinceTickMs: ref revealSince,
+                leftButtonDown: false,
+                nowTickMs: 1000),
+            "最大化窗口下首次进入顶边不应立即唤出顶栏");
+        Assert(!TopBarRevealRules.ShouldTriggerRevealAfterDwell(
+                true, true, false, ref revealSince, leftButtonDown: true, nowTickMs: 1400)
+                && revealSince is null,
+            "按住左键拖标签经过顶边时即使超过延迟也不唤出，并清除之前的停留计时");
+        Assert(!TopBarRevealRules.ShouldTriggerRevealAfterDwell(
+                true, true, false, ref revealSince, leftButtonDown: false, nowTickMs: 1500)
+                && revealSince == 1500,
+            "松开左键后从头计算顶边停留时间");
         Assert(TopBarRevealRules.ShouldTriggerRevealAfterDwell(
                 inRevealZone: true,
                 overlapIsMaximizedOrCovering: true,
                 isCurrentlyShown: false,
-                enteredRevealZoneSinceTickMs: 1000,
-                nowTickMs: 1000 + TopBarRevealRules.MaximizedOverlapRevealDelayMs),
-            "重叠最大化窗口下在顶边有意停留达到阈值后应正常唤出顶栏");
+                enteredRevealZoneSinceTickMs: ref revealSince,
+                leftButtonDown: false,
+                nowTickMs: 1500 + TopBarRevealRules.MaximizedOverlapRevealDelayMs),
+            "松手后停留达到阈值应正常唤出顶栏");
+        Assert(!TopBarRevealRules.ShouldTriggerRevealAfterDwell(
+                false, true, false, ref revealSince, leftButtonDown: false, nowTickMs: 2000)
+                && revealSince is null,
+            "移出顶边应清除停留计时");
+        Assert(!TopBarRevealRules.ShouldTriggerRevealAfterDwell(
+                true, false, false, ref revealSince, leftButtonDown: true, nowTickMs: 2200),
+            "拖动导致原窗口暂时不覆盖顶边时仍不从热区唤出顶栏");
         Assert(TopBarRevealRules.ShouldTriggerRevealAfterDwell(
                 inRevealZone: true,
                 overlapIsMaximizedOrCovering: false,
                 isCurrentlyShown: false,
-                enteredRevealZoneSinceTickMs: 1000,
-                nowTickMs: 1000),
+                enteredRevealZoneSinceTickMs: ref revealSince,
+                leftButtonDown: false,
+                nowTickMs: 2300),
             "桌面无重叠窗口时应即时响应唤出");
         Assert(TopBarRevealRules.ShouldTriggerRevealAfterDwell(
                 inRevealZone: true,
                 overlapIsMaximizedOrCovering: true,
                 isCurrentlyShown: true,
-                enteredRevealZoneSinceTickMs: 1000,
-                nowTickMs: 1000),
+                enteredRevealZoneSinceTickMs: ref revealSince,
+                leftButtonDown: false,
+                nowTickMs: 2300),
             "顶栏已显示时应持续保持显示");
 
         // 预留模式工作区实效校验与异常贴顶窗口检测。
@@ -654,6 +686,24 @@ public static class TopBarTests
             "负坐标副屏工作区顶边下移应判已生效");
         Assert(!TopBarReserveRules.IsWorkAreaReserved(new PixelRect(-1920, -1080, 0, -40), negStrip),
             "负坐标副屏工作区未下移应判失败");
+
+        var bottomSafe = new PixelRect(-1920, -1080, 0, -48);
+        var bottomHost = TopBarReserveRules.ResolveBottomHostArea(bottomSafe, -120);
+        var bottomStrip = DockGeometry.Calculate(bottomHost, DockEdge.Bottom, 32);
+        Assert(bottomHost.Bottom == -120 && bottomStrip == new PixelRect(-1920, -152, 0, -120),
+            "智能隐藏底栏应在原生任务栏及同屏 Dock 上方，包括负坐标副屏");
+        Assert(TopBarReserveRules.ResolveBottomHostArea(bottomSafe, null) == bottomSafe,
+            "无底边 Dock 时将底栏贴至原生任务栏内侧边界");
+        Assert(TopBarRevealRules.IsInRevealZone(-100, -121, bottomStrip, 2, null, DockEdge.Bottom)
+            && !TopBarRevealRules.IsInRevealZone(-100, -120, bottomStrip, 2, null, DockEdge.Bottom)
+            && !TopBarRevealRules.IsInRevealZone(-100, -152, bottomStrip, 2, null, DockEdge.Bottom),
+            "底栏只从自己的下沿唤出，不抢相邻 Dock 的区域");
+        Assert(TopBarReserveRules.IsWorkAreaReserved(bottomHost with { Bottom = -152 }, bottomStrip, DockEdge.Bottom)
+            && !TopBarReserveRules.IsWorkAreaReserved(bottomHost, bottomStrip, DockEdge.Bottom),
+            "只有工作区实际提升到底栏内沿才算预留成功");
+        Assert(!TopBarReserveRules.IsWindowCoveringReservedBar(bottomHost with { Bottom = -151 }, bottomStrip, DockEdge.Bottom)
+            && TopBarReserveRules.IsWindowCoveringReservedBar(bottomHost, bottomStrip, DockEdge.Bottom),
+            "允许底栏缝隙贴合，但要让出明显侵入底栏的应用窗口");
 
         Assert(!TopBarReserveRules.IsWindowCoveringReservedBar(new PixelRect(0, 31, 1920, 1040), reservedStrip),
             "正常位于预留条下方的最大化窗口不算侵入顶栏");

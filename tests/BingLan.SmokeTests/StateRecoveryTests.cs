@@ -9,19 +9,43 @@ internal static class StateRecoveryTests
     internal static void TestUnreadableStateStartsFromDefaults()
     {
         TestIncompatiblePrimaryPreservesBackup();
+        TestTemporarilyUnavailableState();
+        TestUnavailablePendingRestoreStaysQueued();
+        TestRestoreBacksUpCurrentSession();
+        TestDeferredSnapshotsStayOrdered();
+        TestLatestFutureArchiveSurvivesPruning();
         var temp = Path.Combine(Path.GetTempPath(), $"BingLan-state-recovery-{Guid.NewGuid():N}");
         try
         {
             Directory.CreateDirectory(temp);
             var store = new LocalStateStore(temp);
-            File.WriteAllText(store.StatePath, "{ not json");
+            const string brokenPrimary = "{ not json";
+            const string brokenBackup = "{ also not json";
+            File.WriteAllText(store.StatePath, brokenPrimary);
+            File.WriteAllText(store.StatePath + ".bak", brokenBackup);
             Check(store.Load().NoteWidgets.Count == 0, "主文件和备份都损坏时应以默认状态启动");
-            Check(store.ListBackups().Any(path => Path.GetFileName(path).StartsWith("widgets-unreadable-", StringComparison.Ordinal)),
-                "无法读取的状态文件应留在备份里");
+            var defaults = store.Load();
+            store.Save(defaults);
+            store.Save(defaults);
+            var archived = store.ListBackups().Select(File.ReadAllText).ToArray();
+            Check(archived.Contains(brokenPrimary) && archived.Contains(brokenBackup),
+                "两份损坏文件都应在默认状态写入和轮换后原样保留");
 
             File.WriteAllText(
                 store.StatePath,
-                $$"""{"SchemaVersion":{{AppState.CurrentSchemaVersion + 3}},"FutureFlag":{"Enabled":true},"DesktopExperience":{"Components":[{"Kind":99,"IsVisible":true,"FutureCompFlag":7}]},"QuickPlaces":[{"Icon":"folder","Name":"未来入口","Target":"C:\\Future","FuturePlaceFlag":true}],"NoteWidgets":[{"Title":"未来便签","Content":"不应被清空","FutureNoteFlag":42}]}""");
+                $$"""
+                {
+                  "SchemaVersion": {{AppState.CurrentSchemaVersion + 3}},
+                  "FutureFlag": {"Enabled": true, "LargeNumber": 1e999},
+                  "DesktopExperience": {"Components": [{"Kind": 99, "IsVisible": true, "FutureCompFlag": 7}]},
+                  "QuickPlaces": [{"Icon": "folder", "Name": "未来入口", "Target": "C:\\Future", "FuturePlaceFlag": true}],
+                  "NoteWidgets": [{"Title": "未来便签", "Content": "不应被清空", "FutureNoteFlag": 42}],
+                  "LauncherPreferences": {"BackdropMode": 99, "FuturePreference": true},
+                  "LauncherAppearance": {"FutureSurface": 12},
+                  "LauncherGroups": [{"Name": "未来分组", "FutureGroup": true, "Members": [{"Key": "app", "FutureMember": true}]}]
+                }
+                """);
+            var futureRaw = File.ReadAllText(store.StatePath);
             File.Delete(store.StatePath + ".bak");
             var futureLoaded = store.Load();
             Check(File.ReadAllText(store.StatePath).Contains($"{AppState.CurrentSchemaVersion + 3}", StringComparison.Ordinal),
@@ -30,6 +54,8 @@ internal static class StateRecoveryTests
                 && futureLoaded.NoteWidgets[0].Title == "未来便签"
                 && futureLoaded.NoteWidgets[0].Content == "不应被清空",
                 "新版本状态文件加载时应保留已知用户内容而不是清空回退默认");
+            Check(futureLoaded.LauncherPreferences.BackdropMode == LauncherBackdropMode.LiveWindow,
+                "总览卡应使用当前版本支持的背景模式");
             Check(store.ListBackups().Count(path => Path.GetFileName(path).StartsWith("widgets-newer-schema-", StringComparison.Ordinal)) == 1,
                 "打开高版本状态文件时应留存一份高版本备份快照");
 
@@ -37,18 +63,35 @@ internal static class StateRecoveryTests
             File.WriteAllText(newer, $"{{\"SchemaVersion\":{AppState.CurrentSchemaVersion + 1}}}");
             Check(LocalStateStore.DescribeBackup(newer) is not null, "新版本写的备份应可安全读取摘要");
 
+            futureLoaded.LauncherPreferences.ShowRecentFiles = false;
             store.Save(futureLoaded);
             var savedRaw = File.ReadAllText(store.StatePath);
             Check(savedRaw.Contains($"\"SchemaVersion\": {AppState.CurrentSchemaVersion}", StringComparison.Ordinal)
                 && savedRaw.Contains("\"FutureFlag\"", StringComparison.Ordinal)
+                && savedRaw.Contains("\"LargeNumber\": 1e999", StringComparison.Ordinal)
                 && savedRaw.Contains("\"FutureNoteFlag\": 42", StringComparison.Ordinal)
                 && savedRaw.Contains("\"Kind\": 99", StringComparison.Ordinal)
                 && savedRaw.Contains("\"FutureCompFlag\": 7", StringComparison.Ordinal)
-                && savedRaw.Contains("\"FuturePlaceFlag\": true", StringComparison.Ordinal),
+                && savedRaw.Contains("\"FuturePlaceFlag\": true", StringComparison.Ordinal)
+                && savedRaw.Contains("\"BackdropMode\": 0", StringComparison.Ordinal)
+                && savedRaw.Contains("\"ShowRecentFiles\": false", StringComparison.Ordinal)
+                && savedRaw.Contains("\"FuturePreference\": true", StringComparison.Ordinal)
+                && savedRaw.Contains("\"FutureSurface\": 12", StringComparison.Ordinal)
+                && savedRaw.Contains("\"FutureGroup\": true", StringComparison.Ordinal)
+                && savedRaw.Contains("\"FutureMember\": true", StringComparison.Ordinal),
                 "保存高版本状态时应写当前 SchemaVersion 并保留顶层、嵌套及未来未知枚举扩展字段");
             _ = store.Load();
             Check(store.ListBackups().Count(path => Path.GetFileName(path).StartsWith("widgets-newer-schema-", StringComparison.Ordinal)) == 1,
                 "回退版保存后再次启动不应重复生成高版本备份冲掉原版快照");
+
+            var futureFallback = new LocalStateStore(Path.Combine(temp, "future-backup-only"));
+            Directory.CreateDirectory(futureFallback.DataDirectory);
+            File.WriteAllText(futureFallback.StatePath + ".bak", futureRaw);
+            var recoveredFuture = futureFallback.Load();
+            futureFallback.Save(recoveredFuture);
+            futureFallback.Save(recoveredFuture);
+            Check(futureFallback.ListBackups().Any(path => File.ReadAllText(path) == futureRaw),
+                "只从自动备份读到高版本设置时，后续轮换仍应保留原始文件");
 
             File.WriteAllText(store.StatePath, $"{{\"SchemaVersion\":{AppState.CurrentSchemaVersion},\"TodoWidgets\":null,\"FileBoxes\":null}}");
             var nulls = store.Load();
@@ -59,6 +102,8 @@ internal static class StateRecoveryTests
             Check(v18.SchemaVersion == AppState.CurrentSchemaVersion
                 && v18.DismissedDesktopCategories.SequenceEqual([DesktopGroupCategory.Folders]),
                 "v18 迁移后已删除的分类只保留有效且不重复的项");
+            File.WriteAllText(store.StatePath, """{"NoteWidgets":[{"Content":"UTF-16 便签"}]}""", System.Text.Encoding.Unicode);
+            Check(store.Load().NoteWidgets.Single().Content == "UTF-16 便签", "有 BOM 的 UTF-16 设置应可加载");
         }
         finally
         {
@@ -78,7 +123,15 @@ internal static class StateRecoveryTests
             """{"SchemaVersion":"invalid"}""",
             """{"SchemaVersion":null}""",
             """{"SchemaVersion":{}}""",
-            """{"SchemaVersion":true}"""
+            """{"SchemaVersion":true}""",
+            """{"NoteWidgets":[null]}""",
+            """{"SchemaVersion":1,"NoteWidgets":[{"Placement":{"Left":1e999}}]}""",
+            """{"InformationWidgets":[{"WeatherLatitude":1e999}]}""",
+            """{"TodoWidgets":[{"Items":[null]}]}""",
+            """{"SchemaVersion":1,"TodoWidgets":[{"Placement":null}]}""",
+            """{"FileBoxes":[{"Items":[null]}]}""",
+            """{"DesktopExperience":{"Components":[null]}}""",
+            """{"MultiScreen":{"Screens":{"secondary":{"Experience":{"Components":[{"Placement":{"DisplayLayouts":[null]}}]}}}}}"""
         };
         try
         {
@@ -97,6 +150,8 @@ internal static class StateRecoveryTests
                 store.Save(recovered);
                 Check(File.ReadAllText(store.StatePath + ".bak") == validBackup,
                     "从备份恢复后保存，不兼容的主文件不能替换有效备份");
+                Check(store.ListBackups().Any(path => File.ReadAllText(path) == invalidJson),
+                    "被替换的损坏主文件应原样留在备份中");
 
                 var backupReader = new LocalStateStore(Path.Combine(store.DataDirectory, "verify"));
                 Directory.CreateDirectory(backupReader.DataDirectory);
@@ -121,6 +176,274 @@ internal static class StateRecoveryTests
             {
                 Directory.Delete(temp, true);
             }
+        }
+    }
+
+    private static void TestTemporarilyUnavailableState()
+    {
+        var temp = Directory.CreateTempSubdirectory("BingLan-state-locked-");
+        try
+        {
+            foreach (var useBackup in new[] { true, false })
+            {
+                var store = new LocalStateStore(Path.Combine(temp.FullName, useBackup.ToString()));
+                var state = LocalStateStore.CreateDefault();
+                state.NoteWidgets.Add(new NoteWidgetState { Content = "备份内容" });
+                store.Save(state);
+                state.NoteWidgets[0].Content = "较新的原件";
+                store.Save(state);
+                var primary = File.ReadAllText(store.StatePath);
+                var backupPath = store.StatePath + ".bak";
+                var backup = File.ReadAllText(backupPath);
+                if (!useBackup)
+                {
+                    File.Delete(backupPath);
+                }
+
+                AppState recovered;
+                // Even a handle which permits deletion can prevent opening the file for reading.
+                using (File.Open(store.StatePath, FileMode.Open, FileAccess.ReadWrite, FileShare.Delete))
+                {
+                    recovered = store.Load();
+                    Check(useBackup ? recovered.NoteWidgets.Single().Content == "备份内容" : recovered.NoteWidgets.Count == 0,
+                        "主文件暂时不可读时应加载可用备份，否则启动默认状态");
+                    Check(store.RequiresReloadBeforeSaving, "启动时读取失败应阻止隐式覆盖");
+                    CheckSaveRefused(store, recovered);
+                }
+                CheckSaveRefused(store, recovered);
+                Check(File.ReadAllText(store.StatePath) == primary
+                    && (useBackup ? File.ReadAllText(backupPath) == backup : !File.Exists(backupPath))
+                    && store.ListBackups().Count == 0,
+                    "释放锁以后，回退状态也不能替换原件或有效备份");
+
+                recovered.NoteWidgets.Add(new NoteWidgetState { Content = "本次未保存的编辑" });
+                var manual = store.CreateBackup(recovered);
+                var backupReader = new LocalStateStore(Path.Combine(store.DataDirectory, "verify"));
+                Directory.CreateDirectory(backupReader.DataDirectory);
+                File.Copy(manual, backupReader.StatePath);
+                Check(backupReader.Load().NoteWidgets.Last().Content == "本次未保存的编辑"
+                    && File.ReadAllText(store.StatePath) == primary
+                    && (useBackup ? File.ReadAllText(backupPath) == backup : !File.Exists(backupPath)),
+                    "回退会话可以手动备份编辑，且主文件和自动备份保持原样");
+
+                var reloaded = store.Load();
+                Check(!store.RequiresReloadBeforeSaving && reloaded.NoteWidgets.Single().Content == "较新的原件",
+                    "重新加载应读回原件并恢复保存");
+                reloaded.NoteWidgets[0].Content = "解锁后修改";
+                using (File.Open(store.StatePath, FileMode.Open, FileAccess.ReadWrite, FileShare.Delete))
+                {
+                    CheckSaveRefused(store, reloaded);
+                }
+                store.Save(reloaded);
+                Check(new LocalStateStore(store.DataDirectory).Load().NoteWidgets.Single().Content == "解锁后修改"
+                    && File.ReadAllText(backupPath) == primary,
+                    "正常加载后的保存受阻时，释放锁可重试并轮换原件");
+            }
+
+            var backupOnly = new LocalStateStore(Path.Combine(temp.FullName, "backup-only"));
+            backupOnly.Save(new AppState());
+            var fallback = backupOnly.StatePath + ".bak";
+            File.Move(backupOnly.StatePath, fallback);
+            AppState defaults;
+            using (File.Open(fallback, FileMode.Open, FileAccess.ReadWrite, FileShare.Delete))
+            {
+                defaults = backupOnly.Load();
+                Check(backupOnly.RequiresReloadBeforeSaving, "唯一备份暂时不可读时应保护原有数据");
+            }
+            CheckSaveRefused(backupOnly, defaults);
+            Check(!File.Exists(backupOnly.StatePath) && File.Exists(fallback), "唯一备份解锁后仍不应被默认状态覆盖");
+        }
+        finally
+        {
+            temp.Delete(true);
+        }
+    }
+
+    private static void CheckSaveRefused(LocalStateStore store, AppState state)
+    {
+        try
+        {
+            store.Save(state);
+        }
+        catch (IOException)
+        {
+            return;
+        }
+        throw new InvalidOperationException("无法验证原件时应拒绝保存");
+    }
+
+    private static void TestUnavailablePendingRestoreStaysQueued()
+    {
+        var temp = Directory.CreateTempSubdirectory("BingLan-state-pending-");
+        try
+        {
+            var store = new LocalStateStore(temp.FullName);
+            var state = LocalStateStore.CreateDefault();
+            state.NoteWidgets.Add(new NoteWidgetState { Content = "待恢复设置" });
+            var backup = store.CreateBackup(state);
+            state.NoteWidgets[0].Content = "当前设置";
+            store.Save(state);
+            store.ScheduleRestore(backup);
+
+            using (File.Open(store.PendingRestorePath, FileMode.Open, FileAccess.ReadWrite, FileShare.Delete))
+            {
+                Check(store.Load().NoteWidgets.Single().Content == "当前设置" && File.Exists(store.PendingRestorePath),
+                    "恢复文件暂时不可读时应继续加载当前设置并保留恢复计划");
+            }
+            using (File.Open(store.StatePath, FileMode.Open, FileAccess.ReadWrite, FileShare.Delete))
+            {
+                Check(store.Load().NoteWidgets.Single().Content == "待恢复设置" && File.Exists(store.PendingRestorePath),
+                    "主文件暂时不可读时，应读有效备份并保留恢复计划");
+            }
+            Check(store.Load().NoteWidgets.Single().Content == "待恢复设置" && !File.Exists(store.PendingRestorePath)
+                && store.ListBackups().Any(path => Path.GetFileName(path).StartsWith("widgets-before-restore-", StringComparison.Ordinal)),
+                "文件都可访问时应应用排队恢复并保留被替换的原件");
+        }
+        finally
+        {
+            temp.Delete(true);
+        }
+    }
+
+    private static void TestDeferredSnapshotsStayOrdered()
+    {
+        var temp = Directory.CreateTempSubdirectory("BingLan-state-deferred-");
+        try
+        {
+            var store = new LocalStateStore(temp.FullName);
+            var state = LocalStateStore.CreateDefault();
+            state.NoteWidgets.Add(new NoteWidgetState { Content = "捕获时的内容" });
+            var initial = store.SaveDeferred(state);
+            state.NoteWidgets[0].Content = "未捕获的更改";
+            Check(initial.GetAwaiter().GetResult() is null
+                && store.Load().NoteWidgets.Single().Content == "捕获时的内容",
+                "后台应写调用时捕获的快照");
+
+            Task<Exception?>? pending = null;
+            for (var i = 0; i < 64; i++)
+            {
+                state.NoteWidgets[0].Content = $"连续保存 {i}";
+                pending = store.SaveDeferred(state);
+            }
+            state.NoteWidgets[0].Content = "退出时的最后修改";
+            store.Save(state);
+            var backupReader = new LocalStateStore(Path.Combine(temp.FullName, "verify"));
+            Directory.CreateDirectory(backupReader.DataDirectory);
+            File.Copy(store.StatePath + ".bak", backupReader.StatePath);
+            Check(pending!.GetAwaiter().GetResult() is null
+                && backupReader.Load().NoteWidgets.Single().Content == "连续保存 63"
+                && new LocalStateStore(temp.FullName).Load().NoteWidgets.Single().Content == "退出时的最后修改",
+                "退出保存应等到后台最新快照完成，且任何旧快照都不能覆盖最终内容");
+
+            using (File.Open(store.StatePath, FileMode.Open, FileAccess.ReadWrite, FileShare.Delete))
+            {
+                Check(store.SaveDeferred(state).GetAwaiter().GetResult() is IOException,
+                    "后台写入失败应返回可报告的异常");
+            }
+            state.NoteWidgets[0].Content = "后台失败后的立即保存";
+            store.Save(state);
+            Check(store.Load().NoteWidgets.Single().Content == "后台失败后的立即保存", "后台写入失败后应能立即重试");
+
+            const string invalidLegacy = """{"SchemaVersion":1,"NoteWidgets":[{"Placement":{"Left":1e999}}]}""";
+            File.WriteAllText(store.StatePath, invalidLegacy);
+            state.NoteWidgets[0].Content = "损坏旧版原件后的后台保存";
+            Check(store.SaveDeferred(state).GetAwaiter().GetResult() is null
+                && store.ListBackups().Any(path => File.ReadAllText(path) == invalidLegacy),
+                "后台应归档无法写为有限数的旧配置，并保存新快照");
+            state.NoteWidgets[0].Content = "损坏处理后的最新保存";
+            Check(store.SaveDeferred(state).GetAwaiter().GetResult() is null
+                && store.Load().NoteWidgets.Single().Content == "损坏处理后的最新保存",
+                "处理损坏原件以后，后台应继续保存新快照");
+        }
+        finally
+        {
+            temp.Delete(true);
+        }
+    }
+
+    private static void TestRestoreBacksUpCurrentSession()
+    {
+        var temp = Directory.CreateTempSubdirectory("BingLan-restore-session-");
+        try
+        {
+            var requested = new LocalStateStore(Path.Combine(temp.FullName, "incoming"));
+            requested.Save(new AppState { NoteWidgets = [new NoteWidgetState { Content = "准备恢复" }] });
+            foreach (var corruptPrimary in new[] { false, true })
+            {
+                var store = new LocalStateStore(Path.Combine(temp.FullName, $"primary-{corruptPrimary}"));
+                store.Save(new AppState { NoteWidgets = [new NoteWidgetState { Content = "最新可读取的自动备份" }] });
+                var automatic = store.StatePath + ".bak";
+                File.Move(store.StatePath, automatic);
+                var automaticBytes = File.ReadAllText(automatic);
+                if (corruptPrimary)
+                {
+                    File.WriteAllText(store.StatePath, "{ broken primary");
+                }
+                var session = store.Load();
+                session.NoteWidgets[0].Content = "恢复前还未保存的编辑";
+                File.WriteAllText(store.BackupDirectory, "阻止创建备份目录");
+                try
+                {
+                    store.ScheduleRestore(requested.StatePath, session);
+                    throw new InvalidOperationException("保护当前会话的备份失败时应停止恢复");
+                }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+                {
+                    Check(!File.Exists(store.PendingRestorePath) && File.ReadAllText(automatic) == automaticBytes,
+                        "备份失败不能排队恢复或改动唯一有效副本");
+                }
+                File.Delete(store.BackupDirectory);
+
+                store.ScheduleRestore(requested.StatePath, session);
+                Check(File.ReadAllText(automatic) == automaticBytes
+                    && (corruptPrimary ? File.ReadAllText(store.StatePath) == "{ broken primary" : !File.Exists(store.StatePath)),
+                    "排队恢复只应写独立备份和恢复文件");
+                var manual = store.ListBackups().Single();
+                Check(store.Load().NoteWidgets.Single().Content == "准备恢复", "排队恢复后应加载选中设置");
+                var backupReader = new LocalStateStore(Path.Combine(store.DataDirectory, "verify"));
+                Directory.CreateDirectory(backupReader.DataDirectory);
+                File.Copy(manual, backupReader.StatePath);
+                Check(backupReader.Load().NoteWidgets.Single().Content == "恢复前还未保存的编辑",
+                    "恢复前应单独保留本会话尚未写入的修改");
+            }
+        }
+        finally
+        {
+            temp.Delete(true);
+        }
+    }
+
+    private static void TestLatestFutureArchiveSurvivesPruning()
+    {
+        var temp = Directory.CreateTempSubdirectory("BingLan-future-archive-");
+        try
+        {
+            var store = new LocalStateStore(temp.FullName);
+            var older = $$"""{"SchemaVersion":{{AppState.CurrentSchemaVersion + 1}}}""";
+            var newer = $$"""{"SchemaVersion":{{AppState.CurrentSchemaVersion + 2}},"LauncherPreferences":{"BackdropMode":99} }""";
+            File.WriteAllText(store.StatePath, older);
+            _ = store.Load();
+            File.SetLastWriteTimeUtc(store.ListBackups().Single(), DateTime.UtcNow.AddDays(-2));
+            File.WriteAllText(store.StatePath, newer);
+            _ = store.Load();
+            var futureBackup = store.ListBackups().First();
+            Check(File.ReadAllText(futureBackup) == newer, "应定位最近的未来设置原件");
+            File.SetLastWriteTimeUtc(futureBackup, DateTime.UtcNow.AddDays(-1));
+
+            var corrupt = Path.Combine(store.BackupDirectory, "widgets-newer-schema-damaged.json");
+            File.WriteAllText(corrupt, "{ damaged future archive");
+            File.SetLastWriteTimeUtc(corrupt, DateTime.UtcNow.AddDays(1));
+            for (var i = 0; i < LocalStateStore.MaximumAutomaticBackups + 2; i++)
+            {
+                File.WriteAllText(store.StatePath, "{ damaged primary " + i);
+                _ = store.Load();
+            }
+            Check(store.ListBackups().Count == LocalStateStore.MaximumAutomaticBackups && File.ReadAllText(futureBackup) == newer,
+                "其他自动归档不能挤掉最近有效的未来设置原件，总数仍为 15 份");
+        }
+        finally
+        {
+            temp.Delete(true);
         }
     }
 
@@ -203,6 +526,10 @@ internal static class StateRecoveryTests
                 File.Delete(store.StatePath + ".bak");
                 File.WriteAllText(store.StatePath, "{ invalid json " + i);
                 _ = store.Load();
+            }
+            foreach (var existing in Directory.EnumerateFiles(store.BackupDirectory, "widgets-unreadable-*.json"))
+            {
+                File.SetLastWriteTimeUtc(existing, DateTime.UtcNow.AddDays(4));
             }
             File.WriteAllText(store.StatePath, """{"SchemaVersion":44,"TodoWidgets":[{"Title":"旧文件待迁移"}]}""");
             File.SetLastWriteTimeUtc(store.StatePath, DateTime.UtcNow.AddDays(-30));

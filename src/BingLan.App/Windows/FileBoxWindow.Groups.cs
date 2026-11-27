@@ -18,7 +18,7 @@ public partial class FileBoxWindow
     private readonly List<FileBoxState> _tabs;
     private readonly ObservableCollection<FileBoxTabItem> _tabItems = [];
     // Keeps icons warm across tab switches so flipping tabs inside a grouped box feels instant.
-    private readonly Dictionary<Guid, (ImageSource? Icon, bool IsMissing)> _tabIconCache = [];
+    private readonly FileBoxTabIconCache _tabIconCache = new();
     private readonly System.Windows.Threading.DispatcherTimer _tabHoverSwitchTimer = new()
     {
         Interval = FileBoxGroupRules.HoverSwitchTabDelay
@@ -124,6 +124,13 @@ public partial class FileBoxWindow
         }
 
         CacheCurrentTabIcons();
+        foreach (var departed in _tabs.Except(members))
+        {
+            foreach (var item in departed.Items)
+            {
+                _tabIconCache.Remove(item);
+            }
+        }
         _tabs.Clear();
         _tabs.AddRange(members.OrderBy(m => m.TabOrder));
 
@@ -143,6 +150,7 @@ public partial class FileBoxWindow
         TitleEditor.Text = State.Title;
         ApplyAppearance(State.Appearance);
         WidgetCornerRadius = State.CornerRadius;
+        RefreshExpansionLayout();
         ApplyViewMode();
 
         if (switched)
@@ -280,7 +288,7 @@ public partial class FileBoxWindow
     {
         foreach (var tile in _items)
         {
-            _tabIconCache[tile.Mapping.Id] = (tile.Icon, tile.IsMissing);
+            _tabIconCache.Store(tile.Mapping, tile.Icon, tile.IsMissing);
         }
     }
 
@@ -290,13 +298,13 @@ public partial class FileBoxWindow
         var pendingProbe = new List<FileTile>();
         foreach (var item in State.Items.OrderBy(x => x.Order))
         {
-            var cached = _tabIconCache.TryGetValue(item.Id, out var entry);
-            var tile = CreateTile(item, cached ? entry.Icon : null);
-            if (cached)
+            var entry = _tabIconCache.Get(item);
+            var tile = CreateTile(item, entry?.Icon);
+            if (entry is not null)
             {
                 tile.IsMissing = entry.IsMissing;
             }
-            if (!cached || tile.Icon is null)
+            if (entry is null || tile.Icon is null)
             {
                 pendingProbe.Add(tile);
             }
@@ -321,6 +329,21 @@ public partial class FileBoxWindow
         }
 
         return (await PrepareAndAddMappingsForTabAsync(targetTab, paths, countInvalid: false, iconLoader)).Added;
+    }
+
+    internal async Task<int> AddAutomaticMappingsToBoxAsync(
+        Guid boxId,
+        IEnumerable<string> paths,
+        Func<IReadOnlyList<FileBoxState>?> currentBoxes)
+    {
+        var targetTab = FindTab(boxId);
+        if (targetTab is null)
+        {
+            return 0;
+        }
+
+        return (await PrepareAndAddMappingsForTabAsync(targetTab, paths, countInvalid: false,
+            automaticBoxes: currentBoxes)).Added;
     }
 
     internal async Task<string> AddMappingsWithStatusToBoxAsync(
@@ -408,7 +431,7 @@ public partial class FileBoxWindow
                 : null;
             ImageSource? cachedIcon = activeSourceTile?.Icon;
             var isMissing = activeSourceTile?.IsMissing ?? false;
-            if (activeSourceTile is null && sourceWindow._tabIconCache.TryGetValue(mapping.Id, out var cached))
+            if (activeSourceTile is null && sourceWindow._tabIconCache.Get(mapping) is { } cached)
             {
                 cachedIcon = cached.Icon;
                 isMissing = cached.IsMissing;
@@ -430,7 +453,7 @@ public partial class FileBoxWindow
                 }
                 else
                 {
-                    targetWindow._tabIconCache[clone.Id] = (cachedIcon, isMissing);
+                    targetWindow._tabIconCache.Store(clone, cachedIcon, isMissing);
                 }
                 moved++;
             }
@@ -441,6 +464,7 @@ public partial class FileBoxWindow
                     skipped++;
                     continue;
                 }
+                sourceWindow._tabIconCache.Remove(mapping);
 
                 if (activeSourceTile is not null)
                 {
@@ -455,7 +479,7 @@ public partial class FileBoxWindow
                 }
                 else
                 {
-                    targetWindow._tabIconCache[mapping.Id] = (cachedIcon, isMissing);
+                    targetWindow._tabIconCache.Store(mapping, cachedIcon, isMissing);
                 }
                 moved++;
             }
@@ -531,7 +555,7 @@ public partial class FileBoxWindow
                 }
                 else
                 {
-                    targetWindow._tabIconCache[clone.Id] = (tile.Icon, tile.IsMissing);
+                    targetWindow._tabIconCache.Store(clone, tile.Icon, tile.IsMissing);
                 }
                 moved++;
             }
@@ -542,6 +566,7 @@ public partial class FileBoxWindow
                     skipped++;
                     continue;
                 }
+                _tabIconCache.Remove(tile.Mapping);
 
                 _items.Remove(tile);
                 _selectedIds.Remove(tile.Mapping.Id);
@@ -553,7 +578,7 @@ public partial class FileBoxWindow
                 }
                 else
                 {
-                    targetWindow._tabIconCache[tile.Mapping.Id] = (tile.Icon, tile.IsMissing);
+                    targetWindow._tabIconCache.Store(tile.Mapping, tile.Icon, tile.IsMissing);
                 }
                 moved++;
             }
@@ -941,5 +966,27 @@ public partial class FileBoxWindow
 
         private void OnPropertyChanged([CallerMemberName] string? propertyName = null) =>
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+    }
+}
+
+internal sealed class FileBoxTabIconCache
+{
+    internal sealed record Entry(ImageSource? Icon, bool IsMissing);
+
+    // A live mapping keeps its tab icon warm; removing it releases the cache's reference to the image.
+    private readonly ConditionalWeakTable<FileMappingState, Entry> _entries = new();
+
+    internal Entry? Get(FileMappingState mapping) =>
+        _entries.TryGetValue(mapping, out var entry) ? entry : null;
+
+    internal void Remove(FileMappingState mapping) => _entries.Remove(mapping);
+
+    internal void Store(FileMappingState mapping, ImageSource? icon, bool isMissing)
+    {
+        if (Get(mapping) is { } previous && ReferenceEquals(previous.Icon, icon) && previous.IsMissing == isMissing)
+        {
+            return;
+        }
+        _entries.AddOrUpdate(mapping, new Entry(icon, isMissing));
     }
 }

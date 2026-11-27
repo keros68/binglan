@@ -219,7 +219,7 @@ internal static class WindowCommandService
             return result;
         }
 
-        var appUserModelId = item.Pinned?.AppUserModelId ?? DockAppResolver.GetGroupAppUserModelId(item.Group);
+        var appUserModelId = item.LaunchTarget?.AppUserModelId ?? DockAppResolver.GetGroupAppUserModelId(item.Group);
         if (!string.IsNullOrWhiteSpace(appUserModelId))
         {
             if (await Task.Run(() => ActivatePackagedAppForFiles(appUserModelId, existingFiles)))
@@ -485,18 +485,11 @@ internal static class WindowCommandService
 
         var groupExecutablePaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var groupAumids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var groupProcessIds = new HashSet<uint>();
 
         if (item.Group is { } group)
         {
             foreach (var window in group.Windows)
             {
-                if (window.ProcessId > 4 && window.ProcessId != selfPid
-                    && !DockQuitRules.IsProtectedExecutable(window.ExecutablePath)
-                    && !DockQuitRules.IsProtectedAumid(window.AppUserModelId))
-                {
-                    groupProcessIds.Add(window.ProcessId);
-                }
                 if (!string.IsNullOrWhiteSpace(window.ExecutablePath)
                     && !DockQuitRules.IsProtectedExecutable(window.ExecutablePath))
                 {
@@ -511,7 +504,8 @@ internal static class WindowCommandService
         }
 
         var otherItemExecutablePaths = CollectOtherItemExecutables(item, allItems);
-        var checkAumid = !string.IsNullOrWhiteSpace(item.Pinned?.AppUserModelId) || groupAumids.Count > 0;
+        var launchTarget = item.LaunchTarget;
+        var checkAumid = !string.IsNullOrWhiteSpace(launchTarget?.AppUserModelId) || groupAumids.Count > 0;
 
         var matchedAny = false;
         var terminated = 0;
@@ -520,10 +514,9 @@ internal static class WindowCommandService
         for (var pass = 0; pass < 2; pass++)
         {
             var passResult = TerminateMatchingPass(
-                item.Pinned,
+                launchTarget,
                 groupExecutablePaths,
                 groupAumids,
-                pass == 0 ? groupProcessIds : EmptyProcessIds,
                 otherItemExecutablePaths,
                 checkAumid,
                 selfPid,
@@ -566,13 +559,10 @@ internal static class WindowCommandService
         return new WindowCommandResult(true, $"已结束 {displayName}");
     }
 
-    private static readonly HashSet<uint> EmptyProcessIds = [];
-
     private static (bool MatchedAny, int Terminated, bool AccessDenied) TerminateMatchingPass(
-        DockPinnedApp? pinned,
+        DockPinnedApp? launchTarget,
         HashSet<string> groupExecutablePaths,
         HashSet<string> groupAumids,
-        IReadOnlySet<uint> groupProcessIds,
         HashSet<string> otherItemExecutablePaths,
         bool checkAumid,
         uint selfPid,
@@ -625,10 +615,9 @@ internal static class WindowCommandService
         }
 
         var targets = DockQuitRules.SelectProcessesToTerminate(
-            pinned,
+            launchTarget,
             groupExecutablePaths,
             groupAumids,
-            groupProcessIds,
             candidates,
             otherItemExecutablePaths);
         if (targets.Count == 0)
@@ -670,7 +659,7 @@ internal static class WindowCommandService
                         continue;
                     }
                 }
-                else if (!DockQuitRules.MatchesProcess(pinned, groupExecutablePaths, groupAumids, verifiedExe, verifiedAumid))
+                else if (!DockQuitRules.MatchesProcess(launchTarget, groupExecutablePaths, groupAumids, verifiedExe, verifiedAumid))
                 {
                     continue;
                 }
@@ -707,9 +696,10 @@ internal static class WindowCommandService
                 continue;
             }
 
-            if (!string.IsNullOrWhiteSpace(other.Pinned?.ExecutablePath))
+            var executablePath = other.LaunchTarget?.ExecutablePath;
+            if (!string.IsNullOrWhiteSpace(executablePath))
             {
-                result.Add(WindowGrouping.NormalizeExecutablePath(other.Pinned.ExecutablePath));
+                result.Add(WindowGrouping.NormalizeExecutablePath(executablePath));
             }
             if (other.Group is not null)
             {
@@ -1346,7 +1336,7 @@ internal static class WindowCommandService
             && (allowPackagedExecutable || !DockAppResolver.IsPackagedPath(path))
             && File.Exists(path));
         var workingDirectory = executablePath is null ? null
-            : item.Pinned?.WorkingDirectory is { } folder && Directory.Exists(folder)
+            : item.LaunchTarget?.WorkingDirectory is { } folder && Directory.Exists(folder)
                 ? folder
                 : Path.GetDirectoryName(executablePath);
         return (executablePath, workingDirectory);
@@ -1354,9 +1344,10 @@ internal static class WindowCommandService
 
     private static IEnumerable<string> CandidateExecutables(DockItem item)
     {
-        if (!string.IsNullOrWhiteSpace(item.Pinned?.ExecutablePath))
+        var launchExecutable = item.LaunchTarget?.ExecutablePath;
+        if (!string.IsNullOrWhiteSpace(launchExecutable))
         {
-            yield return item.Pinned.ExecutablePath;
+            yield return launchExecutable;
         }
 
         if (item.Group is not null)
@@ -1378,7 +1369,7 @@ internal static class WindowCommandService
         string displayName,
         IReadOnlyList<string> filePaths)
     {
-        var arguments = DockFileDropRules.BuildLaunchArguments(item.Pinned?.Arguments, filePaths);
+        var arguments = DockFileDropRules.BuildLaunchArguments(item.LaunchTarget?.Arguments, filePaths);
         return StartAsync(executablePath, displayName, arguments, workingDirectory);
     }
 

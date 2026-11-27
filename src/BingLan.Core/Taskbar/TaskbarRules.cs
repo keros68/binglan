@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using BingLan.Core.Dock;
 using BingLan.Core.Models;
 
@@ -9,7 +10,8 @@ public sealed record TaskbarEnvironment(
     bool IsHighContrast,
     bool IsRemoteSession,
     bool IsSystemTransparencyEnabled,
-    string? CompetingCustomizer);
+    string? CompetingCustomizer,
+    int? WindowsUpdateRevision = null);
 
 /// <summary>
 /// Whether a mode can be held. <paramref name="Reason"/> is why it cannot, or, when
@@ -65,6 +67,14 @@ public static class TaskbarCompatibility
             return new(false, "对比度主题开启时保持系统默认外观");
         }
 
+        // 26300.9711 passed the XAML lifecycle checks. On 26300.9974 Explorer
+        // fail-fasts during diagnostics root enumeration on preview replacement.
+        if (mode == TaskbarMode.Transparent && environment.WindowsBuild == 26300
+            && environment.WindowsUpdateRevision != 9711)
+        {
+            return new(true, "此 Windows 修订版暂用模糊，以保持资源管理器稳定", TaskbarMode.Blur);
+        }
+
         if (mode == TaskbarMode.Transparent
             && !UsesWin32Taskbar(environment.WindowsBuild)
             && !VerifiedTransparentBuilds.Contains(environment.WindowsBuild))
@@ -85,7 +95,7 @@ public static class TaskbarCompatibility
 /// </summary>
 public sealed class TaskbarCheckpoint
 {
-    public const int CurrentSchemaVersion = 3;
+    public const int CurrentSchemaVersion = 4;
 
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
 
@@ -94,6 +104,14 @@ public sealed class TaskbarCheckpoint
     public bool AutoHideApplied { get; set; }
     public bool OriginalAutoHide { get; set; }
     public string? XamlSessionName { get; set; }
+
+    /// <summary>Explorer process targeted by the XAML diagnostics connection.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public uint? XamlExplorerProcessId { get; set; }
+
+    /// <summary>The native component reported that it could not restore or detach.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool XamlRestoreFailed { get; set; }
 
     /// <summary>
     /// The system transparency effects before the app turned them on for transparent

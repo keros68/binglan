@@ -369,6 +369,14 @@ internal static class SettingsWindowTests
             Assert(topBar.IsEnabled, "开关应写入顶栏状态");
             Assert(applies == 1, "开关后应通知宿主应用");
 
+            var position = Require<ComboBox>(window, "TopBarPositionComboBox");
+            Assert(position.SelectedIndex == 0 && !topBar.ShowAtBottom, "信息条默认在顶部");
+            position.SelectedIndex = 1;
+            Pump();
+            Assert(topBar.ShowAtBottom && applies == 2
+                && Equals(Require<RadioButton>(window, "TopBarReserveRadio").Content, "始终显示，预留底部空间"),
+                "选择底部应写入位置、立即应用并更新预留选项");
+
             window.SelectTopBarModule(TopBarModuleKind.Volume);
             Pump();
             var selectedToggle = Require<CheckBox>(window, "TopBarSelectedModuleEnabledCheckBox");

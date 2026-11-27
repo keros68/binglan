@@ -1,6 +1,6 @@
 # 发布：推送 v* 标签后在云端构建、跑全部五套测试（含会创建真实窗口的三套）、打安装包与
 # 免安装包、生成 SHA256SUMS.txt，并建立草稿 Release 上传这三个文件。发布说明在草稿里补写，
-# 确认后再转为正式发布。手动触发只打包并把产物作为构建附件保存，不建立 Release，用于试跑。
+# 确认后再转为正式发布。手动触发运行相同的测试并保存构建附件，用于试包。
 name: 发布
 
 on:
@@ -13,15 +13,20 @@ on:
         required: true
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  release:
+  build:
     runs-on: windows-2025
     timeout-minutes: 60
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
     steps:
       - name: 检出
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       # 与本地相同的 SDK（global.json），安装包自带的 .NET 运行时随之一致。
       - name: 安装 .NET SDK
@@ -32,9 +37,22 @@ jobs:
       - name: 确定版本号
         id: version
         shell: pwsh
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          TRIAL_VERSION: ${{ inputs.version }}
         run: |
-          $version = if ('${{ github.event_name }}' -eq 'push') { '${{ github.ref_name }}'.TrimStart('v') } else { '${{ inputs.version }}' }
-          if ($version -notmatch '^\d+\.\d+\.\d+$') { throw "版本号格式不对：$version" }
+          if ($env:EVENT_NAME -eq 'push') {
+            if ($env:RELEASE_TAG -cnotmatch '\Av[0-9]+\.[0-9]+\.[0-9]+\z') {
+              throw '发布标签必须采用 v主版本.次版本.修订版本 格式。'
+            }
+            $version = $env:RELEASE_TAG.Substring(1)
+          } else {
+            $version = $env:TRIAL_VERSION
+            if ($version -notmatch '\A[0-9]+\.[0-9]+\.[0-9]+\z') {
+              throw '版本号必须采用 主版本.次版本.修订版本 格式。'
+            }
+          }
           "version=$version" >> $env:GITHUB_OUTPUT
 
       - name: 构建（Release）
@@ -67,37 +85,127 @@ jobs:
 
       - name: 打包
         shell: pwsh
-        run: pwsh -NoProfile -File installer/build.ps1 -Version ${{ steps.version.outputs.version }}
+        env:
+          BINGLAN_RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: pwsh -NoProfile -File installer/build.ps1 -Version $env:BINGLAN_RELEASE_VERSION
 
       - name: 生成 SHA256SUMS.txt
         shell: pwsh
+        env:
+          BINGLAN_RELEASE_VERSION: ${{ steps.version.outputs.version }}
         run: |
-          $version = '${{ steps.version.outputs.version }}'
+          $version = $env:BINGLAN_RELEASE_VERSION
           $files = "BingLan-Setup-$version.exe", "BingLan-$version-portable.zip"
           $lines = $files | ForEach-Object { "$((Get-FileHash (Join-Path installer/bin $_) -Algorithm SHA256).Hash)  $_" }
           [IO.File]::WriteAllText((Join-Path installer/bin 'SHA256SUMS.txt'), ($lines -join "`n") + "`n")
           Get-Content installer/bin/SHA256SUMS.txt
 
-      - name: 保存产物（试跑）
-        if: github.event_name == 'workflow_dispatch'
+      - name: 保存产物
+        id: upload
         uses: actions/upload-artifact@v4
         with:
-          name: binglan-${{ steps.version.outputs.version }}
+          name: binglan-${{ steps.version.outputs.version }}-${{ github.run_attempt }}
           path: |
             installer/bin/BingLan-Setup-${{ steps.version.outputs.version }}.exe
             installer/bin/BingLan-${{ steps.version.outputs.version }}-portable.zip
             installer/bin/SHA256SUMS.txt
-          retention-days: 3
+          if-no-files-found: error
+          retention-days: ${{ github.event_name == 'push' && 30 || 3 }}
 
-      - name: 建立草稿 Release
-        if: github.event_name == 'push'
+  release:
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    needs: build
+    runs-on: windows-2025
+    timeout-minutes: 10
+    concurrency: binglan-release-${{ github.ref }}
+    permissions:
+      contents: write
+    steps:
+      - name: 下载发布产物
+        uses: actions/download-artifact@v4
+        with:
+          artifact-ids: ${{ needs.build.outputs.artifact-id }}
+          path: release-assets
+          merge-multiple: true
+
+      - name: 准备草稿 Release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
+          BINGLAN_RELEASE_VERSION: ${{ needs.build.outputs.version }}
         run: |
-          $version = '${{ steps.version.outputs.version }}'
-          gh release create "v$version" --draft --title "冰蓝桌面 $version" `
-            --notes "发布说明待补写。" `
-            "installer/bin/BingLan-Setup-$version.exe" `
-            "installer/bin/BingLan-$version-portable.zip" `
-            "installer/bin/SHA256SUMS.txt"
+          $version = $env:BINGLAN_RELEASE_VERSION
+          $tag = "v$version"
+          $repoApi = "repos/$env:GITHUB_REPOSITORY"
+          $packageNames = "BingLan-Setup-$version.exe", "BingLan-$version-portable.zip"
+          $assets = foreach ($name in ($packageNames + 'SHA256SUMS.txt')) {
+            $path = Join-Path release-assets $name
+            $hash = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+            [pscustomobject]@{ Name = $name; Path = $path; Hash = $hash }
+          }
+          $expectedSums = @($assets | Where-Object Name -in $packageNames |
+            ForEach-Object { "$($_.Hash)  $($_.Name)" }) -join "`n"
+          $actualSums = (Get-Content -LiteralPath release-assets/SHA256SUMS.txt) -join "`n"
+          if ($actualSums -ne $expectedSums) { throw '下载的发布产物与 SHA256SUMS.txt 不一致。' }
+
+          function Find-TargetRelease {
+            $json = gh api --paginate --slurp "$repoApi/releases?per_page=100"
+            if ($LASTEXITCODE -ne 0) { throw '无法读取发行版列表。' }
+            $matches = @(foreach ($page in (ConvertFrom-Json -InputObject ($json -join "`n") -NoEnumerate)) {
+              $page | Where-Object tag_name -ceq $tag
+            })
+            if ($matches.Count -gt 1) { throw "标签 $tag 对应多个发行版，请先核对草稿。" }
+            if ($matches.Count -eq 1) { $matches[0] }
+          }
+
+          $release = Find-TargetRelease
+          if ($release -and -not $release.draft) {
+            Write-Host "发行版 $tag 已发布。"
+            exit 0
+          }
+          if (-not $release) {
+            gh release create $tag --repo $env:GITHUB_REPOSITORY --verify-tag --draft `
+              --title "冰蓝桌面 $version" --notes "发布说明待补写。"
+            if ($LASTEXITCODE -ne 0) { throw "无法创建 $tag 的草稿。" }
+            $release = Find-TargetRelease
+          } else {
+            gh api --silent "$repoApi/git/ref/tags/$tag"
+            if ($LASTEXITCODE -ne 0) { throw "无法核实远程标签 $tag。" }
+          }
+          $draftId = $release.id
+          $draftApi = "$repoApi/releases/$draftId"
+
+          function Get-TargetDraft {
+            $json = gh api $draftApi
+            if ($LASTEXITCODE -ne 0) { throw "无法读取 $tag 的草稿。" }
+            $draft = ConvertFrom-Json -InputObject ($json -join "`n")
+            if (-not $draft.draft -or $draft.tag_name -cne $tag) { throw "发行版 $tag 已退出草稿状态或更换标签。" }
+            $draft
+          }
+
+          function Test-ReleaseAsset($draft, $asset) {
+            $existing = @($draft.assets | Where-Object name -ceq $asset.Name)
+            if ($existing.Count -eq 0) { return $false }
+            if ($existing.Count -ne 1 -or $existing[0].state -ne 'uploaded' -or
+                $existing[0].digest -ne "sha256:$($asset.Hash)") {
+              throw "草稿附件 $($asset.Name) 与本次产物不一致，请核对附件。"
+            }
+            return $true
+          }
+
+          if (-not $draftId) { throw "无法取得 $tag 的草稿 ID。" }
+          $draft = Get-TargetDraft
+          $missing = @($assets | Where-Object { -not (Test-ReleaseAsset $draft $_) })
+          foreach ($asset in $missing) {
+            $draft = Get-TargetDraft
+            if (Test-ReleaseAsset $draft $asset) { continue }
+            $name = [uri]::EscapeDataString($asset.Name)
+            Invoke-WebRequest -Method Post -MaximumRedirection 0 `
+              -Uri "https://uploads.github.com/$draftApi/assets?name=$name" `
+              -Authentication Bearer -Token (ConvertTo-SecureString $env:GH_TOKEN -AsPlainText -Force) `
+              -ContentType application/octet-stream -InFile $asset.Path | Out-Null
+          }
+          $draft = Get-TargetDraft
+          foreach ($asset in $assets) {
+            if (-not (Test-ReleaseAsset $draft $asset)) { throw "草稿缺少 $($asset.Name)。" }
+          }

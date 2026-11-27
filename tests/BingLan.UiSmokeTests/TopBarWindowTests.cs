@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Automation;
@@ -8,6 +9,8 @@ using System.Windows.Controls.Primitives;
 using System.Windows.Interop;
 using System.Windows.Input;
 using System.Windows.Media;
+using BingLan.App.Dock;
+using BingLan.App;
 using BingLan.App.Interop;
 using BingLan.App.Services;
 using BingLan.App.Windows;
@@ -19,13 +22,13 @@ using System.Buffers.Binary;
 using System.Text;
 
 /// <summary>
-/// Drives the top bar without a mouse: window style, module layout, deep-link clicks and
-/// the module switches. The tests always use smart-hide mode so no real AppBar is
-/// registered on the machine running the suite.
+/// The default suite exercises modules in smart-hide mode. The opt-in reserved-bar
+/// test registers a real AppBar and sends mouse input to its modules.
 /// </summary>
 internal static class TopBarWindowTests
 {
     private const int GwlExStyle = -20;
+    private const uint MakeProbeBorderless = 0x8001;
 
     [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
     private static extern nint GetWindowLongPtr(nint window, int index);
@@ -45,6 +48,7 @@ internal static class TopBarWindowTests
     }
 
     private const uint MouseMove = 0x0001;
+    private const uint MouseLeftDown = 0x0002;
     private const uint MouseLeftUp = 0x0004;
     private const uint MouseMoveNoCoalesce = 0x2000;
     private const uint MouseVirtualDesktop = 0x4000;
@@ -121,6 +125,12 @@ internal static class TopBarWindowTests
     [DllImport("user32.dll")]
     private static extern bool SetForegroundWindow(nint window);
 
+    [DllImport("user32.dll")]
+    private static extern nint WindowFromPoint(DockNativeMethods.NativePoint point);
+
+    [DllImport("user32.dll")]
+    private static extern bool SetCursorPos(int x, int y);
+
     /// <summary>
     /// Interactive windows receive the foreground after a user opens them. Windows
     /// can deny that grant to an automated test, so tests recreate the foreground
@@ -150,22 +160,284 @@ internal static class TopBarWindowTests
         }
     }
 
-    internal static void Run(Action<Window> show, Action pump)
+    internal static int RunReservedFlyoutProbe(Application app)
     {
-        ShowModulesAndStyles(show, pump);
-        ModuleSwitchesRemoveButtons(show, pump);
-        ClicksOpenSettings(show, pump);
-        SurfacePaintsGlass(show, pump);
-        TodoFlyoutShowsItemsAndCloses(show, pump);
-        CapsuleExpandsWithinItsSurface(show, pump);
-        WeatherHoverOpensTooltip(show, pump);
-        SearchEntryButtonOpensLauncher(show, pump);
-        SearchModuleSwitchHidesEntry(show, pump);
-        RateDigitsDoNotShiftSearchEntry(show, pump);
-        SearchEntrySitsAtBarCentre(show, pump);
-        CustomModuleOrderUpdatesLayout(show, pump);
-        EverythingProtocolAndFallback(pump);
-        WindowsIndexQueryRules();
+        app.ShutdownMode = ShutdownMode.OnMainWindowClose;
+        var window = new Window { Title = "冰蓝顶栏浮层测试窗口", Width = 640, Height = 480 };
+        window.SourceInitialized += (_, _) =>
+        {
+            ((HwndSource)PresentationSource.FromVisual(window)).AddHook(MakeBorderless);
+        };
+        return app.Run(window);
+
+        nint MakeBorderless(nint handle, int message, nint wParam, nint lParam, ref bool handled)
+        {
+            if (message == MakeProbeBorderless)
+            {
+                window.WindowStyle = WindowStyle.None;
+                window.ResizeMode = ResizeMode.NoResize;
+                handled = true;
+            }
+            return 0;
+        }
+    }
+
+    internal static void ReservedBarFlyoutsStayOpen(Action<Window> show, Action pump)
+    {
+        var monitor = MonitorCatalog.GetAll().FirstOrDefault(screen => screen.Bounds.Top == screen.WorkingArea.Top)
+            ?? throw new InvalidOperationException("测试需要一块顶边未被预留的显示器");
+        var previousForeground = GetForegroundWindow();
+        Assert(DockNativeMethods.GetCursorPos(out var previousCursor), "无法读取测试前的鼠标位置");
+        using var probe = Process.Start(new ProcessStartInfo(
+            System.IO.Path.Combine(AppContext.BaseDirectory, "BingLan.UiSmokeTests.exe"), "--topbar-reserved-flyout-probe")
+        {
+            UseShellExecute = false,
+            CreateNoWindow = true
+        })!;
+        var state = BarState();
+        state.VisibilityMode = TopBarVisibilityMode.ReserveTopEdge;
+        state.Height = TopBarState.MaximumHeightDip;
+        using var sampler = new WindowsPerformanceSamplingService();
+        var target = new SurfaceMonitorSelection(monitor.DeviceName, monitor, null);
+        var bar = new TopBarWindow(state, new DesktopStyleState(), new FakeEnvironment(), sampler, screenTarget: target);
+        try
+        {
+            show(bar);
+            Assert(WaitUntil(pump, () => bar.GetReservedBottomForMonitor(monitor) is not null), "顶栏未获得实际顶边预留");
+            var barHandle = new WindowInteropHelper(bar).Handle;
+            Assert(GetWindowRect(barHandle, out var barRect), "无法读取顶栏坐标");
+            Assert(WaitUntil(pump, () => { probe.Refresh(); return probe.MainWindowHandle != 0; }), "测试应用未创建窗口");
+            var window = probe.MainWindowHandle;
+
+            Assert(NativeMethods.SetWindowPos(window, 0,
+                monitor.Bounds.Left + monitor.Bounds.Width / 2 - 320,
+                monitor.Bounds.Top + monitor.Bounds.Height / 2 - 240,
+                640, 480, NativeMethods.SwpNoZOrder | NativeMethods.SwpNoActivate), "无法放置测试应用");
+            const int maximize = 3;
+            Assert(DockNativeMethods.ShowWindowAsync(window, maximize), "无法最大化测试应用");
+            Assert(WaitUntil(pump, () => DockNativeMethods.IsZoomed(window)
+                && DockNativeMethods.MonitorFromWindow(window, DockNativeMethods.MonitorDefaultToNearest) == monitor.MonitorHandle),
+                "测试应用未在顶栏所在屏幕最大化");
+            ForceForeground(window);
+            if (!WaitUntil(pump, () => GetForegroundWindow() == window, attempts: 25))
+            {
+                Assert(GetWindowRect(window, out var appRect), "无法读取最大化测试应用坐标");
+                Click(window, appRect.Left + (appRect.Right - appRect.Left) * 3 / 4, (appRect.Top + appRect.Bottom) / 2);
+                Assert(WaitUntil(pump, () => GetForegroundWindow() == window), "测试应用未获得前台");
+            }
+            CheckFlyouts("正常最大化");
+            CheckSmartHide();
+
+            Assert(DockNativeMethods.ShowWindowAsync(window, DockNativeMethods.SwRestore), "无法还原测试应用");
+            Assert(WaitUntil(pump, () => !DockNativeMethods.IsZoomed(window)), "测试应用未还原");
+            const int overlapPixels = 12;
+            Assert(NativeMethods.SetWindowPos(window, 0, monitor.Bounds.Left, barRect.Bottom - overlapPixels,
+                monitor.Bounds.Width, monitor.WorkingArea.Height - 80, NativeMethods.SwpNoZOrder | NativeMethods.SwpNoActivate),
+                "无法将测试应用移到顶栏边缘");
+            Assert(WaitUntil(pump, () =>
+                DockNativeMethods.DwmGetWindowAttribute(window, DockNativeMethods.DwmwaExtendedFrameBounds,
+                    out DockNativeMethods.NativeRect frame, Marshal.SizeOf<DockNativeMethods.NativeRect>()) == 0
+                    && frame.Top < barRect.Bottom - TopBarReserveRules.SeamTolerancePixels), "测试应用未压进顶栏");
+            CheckFlyouts("窗口边缘重叠");
+
+            ClickModule("时间日期模块");
+            Assert(WaitUntil(pump, () => bar.ClockFlyout?.IsOpen == true), "切入真全屏前日历应打开");
+            Assert(DockNativeMethods.PostMessageW(window, MakeProbeBorderless, 0, 0), "无法切换测试窗口的边框");
+            Assert(WaitUntil(pump, () => ((long)GetWindowLongPtr(window, NativeMethods.GwlStyle) & NativeMethods.WsCaption) == 0),
+                "测试窗口仍有标题栏");
+            Assert(NativeMethods.SetWindowPos(window, 0, monitor.Bounds.Left, monitor.Bounds.Top,
+                monitor.Bounds.Width, monitor.Bounds.Height, NativeMethods.SwpNoZOrder | NativeMethods.SwpNoActivate),
+                "无法令测试应用覆盖整个屏幕");
+            Assert(WaitUntil(pump, () => FullScreenWatcher.IsFullScreen(window, excludeMaximized: true)
+                && bar.ClockFlyout?.IsOpen != true), "真全屏应收起日历浮层");
+            Assert(GetForegroundWindow() == window, "切入真全屏时前台应用应保持不变");
+            Console.WriteLine($"通过：{monitor.Label}，真全屏仍会收起日历");
+
+            void CheckSmartHide()
+            {
+                MoveMouseTo(monitor.Bounds.Left + monitor.Bounds.Width / 2, monitor.Bounds.Top + monitor.Bounds.Height / 2);
+                var smartState = BarState();
+                smartState.VisibilityMode = TopBarVisibilityMode.SmartHide;
+                var smart = new TopBarWindow(smartState, new DesktopStyleState(), new FakeEnvironment(), sampler,
+                    screenTarget: target, ownsGlobalEvents: false);
+                try
+                {
+                    var handle = ShowBarAndGetHandle(smart, pump);
+                    Assert(WaitUntil(pump, () => !smart.IsVisible) && DockNativeMethods.IsWindow(handle),
+                        "最大化时智能隐藏应收起已创建的顶栏窗口");
+                    RevealSmartBar(smart, handle, pump);
+                    Assert(new WindowInteropHelper(smart).Handle == handle, "边缘唤出应复用已创建的顶栏窗口");
+                    Console.WriteLine($"通过：{monitor.Label}，智能隐藏保留窗口，停留屏幕边缘可唤出");
+                }
+                finally
+                {
+                    smart.Close();
+                    pump();
+                }
+            }
+
+            void ClickModule(string name)
+            {
+                Assert(GetForegroundWindow() == window, "点击前测试应用必须在前台");
+                var button = ButtonByName(bar, name);
+                // This part of the button clears the shorter bar and the window edge in the overlap scenario.
+                var point = button.PointToScreen(new Point(button.ActualWidth / 2, button.ActualHeight * 0.72));
+                Click(barHandle, (int)point.X, (int)point.Y);
+            }
+
+            void CheckFlyouts(string scenario)
+            {
+                Hold(TimeSpan.FromMilliseconds(350));
+                Check("时间日期模块", () => bar.ClockFlyout?.IsOpen == true);
+                Check("音量模块", () => bar.VolumeFlyout?.IsOpen == true);
+                Console.WriteLine($"通过：{monitor.Label}，{scenario}，日历和音量均可保持打开");
+
+                void Check(string name, Func<bool> isOpen)
+                {
+                    ClickModule(name);
+                    Hold(TimeSpan.FromMilliseconds(850));
+                    Assert(isOpen(), $"{scenario}时 {name} 应保持打开");
+                    ClickModule(name);
+                    Assert(WaitUntil(pump, () => !isOpen()), $"再次点击 {name} 应关闭浮层");
+                }
+            }
+
+            void Click(nint window, int x, int y)
+            {
+                MoveMouseTo(x, y);
+                var point = new DockNativeMethods.NativePoint { X = x, Y = y };
+                Assert(WaitUntil(pump, () => WindowFromPoint(point) == window),
+                    $"点击位置 ({x},{y}) 被其他窗口遮挡，命中 {WindowFromPoint(point):X}，预期 {window:X}");
+                SendMouseInputs(new MouseInput { Flags = MouseLeftDown }, new MouseInput { Flags = MouseLeftUp });
+            }
+
+            void Hold(TimeSpan duration)
+            {
+                var watch = Stopwatch.StartNew();
+                while (watch.Elapsed < duration)
+                {
+                    pump();
+                    Thread.Sleep(10);
+                }
+            }
+        }
+        finally
+        {
+            bar.Close();
+            if (!probe.HasExited && (!probe.CloseMainWindow() || !probe.WaitForExit(2000)))
+            {
+                probe.Kill();
+                probe.WaitForExit(2000);
+            }
+            SetCursorPos(previousCursor.X, previousCursor.Y);
+            if (previousForeground != 0 && DockNativeMethods.IsWindow(previousForeground))
+            {
+                ForceForeground(previousForeground);
+            }
+            pump();
+        }
+    }
+
+    private static nint ShowBarAndGetHandle(Window bar, Action pump)
+    {
+        bar.Show();
+        pump();
+        var handle = new WindowInteropHelper(bar).Handle;
+        Assert(handle != 0 && DockNativeMethods.IsWindow(handle), "顶栏未创建原生窗口");
+        return handle;
+    }
+
+    private static void RevealSmartBar(Window bar, nint handle, Action pump)
+    {
+        Assert(GetWindowRect(handle, out var bounds) && bounds.Right > bounds.Left && bounds.Bottom > bounds.Top,
+            "无法读取已创建顶栏的屏幕位置");
+        var monitorHandle = DockNativeMethods.MonitorFromWindow(handle, DockNativeMethods.MonitorDefaultToNearest);
+        var screen = MonitorCatalog.GetAll().Single(monitor => monitor.MonitorHandle == monitorHandle).Bounds;
+        var isTopBar = bounds.Top + (bounds.Bottom - bounds.Top) / 2 < screen.Top + screen.Height / 2;
+        MoveMouseTo(bounds.Left + (bounds.Right - bounds.Left) / 2, isTopBar ? bounds.Top : bounds.Bottom - 2);
+        Assert(WaitUntil(pump, () => bar.IsVisible), "顶栏窗口已创建，但在屏幕边缘停留后仍未显示");
+    }
+
+    internal static void Run(Action pump)
+    {
+        Assert(DockNativeMethods.GetCursorPos(out var previousCursor), "无法读取测试前的鼠标位置");
+        var movedPointer = false;
+        try
+        {
+            ShowModulesAndStyles(ShowForInteraction, pump);
+            ModuleSwitchesRemoveButtons(ShowForInteraction, pump);
+            ClicksOpenSettings(ShowForInteraction, pump);
+            BottomBarAvoidsDockAndOpensCalendarInward(ShowForInteraction, pump);
+            PowerDialogAvailableWithoutBattery(ShowForInteraction, pump);
+            SurfacePaintsGlass(ShowForInteraction, pump);
+            TodoFlyoutShowsItemsAndCloses(ShowForInteraction, pump);
+            CapsuleExpandsWithinItsSurface(ShowForInteraction, pump);
+            WeatherHoverOpensTooltip(ShowForInteraction, pump);
+            SearchEntryButtonOpensLauncher(ShowForInteraction, pump);
+            SearchAndModuleFlyoutsAreMutuallyExclusive(ShowForInteraction, pump);
+            SearchAndModuleFlyoutsUseSystemColorsInHighContrast(ShowForInteraction, pump);
+            SearchModuleSwitchHidesEntry(ShowForInteraction, pump);
+            RateDigitsDoNotShiftSearchEntry(ShowForInteraction, pump);
+            SearchEntrySitsAtBarCentre(ShowForInteraction, pump);
+            CustomModuleOrderUpdatesLayout(ShowForInteraction, pump);
+            EverythingProtocolAndFallback(pump);
+            WindowsIndexQueryRules();
+        }
+        finally
+        {
+            if (movedPointer)
+            {
+                SetCursorPos(previousCursor.X, previousCursor.Y);
+            }
+        }
+
+        void ShowForInteraction(Window bar)
+        {
+            try
+            {
+                var handle = ShowBarAndGetHandle(bar, pump);
+                if (!bar.IsVisible)
+                {
+                    movedPointer = true;
+                    RevealSmartBar(bar, handle, pump);
+                }
+            }
+            catch
+            {
+                bar.Close();
+                pump();
+                throw;
+            }
+        }
+    }
+
+    private static void BottomBarAvoidsDockAndOpensCalendarInward(Action<Window> show, Action pump)
+    {
+        var state = BarState();
+        state.ShowAtBottom = true;
+        state.VisibilityMode = TopBarVisibilityMode.SmartHide;
+        using var sampler = new WindowsPerformanceSamplingService();
+        int? dockTop = null;
+        var bar = new TopBarWindow(state, new DesktopStyleState(), new FakeEnvironment(), sampler)
+        {
+            ResolveBottomDockTop = monitor => dockTop =
+                TaskbarEdgeGuard.AvoidNativeTaskbar(monitor.Bounds, monitor.Bounds).Bottom - 100
+        };
+        show(bar);
+        try
+        {
+            Assert(GetWindowRect(new WindowInteropHelper(bar).Handle, out var rect) && rect.Bottom == dockTop,
+                "底部信息条应贴齐同屏底部 Dock 上沿");
+            Invoke(ButtonByName(bar, "时间日期模块"));
+            pump();
+            Assert(bar.ClockFlyout is { IsOpen: true, Placement: PlacementMode.Top },
+                "底部信息条从条上方向工作区展开日历");
+        }
+        finally
+        {
+            bar.Close();
+            pump();
+        }
     }
 
     private static void WeatherHoverOpensTooltip(Action<Window> show, Action pump)
@@ -221,6 +493,52 @@ internal static class TopBarWindowTests
         {
             bar.Close();
             pump();
+        }
+    }
+
+    private static void PowerDialogAvailableWithoutBattery(Action<Window> show, Action pump)
+    {
+        var pending = new TaskCompletionSource<TopBarBatterySnapshot>();
+        var unavailable = new TopBarBatterySnapshot(
+            -1, TopBarBatteryStatus.Unknown, false, null, false, TopBarPowerMode.Unknown, false, 0);
+        (string State, Task<TopBarBatterySnapshot> Read)[] cases =
+        [
+            ("无电池", Task.FromResult(unavailable)),
+            ("状态加载中", pending.Task),
+            ("状态读取失败", Task.FromException<TopBarBatterySnapshot>(new InvalidOperationException("测试读取失败")))
+        ];
+        foreach (var (stateName, read) in cases)
+        {
+            var state = BarState();
+            state.VisibilityMode = TopBarVisibilityMode.SmartHide;
+            using var sampler = new WindowsPerformanceSamplingService();
+            var environment = new FakeEnvironment { BatteryReadTask = read };
+            var bar = new TopBarWindow(state, new DesktopStyleState(), environment, sampler);
+            show(bar);
+            try
+            {
+                Invoke(ButtonByName(bar, "电量模块"));
+                pump();
+                var action = AllButtons(bar.BatteryFlyout!.Child)
+                    .Single(candidate => AutomationProperties.GetName(candidate) == "打开 Windows 关机或重启对话框");
+                Assert(action.IsEnabled, $"{stateName}时应保留关机或重启入口");
+                Invoke(action);
+                pump();
+                Assert(bar.BatteryFlyout is null && environment.ShutdownDialogRequested == 1
+                    && environment.QuickSettingsRequested == 0 && environment.OpenedSettingsUris.Count == 0,
+                    $"{stateName}时只应请求系统选择对话框并收起浮层");
+                if (read == pending.Task)
+                {
+                    pending.SetResult(unavailable);
+                    pump();
+                    Assert(bar.BatteryFlyout is null, "读取状态迟到时不应重新打开电源浮层");
+                }
+            }
+            finally
+            {
+                bar.Close();
+                pump();
+            }
         }
     }
 
@@ -545,6 +863,15 @@ internal static class TopBarWindowTests
             Assert(bar.BatteryFlyout is null && environment.OpenedSettingsUris.Contains("ms-settings:powersleep"),
                 "点击电池浮层底部设置项应收起浮层并打开系统电源设置");
 
+            Invoke(ButtonByName(bar, "电量模块"));
+            pump();
+            Invoke(AllButtons(bar.BatteryFlyout!.Child)
+                .Single(candidate => AutomationProperties.GetName(candidate) == "打开 Windows 关机或重启对话框"));
+            pump();
+            Assert(bar.BatteryFlyout is null && environment.ShutdownDialogRequested == 1
+                && environment.OpenedSettingsUris.Count == 2 && environment.QuickSettingsRequested == 0,
+                "关机或重启入口应收起浮层并只请求 Windows 选择对话框");
+
             Invoke(ButtonByName(bar, "网络模块"));
             pump();
             Assert(bar.NetworkFlyout?.IsOpen == true && bar.BatteryFlyout is null,
@@ -724,6 +1051,130 @@ internal static class TopBarWindowTests
         finally
         {
             bar.Close();
+            pump();
+        }
+    }
+
+    private static void SearchAndModuleFlyoutsAreMutuallyExclusive(Action<Window> show, Action pump)
+    {
+        var state = BarState();
+        state.VisibilityMode = TopBarVisibilityMode.SmartHide;
+        state.SearchInline = true;
+        state.FollowCardLook = false;
+        state.SurfaceColor = "#00FFFF";
+        state.SurfaceOpacity = 0d;
+        var expectedSurface = AccessibilityThemeManager.IsHighContrastEnabled || SystemParameters.HighContrast
+            ? SystemColors.WindowColor
+            : Color.FromArgb(1, 0, 255, 255);
+        using var sampler = new WindowsPerformanceSamplingService();
+        var bar = new TopBarWindow(state, new DesktopStyleState(), new FakeEnvironment(), sampler);
+        show(bar);
+        try
+        {
+            (string Name, Func<Popup?> Current)[] modules =
+            [
+                ("待办模块", () => bar.TodoFlyout),
+                ("时间日期模块", () => bar.ClockFlyout),
+                ("输入法模块", () => bar.InputMethodFlyout),
+                ("音量模块", () => bar.VolumeFlyout),
+                ("电量模块", () => bar.BatteryFlyout),
+                ("网络模块", () => bar.NetworkFlyout)
+            ];
+            foreach (var (name, current) in modules)
+            {
+                Invoke(bar.SearchEntryButton!);
+                Assert(WaitUntil(pump, () => bar.SearchPopup?.IsVisible == true),
+                    $"应打开内联搜索（存在：{bar.SearchPopup is not null}，可见：{bar.SearchPopup?.IsVisible}）");
+                var search = bar.SearchPopup!;
+                search.UpdateLayout();
+                var searchColor = ((search.Content as Border)?.Background as SolidColorBrush)?.Color;
+                Assert(searchColor == expectedSurface,
+                    $"内联搜索的底色和不透明度应跟随顶栏（实际：{searchColor}，预期：{expectedSurface}）");
+                var input = DescendantElements(search).OfType<TextBox>().Single();
+                input.Text = "报告";
+                Assert(search.HasUserInput && search.IsVisible, "搜索浮层应保留已输入的查询");
+
+                // Invoke without changing the foreground window or generating an outside click.
+                Invoke(ButtonByName(bar, name));
+                var flyout = current();
+                Assert(flyout is not null && bar.SearchPopup is null && !search.IsVisible,
+                    $"打开{name}浮层应立即收起已有的搜索窗口（模块浮层存在：{flyout is not null}，" +
+                    $"已打开：{flyout?.IsOpen}，搜索引用已清除：{bar.SearchPopup is null}，原搜索可见：{search.IsVisible}）");
+                var openedFlyout = flyout!;
+                Assert(WaitUntil(pump, () => openedFlyout.IsOpen), $"{name}浮层应在 WPF 加载后显示");
+                var flyoutColor = ((openedFlyout.Child as Border)?.Background as SolidColorBrush)?.Color;
+                Assert(flyoutColor == expectedSurface,
+                    $"{name}浮层的底色和不透明度应与内联搜索一致（实际：{flyoutColor}，预期：{expectedSurface}）");
+
+                bar.TriggerSearch();
+                Assert(!openedFlyout.IsOpen && current() is null && bar.SearchPopup?.IsVisible == true,
+                    $"触发搜索应立即收起已有的{name}浮层（模块浮层仍打开：{openedFlyout.IsOpen}，" +
+                    $"模块引用已清除：{current() is null}，搜索可见：{bar.SearchPopup?.IsVisible}）");
+                var reopenedSearch = bar.SearchPopup!;
+                reopenedSearch.UpdateLayout();
+                var reopenedInput = DescendantElements(reopenedSearch).OfType<TextBox>().Single();
+                var source = PresentationSource.FromVisual(reopenedInput)
+                    ?? throw new InvalidOperationException("搜索框没有呈现源");
+                reopenedInput.RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, source, Environment.TickCount, Key.Escape)
+                {
+                    RoutedEvent = Keyboard.PreviewKeyDownEvent
+                });
+                Assert(bar.SearchPopup is null && !reopenedSearch.IsVisible,
+                    $"按 Esc 应关闭当前搜索浮层（搜索引用已清除：{bar.SearchPopup is null}，原搜索可见：{reopenedSearch.IsVisible}）");
+                pump();
+            }
+        }
+        finally
+        {
+            bar.Close();
+            pump();
+        }
+    }
+
+    private static void SearchAndModuleFlyoutsUseSystemColorsInHighContrast(Action<Window> show, Action pump)
+    {
+        var state = BarState();
+        state.VisibilityMode = TopBarVisibilityMode.SmartHide;
+        state.SearchInline = true;
+        using var sampler = new WindowsPerformanceSamplingService();
+        var bar = new TopBarWindow(state, new DesktopStyleState(), new FakeEnvironment(), sampler);
+        try
+        {
+            AccessibilityThemeManager.SetHighContrastForTesting(true);
+            show(bar);
+
+            Invoke(bar.SearchEntryButton!);
+            Assert(WaitUntil(pump, () => bar.SearchPopup?.IsVisible == true),
+                $"应打开高对比度内联搜索（存在：{bar.SearchPopup is not null}，可见：{bar.SearchPopup?.IsVisible}）");
+            var search = bar.SearchPopup!;
+            search.UpdateLayout();
+            var searchCard = search.Content as Border;
+            var searchBackground = (searchCard?.Background as SolidColorBrush)?.Color;
+            var searchBorder = (searchCard?.BorderBrush as SolidColorBrush)?.Color;
+            Assert(searchBackground == SystemColors.WindowColor && searchBorder == SystemColors.WindowTextColor,
+                $"高对比度内联搜索应使用系统背景和边框颜色（实际：{searchBackground}、{searchBorder}，" +
+                $"预期：{SystemColors.WindowColor}、{SystemColors.WindowTextColor}）");
+            var searchInk = (DescendantElements(search).OfType<TextBox>().Single().Foreground as SolidColorBrush)?.Color;
+            Assert(searchInk == SystemColors.WindowTextColor,
+                $"高对比度内联搜索应使用系统文字颜色（实际：{searchInk}，预期：{SystemColors.WindowTextColor}）");
+
+            Invoke(ButtonByName(bar, "音量模块"));
+            var volume = bar.VolumeFlyout;
+            Assert(volume is not null && bar.SearchPopup is null && !search.IsVisible,
+                $"高对比度音量浮层应打开并收起搜索（音量浮层存在：{volume is not null}，已打开：{volume?.IsOpen}，" +
+                $"搜索引用已清除：{bar.SearchPopup is null}，原搜索可见：{search.IsVisible}）");
+            Assert(WaitUntil(pump, () => volume!.IsOpen), "高对比度音量浮层应在 WPF 加载后显示");
+            var volumeCard = volume!.Child as Border;
+            var volumeBackground = (volumeCard?.Background as SolidColorBrush)?.Color;
+            var volumeBorder = (volumeCard?.BorderBrush as SolidColorBrush)?.Color;
+            Assert(volumeBackground == SystemColors.WindowColor && volumeBorder == SystemColors.WindowTextColor,
+                $"高对比度音量浮层应使用系统背景和边框颜色（实际：{volumeBackground}、{volumeBorder}，" +
+                $"预期：{SystemColors.WindowColor}、{SystemColors.WindowTextColor}）");
+        }
+        finally
+        {
+            bar.Close();
+            AccessibilityThemeManager.RestoreSystemModeForTesting();
             pump();
         }
     }
@@ -1113,6 +1564,8 @@ internal static class TopBarWindowTests
         ];
 
         internal List<string> OpenedSettingsUris { get; } = [];
+        internal int ShutdownDialogRequested { get; private set; }
+        internal Task<TopBarBatterySnapshot>? BatteryReadTask { get; set; }
         internal List<bool> MasterMutedCalls { get; } = [];
         internal List<string> SwitchedAudioDevices { get; } = [];
         internal List<TopBarPowerMode> PowerModeChanges { get; } = [];
@@ -1125,6 +1578,8 @@ internal static class TopBarWindowTests
         }
 
         public void OpenSystemSettings(string settingsUri) => OpenedSettingsUris.Add(settingsUri);
+
+        public void OpenShutdownDialog() => ShutdownDialogRequested++;
 
         public Task<TopBarAudioSnapshot> ReadAudioSnapshotAsync() => Task.FromResult(
             new TopBarAudioSnapshot(
@@ -1159,7 +1614,7 @@ internal static class TopBarWindowTests
 
         public Task<bool> SetAudioSessionMuteAsync(string? deviceId, uint processId, bool muted) => Task.FromResult(true);
 
-        public Task<TopBarBatterySnapshot> ReadBatterySnapshotAsync() => Task.FromResult(
+        public Task<TopBarBatterySnapshot> ReadBatterySnapshotAsync() => BatteryReadTask ?? Task.FromResult(
             new TopBarBatterySnapshot(
                 Percent: 85,
                 Status: TopBarBatteryStatus.OnBattery,
@@ -1394,6 +1849,9 @@ internal static class TopBarWindowTests
             bar.TriggerSearch();
             Assert(!bar.CapsuleDetailsExpanded && bar.SearchPopup is not null,
                 "开启内联搜索后胶囊搜索入口应收起待办并弹出内联搜索窗口");
+            Invoke(ButtonByName(bar, "今日待办概要，点击查看列表"));
+            Assert(bar.CapsuleDetailsExpanded && bar.SearchPopup is null,
+                "展开胶囊待办应收起已有的内联搜索窗口");
         }
         finally
         {

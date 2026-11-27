@@ -78,6 +78,21 @@ public static class FileMappingService
             unclaimed.ToDictionary(pair => pair.Key, pair => (IReadOnlyList<string>)pair.Value));
     }
 
+    /// <summary>Automatic collection preserves paths already curated into any box.</summary>
+    public static DesktopDistribution DistributeAutomatically(IEnumerable<string> paths, IReadOnlyList<FileBoxState> boxes)
+    {
+        var mapped = boxes.SelectMany(box => box.Items).Select(item => item.Path)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var distribution = Distribute(paths.Where(path => !mapped.Contains(path)), boxes);
+        return distribution with
+        {
+            ByBox = distribution.ByBox.ToDictionary(pair => pair.Key, pair =>
+                (IReadOnlyList<string>)pair.Value
+                    .Except(boxes.First(box => box.Id == pair.Key).AutoCollectExcludedPaths, StringComparer.OrdinalIgnoreCase)
+                    .ToArray())
+        };
+    }
+
     private const string ShellEntryPrefix = "shell:";
 
     private static readonly HashSet<string> ApplicationExtensions = new(
@@ -293,7 +308,20 @@ public static class FileMappingService
     public static int AddPrepared(FileBoxState box, IEnumerable<string> fullPaths) =>
         AddPaths(box, fullPaths, checkExistence: false);
 
-    private static int AddPaths(FileBoxState box, IEnumerable<string> paths, bool checkExistence)
+    /// <summary>Rechecks current curation at commit after background preparation.</summary>
+    public static int AddPreparedAutomatically(FileBoxState box, IEnumerable<string> fullPaths, IReadOnlyList<FileBoxState> boxes)
+    {
+        if (!boxes.Contains(box))
+        {
+            return 0;
+        }
+        var blocked = boxes.SelectMany(candidate => candidate.Items).Select(item => item.Path)
+            .Concat(box.AutoCollectExcludedPaths).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return AddPaths(box, fullPaths.Where(path => !blocked.Contains(path)), checkExistence: false,
+            explicitImport: false);
+    }
+
+    private static int AddPaths(FileBoxState box, IEnumerable<string> paths, bool checkExistence, bool explicitImport = true)
     {
         var known = box.Items.Select(x => x.Path).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var added = 0;
@@ -317,6 +345,10 @@ public static class FileMappingService
             }
 
             known.Add(path);
+            if (explicitImport)
+            {
+                AllowAutoCollection(box, path);
+            }
             box.Items.Add(new FileMappingState
             {
                 Path = path,
@@ -353,6 +385,7 @@ public static class FileMappingService
             Title = title,
             Order = box.Items.Count
         });
+        AllowAutoCollection(box, path);
         Normalize(box);
         return 1;
     }
@@ -391,6 +424,8 @@ public static class FileMappingService
             return false;
         }
 
+        ExcludeAutoCollection(box, item.Path);
+        AllowAutoCollection(box, fullPath);
         item.Path = fullPath;
         item.Title = null;
         return true;
@@ -429,6 +464,8 @@ public static class FileMappingService
         }
 
         source.Items.Remove(item);
+        ExcludeAutoCollection(source, item.Path);
+        AllowAutoCollection(target, item.Path);
         Normalize(source);
         item.Order = target.Items.Count;
         target.Items.Add(item);
@@ -462,6 +499,7 @@ public static class FileMappingService
             Order = target.Items.Count
         };
         target.Items.Add(copied);
+        AllowAutoCollection(target, copied.Path);
         Normalize(target);
         return true;
     }
@@ -511,15 +549,31 @@ public static class FileMappingService
                 .ToArray());
     }
 
-    public static bool Remove(FileBoxState box, Guid itemId)
+    public static bool Remove(FileBoxState box, Guid itemId, bool excludeFromAutomaticCollection = true)
     {
+        var item = box.Items.FirstOrDefault(candidate => candidate.Id == itemId);
         var removed = box.Items.RemoveAll(x => x.Id == itemId) > 0;
         if (removed)
         {
+            if (excludeFromAutomaticCollection)
+            {
+                ExcludeAutoCollection(box, item!.Path);
+            }
             Normalize(box);
         }
         return removed;
     }
+
+    private static void ExcludeAutoCollection(FileBoxState box, string path)
+    {
+        if (!IsShellEntry(path) && !box.AutoCollectExcludedPaths.Contains(path, StringComparer.OrdinalIgnoreCase))
+        {
+            box.AutoCollectExcludedPaths.Add(path);
+        }
+    }
+
+    private static void AllowAutoCollection(FileBoxState box, string path) =>
+        box.AutoCollectExcludedPaths.RemoveAll(excluded => string.Equals(excluded, path, StringComparison.OrdinalIgnoreCase));
 
     public static bool Move(FileBoxState box, Guid itemId, int offset)
     {

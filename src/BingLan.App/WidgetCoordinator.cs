@@ -74,6 +74,7 @@ public sealed partial class WidgetCoordinator : IDisposable
     private int _desktopToggleVersion;
     private int _nativeToggleVersion;
     private bool _saveFailureShown;
+    private Task<Exception?>? _deferredSave;
     private readonly string[] _launchArguments;
     private readonly bool _showOnboarding;
     private AppState _state;
@@ -109,11 +110,7 @@ public sealed partial class WidgetCoordinator : IDisposable
         _citySearchService = new CityLookupService();
         _mappingWatcher = new FileMappingWatchService(SweepGoneFileMappings, ImportNewDesktopEntries);
         _saveTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(350) };
-        _saveTimer.Tick += (_, _) =>
-        {
-            _saveTimer.Stop();
-            SaveNow();
-        };
+        _saveTimer.Tick += (_, _) => SaveDeferred();
         _trayIcon = BuildTrayIcon(interactiveQa);
         _desktopSurfaceWatcher = new DesktopSurfaceWatcher(GetDesktopProtectedHandles);
         _hotkeys = new GlobalHotkeyHost();
@@ -176,6 +173,7 @@ public sealed partial class WidgetCoordinator : IDisposable
         _topBar.ExplorerNotified += _cornerReveal.ScheduleZOrderCheck;
         _topBar.ReadScreenPreferences = ReadScreenSurfacePreferences;
         _dock.ResolveTopBarReservedBottomPx = _topBar.GetReservedBottomForMonitor;
+        _topBar.ResolveBottomDockTop = _dock.GetBottomDockTopForMonitor;
         _dock.OpenTrayOverflowRequested = TryOpenTrayOverflowAsync;
         StartupLog.Open(_store.DataDirectory);
         UiDiagnostics.Start(
@@ -368,6 +366,9 @@ public sealed partial class WidgetCoordinator : IDisposable
         await ApplyTaskbarModeAsync();
         StartupLog.Write("任务栏模式已应用");
         RunShellStep("任务栏边缘唤出", () => _cornerReveal.SetMode(_state.Taskbar.EdgeRevealMode));
+#if TRAY_PANEL_PREVIEW
+        if (!_isExiting) TopBarWindow.EnableTrayPanelWarmup();
+#endif
         if (!_cleanDesktopRecovered)
         {
             // The original icon state is unknown or could not be put back; stay off
@@ -419,7 +420,14 @@ public sealed partial class WidgetCoordinator : IDisposable
         }
 
         CaptureAll();
-        _store.CreateBackup(_state);
+        try
+        {
+            _store.CreateBackup(_state, allowWhenReloadRequired: false);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
+        {
+            return $"备份未完成：{exception.Message}";
+        }
         var style = _state.Style;
         if (look.TextColor is { } text)
         {
@@ -3055,12 +3063,19 @@ public sealed partial class WidgetCoordinator : IDisposable
     private void Backup()
     {
         CaptureAll();
-        var path = _store.CreateBackup(_state);
-        _trayIcon.ShowBalloonTip(
-            2500,
-            "备份完成",
-            $"已保存到 {path}",
-            TrayTipKind.Info);
+        try
+        {
+            var path = _store.CreateBackup(_state);
+            _trayIcon.ShowBalloonTip(
+                2500,
+                "备份完成",
+                $"已保存到 {path}",
+                TrayTipKind.Info);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
+        {
+            ReportSaveFailure(exception);
+        }
     }
 
     private static Version AppVersion =>
@@ -3118,7 +3133,7 @@ public sealed partial class WidgetCoordinator : IDisposable
         var bindings = ThemeRules.ResolveBindings(package.Bindings, resolver.Resolve);
 
         CaptureAll();
-        _store.CreateBackup(_state);
+        _store.CreateBackup(_state, allowWhenReloadRequired: false);
         ThemeRules.ApplyVisuals(package, _state.DesktopExperience, WorkArea());
         ApplyDesktopExperience(_state.DesktopExperience);
         var taskbarBefore = _state.Taskbar.Mode;
@@ -3208,11 +3223,11 @@ public sealed partial class WidgetCoordinator : IDisposable
         return new BindOutcome(true, $"已将 {app.DisplayName} 绑定到“{AppSlotCatalog.GetName(binding.Slot)}”槽位");
     }
 
-    // The running app saves on exit, so the backup is queued and applied by the next
-    // instance before it loads any state.
+    // The backup is queued and applied by the next instance before it loads any state.
     private void RestoreBackupAndRestart(string backupPath)
     {
-        _store.ScheduleRestore(backupPath);
+        CaptureAll();
+        _store.ScheduleRestore(backupPath, _state);
         var executable = Environment.ProcessPath;
         if (executable is not null)
         {
@@ -3341,10 +3356,19 @@ public sealed partial class WidgetCoordinator : IDisposable
             do
             {
                 _importDesktopAgain = false;
-                var boxes = ScreenProfileAccessor.FilterPrimaryFileBoxes(_state.FileBoxes);
+                var boxes = ScreenProfileAccessor.FilterPrimaryFileBoxes(_state.FileBoxes)
+                    .Select(box => new FileBoxState
+                    {
+                        Id = box.Id,
+                        DesktopCategory = box.DesktopCategory,
+                        CollectFolders = box.CollectFolders,
+                        CollectExtensions = box.CollectExtensions.ToList(),
+                        AutoCollectExcludedPaths = box.AutoCollectExcludedPaths.ToList(),
+                        Items = box.Items.Select(item => new FileMappingState { Path = item.Path }).ToList()
+                    }).ToArray();
                 var distribution = await Task.Run(() =>
-                    FileMappingService.Distribute(CollectImportableDesktopEntries(), boxes));
-                if (_isExiting)
+                    FileMappingService.DistributeAutomatically(CollectImportableDesktopEntries(), boxes));
+                if (_isExiting || !_state.FileBoxAutomationEnabled)
                 {
                     return;
                 }
@@ -3353,7 +3377,10 @@ public sealed partial class WidgetCoordinator : IDisposable
                 {
                     if (FindPrimaryFileBoxWindow(boxId) is { } boxWindow)
                     {
-                        var added = await boxWindow.AddMappingsToBoxAsync(boxId, paths);
+                        var added = await boxWindow.AddAutomaticMappingsToBoxAsync(boxId, paths,
+                            () => _isExiting || !_state.FileBoxAutomationEnabled
+                                ? null
+                                : ScreenProfileAccessor.FilterPrimaryFileBoxes(_state.FileBoxes));
                         if (added > 0)
                         {
                             boxWindow.SetOperationStatus($"已自动收纳 {added} 项新桌面项目");
@@ -3585,28 +3612,70 @@ public sealed partial class WidgetCoordinator : IDisposable
         _saveTimer.Start();
     }
 
-    // A failed save (file locked by a scanner, disk full) keeps the app running; the next
-    // change saves again, and the user hears about it once.
+    private async void SaveDeferred()
+    {
+        _saveTimer.Stop();
+        CaptureAll();
+        Task<Exception?> save;
+        try
+        {
+            save = _store.SaveDeferred(_state);
+        }
+        catch (InvalidDataException exception)
+        {
+            _deferredSave = null;
+            ReportSaveFailure(exception);
+            return;
+        }
+        if (ReferenceEquals(_deferredSave, save))
+        {
+            return;
+        }
+        _deferredSave = save;
+        var error = await save;
+        if (!ReferenceEquals(_deferredSave, save))
+        {
+            return;
+        }
+        _deferredSave = null;
+        if (error is null)
+        {
+            _saveFailureShown = false;
+        }
+        else
+        {
+            ReportSaveFailure(error);
+        }
+    }
+
     private void SaveNow()
     {
+        _saveTimer.Stop();
+        _deferredSave = null;
         CaptureAll();
         try
         {
             _store.Save(_state);
+            _saveFailureShown = false;
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
         {
-            StartupLog.Write($"保存失败：{exception.Message}");
-            if (!_saveFailureShown)
-            {
-                _saveFailureShown = true;
-                _trayIcon.ShowBalloonTip(
-                    5000,
-                    "冰蓝桌面",
-                    "设置暂时无法保存，稍后修改时会再次尝试。",
-                    TrayTipKind.Warning);
-            }
+            ReportSaveFailure(exception);
         }
+    }
+
+    private void ReportSaveFailure(Exception exception)
+    {
+        StartupLog.Write($"保存失败：{exception.Message}");
+        if (_saveFailureShown)
+        {
+            return;
+        }
+        _saveFailureShown = true;
+        var message = _store.RequiresReloadBeforeSaving
+            ? "原设置暂时无法读取。可用“立即备份”单独保存本次修改。文件可访问后可重启。"
+            : "设置暂时无法保存，稍后修改时会再次尝试。";
+        _trayIcon.ShowBalloonTip(5000, "冰蓝桌面", message, TrayTipKind.Warning);
     }
 
     private void CaptureAll()
@@ -3914,8 +3983,6 @@ public sealed partial class WidgetCoordinator : IDisposable
 
         public bool IsEverythingSearchEnabled => owner._state.LauncherPreferences.UseEverything;
 
-        public LauncherAppearanceState LauncherAppearance => owner._state.LauncherAppearance;
-
         public async Task<LauncherPanelSnapshot?> ReadSearchSnapshotAsync() =>
             await owner.ReadLauncherSnapshotAsync();
 
@@ -3993,6 +4060,14 @@ public sealed partial class WidgetCoordinator : IDisposable
         public void OpenSystemSettings(string settingsUri)
         {
             if (!ShellSurfaceService.OpenSystemSettings(settingsUri))
+            {
+                ReportShellFailure();
+            }
+        }
+
+        public async void OpenShutdownDialog()
+        {
+            if (!await ShellSurfaceService.OpenShutdownDialogAsync() && !owner._isExiting && !owner._exitRequested)
             {
                 ReportShellFailure();
             }

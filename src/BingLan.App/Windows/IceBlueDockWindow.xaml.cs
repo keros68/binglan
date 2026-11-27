@@ -33,6 +33,7 @@ namespace BingLan.App.Windows;
 public partial class IceBlueDockWindow : Window
 {
     private const string PinDragFormat = "BingLan.DockPin";
+    private const string RunningPinDragFormat = "BingLan.DockRunningPin";
     private const string RunningDragFormat = "BingLan.DockRunning";
     private const double CommandGlyphCanvasSize = 24;
     private const int WmMouseActivate = 0x0021;
@@ -57,16 +58,17 @@ public partial class IceBlueDockWindow : Window
     private static readonly TimeSpan YieldReleaseCheckInterval = TimeSpan.FromMilliseconds(30);
     private static readonly TimeSpan YieldReleaseLimit = TimeSpan.FromMilliseconds(600);
     private DockAutoHideState _autoHide = new();
-    private readonly Dictionary<string, DockAppVisual> _visuals = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, (DockVisualPinState Source, DockAppVisual Visual)> _visuals =
+        new(StringComparer.OrdinalIgnoreCase);
     private DockAppBarController? _appBar;
     private IReadOnlyList<DockItem> _items = [];
-    private IReadOnlyList<string> _groupOrder = [];
+    private IReadOnlyList<string> _runningOrder = [];
     private readonly List<DockButtonParts> _itemButtons = [];
     private readonly Dictionary<string, DateTimeOffset> _lastBounce = [];
     private bool _bounceRequested;
     private string _lastSignature = string.Empty;
     private string _lastStructureKey = string.Empty;
-    private (bool Start, bool Launcher, bool Desktop, bool TaskView) _renderedCommandButtons;
+    private (bool Start, bool Launcher, bool Desktop, bool TaskView, bool QuickSettings) _renderedCommandButtons;
     private nint _handle;
     private bool _closing;
     private bool _isChangingVisibilityByApp;
@@ -124,15 +126,14 @@ public partial class IceBlueDockWindow : Window
     /// </summary>
     private sealed class RenderFrameTicker(Action step)
     {
-        private TimeSpan _lastFrame = TimeSpan.MinValue;
-
         public bool IsEnabled { get; private set; }
+        public TimeSpan LastFrame { get; private set; } = TimeSpan.MinValue;
 
         public void Start()
         {
             if (IsEnabled) return;
             IsEnabled = true;
-            _lastFrame = TimeSpan.MinValue;
+            LastFrame = TimeSpan.MinValue;
             CompositionTarget.Rendering += OnRendering;
         }
 
@@ -148,8 +149,8 @@ public partial class IceBlueDockWindow : Window
             // Rendering can fire more than once for a frame; step only on a new frame time.
             if (e is System.Windows.Media.RenderingEventArgs args)
             {
-                if (args.RenderingTime == _lastFrame) return;
-                _lastFrame = args.RenderingTime;
+                if (args.RenderingTime == LastFrame) return;
+                LastFrame = args.RenderingTime;
             }
             step();
         }
@@ -170,8 +171,10 @@ public partial class IceBlueDockWindow : Window
 
     private readonly List<MagnificationSlot> _magSlots = [];
     private readonly RenderFrameTicker _magTimer;
+    private readonly DockFrameDiagnostics? _hoverFrames;
     private readonly System.Diagnostics.Stopwatch _magClock = new();
     private long _magLastTicks;
+    private (double CursorAxis, double MaxScale)? _magPendingTarget;
     private double _topOverflowDip;
     private bool _magReturnAnimating;
     private bool _magRegionExpanded;
@@ -210,6 +213,7 @@ public partial class IceBlueDockWindow : Window
         _morph.CollapseCompleted += OnCollapseMorphCompleted;
         _watcher = new WindowEventWatcher(Dispatcher);
         _watcher.SnapshotInvalidated += RefreshWindows;
+        _runtime.BackgroundPinsChanged += RefreshWindows;
         // Start, a tray panel or the taskbar taking the foreground is answered at once
         // instead of on the next poll, so the dock steps aside while the taskbar slides in.
         _watcher.ForegroundChanged += () =>
@@ -260,6 +264,10 @@ public partial class IceBlueDockWindow : Window
         IsVisibleChanged += (_, _) => UpdateBackdropSampling(immediate: IsVisible);
         AccessibilityThemeManager.HighContrastChanged += OnHighContrastChanged;
         _magTimer = new RenderFrameTicker(StepMagnification);
+        if (DockFrameDiagnostics.CanStart)
+        {
+            _hoverFrames = new DockFrameDiagnostics(ReadHoverScale);
+        }
         SystemParameters.StaticPropertyChanged += OnSystemParametersChanged;
         SourceInitialized += OnSourceInitialized;
         SizeChanged += (_, _) => SyncMagnificationHitRegion();
@@ -295,6 +303,12 @@ public partial class IceBlueDockWindow : Window
 
     private DockEdge CurrentEdge => DockEdgeRules.Normalize(ScreenSelection?.Preferences?.DockEdge ?? _state.Edge);
     private DockVisibilityMode CurrentVisibilityMode => ScreenSelection?.Preferences?.DockVisibilityMode ?? _state.VisibilityMode;
+
+    internal int? GetBottomDockTopForMonitor(MonitorSnapshot monitor) =>
+        !_closing && CurrentEdge == DockEdge.Bottom && _appBar is { Bounds.HasArea: true } bar
+            && bar.Monitor?.MonitorHandle == monitor.MonitorHandle
+            ? bar.Bounds.Top - (int)Math.Round(_topOverflowDip * monitor.Dpi / 96d)
+            : null;
     private bool IsVertical => DockEdgeRules.IsVertical(CurrentEdge);
 
     private static PlacementMode InwardMenuPlacement(DockEdge edge) => DockEdgeRules.Normalize(edge) switch
@@ -529,9 +543,6 @@ public partial class IceBlueDockWindow : Window
     internal void RefreshSharedItems()
     {
         _sharedItemsVersion++;
-        _visuals.Clear();
-        _lastSignature = string.Empty;
-        _lastStructureKey = string.Empty;
         RefreshWindows();
     }
 
@@ -665,11 +676,15 @@ public partial class IceBlueDockWindow : Window
                 _attentionRevealUntil = DateTimeOffset.UtcNow + AttentionReveal;
                 ShowDock();
             }
-            _lastSignature = string.Empty;
-            _lastStructureKey = string.Empty;
-            RefreshWindows();
+            RefreshAttentionBadges();
         }
         return 0;
+    }
+
+    private void RefreshAttentionBadges()
+    {
+        _lastSignature = string.Empty;
+        RefreshWindows();
     }
 
     private bool MarkFlashed(nint window)
@@ -763,9 +778,7 @@ public partial class IceBlueDockWindow : Window
 
                             if (_attention.Cleared(activeHandle, instancePids))
                             {
-                                _lastSignature = string.Empty;
-                                _lastStructureKey = string.Empty;
-                                RefreshWindows();
+                                RefreshAttentionBadges();
                             }
                         });
                     },
@@ -807,9 +820,11 @@ public partial class IceBlueDockWindow : Window
         _yieldHideTimer.Stop();
         _backdropTimer.Stop();
         AccessibilityThemeManager.HighContrastChanged -= OnHighContrastChanged;
+        _hoverFrames?.Finish(completed: false);
         _magTimer.Stop();
         _magClock.Stop();
         SystemParameters.StaticPropertyChanged -= OnSystemParametersChanged;
+        _runtime.BackgroundPinsChanged -= RefreshWindows;
         _watcher.Dispose();
         _maximizeWatcher.Dispose();
         _appBar?.Dispose();
@@ -828,20 +843,28 @@ public partial class IceBlueDockWindow : Window
                 UiDiagnostics.Hit(UiActivity.DockRefresh);
                 _refreshQueued = false;
                 var sharedItemsVersion = _sharedItemsVersion;
-                var pinned = _state.PinnedApps.ToArray();
+                var pinList = _state.PinnedApps;
+                var pinned = pinList.ToArray();
                 var hidden = _state.HiddenApps.ToArray();
                 var snapshot = await _runtime.CaptureAsync();
-                if (sharedItemsVersion != _sharedItemsVersion)
+                if (_closing) return;
+                if (sharedItemsVersion != _sharedItemsVersion || !ReferenceEquals(pinList, _state.PinnedApps))
                 {
                     _refreshQueued = true;
                     continue;
                 }
                 IReadOnlyList<DockItem> items;
+                var showRunningPinsSeparately = _state.ShowRunningPinsSeparately;
                 using (UiDiagnostics.Measure("Dock 窗口分组"))
                 {
-                    var groups = WindowGrouping.OrderByFirstSeen(WindowGrouping.Group(snapshot), _groupOrder);
-                    _groupOrder = groups.Select(group => group.Key).ToArray();
-                    items = DockItemComposer.Compose(pinned, groups, hidden);
+                    items = DockItemComposer.Compose(
+                        pinned,
+                        WindowGrouping.Group(snapshot),
+                        hidden,
+                        _runtime.GetBackgroundPins(pinned),
+                        _runtime.RunningTrayExecutables,
+                        _runningOrder,
+                        showRunningPinsSeparately);
                     _attention.RemoveRange(_attention.MarkedWindows
                         .Where(handle => !DockNativeMethods.IsWindow(handle))
                         .ToArray());
@@ -851,26 +874,32 @@ public partial class IceBlueDockWindow : Window
                     _visuals.Remove(stale);
                 }
                 _runtime.RetainVisuals(items.Select(item => item.Key));
-                var missing = items.Where(item => !_visuals.ContainsKey(item.Key)).ToArray();
+                var missing = items.Select(item => (Item: item, Source: DockVisualPinState.Of(item)))
+                    .Where(entry => !_visuals.TryGetValue(entry.Item.Key, out var cached) || cached.Source != entry.Source)
+                    .ToArray();
                 if (missing.Length > 0)
                 {
-                    var resolved = await Task.WhenAll(missing.Select(async item =>
-                        (item.Key, Visual: await _runtime.ResolveVisualAsync(item))));
-                    if (sharedItemsVersion != _sharedItemsVersion)
+                    var resolved = await Task.WhenAll(missing.Select(async entry =>
+                        (entry.Item.Key, entry.Source, Visual: await _runtime.ResolveVisualAsync(entry.Item))));
+                    if (sharedItemsVersion != _sharedItemsVersion
+                        || !ReferenceEquals(pinList, _state.PinnedApps)
+                        || showRunningPinsSeparately != _state.ShowRunningPinsSeparately)
                     {
                         _refreshQueued = true;
                         continue;
                     }
-                    foreach (var (key, visual) in resolved)
+                    foreach (var (key, source, visual) in resolved)
                     {
-                        _visuals[key] = visual;
+                        _visuals[key] = (source, visual);
                     }
+                    _lastSignature = string.Empty;
                 }
 
                 if (_closing)
                 {
                     return;
                 }
+                _runningOrder = items.Where(item => item.IsInRunningSection).Select(item => item.RunningOrderKey).ToArray();
                 ApplyItems(items);
                 BounceFlashedItems();
             }
@@ -898,13 +927,19 @@ public partial class IceBlueDockWindow : Window
         var edge = CurrentEdge;
         var rowSettings = $"{_effectiveIconSize}|{commands}|{_dockOverflowing}|{edge}";
         var signature = $"{rowSettings}|{BuildSignature(items)}|{string.Join(",", items.Select(item => $"{(_attention.Wants(item) ? '!' : '-')}{_attention.UnreadCount(item)}"))}";
-        if (string.Equals(signature, _lastSignature, StringComparison.Ordinal))
+        if (string.Equals(signature, _lastSignature, StringComparison.Ordinal) && _itemButtons.Count == items.Count)
         {
+            // A fresh snapshot may change launch arguments or replace a pin object without changing the row.
+            _items = items;
+            for (var index = 0; index < items.Count; index++)
+            {
+                _itemButtons[index].Button.Item = items[index];
+            }
             return;
         }
 
         var countChanged = items.Count != _items.Count
-            || items.Count(item => item.IsPinned) != _items.Count(item => item.IsPinned)
+            || HasRunningDivider(items) != HasRunningDivider(_items)
             || _renderedCommandButtons != commands;
         _renderedCommandButtons = commands;
         _renderedEdge = edge;
@@ -949,14 +984,17 @@ public partial class IceBlueDockWindow : Window
         {
             ItemPanel.Children.Add(BuildTaskViewButton());
         }
+        if (commands.QuickSettings)
+        {
+            ItemPanel.Children.Add(BuildQuickSettingsButton());
+        }
         if (LeadingButtonCount > 0 && items.Count > 0)
         {
             ItemPanel.Children.Add(BuildDivider());
         }
         for (var index = 0; index < items.Count; index++)
         {
-            // Pinned apps come first; a thin line sets the other running apps apart.
-            if (index > 0 && items[index - 1].IsPinned && !items[index].IsPinned)
+            if (index > 0 && !items[index - 1].IsInRunningSection && items[index].IsInRunningSection)
             {
                 ItemPanel.Children.Add(BuildDivider());
             }
@@ -1006,7 +1044,7 @@ public partial class IceBlueDockWindow : Window
             var menu = CreateMenu(button, InwardMenuPlacement(CurrentEdge));
             foreach (var item in _items)
             {
-                var icon = _visuals.TryGetValue(item.Key, out var visual) ? visual.Icon : null;
+                var icon = _visuals.TryGetValue(item.Key, out var visual) ? visual.Visual.Icon : null;
                 var captured = item;
                 menu.AddItem(
                     DisplayNameOf(item),
@@ -1110,6 +1148,21 @@ public partial class IceBlueDockWindow : Window
         return button;
     }
 
+    private Button BuildQuickSettingsButton()
+    {
+        var glyph = CreateDockCommandOutline("M3,6 H21 M8,3 V9 M3,12 H21 M16,9 V15 M3,18 H21 M10,15 V21");
+        var button = BuildDockCommandButton(glyph, "打开 Windows 快速设置", "快速设置（Win+A）");
+        AutomationProperties.SetHelpText(button, "在 Windows 快速设置中调节音量、网络和蓝牙");
+        button.Click += async (_, _) =>
+        {
+            if (!await ShellSurfaceService.OpenQuickSettingsAsync("ms-settings:"))
+            {
+                CommandFailed?.Invoke("无法打开快速设置，请打开 Windows 设置。");
+            }
+        };
+        return button;
+    }
+
     private static System.Windows.Shapes.Path CreateDockCommandOutline(string data)
     {
         var frame = new System.Windows.Shapes.Path
@@ -1193,7 +1246,7 @@ public partial class IceBlueDockWindow : Window
     private string DisplayNameOf(DockItem item) =>
         item.IsPinned
             ? item.DisplayName
-            : _visuals.TryGetValue(item.Key, out var visual) && visual.DisplayName is { } name
+            : _visuals.TryGetValue(item.Key, out var visual) && visual.Visual.DisplayName is { } name
                 ? name
                 : item.DisplayName;
 
@@ -1223,12 +1276,20 @@ public partial class IceBlueDockWindow : Window
         return divider;
     }
 
+    internal sealed class DockItemButton : Button
+    {
+        internal DockItem? Item { get; set; }
+    }
+
     private sealed record DockButtonParts(
-        Button Button,
+        DockItemButton Button,
         Image Icon,
         Grid IconHost,
         Border Dot,
-        ScaleTransform IconScale);
+        ScaleTransform IconScale)
+    {
+        public (bool WantsAttention, int Unread) Badge { get; set; }
+    }
 
     private DockButtonParts BuildItem(DockItem item)
     {
@@ -1288,21 +1349,20 @@ public partial class IceBlueDockWindow : Window
             content.Children.Add(dot);
         }
 
-        var button = new Button
+        var button = new DockItemButton
         {
             Content = content,
             Width = _effectiveIconSize + 16,
             Height = _effectiveIconSize + 16,
             Margin = vertical ? new Thickness(0, 4, 0, 4) : new Thickness(4, 0, 4, 0),
             Style = (Style)Resources["DockItemButtonStyle"],
-            Tag = item,
             AllowDrop = true
         };
         ApplyToolTipPlacement(button);
 
         button.Click += (_, _) =>
         {
-            if (button.Tag is not DockItem current) return;
+            if (button.Item is not DockItem current) return;
             var currentName = DisplayNameOf(current);
             if ((Keyboard.Modifiers & ModifierKeys.Shift) != 0)
             {
@@ -1315,7 +1375,7 @@ public partial class IceBlueDockWindow : Window
         };
         button.MouseUp += (_, eventArgs) =>
         {
-            if (eventArgs.ChangedButton == MouseButton.Middle && button.Tag is DockItem current)
+            if (eventArgs.ChangedButton == MouseButton.Middle && button.Item is DockItem current)
             {
                 eventArgs.Handled = true;
                 LaunchNewInstance(current, DisplayNameOf(current));
@@ -1326,15 +1386,13 @@ public partial class IceBlueDockWindow : Window
         button.ContextMenuOpening += (_, eventArgs) => eventArgs.Handled = true;
         button.MouseRightButtonUp += (_, eventArgs) =>
         {
-            if (button.Tag is not DockItem current) return;
             eventArgs.Handled = true;
-            var currentName = DisplayNameOf(current);
             Dispatcher.BeginInvoke(
                 () =>
                 {
-                    if (!_closing && IsVisible)
+                    if (!_closing && IsVisible && button.Item is DockItem current && ItemPanel.Children.Contains(button))
                     {
-                        OpenItemMenu(current, currentName, button);
+                        OpenItemMenu(current, DisplayNameOf(current), button);
                     }
                 },
                 DispatcherPriority.Input);
@@ -1342,7 +1400,7 @@ public partial class IceBlueDockWindow : Window
         button.PreviewKeyDown += (_, eventArgs) =>
         {
             if ((eventArgs.Key == Key.Apps || (eventArgs.Key == Key.F10 && Keyboard.Modifiers == ModifierKeys.Shift))
-                && button.Tag is DockItem current)
+                && button.Item is DockItem current)
             {
                 eventArgs.Handled = true;
                 if (!eventArgs.IsRepeat)
@@ -1353,7 +1411,7 @@ public partial class IceBlueDockWindow : Window
         };
         button.PreviewMouseLeftButtonDown += (_, eventArgs) =>
         {
-            if (button.Tag is not DockItem current) return;
+            if (button.Item is not DockItem current) return;
             // Pinned apps are dragged to reorder; running apps are dragged in to pin them.
             _dragStart = eventArgs.GetPosition(this);
             _dragItem = current;
@@ -1364,7 +1422,7 @@ public partial class IceBlueDockWindow : Window
         button.DragOver += (_, eventArgs) => OnItemDragOver(parts, eventArgs);
         button.Drop += (_, eventArgs) =>
         {
-            if (parts.Button.Tag is DockItem current)
+            if (parts.Button.Item is DockItem current)
             {
                 OnItemDrop(parts, current, eventArgs);
             }
@@ -1396,7 +1454,7 @@ public partial class IceBlueDockWindow : Window
         var bounced = false;
         foreach (var parts in _itemButtons)
         {
-            if (parts.Button.Tag is not DockItem item
+            if (parts.Button.Item is not DockItem item
                 || !_attention.Wants(item))
             {
                 continue;
@@ -1458,13 +1516,77 @@ public partial class IceBlueDockWindow : Window
 
     private void UpdateItemButton(DockButtonParts parts, DockItem item)
     {
-        parts.Button.Tag = item;
-        parts.Icon.Source = _visuals.TryGetValue(item.Key, out var visual) ? visual.Icon : null;
-        var badgeLayer = (Grid)parts.IconHost.Children[1];
-        badgeLayer.Children.Clear();
+        var previous = parts.Button.Item;
+        parts.Button.Item = item;
+        parts.Icon.Source = _visuals.TryGetValue(item.Key, out var visual) ? visual.Visual.Icon : null;
 
         var wantsAttention = _attention.Wants(item);
-        var unread = _attention.UnreadCount(item);
+        var unread = wantsAttention ? Math.Min(100, _attention.UnreadCount(item)) : 0;
+        var attentionChanged = parts.Badge.WantsAttention != wantsAttention;
+        if (parts.Badge != (wantsAttention, unread))
+        {
+            UpdateAttentionBadge((Grid)parts.IconHost.Children[1], wantsAttention, unread);
+            parts.Badge = (wantsAttention, unread);
+        }
+
+        if (previous?.HasMultipleWindows != item.HasMultipleWindows)
+        {
+            if (IsVertical)
+            {
+                parts.Dot.Width = 4;
+                parts.Dot.Height = item.HasMultipleWindows ? 10 : 4;
+            }
+            else
+            {
+                parts.Dot.Width = item.HasMultipleWindows ? 10 : 4;
+                parts.Dot.Height = 4;
+            }
+        }
+        var runningChanged = previous?.IsRunning != item.IsRunning;
+        if (runningChanged)
+        {
+            parts.Dot.Visibility = item.IsRunning ? Visibility.Visible : Visibility.Hidden;
+        }
+        var isActive = item.IsActive;
+        var activeChanged = previous?.IsActive != isActive;
+        if (attentionChanged || (!wantsAttention && activeChanged))
+        {
+            if (wantsAttention)
+            {
+                parts.Dot.Background = AttentionBrush;
+            }
+            else
+            {
+                parts.Dot.SetResourceReference(
+                    Border.BackgroundProperty,
+                    isActive ? "DockActiveDotBrush" : "DockRunningDotBrush");
+            }
+        }
+
+        var name = DisplayNameOf(item);
+        var nameChanged = !string.Equals(AutomationProperties.GetName(parts.Button), name, StringComparison.Ordinal);
+        if (nameChanged || !HaveSameWindowTitles(previous?.Group, item.Group))
+        {
+            parts.Button.ToolTip = BuildToolTip(item, name);
+        }
+        if (nameChanged)
+        {
+            AutomationProperties.SetName(parts.Button, name);
+        }
+        if (attentionChanged || activeChanged || runningChanged || previous?.WindowCount != item.WindowCount)
+        {
+            AutomationProperties.SetHelpText(parts.Button, wantsAttention ? "有新提醒" : item.State switch
+            {
+                DockItemState.Active => "当前窗口",
+                DockItemState.Running => item.HasMultipleWindows ? $"{item.WindowCount} 个窗口" : "正在运行",
+                _ => "已固定，未运行"
+            });
+        }
+    }
+
+    private void UpdateAttentionBadge(Grid badgeLayer, bool wantsAttention, int unread)
+    {
+        badgeLayer.Children.Clear();
         if (wantsAttention && unread > 0)
         {
             // A count the app published becomes a red pill; like macOS, "99+" past the cap.
@@ -1509,37 +1631,26 @@ public partial class IceBlueDockWindow : Window
             });
         }
 
-        if (IsVertical)
-        {
-            parts.Dot.Width = 4;
-            parts.Dot.Height = item.HasMultipleWindows ? 10 : 4;
-        }
-        else
-        {
-            parts.Dot.Width = item.HasMultipleWindows ? 10 : 4;
-            parts.Dot.Height = 4;
-        }
-        parts.Dot.Visibility = item.IsRunning ? Visibility.Visible : Visibility.Hidden;
-        if (wantsAttention)
-        {
-            parts.Dot.Background = AttentionBrush;
-        }
-        else
-        {
-            parts.Dot.SetResourceReference(
-                Border.BackgroundProperty,
-                item.IsActive ? "DockActiveDotBrush" : "DockRunningDotBrush");
-        }
+    }
 
-        var name = DisplayNameOf(item);
-        parts.Button.ToolTip = BuildToolTip(item, name);
-        AutomationProperties.SetName(parts.Button, name);
-        AutomationProperties.SetHelpText(parts.Button, wantsAttention ? "有新提醒" : item.State switch
+    private static bool HaveSameWindowTitles(WindowGroup? previous, WindowGroup? current)
+    {
+        if (ReferenceEquals(previous, current))
         {
-            DockItemState.Active => "当前窗口",
-            DockItemState.Running => item.HasMultipleWindows ? $"{item.WindowCount} 个窗口" : "正在运行",
-            _ => "已固定，未运行"
-        });
+            return true;
+        }
+        if (previous is null || current is null || previous.Windows.Count != current.Windows.Count)
+        {
+            return false;
+        }
+        for (var index = 0; index < current.Windows.Count; index++)
+        {
+            if (!string.Equals(previous.Windows[index].Title, current.Windows[index].Title, StringComparison.Ordinal))
+            {
+                return false;
+            }
+        }
+        return true;
     }
 
     internal void RefreshAdaptiveAppearance()
@@ -1717,6 +1828,7 @@ public partial class IceBlueDockWindow : Window
     private async void Invoke(DockItem item)
     {
         var displayName = DisplayNameOf(item);
+        var launchTarget = item.LaunchTarget;
         var attentionEntries = _attention.EntriesFor(item);
         if (attentionEntries.Count > 0)
         {
@@ -1763,7 +1875,7 @@ public partial class IceBlueDockWindow : Window
                     // The most recent alert belongs to another instance hidden in the tray
                     // (e.g. a 2nd WeChat account while the 1st is open). Do not activate the
                     // wrong visible instance; route through instance-scoped tray reveal instead.
-                    var targetPin = item.Pinned ?? CreateTransientRevealPin(item, latest.ExecutablePath, displayName);
+                    var targetPin = launchTarget ?? CreateTransientRevealPin(item, latest.ExecutablePath, displayName);
                     if (targetPin is not null)
                     {
                         await RevealOrLaunchWithAttentionAsync(targetPin, latest, latestInstancePids);
@@ -1772,9 +1884,9 @@ public partial class IceBlueDockWindow : Window
                 }
             }
 
-            if (item.Pinned is not null)
+            if (launchTarget is not null)
             {
-                await RevealOrLaunchWithAttentionAsync(item.Pinned, latest, latestInstancePids);
+                await RevealOrLaunchWithAttentionAsync(launchTarget, latest, latestInstancePids);
                 return;
             }
         }
@@ -1793,13 +1905,9 @@ public partial class IceBlueDockWindow : Window
             }
 
             RefreshWindows();
-            if (item.Pinned is null)
-            {
-                return;
-            }
         }
 
-        if (item.Pinned is null)
+        if (launchTarget is null)
         {
             return;
         }
@@ -1816,7 +1924,7 @@ public partial class IceBlueDockWindow : Window
         {
             await ReportCommandResultAsync(
                 await WindowCommandService.RevealOrLaunchAsync(
-                    item.Pinned,
+                    launchTarget,
                     launchCooldown: _launchCooldown),
                 item.DisplayName);
         }
@@ -1865,9 +1973,7 @@ public partial class IceBlueDockWindow : Window
                 // trapped on the hint; a new flash will re-mark it immediately.
                 if (_attention.Cleared(latest.Window, latestInstancePids))
                 {
-                    _lastSignature = string.Empty;
-                    _lastStructureKey = string.Empty;
-                    RefreshWindows();
+                    RefreshAttentionBadges();
                 }
             }
             await ReportCommandResultAsync(result, targetPin.DisplayName);
@@ -2016,22 +2122,54 @@ public partial class IceBlueDockWindow : Window
         var edge = CurrentEdge;
         var vertical = DockEdgeRules.IsVertical(edge);
         var pointer = e.GetPosition(ItemPanel);
-        var cursorAxis = vertical ? pointer.Y : pointer.X;
-        var radiusDip = DockLayoutMetrics.ItemCell(_effectiveIconSize) * DockMagnificationRules.InfluenceRadiusCells;
-        var motion = Motion;
-        var clearReturn = _magReturnAnimating;
-        _magReturnAnimating = false;
-        _magReturnGeneration++;
+        QueueMagnificationTarget(vertical ? pointer.Y : pointer.X, maxScale);
+    }
+
+    private void QueueMagnificationTarget(double cursorAxis, double maxScale)
+    {
+        // A high-report-rate mouse can deliver several positions before a frame is drawn.
+        // The frame only needs the latest one to read the layout and compute every icon target.
+        _magPendingTarget = (cursorAxis, maxScale);
+        if (_magReturnAnimating)
+        {
+            _hoverFrames?.Finish(completed: false);
+            _magReturnAnimating = false;
+            _magReturnGeneration++;
+            foreach (var slot in _magSlots)
+            {
+                if (slot.Scale.HasAnimatedProperties || slot.Translate.HasAnimatedProperties)
+                {
+                    DetachSlotAnimations(slot);
+                }
+            }
+        }
         if (!_magRegionExpanded)
         {
             _magRegionExpanded = true;
             SyncMagnificationHitRegion();
         }
+        if (!_magTimer.IsEnabled)
+        {
+            if (!_magClock.IsRunning)
+            {
+                _magClock.Restart();
+            }
+            _magLastTicks = _magClock.ElapsedTicks;
+            _hoverFrames?.Begin("hover-magnify", useOwnRendering: false);
+            _magTimer.Start();
+        }
+    }
 
+    private void UpdateMagnificationTargets(double cursorAxis, double maxScale)
+    {
+        var edge = CurrentEdge;
+        var vertical = DockEdgeRules.IsVertical(edge);
+        var radiusDip = DockLayoutMetrics.ItemCell(_effectiveIconSize) * DockMagnificationRules.InfluenceRadiusCells;
+        var motion = Motion;
         for (var i = 0; i < _magSlots.Count; i++)
         {
             var slot = _magSlots[i];
-            if (clearReturn || slot.Scale.HasAnimatedProperties || slot.Translate.HasAnimatedProperties)
+            if (slot.Scale.HasAnimatedProperties || slot.Translate.HasAnimatedProperties)
             {
                 DetachSlotAnimations(slot);
             }
@@ -2044,16 +2182,6 @@ public partial class IceBlueDockWindow : Window
             slot.TargetScale = targetScale;
             slot.TargetLiftX = liftX;
             slot.TargetLiftY = liftY;
-        }
-
-        if (!_magTimer.IsEnabled)
-        {
-            if (!_magClock.IsRunning)
-            {
-                _magClock.Restart();
-            }
-            _magLastTicks = _magClock.ElapsedTicks;
-            _magTimer.Start();
         }
     }
 
@@ -2103,8 +2231,15 @@ public partial class IceBlueDockWindow : Window
     {
         if (_closing || _magSlots.Count == 0)
         {
+            _hoverFrames?.Finish(completed: false);
             _magTimer.Stop();
             return;
+        }
+
+        if (_magPendingTarget is { } pending)
+        {
+            _magPendingTarget = null;
+            UpdateMagnificationTargets(pending.CursorAxis, pending.MaxScale);
         }
 
         var nowTicks = _magClock.ElapsedTicks;
@@ -2152,8 +2287,10 @@ public partial class IceBlueDockWindow : Window
             }
         }
 
+        _hoverFrames?.Observe(_magTimer.LastFrame);
         if (!anyPending)
         {
+            _hoverFrames?.Finish(completed: true);
             _magTimer.Stop();
         }
     }
@@ -2161,7 +2298,9 @@ public partial class IceBlueDockWindow : Window
     private void StopMagnification(bool animateReturn)
     {
         // Always stop the animation timer immediately when leaving or hiding the dock.
+        _hoverFrames?.Finish(completed: false);
         _magTimer.Stop();
+        _magPendingTarget = null;
         var generation = ++_magReturnGeneration;
         if (_magSlots.Count == 0)
         {
@@ -2202,6 +2341,7 @@ public partial class IceBlueDockWindow : Window
                     if (completionHost is null)
                     {
                         completionHost = slot.Scale;
+                        _hoverFrames?.Begin("hover-return", useOwnRendering: true);
                         var completionScaleBack = new DoubleAnimation(1d, new Duration(returnDuration))
                         {
                             EasingFunction = ease
@@ -2212,6 +2352,7 @@ public partial class IceBlueDockWindow : Window
                             {
                                 return;
                             }
+                            _hoverFrames?.Finish(completed: true);
                             _magReturnAnimating = false;
                             _magRegionExpanded = false;
                             ResetMagnificationSlotsImmediate();
@@ -2243,6 +2384,16 @@ public partial class IceBlueDockWindow : Window
         _magRegionExpanded = false;
         ResetMagnificationSlotsImmediate();
         SyncMagnificationHitRegion();
+    }
+
+    private double ReadHoverScale()
+    {
+        var largest = 1d;
+        foreach (var slot in _magSlots)
+        {
+            largest = Math.Max(largest, slot.Scale.ScaleX);
+        }
+        return largest;
     }
 
     private static void DetachSlotAnimations(MagnificationSlot slot)
@@ -2465,7 +2616,7 @@ public partial class IceBlueDockWindow : Window
         }
 
         var isPathPin = item.Pinned is { } pathPin && DockPinRules.IsPathPin(pathPin);
-        var executablePath = item.Pinned?.ExecutablePath
+        var executablePath = item.LaunchTarget?.ExecutablePath
             ?? item.Pinned?.TargetPath
             ?? item.Group?.Windows
                 .Select(window => window.ExecutablePath)
@@ -2640,6 +2791,10 @@ public partial class IceBlueDockWindow : Window
             var data = dragged.Pinned is { } pinned
                 ? new DataObject(PinDragFormat, DockPinRules.IdentityKey(pinned))
                 : new DataObject(RunningDragFormat, dragged.Key);
+            if (dragged.IsPinned && dragged.IsInRunningSection)
+            {
+                data.SetData(RunningPinDragFormat, true);
+            }
             DragDrop.DoDragDrop((DependencyObject)sender, data, DragDropEffects.Move);
         }
         finally
@@ -2657,7 +2812,7 @@ public partial class IceBlueDockWindow : Window
 
         if (e.Data.GetDataPresent(PinDragFormat) || e.Data.GetDataPresent(RunningDragFormat))
         {
-            e.Effects = (e.AllowedEffects & DragDropEffects.Move) != 0
+            e.Effects = (e.AllowedEffects & DragDropEffects.Move) != 0 && CanPlacePinDrag(e.Data, null)
                 ? DragDropEffects.Move
                 : DragDropEffects.None;
             e.Handled = true;
@@ -2688,9 +2843,9 @@ public partial class IceBlueDockWindow : Window
         {
             ClearDragTargetVisual();
             _dragHover.Clear();
-            var canMove = (e.AllowedEffects & DragDropEffects.Move) != 0;
+            var canMove = (e.AllowedEffects & DragDropEffects.Move) != 0 && CanPlacePinDrag(e.Data, parts.Button.Item);
             e.Effects = canMove ? DragDropEffects.Move : DragDropEffects.None;
-            if (canMove)
+            if (canMove && parts.Button.Item is DockItem { IsInRunningSection: false })
             {
                 var pos = e.GetPosition(parts.Button);
                 var afterHalf = IsVertical
@@ -2708,7 +2863,7 @@ public partial class IceBlueDockWindow : Window
 
         ClearPinDragIndicator();
 
-        if (parts.Button.Tag is not DockItem current
+        if (parts.Button.Item is not DockItem current
             || e.Data.GetData(System.Windows.DataFormats.FileDrop) is not string[] { Length: > 0 } files)
         {
             OnSurfaceDragOver(parts.Button, e);
@@ -2765,7 +2920,7 @@ public partial class IceBlueDockWindow : Window
             return;
         }
 
-        if (_hoveredDragParts?.Button.Tag is DockItem item)
+        if (_hoveredDragParts?.Button.Item is DockItem item)
         {
             TryHoverRaise(item);
         }
@@ -2773,7 +2928,7 @@ public partial class IceBlueDockWindow : Window
 
     private void TryHoverRaise(DockItem item)
     {
-        if (_dragHover.Hover(item.Key, item.IsRunning, DateTimeOffset.UtcNow)
+        if (_dragHover.Hover(item.Key, item.Group is not null, DateTimeOffset.UtcNow)
             && item.Group is { } group)
         {
             WindowCommandService.RaiseForDrag(group);
@@ -2960,10 +3115,17 @@ public partial class IceBlueDockWindow : Window
 
     private void DropPin(DragEventArgs e, DockItem target, double pointerAxis, double itemLength)
     {
+        if (!CanPlacePinDrag(e.Data, target))
+        {
+            e.Effects = DragDropEffects.None;
+            e.Handled = true;
+            return;
+        }
+
         if (e.Data.GetData(RunningDragFormat) is string runningKey)
         {
             e.Handled = true;
-            var index = target.Pinned is { } at
+            var index = target is { IsInRunningSection: false, Pinned: { } at }
                 ? DockEdgeRules.ComputePinInsertIndex(
                     DockPinRules.IndexOf(_state, DockPinRules.IdentityKey(at)),
                     pointerAxis,
@@ -2983,7 +3145,7 @@ public partial class IceBlueDockWindow : Window
 
         e.Handled = true;
         var sourceIndex = DockPinRules.IndexOf(_state, key);
-        var targetIndex = target.Pinned is { } pinned
+        var targetIndex = target is { IsInRunningSection: false, Pinned: { } pinned }
             ? DockEdgeRules.ComputePinMoveIndex(
                 sourceIndex,
                 DockPinRules.IndexOf(_state, DockPinRules.IdentityKey(pinned)),
@@ -3002,6 +3164,12 @@ public partial class IceBlueDockWindow : Window
         EndExternalDrag();
         if (_closing || e.Handled)
         {
+            return;
+        }
+        if (!CanPlacePinDrag(e.Data, null))
+        {
+            e.Effects = DragDropEffects.None;
+            e.Handled = true;
             return;
         }
         if (e.Data.GetData(System.Windows.DataFormats.FileDrop) is string[] { Length: > 0 } files)
@@ -3042,6 +3210,9 @@ public partial class IceBlueDockWindow : Window
         }
     }
 
+    private static bool CanPlacePinDrag(System.Windows.IDataObject data, DockItem? target) =>
+        !data.GetDataPresent(RunningPinDragFormat) || target is { IsInRunningSection: false };
+
     // A running app dragged among the pinned apps is pinned where it was dropped.
     private void PinRunning(string key, int index)
     {
@@ -3078,22 +3249,25 @@ public partial class IceBlueDockWindow : Window
     private void SetIcon(DockItem item, DockPinnedApp pinned, DockIconStore iconStore, string? iconFile)
     {
         var previous = pinned.IconFile;
-        pinned.IconFile = iconFile;
-        if (!string.Equals(previous, iconFile, StringComparison.Ordinal))
+        if (string.Equals(previous, iconFile, StringComparison.Ordinal))
         {
-            iconStore.Delete(previous);
+            return;
         }
-        _visuals.Remove(item.Key);
-        _lastSignature = string.Empty;
-        _lastStructureKey = string.Empty;
+        pinned.IconFile = iconFile;
+        iconStore.Delete(previous);
         PinsChanged();
     }
 
     private void PinsChanged()
     {
-        _runtime.InvalidateVisuals();
-        RefreshSharedItems();
-        SharedItemsChanged?.Invoke();
+        if (SharedItemsChanged is { } refreshShared)
+        {
+            refreshShared();
+        }
+        else
+        {
+            RefreshSharedItems();
+        }
         DockStateChanged?.Invoke();
     }
 
@@ -3105,22 +3279,26 @@ public partial class IceBlueDockWindow : Window
                + (DividerCount(_items) * DockLayoutMetrics.DividerDip);
     }
 
-    private (bool Start, bool Launcher, bool Desktop, bool TaskView) VisibleCommands =>
+    private (bool Start, bool Launcher, bool Desktop, bool TaskView, bool QuickSettings) VisibleCommands =>
         (_state.ShowStartMenuButton, LauncherEnabled && _state.ShowLauncherButton && LauncherRequested is not null,
-            _state.ShowDesktopButton, _state.ShowTaskViewButton);
+            _state.ShowDesktopButton, _state.ShowTaskViewButton, _state.ShowQuickSettingsButton);
 
     private int LeadingButtonCount
     {
         get
         {
-            var (start, launcher, desktop, taskView) = VisibleCommands;
-            return (start ? 1 : 0) + (launcher ? 1 : 0) + (desktop ? 1 : 0) + (taskView ? 1 : 0);
+            var (start, launcher, desktop, taskView, quickSettings) = VisibleCommands;
+            return (start ? 1 : 0) + (launcher ? 1 : 0) + (desktop ? 1 : 0) + (taskView ? 1 : 0)
+                + (quickSettings ? 1 : 0);
         }
     }
 
     private int DividerCount(IReadOnlyList<DockItem> items) =>
         (LeadingButtonCount > 0 && items.Count > 0 ? 1 : 0)
-        + (items.Any(item => item.IsPinned) && items.Any(item => !item.IsPinned) ? 1 : 0);
+        + (HasRunningDivider(items) ? 1 : 0);
+
+    private static bool HasRunningDivider(IReadOnlyList<DockItem> items) =>
+        items.Count > 1 && !items[0].IsInRunningSection && items[^1].IsInRunningSection;
 
     private void UpdateEffectiveIconSize(MonitorSnapshot monitor, IReadOnlyList<DockItem> items)
     {
@@ -3160,7 +3338,7 @@ public partial class IceBlueDockWindow : Window
             return;
         }
 
-        using var _ = UiDiagnostics.Measure("Dock 前台判定");
+        using var measurement = UiDiagnostics.Measure("Dock 前台判定");
 
         if (_attention.Count > 0)
         {
@@ -3239,10 +3417,22 @@ public partial class IceBlueDockWindow : Window
         var trueFullScreen = DockVacateRules.IsEffectiveFullScreen(directTrueFullScreen, backingFullScreen);
         _trueFullScreenForeground = trueFullScreen;
         var effectiveMaximizedOnDockMonitor = maximizedOnDockMonitor || backingMaximizedOnDockMonitor;
+        var checkedMonitorForMaximized = !effectiveMaximizedOnDockMonitor
+            && _state.ReleaseForBackgroundMaximizedWindow
+            && DockVacateRules.CanReleaseForMaximized(CurrentVisibilityMode, _state.ReleaseWhenMaximized);
+        var monitorOverlaps = false;
+        var monitorMaximized = false;
+        if (checkedMonitorForMaximized)
+        {
+            TransientForegroundResolver.TryFindCoveringWindowOnMonitor(
+                monitor.MonitorHandle, bounds, _handle, out monitorOverlaps, out monitorMaximized, out _);
+        }
         var shouldVacate = DockVacateRules.ShouldReleaseForMaximized(
             CurrentVisibilityMode,
             _state.ReleaseWhenMaximized,
-            effectiveMaximizedOnDockMonitor);
+            effectiveMaximizedOnDockMonitor,
+            _state.ReleaseForBackgroundMaximizedWindow,
+            monitorMaximized);
         if (shouldVacate != _vacatedForMaximized)
         {
             _vacatedForMaximized = shouldVacate;
@@ -3317,19 +3507,13 @@ public partial class IceBlueDockWindow : Window
             maximizedOnDockMonitor,
             backingOverlapsDock,
             backingMaximizedOnDockMonitor);
-        if (!_state.AutoHideAlways
-            && !(effectiveOverlaps && effectiveOverlapMaximized)
-            && TransientForegroundResolver.TryFindCoveringWindowOnMonitor(
-                monitor.MonitorHandle,
-                bounds,
-                _handle,
-                out var monitorOverlaps,
-                out var monitorMaximized,
-                out var _monitorCoveringBounds))
+        if (!checkedMonitorForMaximized && !_state.AutoHideAlways && !(effectiveOverlaps && effectiveOverlapMaximized))
         {
-            effectiveOverlaps |= monitorOverlaps;
-            effectiveOverlapMaximized |= monitorMaximized;
+            TransientForegroundResolver.TryFindCoveringWindowOnMonitor(
+                monitor.MonitorHandle, bounds, _handle, out monitorOverlaps, out monitorMaximized, out _);
         }
+        effectiveOverlaps |= monitorOverlaps;
+        effectiveOverlapMaximized |= monitorMaximized;
         var pointerOverDock = pointerOverStrip || pointerOverHandle;
         var input = new DockAutoHideInput(
             // This input is only built while smart-hiding, where a maximized window on
@@ -3482,18 +3666,9 @@ public partial class IceBlueDockWindow : Window
 
     // An auto-hidden taskbar still sliding back down overlaps the dock's strip; a
     // taskbar that is always shown sits beside it and never delays the return.
-    private bool TaskbarCoversDock()
-    {
-        if (_appBar is not { } appBar) return false;
-        var tray = TaskbarNativeMethods.FindWindowW("Shell_TrayWnd", null);
-        if (tray == 0
-            || !DockNativeMethods.IsWindowVisible(tray)
-            || !DockNativeMethods.GetWindowRect(tray, out var rect))
-        {
-            return false;
-        }
-        return new PixelRect(rect.Left, rect.Top, rect.Right, rect.Bottom).Intersects(appBar.Bounds);
-    }
+    private bool TaskbarCoversDock() =>
+        _appBar is { Monitor: { } monitor } appBar
+        && TaskbarEdgeGuard.IsVisibleTaskbarOverlapping(monitor, appBar.Bounds);
 
     private void ShowDock()
     {
@@ -3814,6 +3989,7 @@ public partial class IceBlueDockWindow : Window
             builder.Append(item.Key)
                 .Append(':')
                 .Append(item.IsPinned ? 'P' : '-')
+                .Append(item.IsInRunningSection ? 'S' : '-')
                 .Append('|');
         }
         return builder.ToString();
@@ -3828,6 +4004,8 @@ public partial class IceBlueDockWindow : Window
                 .Append(':')
                 .Append(DisplayNameOf(item))
                 .Append(item.IsPinned ? 'P' : '-')
+                .Append(item.IsInRunningSection ? 'S' : '-')
+                .Append(item.IsRunning ? 'R' : '-')
                 .Append(item.IsActive ? 'A' : '-')
                 .Append(item.WindowCount)
                 .Append(':');

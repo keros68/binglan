@@ -417,6 +417,9 @@ public sealed class FileBoxState
     /// </summary>
     public List<string> CollectExtensions { get; set; } = [];
 
+    /// <summary>Paths manually removed from this box; automatic desktop collection skips them.</summary>
+    public List<string> AutoCollectExcludedPaths { get; set; } = [];
+
     /// <summary>Whether this box collects desktop folders when the desktop is organised.</summary>
     public bool CollectFolders { get; set; }
 
@@ -428,6 +431,9 @@ public sealed class FileBoxState
 
     /// <summary>Whether hovering the collapsed title bar unfolds the box automatically. Off by default.</summary>
     public bool HoverExpand { get; set; }
+
+    /// <summary>Whether the title stays at the bottom while this box expands upward. Off by default.</summary>
+    public bool ExpandUpward { get; set; }
 
     /// <summary>
     /// Idle delay in seconds before an expanded box folds back when <see cref="AutoCollapse"/> is on.

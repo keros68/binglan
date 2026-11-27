@@ -1,0 +1,63 @@
+<Window x:Class="BingLan.TrayPanelSpike.PanelWindow" x:ClassModifier="internal"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="冰蓝独立托盘实验" Width="280" SizeToContent="Height" ResizeMode="NoResize"
+    WindowStyle="None" AllowsTransparency="True" Background="Transparent" ShowInTaskbar="False"
+    FontFamily="Segoe UI Variable Text, Microsoft YaHei UI" UseLayoutRounding="True"
+    PreviewKeyDown="OnWindowKeyDown">
+    <Window.Resources>
+        <BitmapImage x:Key="BingLanMark" UriSource="pack://application:,,,/Assets/Brand/binglan-icon.png" DecodePixelWidth="48"/>
+        <SolidColorBrush x:Key="Surface" Color="#F0ECF6FF"/>
+        <SolidColorBrush x:Key="Edge" Color="#36122C44"/>
+        <SolidColorBrush x:Key="Ink" Color="#122C44"/>
+        <SolidColorBrush x:Key="SoftInk" Color="#35516B"/>
+        <SolidColorBrush x:Key="Hover" Color="#14122C44"/>
+        <SolidColorBrush x:Key="FocusRing" Color="#1EA9FF"/>
+        <Style TargetType="Button">
+            <Setter Property="Width" Value="38"/>
+            <Setter Property="Height" Value="38"/>
+            <Setter Property="Foreground" Value="{DynamicResource Ink}"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Template">
+                <Setter.Value><ControlTemplate TargetType="Button">
+                    <Border x:Name="Hit" CornerRadius="8" Background="{TemplateBinding Background}"
+                            BorderThickness="1" BorderBrush="Transparent">
+                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Hit" Property="Background" Value="{DynamicResource Hover}"/></Trigger>
+                        <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Hit" Property="BorderBrush" Value="{DynamicResource FocusRing}"/></Trigger>
+                        <Trigger Property="IsPressed" Value="True"><Setter TargetName="Hit" Property="Opacity" Value="0.7"/></Trigger>
+                        <Trigger Property="IsEnabled" Value="False"><Setter TargetName="Hit" Property="Opacity" Value="0.55"/></Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate></Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="HeaderTool" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="Width" Value="32"/><Setter Property="Height" Value="32"/>
+            <Setter Property="Foreground" Value="{DynamicResource SoftInk}"/>
+            <Setter Property="FontFamily" Value="Segoe Fluent Icons, Segoe MDL2 Assets"/>
+            <Setter Property="FontSize" Value="12"/>
+        </Style>
+    </Window.Resources>
+    <Border x:Name="SurfaceCard" Margin="10" Padding="12,8,12,10" CornerRadius="14" BorderThickness="1" SnapsToDevicePixels="True"
+            Background="{DynamicResource Surface}" BorderBrush="{DynamicResource Edge}">
+        <Border.Effect><DropShadowEffect ShadowDepth="2" BlurRadius="9" Opacity="0.22"/></Border.Effect>
+        <StackPanel>
+            <DockPanel LastChildFill="True">
+                <Button DockPanel.Dock="Right" Style="{StaticResource HeaderTool}" Content="&#xE8BB;" ToolTip="关闭" AutomationProperties.Name="关闭" Click="OnClose"/>
+                <Button DockPanel.Dock="Right" x:Name="Refresh" Style="{StaticResource HeaderTool}" Content="&#xE72C;" ToolTip="刷新" AutomationProperties.Name="刷新图标" Click="OnRefresh"/>
+                <TextBlock x:Name="PanelTitle" Text="系统托盘" Margin="5,0" FontSize="14" FontWeight="SemiBold" Background="Transparent"
+                           Foreground="{DynamicResource Ink}" VerticalAlignment="Stretch" Padding="0,5,0,0" MouseLeftButtonDown="OnHeaderDrag"/>
+            </DockPanel>
+            <ScrollViewer VerticalScrollBarVisibility="Auto" MaxHeight="244" HorizontalScrollBarVisibility="Disabled" Focusable="False">
+                <WrapPanel x:Name="Entries" Margin="0,4,0,0"/>
+            </ScrollViewer>
+            <TextBlock x:Name="Status" Margin="5,5,5,3" TextWrapping="Wrap" FontSize="12"
+                       Foreground="{DynamicResource SoftInk}" Visibility="Collapsed" AutomationProperties.LiveSetting="Polite"/>
+            <TextBlock x:Name="Callbacks" Margin="5,5,5,3" TextWrapping="Wrap" FontSize="12"
+                       Foreground="{DynamicResource SoftInk}" Visibility="Collapsed"/>
+        </StackPanel>
+    </Border>
+</Window>

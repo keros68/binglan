@@ -47,6 +47,18 @@ internal sealed class DockHost : IDisposable
 
     internal Func<nint, nint>? ResolvePanelForeground { get; set; }
     internal Func<MonitorSnapshot, int?>? ResolveTopBarReservedBottomPx { get; set; }
+
+    internal int? GetBottomDockTopForMonitor(MonitorSnapshot monitor)
+    {
+        foreach (var window in _windows.Values)
+        {
+            if (window.GetBottomDockTopForMonitor(monitor) is { } top)
+            {
+                return top;
+            }
+        }
+        return null;
+    }
     internal Func<Task<bool>>? OpenTrayOverflowRequested { get; set; }
     internal Func<bool> IsLauncherEnabled { get; set; } = () => true;
     internal Func<IReadOnlyDictionary<string, ScreenSurfacePreferences>?>? ReadScreenPreferences { get; set; }
@@ -211,7 +223,6 @@ internal sealed class DockHost : IDisposable
 
     private void RefreshSharedItems()
     {
-        _runtime.InvalidateVisuals();
         foreach (var window in _windows.Values.ToArray()) window.RefreshSharedItems();
     }
 

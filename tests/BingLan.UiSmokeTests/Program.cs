@@ -108,11 +108,29 @@ internal static class Program
         // loop manually via Pump() instead of Application.Run(), so it must be installed here.
         SynchronizationContext.SetSynchronizationContext(new DispatcherSynchronizationContext());
 
+        if (Environment.GetCommandLineArgs().Contains("--dock-background-tests"))
+        {
+            DockInteractionPerformanceTests.TestBackgroundRefresh(PumpUntil);
+            Console.WriteLine("通过：Dock 后台进程扫描、实时窗口归属和缓存复用");
+            return 0;
+        }
+
         var failures = new List<string>();
         AppContext.SetSwitch(BingLan.App.App.SuppressCoordinatorStartupSwitch, true);
         var app = new BingLan.App.App();
         app.InitializeComponent();
         BingLan.App.App.UseSoftwareRendering();
+        if (Environment.GetCommandLineArgs().Contains("--topbar-reserved-flyout-probe"))
+        {
+            return TopBarWindowTests.RunReservedFlyoutProbe(app);
+        }
+        if (Environment.GetCommandLineArgs().Contains("--topbar-reserved-flyout-tests"))
+        {
+            Run("常显顶栏在最大化和边缘重叠时的日历与音量",
+                () => TopBarWindowTests.ReservedBarFlyoutsStayOpen(ShowAndPump, Pump), failures);
+            failures.ForEach(Console.Error.WriteLine);
+            return failures.Count == 0 ? 0 : 1;
+        }
         if (Environment.GetCommandLineArgs().Contains("--fullscreen-hotkey-probe"))
         {
             return FullScreenHotkeyTests.RunProbe(app);
@@ -239,7 +257,9 @@ internal static class Program
         Run("卡片自己跟随指针拖动，锁定后不动，边缘不缩放", TestNativeHitTesting, failures);
         Run("分组盒图标按宽度均分成整列", TestFileBoxTilesFillRow, failures);
         Run("分组盒盒间转移与 Ctrl 复制映射", () => FileBoxTransferTests.Run(ShowAndPump, Pump), failures);
+        Run("文件收纳盒向上展开、标题位置与折叠保存", () => FileBoxExpansionWindowTests.Run(ShowAndPump, Pump, PumpUntil), failures);
         Run("快捷入口显示系统位置图标", TestQuickPlaces, failures);
+        Run("快捷入口拖放排序、编辑和选中屏保存", QuickPlaceReorderTests.Run, failures);
         Run("新建卡片不会重置 Dock 与卡片颜色", TestNewCardKeepsAppBrushes, failures);
         Run("卡片显示后与切换窗口后位于普通窗口下方", TestCardsStayBehindWindows, failures);
         Run("开始菜单应用列表可直接固定到 Dock", TestStartMenuApps, failures);
@@ -252,6 +272,8 @@ internal static class Program
         Run("内置开源字体从程序中加载并带对应字重", TestBundledFonts, failures);
         Run("自动隐藏任务栏边缘不被组件占用", TestTaskbarRevealEdgeGuard, failures);
         Run("任务栏 XAML 恢复边界与取消", TestTaskbarXamlRecovery, failures);
+        Run("任务栏 XAML 连接未结束时保留恢复记录", TestUnconfirmedTaskbarXamlRecovery, failures);
+        Run("同一 Explorer 重发任务栏创建消息不重连 XAML", TestRepeatedTaskbarCreatedDoesNotReconnectXaml, failures);
         Run("工作区变化后卡片让出任务栏或 Dock 占用的边缘", TestCardLeavesReservedEdge, failures);
         Run("隐藏期间丢失显示器后卡片在显示前被拉回", TestHiddenCardRecoversFromLostMonitor, failures);
         Run("隐藏卡片带着越界位置重新显示时自动收拢到工作区", TestReShownCardRecoversIntoWorkArea, failures);
@@ -334,11 +356,13 @@ internal static class Program
         Run("显示器排列切换后卡片回到该排列下的位置", () => DisplayLayoutWindowTests.Run(ShowAndPump, Pump), failures);
         Run("多屏独立卡片方案、负Y混合DPI落点、跨屏迁移与热拔插彻底销毁", () => MultiScreenUiTests.Run(ShowAndPump, Pump), failures);
         Run("Dock 隐藏把手的窗口样式、拖动与显隐", () => DockHandleTests.Run(ShowAndPump, Pump), failures);
+        Run("Dock 合并悬停输入并保留未变图标与徽标", DockInteractionPerformanceTests.Run, failures);
+        Run("Dock 跨屏共享后台运行点且不阻塞窗口更新", () => DockInteractionPerformanceTests.TestBackgroundRefresh(PumpUntil), failures);
         Run("Dock 形变动画的收敛点、完成与打断", () => DockMorphAnimatorTests.Run(ShowAndPump, Pump, PumpUntil), failures);
         Run("Dock 原生玻璃形变、层级、回退与窗口清理", () => DockGlassSurfaceTests.Run(ShowAndPump, Pump, PumpUntil), failures);
         Run("界面卡顿写入本地日志：卡住时的任务与恢复时长", () => UiDiagnosticsTests.Run(Pump, PumpUntil), failures);
         Run("Dock 最大化状态钩子的过滤与即时通知", () => MaximizeStateWatcherTests.Run(ShowAndPump, Pump, PumpUntil), failures);
-        Run("顶端信息条的窗口样式、模块与点击深链", () => TopBarWindowTests.Run(ShowAndPump, Pump), failures);
+        Run("顶端信息条的窗口样式、模块与点击深链", () => TopBarWindowTests.Run(Pump), failures);
         Run("启动面板浏览、搜索、启动参数与失效文件", () => LauncherPanelWindowTests.Run(ShowAndPump, Pump, PumpUntil), failures);
         Run("主题导入对话框显示名称与预览图", TestThemeImportDialogShowsNameAndPreview, failures);
         Run("三种材质与 0/12/32 圆角真实窗口无白边或锯齿", TestMaterialCornerEdgesNoWhiteHalo, failures);
@@ -2776,13 +2800,15 @@ internal static class Program
         using (var view = mapping.CreateViewAccessor())
         {
             view.Write(8, 123);
-            Assert(!TaskbarXamlSession.Restore(unrelated), "恢复记录不得写入其他映射");
+            Assert(TaskbarXamlSession.Restore(unrelated) == TaskbarXamlRestoreResult.Unconfirmed,
+                "恢复记录不得写入其他映射");
             Assert(view.ReadInt32(8) == 123, "其他映射内容应保持不变");
         }
         Assert(!TaskbarXamlSession.IsValidMappingName(TaskbarXamlSession.MappingPrefix + "not-a-guid"),
             "畸形会话名称必须拒绝");
         var missing = TaskbarXamlSession.MappingPrefix + Guid.NewGuid().ToString("N");
-        Assert(TaskbarXamlSession.Restore(missing), "Explorer 已退出或会话已释放时无需再次修改");
+        Assert(TaskbarXamlSession.Restore(missing) == TaskbarXamlRestoreResult.Missing,
+            "映射缺失时没有仍可注册的 XAML 会话");
         using var session = new TaskbarXamlSession(Path.GetTempPath());
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
@@ -2790,6 +2816,138 @@ internal static class Program
         Pump();
         Assert(attempt.IsCanceled, "已取消的启用请求不得加载 Explorer 组件");
         Assert(!session.IsActive, "取消后不能报告透明已启用");
+    }
+
+    private static void TestUnconfirmedTaskbarXamlRecovery()
+    {
+        using var session = new TaskbarXamlSession(Path.GetTempPath());
+        using var mapping = System.IO.MemoryMappedFiles.MemoryMappedFile.OpenExisting(session.MappingName);
+        using var view = mapping.CreateViewAccessor();
+        using var cancellation = new CancellationTokenSource();
+        using var entered = new ManualResetEventSlim();
+        var finishConnection = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var start = session.StartAsync(1, cancellation.Token, () =>
+        {
+            entered.Set();
+            finishConnection.Task.Wait(TimeSpan.FromSeconds(15));
+            return 0;
+        });
+        try
+        {
+            PumpUntil(() => entered.IsSet, "连接必须先进入 native 调用");
+            cancellation.Cancel();
+            PumpUntil(() => start.IsCanceled, "取消必须及时结束宿主的等待");
+            view.Write(16, 1);
+            Assert(session.Restore() == TaskbarXamlRestoreResult.Unconfirmed && session.HasPendingConnection,
+                "native 调用尚未返回时，停止标记不足以确认恢复");
+            finishConnection.TrySetResult();
+            Assert(session.Restore() == TaskbarXamlRestoreResult.Restored && !session.HasPendingConnection,
+                "native 调用结束且收到停止确认后可以恢复");
+        }
+        finally
+        {
+            finishConnection.TrySetResult();
+        }
+
+        var directory = Path.Combine(Path.GetTempPath(), "BingLanTaskbarRecovery-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            const uint previousExplorer = 1234;
+            var explorerRunning = true;
+            var transparencyEnabled = true;
+            var canWriteTransparency = false;
+            var checkpointPath = Path.Combine(directory, "taskbar-recovery.json");
+            var checkpoint = new BingLan.Core.Taskbar.TaskbarCheckpoint
+            {
+                XamlSessionName = TaskbarXamlSession.MappingPrefix + Guid.NewGuid().ToString("N"),
+                XamlExplorerProcessId = previousExplorer,
+                OriginalSystemTransparency = false
+            };
+            File.WriteAllText(checkpointPath, checkpoint.Serialize());
+            var ops = new TaskbarPlatformOps
+            {
+                IsProcessRunning = pid => pid == previousExplorer && explorerRunning,
+                GetAutoHide = () => false,
+                IsSystemTransparencyEnabled = () => transparencyEnabled,
+                TryWriteSystemTransparency = enabled =>
+                {
+                    if (!canWriteTransparency) return false;
+                    transparencyEnabled = enabled;
+                    return true;
+                }
+            };
+            Assert(!TaskbarAdapter.RecoverFromCheckpoint(checkpointPath, ops)
+                && BingLan.Core.Taskbar.TaskbarCheckpoint.Parse(File.ReadAllText(checkpointPath)) is
+                    { XamlSessionName: null, XamlExplorerProcessId: null },
+                "旧 Explorer 仍在运行但映射已不存在时，仅保留失败的系统透明回滚记录");
+            canWriteTransparency = true;
+            Assert(TaskbarAdapter.RecoverFromCheckpoint(checkpointPath, ops)
+                && !File.Exists(checkpointPath) && !transparencyEnabled,
+                "映射已不存在时可以恢复原系统透明效果并清除检查点");
+
+            transparencyEnabled = true;
+            using (var failedSession = new TaskbarXamlSession(Path.GetTempPath()))
+            using (var failedMapping = System.IO.MemoryMappedFiles.MemoryMappedFile.OpenExisting(failedSession.MappingName))
+            using (var failedView = failedMapping.CreateViewAccessor())
+            {
+                checkpoint.XamlSessionName = failedSession.MappingName;
+                File.WriteAllText(checkpointPath, checkpoint.Serialize());
+                failedView.Write(16, 2);
+                Assert(!TaskbarAdapter.RecoverFromCheckpoint(checkpointPath, ops)
+                    && BingLan.Core.Taskbar.TaskbarCheckpoint.Parse(File.ReadAllText(checkpointPath)) is
+                        { XamlRestoreFailed: true, XamlExplorerProcessId: previousExplorer },
+                    "明确的原生恢复失败必须记入检查点");
+            }
+            Assert(!TaskbarAdapter.RecoverFromCheckpoint(checkpointPath, ops) && transparencyEnabled,
+                "明确的原生恢复失败在释放映射后仍须等待旧 Explorer 退出");
+            explorerRunning = false;
+            Assert(TaskbarAdapter.RecoverFromCheckpoint(checkpointPath, ops)
+                && !File.Exists(checkpointPath) && !transparencyEnabled,
+                "报告恢复失败的旧 Explorer 已退出后，应恢复系统透明效果并清除检查点");
+
+            checkpoint.SchemaVersion = 3;
+            checkpoint.XamlExplorerProcessId = null;
+            transparencyEnabled = true;
+            explorerRunning = true;
+            File.WriteAllText(checkpointPath, checkpoint.Serialize());
+            Assert(TaskbarAdapter.RecoverFromCheckpoint(checkpointPath, ops)
+                && !File.Exists(checkpointPath) && !transparencyEnabled,
+                "旧版检查点没有连接保护标记时，仍按原有协议恢复");
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    private static void TestRepeatedTaskbarCreatedDoesNotReconnectXaml()
+    {
+        const uint explorer = 1234;
+        using var session = new TaskbarXamlSession(Path.GetTempPath());
+        using var adapter = new TaskbarAdapter(
+            Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "taskbar-recovery.json"),
+            ops: new TaskbarPlatformOps
+            {
+                ReadTaskbarIdentity = () => (1, explorer),
+                ReadEnvironment = _ => new BingLan.Core.Taskbar.TaskbarEnvironment(26200, true, false, false, null)
+            });
+
+        const System.Reflection.BindingFlags instanceMembers =
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+        var type = typeof(TaskbarAdapter);
+        type.GetField("_xamlSession", instanceMembers)!.SetValue(adapter, session);
+        type.GetField("_explorerProcessId", instanceMembers)!.SetValue(adapter, explorer);
+        type.GetProperty("ActiveMode", instanceMembers)!.SetValue(adapter, TaskbarMode.Transparent);
+        var taskbarCreated = (uint)type.GetField("_taskbarCreatedMessage", instanceMembers)!.GetValue(adapter)!;
+        var watchTaskbar = type.GetMethod("WatchTaskbar", instanceMembers)!;
+        var requestVersion = type.GetField("_requestVersion", instanceMembers)!;
+        var version = requestVersion.GetValue(adapter);
+        for (var i = 0; i < 2; i++)
+            watchTaskbar.Invoke(adapter, [nint.Zero, (int)taskbarCreated, nint.Zero, nint.Zero, false]);
+
+        Assert(Equals(requestVersion.GetValue(adapter), version) && adapter.ActiveMode == TaskbarMode.Transparent,
+            "同一 Explorer 重发 TaskbarCreated 时必须继续用当前会话");
     }
 
     private static void TestTaskbarRevealEdgeGuard()
@@ -7065,8 +7223,14 @@ internal static class Program
             dock.LauncherRequested += () => { };
             try
             {
-                var commands = typeof(IceBlueDockWindow).GetProperty("VisibleCommands", Private)!;
-                bool ShowsLauncher() => ((ValueTuple<bool, bool, bool, bool>)commands.GetValue(dock)!).Item2;
+                var applyItems = typeof(IceBlueDockWindow).GetMethod("ApplyItems", Private)!;
+                var itemPanel = Require<Panel>(dock, "ItemPanel");
+                bool ShowsLauncher()
+                {
+                    applyItems.Invoke(dock, [Array.Empty<DockItem>()]);
+                    return itemPanel.Children.OfType<Button>().Any(button =>
+                        System.Windows.Automation.AutomationProperties.GetName(button) == "打开冰蓝总览卡");
+                }
                 Assert(!ShowsLauncher(),
                     "总开关关闭时 Dock 入口应隐藏");
                 dock.LauncherEnabled = true;
@@ -7201,6 +7365,15 @@ internal static class Program
             Pump();
             Assert(!dock.ShowTaskViewButton && dockApplied == 7, "关闭任务视图按钮应立即应用");
 
+            var separateRunningPins = Require<CheckBox>(window, "DockShowRunningPinsSeparatelyCheckBox");
+            Assert(separateRunningPins.IsChecked == false, "固定应用单独显示在运行区应默认关闭");
+            separateRunningPins.IsChecked = true;
+            Pump();
+            Assert(dock.ShowRunningPinsSeparately && dockApplied == 8, "开启运行区分组应保存并立即应用");
+            separateRunningPins.IsChecked = false;
+            Pump();
+            Assert(!dock.ShowRunningPinsSeparately && dockApplied == 9, "关闭运行区分组应保存并立即应用");
+
             Require<RadioButton>(window, "DockSmartHideRadio").IsChecked = true;
             Pump();
             Assert(!Require<FrameworkElement>(window, "DockMaximizeReleaseRow").IsEnabled,
@@ -7211,6 +7384,30 @@ internal static class Program
                     && !dock.ReleaseWhenMaximized
                     && Require<CheckBox>(window, "DockMaximizeReleaseCheckBox").IsChecked != true,
                 "从智能隐藏切回始终显示时应恢复启用并清除残留的最大化让出开关");
+
+            var backgroundMaximize = Require<CheckBox>(window, "DockBackgroundMaximizeCheckBox");
+            Assert(!backgroundMaximize.IsEnabled && backgroundMaximize.IsChecked == false,
+                "后台最大化选项默认关闭，先开启最大化让出才可调整");
+            Require<CheckBox>(window, "DockMaximizeReleaseCheckBox").IsChecked = true;
+            Pump();
+            Assert(backgroundMaximize.IsEnabled, "最大化让出开启后可以选择是否包含后台窗口");
+            var beforeBackgroundChange = dockApplied;
+            backgroundMaximize.IsChecked = true;
+            Pump();
+            Assert(dock.ReleaseForBackgroundMaximizedWindow && dockApplied == beforeBackgroundChange + 1,
+                "后台最大化选项应保存并立即应用");
+
+            var quickSettings = Require<CheckBox>(window, "DockQuickSettingsButtonCheckBox");
+            Assert(quickSettings.IsChecked == false, "快速设置按钮应默认关闭");
+            var beforeQuickSettingsChange = dockApplied;
+            quickSettings.IsChecked = true;
+            Pump();
+            Assert(dock.ShowQuickSettingsButton && dockApplied == beforeQuickSettingsChange + 1,
+                "快速设置按钮应保存并立即显示");
+            quickSettings.IsChecked = false;
+            Pump();
+            Assert(!dock.ShowQuickSettingsButton && dockApplied == beforeQuickSettingsChange + 2,
+                "关闭快速设置按钮应立即应用");
         }
         finally
         {
