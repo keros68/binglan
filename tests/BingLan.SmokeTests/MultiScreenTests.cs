@@ -18,10 +18,12 @@ internal static class MultiScreenTests
 
     internal static void RunAll()
     {
-        TestSchemaV64ToV65MigrationAndNullZeroOverhead();
+        TestLegacySchemaMigrationAndNullZeroOverhead();
+        TestLegacyRootBindingAndPreservation();
+        TestSurfacePreferencesAndOfflineAssociation();
         TestMonitorKeyNormalizationAndBlankProfile();
         TestLocalDipToPhysicalBoundsNegativeYAndMixedDpi();
-        TestCopyPrimaryProfileCrossScreenMoveAndOfflineDiscovery();
+        TestCopyPrimaryProfileAndCrossScreenMove();
         TestThemeExportImportDoesNotTouchMultiScreen();
         TestWeatherServiceConcurrentDeduplication();
         TestMonitorLocalPlacementAndPortMigrationRules();
@@ -30,7 +32,7 @@ internal static class MultiScreenTests
         TestCodexReviewEdgeCases();
     }
 
-    private static void TestSchemaV64ToV65MigrationAndNullZeroOverhead()
+    private static void TestLegacySchemaMigrationAndNullZeroOverhead()
     {
         var tempDir = Path.Combine(Path.GetTempPath(), "binglan-ms-smoke-" + Guid.NewGuid().ToString("N"));
         try
@@ -38,7 +40,7 @@ internal static class MultiScreenTests
             var store = new LocalStateStore(tempDir);
             Directory.CreateDirectory(tempDir);
 
-            foreach (var legacyVersion in new[] { 62, 63, 64 })
+            foreach (var legacyVersion in new[] { 62, 63, 64, 65, 66 })
             {
                 var legacyState = LocalStateStore.CreateDefault();
                 legacyState.SchemaVersion = legacyVersion;
@@ -78,17 +80,17 @@ internal static class MultiScreenTests
                 File.WriteAllText(store.StatePath, legacyJson);
 
                 var loaded = store.Load();
-                Check(loaded.SchemaVersion == AppState.CurrentSchemaVersion && AppState.CurrentSchemaVersion == 65,
-                    $"v{legacyVersion} 状态应平滑迁移到 v65，实际 {loaded.SchemaVersion}");
+                Check(loaded.SchemaVersion == AppState.CurrentSchemaVersion && AppState.CurrentSchemaVersion == 67,
+                    $"v{legacyVersion} 状态应平滑迁移到 v67，实际 {loaded.SchemaVersion}");
                 Check(loaded.MultiScreen is null, "单屏旧状态迁移后 MultiScreen 应保持 null 零分配");
                 Check(loaded.InformationWidgets.Any(i => i.ClockAlignment == ClockHorizontalAlignment.Center),
-                    "迁移到 v65 后应保留 v0.4.9 的 ClockAlignment 设置");
+                    "迁移后应保留 v0.4.9 的 ClockAlignment 设置");
                 Check(loaded.FileBoxes.Count(b => b.GroupId == groupId) == 2
                     && loaded.FileBoxes.Any(b => b.Id == tabA.Id && b.HoverSwitchTabs && b.HideWhenIdle && Math.Abs((b.IdleHideDelaySeconds ?? 0d) - 1.5d) < 0.01d)
                     && loaded.FileBoxes.Any(b => b.Id == tabB.Id && b.HoverSwitchTabs && b.HideWhenIdle),
-                    "v64->v65 迁移应无损保留 v0.5.0 组合收纳盒 GroupId/HoverSwitchTabs/HideWhenIdle 设置");
+                    "迁移应保留组合收纳盒 GroupId/HoverSwitchTabs/HideWhenIdle 设置");
                 Check(loaded.TodoWidgets[0].Items.Any(i => i.Text == "跨天固定待办" && i.IsPersistent),
-                    "v64->v65 迁移应无损保留 v0.5.0 跨天固定待办项");
+                    "迁移应保留跨天固定待办项");
                 Check(loaded.TodoWidgets.All(t => t.ScreenKey is null)
                     && loaded.FileBoxes.All(b => b.ScreenKey is null)
                     && loaded.NoteWidgets.All(n => n.ScreenKey is null),
@@ -123,6 +125,119 @@ internal static class MultiScreenTests
             Check(reloadedMulti.MultiScreen.Screens.TryGetValue(SecondaryKey, out var reloadedProfile)
                 && reloadedProfile.ExtensionData?.ContainsKey("FutureDockMode") == true,
                 "ScreenProfileState.ExtensionData 应向前兼容保留");
+
+            var secondaryTodo = TodoService.CreateDefaultWidget();
+            secondaryTodo.ScreenKey = SecondaryKey;
+            secondaryTodo.Items.Add(new TodoItemState { Text = "副屏待办" });
+            multiState.TodoWidgets.Add(secondaryTodo);
+            var secondaryNote = NoteService.CreateDefaultWidget();
+            secondaryNote.ScreenKey = SecondaryKey;
+            secondaryNote.Content = "副屏便签";
+            multiState.NoteWidgets.Add(secondaryNote);
+            var secondaryBox = new FileBoxState { ScreenKey = SecondaryKey, Title = "副屏收纳盒" };
+            secondaryBox.Items.Add(new FileMappingState { Path = @"C:\Demo\report.pdf", Title = "report" });
+            multiState.FileBoxes.Add(secondaryBox);
+            ScreenProfileAccessor.RecordMonitorLocalPlacement(
+                secondaryBox.Placement, new PixelRect(2148, 50, 2500, 350), SecondaryWorkPx, SecondaryDpi);
+            profile.PrimaryTodoId = secondaryTodo.Id.ToString();
+            multiState.MultiScreen.IsEnabled = false;
+
+            store.Save(multiState);
+            var reloadedDisabled = store.Load();
+            Check(reloadedDisabled.MultiScreen is { IsEnabled: false }
+                && reloadedDisabled.MultiScreen.Screens[SecondaryKey].ParsedPrimaryTodoId == secondaryTodo.Id,
+                "停用多屏并重载后应保留副屏配置与主待办归属");
+            Check(reloadedDisabled.TodoWidgets.Any(t => t.Id == secondaryTodo.Id
+                    && t.ScreenKey == SecondaryKey && t.Items.Any(i => i.Text == "副屏待办"))
+                && reloadedDisabled.NoteWidgets.Any(n => n.Id == secondaryNote.Id
+                    && n.ScreenKey == SecondaryKey && n.Content == "副屏便签"),
+                "停用多屏并重载后待办和便签仍应属于副屏并保留内容");
+            var reloadedBox = reloadedDisabled.FileBoxes.Single(b => b.Id == secondaryBox.Id);
+            Check(reloadedBox.ScreenKey == SecondaryKey
+                && reloadedBox.Items.Single().Path == @"C:\Demo\report.pdf"
+                && reloadedBox.Placement.MonitorLocal is { LocalLeftDip: 100d, LocalTopDip: 100d }
+                && ScreenProfileAccessor.FilterPrimaryFileBoxes(reloadedDisabled.FileBoxes).All(b => b.Id != secondaryBox.Id),
+                "停用多屏并重载后收纳盒应保留副屏位置与映射，不并入主屏整理范围");
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+            {
+                Directory.Delete(tempDir, recursive: true);
+            }
+        }
+    }
+
+    private static void TestLegacyRootBindingAndPreservation()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), "binglan-root-migration-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var store = new LocalStateStore(tempDir);
+            var state = LocalStateStore.CreateDefault();
+            state.MultiScreen = new MultiScreenState { IsEnabled = true };
+            var secondary = ScreenProfileAccessor.EnsureScreenProfile(state, SecondaryKey,
+                @"\\.\DISPLAY2", "Same display", "DISPLAY#DELA07A", "Same display");
+            secondary.QuickPlaces = [new QuickPlaceState { Name = "资料", Target = @"D:\资料" }];
+            var rootTodo = state.TodoWidgets[0];
+            rootTodo.Items.Add(new TodoItemState { Text = "保留旧待办", IsPersistent = true });
+            rootTodo.Placement.Left = 123;
+            rootTodo.Placement.Top = 234;
+            var note = NoteService.CreateDefaultWidget();
+            note.Content = "旧便签\n第二行";
+            note.Placement.Left = 321;
+            note.Placement.Top = 432;
+            state.NoteWidgets.Add(note);
+            var box = new FileBoxState { Title = "旧映射" };
+            box.Placement.Left = 456;
+            box.Placement.Top = 567;
+            box.Items.Add(new FileMappingState { Title = "保留文件", Path = @"C:\资料\report.pdf" });
+            state.FileBoxes.Add(box);
+            store.Save(state);
+            var normalizedContent = JsonSerializer.Serialize(state);
+            state.SchemaVersion = 65;
+            var oldJson = JsonSerializer.Serialize(state);
+            File.WriteAllText(store.StatePath, oldJson);
+
+            var loaded = store.Load();
+            var multi = loaded.MultiScreen ?? throw new InvalidOperationException("多屏配置丢失");
+            Check(loaded.MultiScreen is { IsEnabled: true, RootMonitorKey: null }
+                && JsonSerializer.Serialize(loaded) == normalizedContent,
+                "v65 启用多屏的旧根布局必须无损升级且保持未确认归属");
+            Check(ScreenProfileAccessor.ReconcileConnectedProfileKeys(loaded,
+                [new MonitorIdentityCandidate("monitor:serial:other", "DISPLAY#DELA07A#other", @"\\.\DISPLAY1", "Same display", "Same display")]) == 0
+                && multi.Screens.ContainsKey(SecondaryKey),
+                "同型号同名新屏不得获得其他副屏配置");
+            Check(!ScreenProfileAccessor.BindLegacyRootToScreen(loaded, SecondaryKey)
+                && multi.RootMonitorKey is null,
+                "已有独立配置的屏幕不能覆盖绑定旧根布局");
+            var orphanNote = NoteService.CreateDefaultWidget();
+            orphanNote.ScreenKey = "monitor:orphan";
+            loaded.NoteWidgets.Add(orphanNote);
+            Check(!ScreenProfileAccessor.BindLegacyRootToScreen(loaded, orphanNote.ScreenKey),
+                "存在独立卡片但缺少配置的屏幕同样不能覆盖绑定旧布局");
+            loaded.NoteWidgets.Remove(orphanNote);
+            Check(ScreenProfileAccessor.BindLegacyRootToScreen(loaded, " monitor:serial:root ")
+                && multi.RootMonitorKey == "monitor:serial:root"
+                && !ScreenProfileAccessor.BindLegacyRootToScreen(loaded, "monitor:serial:root")
+                && !ScreenProfileAccessor.BindLegacyRootToScreen(loaded, "monitor:serial:other"),
+                "旧根布局只允许显式绑定一次，不能再绑定另一块屏幕");
+            Check(loaded.TodoWidgets.Single(t => t.Id == rootTodo.Id) is { ScreenKey: null, Placement.Left: 123, Placement.Top: 234 } savedTodo
+                && savedTodo.Items.Single().Text == "保留旧待办"
+                && loaded.NoteWidgets.Single(n => n.Id == note.Id) is { ScreenKey: null, Content: "旧便签\n第二行", Placement.Left: 321, Placement.Top: 432 }
+                && loaded.FileBoxes.Single(b => b.Id == box.Id) is { ScreenKey: null, Placement.Left: 456, Placement.Top: 567 } savedBox
+                && savedBox.Items.Single().Path == @"C:\资料\report.pdf"
+                && ReferenceEquals(ScreenProfileAccessor.GetExperience(loaded, null), loaded.DesktopExperience),
+                "绑定只写物理归属，待办便签文件映射内容及坐标必须完全保留，根访问仍使用 null");
+            multi.IsEnabled = false;
+            store.Save(loaded);
+            var reloaded = store.Load();
+            Check(reloaded.MultiScreen is { IsEnabled: false, RootMonitorKey: "monitor:serial:root" }
+                && reloaded.MultiScreen.Screens[SecondaryKey].QuickPlaces.Single().Target == @"D:\资料",
+                "关闭多屏并重载后仍保留根物理归属与其他副屏的独立内容");
+            Check(Directory.EnumerateFiles(store.BackupDirectory, "widgets-before-migration-*.json")
+                .Any(path => File.ReadAllText(path) == oldJson),
+                "迁移前的完整 v65 JSON 必须保存在自动备份中");
         }
         finally
         {
@@ -202,7 +317,7 @@ internal static class MultiScreenTests
         }
     }
 
-    private static void TestCopyPrimaryProfileCrossScreenMoveAndOfflineDiscovery()
+    private static void TestCopyPrimaryProfileAndCrossScreenMove()
     {
         var state = LocalStateStore.CreateDefault();
         state.DesktopExperience.ActivePreset = DesktopLayoutPreset.GlacierWorkbench;
@@ -276,31 +391,6 @@ internal static class MultiScreenTests
             && ScreenProfileAccessor.GetQuickPlaces(state, SecondaryKey).Any(p => p.Target == @"C:\CustomA")
             && !state.QuickPlaces.Any(p => p.Target == @"C:\CustomA"),
             "跨屏迁移快捷入口应合并保留目标自定义项、完整搬迁源定制项并重置源屏列表");
-        copyResult.Profile.Experience.GetComponent(DesktopComponentKind.QuickLaunch).IsVisible = true;
-
-        // Disconnected discovery when SecondaryKey is unplugged covers Todo, Note, FileBox, QuickLaunch, and visible built-ins.
-        var offline = ScreenProfileAccessor.FindDisconnectedScreenWidgets(
-            state, connectedSecondaryKeys: new HashSet<string>(StringComparer.Ordinal));
-        Check(offline.Any(item => item.Id == copyResult.CreatedTodo!.Id && item.KindName == ScreenProfileAccessor.DisconnectedTodoKind)
-            && offline.Any(item => item.Id == note.Id && item.KindName == ScreenProfileAccessor.DisconnectedNoteKind)
-            && offline.Any(item => item.Id == box.Id && item.KindName == ScreenProfileAccessor.DisconnectedFileBoxKind)
-            && offline.Any(item => item.KindName == ScreenProfileAccessor.DisconnectedQuickLaunchKind && item.ScreenKey == SecondaryKey)
-            && offline.Any(item => item.KindName == ScreenProfileAccessor.DisconnectedBuiltInInfoKind && item.Title == DesktopExperienceRules.GetComponentName(DesktopComponentKind.Weather)),
-            $"副屏拔出后应发现待办/便签/收纳盒/快捷入口及可见内置信息卡，实际 {offline.Count} 项");
-
-        // Recover disconnected QuickPlaces & built-in Weather back to primary.
-        state.DesktopExperience.GetComponent(DesktopComponentKind.Weather).IsVisible = false;
-        Check(ScreenProfileAccessor.MoveDisconnectedQuickPlacesToPrimary(state, SecondaryKey),
-            "离线快捷入口应支持一键移回主屏");
-        Check(state.QuickPlaces.Any(p => p.Target == @"C:\CustomA")
-            && !copyResult.Profile.Experience.GetComponent(DesktopComponentKind.QuickLaunch).IsVisible,
-            "离线快捷入口移回主屏后主屏应获得自定义项且离线屏槽位关闭");
-        Check(ScreenProfileAccessor.MoveDisconnectedBuiltInToPrimary(state, SecondaryKey, DesktopComponentKind.Weather),
-            "离线可见内置天气卡应支持移回主屏");
-        Check(state.DesktopExperience.GetComponent(DesktopComponentKind.Weather).IsVisible
-            && !copyResult.Profile.Experience.GetComponent(DesktopComponentKind.Weather).IsVisible,
-            "离线内置天气卡移回主屏后主屏应开启且离线屏槽位关闭");
-
         // Move Todo back to primary and verify ownership reconciliation.
         ScreenProfileAccessor.MoveTodoToScreen(
             state, copyResult.CreatedTodo!.Id, targetScreenKey: null, PrimaryWorkPx, PrimaryDpi);
@@ -358,6 +448,65 @@ internal static class MultiScreenTests
             CancellationToken cancellationToken) => send(request, cancellationToken);
     }
 
+    private static void TestSurfacePreferencesAndOfflineAssociation()
+    {
+        const string root = "DISPLAY#ROOT#1";
+        const string replacement = "DISPLAY#NEW#2";
+        const string occupied = "DISPLAY#OTHER#3";
+        var state = LocalStateStore.CreateDefault();
+        state.MultiScreen = new MultiScreenState { IsEnabled = true, RootMonitorKey = root };
+        state.Dock.MonitorKey = root;
+        var preferences = new ScreenSurfacePreferences
+        {
+            DockEnabled = false, DockEdge = DockEdge.Left, TopBarEnabled = true, TopBarHeight = 500,
+            DockHiddenHandleLeftDip = 10, DockHiddenHandleTopDip = double.PositiveInfinity
+        };
+        preferences.Normalize();
+        Check(preferences.TopBarHeight == TopBarState.MaximumHeightDip && preferences.DockHiddenHandleLeftDip is null,
+            "逐屏高度应按 DIP 钳制，无效把手坐标不得保留");
+        state.MultiScreen.SurfacePreferences[root] = preferences;
+        state.MultiScreen.SurfacePreferences[occupied] = new ScreenSurfacePreferences { DockEnabled = true };
+        Check(!ScreenProfileAccessor.BindArchivedProfile(state, root, new(occupied, null, null, null, "已有设置")),
+            "仅有栏设置的目的地也不可被覆盖");
+        var rootNote = new NoteWidgetState { Title = "旧根便签" };
+        state.NoteWidgets.Add(rootNote);
+        Check(ScreenProfileAccessor.BindArchivedProfile(state, root, new(replacement, null, null, null, "新显示器"))
+              && state.MultiScreen.RootMonitorKey == replacement && rootNote.ScreenKey is null
+              && state.Dock.MonitorKey == root && !state.MultiScreen.SurfacePreferences.ContainsKey(root)
+              && state.MultiScreen.SurfacePreferences[replacement].DockEdge == DockEdge.Left,
+            "根档案的内容和逐屏偏好应随绑定，固定的全局设备目标须保留");
+
+        var oldProfile = ScreenProfileAccessor.EnsureScreenProfile(state, SecondaryKey);
+        oldProfile.Experience.GetComponent(DesktopComponentKind.Weather).IsVisible = true;
+        var note = new NoteWidgetState { Title = "旧独立便签", ScreenKey = SecondaryKey };
+        state.NoteWidgets.Add(note);
+        state.MultiScreen.SurfacePreferences[SecondaryKey] = new ScreenSurfacePreferences { TopBarHeight = 41 };
+        Check(ScreenProfileAccessor.BindArchivedProfile(state, SecondaryKey, new(root, null, null, null, "备用屏"))
+              && note.ScreenKey == root && state.MultiScreen.Screens[root] == oldProfile
+              && state.MultiScreen.SurfacePreferences[root].TopBarHeight == 41,
+            "绑定独立档案应同时保留卡片状态与该屏的栏设置");
+
+        var directory = Path.Combine(Path.GetTempPath(), "binglan-screen-prefs-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var store = new LocalStateStore(directory);
+            store.Save(state);
+            var roundTrip = store.Load();
+            Check(roundTrip.MultiScreen?.SurfacePreferences[replacement].DockEnabled == false
+                  && roundTrip.MultiScreen.SurfacePreferences[root.ToLowerInvariant()].TopBarHeight == 41,
+                "重启后应保留逐屏覆盖，包括关闭与独立高度");
+        }
+        finally
+        {
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        }
+
+        var modules = new TopBarModuleSwitches { Clock = false, Weather = true };
+        Check(DesktopModeRules.TopBarDuplicatesCard(modules, DesktopComponentKind.Weather)
+              && !DesktopModeRules.TopBarDuplicatesCard(modules, DesktopComponentKind.TimeDate),
+            "只隐藏顶栏确实启用的重复数据卡片");
+    }
+
     private static void TestThemeExportImportDoesNotTouchMultiScreen()
     {
         var state = LocalStateStore.CreateDefault();
@@ -365,6 +514,7 @@ internal static class MultiScreenTests
         var secondary = ScreenProfileAccessor.EnsureScreenProfile(state, SecondaryKey, @"\\.\DISPLAY1", "副屏 2");
         secondary.Experience.ActivePreset = DesktopLayoutPreset.CenterClock;
         secondary.Experience.GetComponent(DesktopComponentKind.Performance).IsVisible = true;
+        state.MultiScreen.SurfacePreferences[SecondaryKey] = new ScreenSurfacePreferences { DockEnabled = true };
 
         var area = new ThemeArea(0, 0, 1920, 1040);
         var package = ThemeRules.Export(state, "测试主题", area, new Version(0, 4, 8));
@@ -379,7 +529,8 @@ internal static class MultiScreenTests
         Check(state.MultiScreen is { IsEnabled: true }
             && state.MultiScreen.Screens.TryGetValue(SecondaryKey, out var kept)
             && kept.Experience.ActivePreset == DesktopLayoutPreset.CenterClock
-            && kept.Experience.GetComponent(DesktopComponentKind.Performance).IsVisible,
+            && kept.Experience.GetComponent(DesktopComponentKind.Performance).IsVisible
+            && state.MultiScreen.SurfacePreferences[SecondaryKey].DockEnabled == true,
             "导入主题只能影响主屏，不得清空或覆盖副屏独立方案");
     }
 
@@ -443,7 +594,7 @@ internal static class MultiScreenTests
             && pxSmall.Width == 420 && pxSmall.Height == 480,
             $"较小工作区下应按锚点还原并完整留在工作区内且保持原尺寸，实际 {restoredSmall}");
 
-        // 3. ReconcileConnectedProfileKeys handles port change (EDID model) & dock FriendlyName unambiguously.
+        // 3. Only a normalized exact legacy device path can establish migration ownership.
         var state = LocalStateStore.CreateDefault();
         state.MultiScreen = new MultiScreenState { IsEnabled = true };
         var oldBoeKey = "DISPLAY#BOE0C8B#5&2C737580&0&UID4357";
@@ -459,14 +610,11 @@ internal static class MultiScreenTests
         state.NoteWidgets.Add(secNote);
         state.FileBoxes.Add(secBox);
 
-        // Connected on a different port (new UID) while Primary is SAM7180.
+        // A canonical identity carries its exact legacy device path as migration evidence.
         var newPortBoeKey = "DISPLAY#BOE0C8B#5&99AABBCC&0&UID8888";
         var migratedCount = ScreenProfileAccessor.ReconcileConnectedProfileKeys(
             state,
-            [new MonitorIdentityCandidate(newPortBoeKey, newPortBoeKey, @"\\.\DISPLAY3", "Laptop Built-in", "副屏 2 · Laptop Built-in")],
-            primaryHardwareId: "DISPLAY#SAM7180#5&2C737580&0&UID4356",
-            primaryModelId: "DISPLAY#SAM7180",
-            primaryFriendlyName: "Odyssey G52A");
+            [new MonitorIdentityCandidate(newPortBoeKey, newPortBoeKey, @"\\.\DISPLAY3", "Laptop Built-in", "副屏 2 · Laptop Built-in", @"\\?\" + oldBoeKey.ToLowerInvariant() + "#{e6f07b5f-ee97-4a90-b076-33f57bf4eaa7}")]);
         Check(migratedCount == 1
             && state.MultiScreen.Screens.Count == 1
             && !state.MultiScreen.Screens.ContainsKey(oldBoeKey)
@@ -474,7 +622,7 @@ internal static class MultiScreenTests
             && secTodo.ScreenKey == newPortBoeKey
             && secNote.ScreenKey == newPortBoeKey
             && secBox.ScreenKey == newPortBoeKey,
-            "换接口重连同 EDID 型号副屏时应 1 对 1 自动迁移档案及所有所属卡片 ScreenKey，且不得产生重复档案");
+            "精确旧设备路径匹配应忽略大小写与路径包装，并迁移档案及所属卡片且不产生重复档案");
 
         // Ambiguous case: two identical offline/online monitors OR primary monitor's own model must NEVER guess.
         var ambState = LocalStateStore.CreateDefault();
@@ -484,25 +632,23 @@ internal static class MultiScreenTests
         _ = (p1, p2);
         var ambMigrated = ScreenProfileAccessor.ReconcileConnectedProfileKeys(
             ambState,
-            [new MonitorIdentityCandidate("DISPLAY#DELL123#3&C&0&UID9", "DISPLAY#DELL123#3&C&0&UID9", @"\\.\DISPLAY4", "DELL U2723QE", "副屏 4")],
-            primaryHardwareId: "DISPLAY#SAM7180#0",
-            primaryModelId: "DISPLAY#SAM7180");
+            [new MonitorIdentityCandidate("DISPLAY#DELL123#3&C&0&UID9", "DISPLAY#DELL123#3&C&0&UID9", @"\\.\DISPLAY4", "DELL U2723QE", "副屏 4")]);
         Check(ambMigrated == 0 && ambState.MultiScreen.Screens.Count == 2,
             "存在多份同型号离线档案时严禁盲猜迁移，必须保持零误迁");
 
-        // Unfamiliar FriendlyName-only dock migration works cleanly when non-generic and unique.
+        // A friendly name or GDI slot is never sufficient physical ownership evidence.
         var dockState = LocalStateStore.CreateDefault();
         dockState.MultiScreen = new MultiScreenState { IsEnabled = true };
         var dockOldKey = "slot:DISPLAY4";
         ScreenProfileAccessor.EnsureScreenProfile(dockState, dockOldKey, @"\\.\DISPLAY4", "副屏 2 · ThinkVision P27", null, "ThinkVision P27");
         var dockMigrated = ScreenProfileAccessor.ReconcileConnectedProfileKeys(
             dockState,
-            [new MonitorIdentityCandidate("slot:DISPLAY7", null, @"\\.\DISPLAY7", "ThinkVision P27", "副屏 2 · ThinkVision P27")],
-            primaryHardwareId: "DISPLAY#BOE0C8B#0",
-            primaryModelId: "DISPLAY#BOE0C8B",
-            primaryFriendlyName: "BOE");
-        Check(dockMigrated == 1 && dockState.MultiScreen.Screens.ContainsKey("slot:DISPLAY7"),
-            "非泛化友好名称 1 对 1 唯一匹配时应支持虚拟/扩展坞副屏迁移");
+            [new MonitorIdentityCandidate("slot:DISPLAY7", null, @"\\.\DISPLAY7", "ThinkVision P27", "副屏 2 · ThinkVision P27")]);
+        Check(dockMigrated == 0 && dockState.MultiScreen.Screens.ContainsKey(dockOldKey),
+            "仅友好名称匹配时不得迁移扩展坞配置");
+        Check(ScreenProfileAccessor.ReconcileConnectedProfileKeys(dockState,
+            [new MonitorIdentityCandidate("monitor:serial:test", null, @"\\.\DISPLAY4", "ThinkVision P27", "ThinkVision P27", dockOldKey)]) == 0,
+            "相同 GDI 插槽编号不能作为旧屏幕归属证据");
         Check(MultiScreenRules.IsGenericMonitorName("Generic PnP Monitor")
             && MultiScreenRules.IsGenericMonitorName("通用即插即用监视器")
             && MultiScreenRules.IsGenericMonitorName(@"\\.\DISPLAY2")
@@ -528,21 +674,12 @@ internal static class MultiScreenTests
             new QuickPlaceState { Icon = QuickPlaceRules.FolderIcon, Name = "副屏重复", Target = @"c:\shared" },
             new QuickPlaceState { Icon = QuickPlaceRules.FolderIcon, Name = "副屏B", Target = @"C:\SecondaryB" }
         ];
-        Check(ScreenProfileAccessor.MoveDisconnectedQuickPlacesToPrimary(qState, SecondaryKey),
-            "含有效自定义项的离线快捷入口移回主屏应返回 true");
+        ScreenProfileAccessor.MoveQuickPlacesToScreen(qState, SecondaryKey, null);
         Check(qState.QuickPlaces.Count == 3
             && qState.QuickPlaces[0].Target == @"C:\PrimaryA"
             && qState.QuickPlaces[1].Target == @"C:\Shared"
             && qState.QuickPlaces[2].Target == @"C:\SecondaryB",
             $"移回主屏应合并保留主屏自定义项与顺序并去重，实际 {string.Join(',', qState.QuickPlaces.Select(p => p.Target))}");
-
-        // Hidden + defaults-only secondary screen must report false without touching Primary.
-        var emptySecKey = "DISPLAY#EMPTY#0";
-        var emptyProfile = ScreenProfileAccessor.EnsureScreenProfile(qState, emptySecKey);
-        emptyProfile.Experience.GetComponent(DesktopComponentKind.QuickLaunch).IsVisible = false;
-        emptyProfile.QuickPlaces = QuickPlaceRules.CreateDefaults();
-        Check(!ScreenProfileAccessor.MoveDisconnectedQuickPlacesToPrimary(qState, emptySecKey),
-            "默认且隐藏的离线快捷入口不应虚报移回主屏");
 
         // Cap enforcement at QuickPlaceRules.MaximumItems (12).
         qState.QuickPlaces = Enumerable.Range(1, 10)
@@ -637,19 +774,13 @@ internal static class MultiScreenTests
             && activeTab.Placement.MonitorLocal is null && mixedTab.Placement.MonitorLocal is null,
             "MoveFileBoxToScreen 必须将同 GroupId 所有标签页整组同步迁移并清除所有贴边停靠锚点");
 
-        // Move group back to secondary, then verify FindDisconnectedScreenWidgets emits ONE grouped entry.
+        // Move the group back to the connected secondary screen.
         ScreenProfileAccessor.MoveFileBoxToScreen(
             state, activeTab.Id, SecondaryKey, SecondaryWorkPx, SecondaryDpi,
             sourceBoundsPx: new PixelRect(120, 120, 480, 420), sourceWorkAreaPx: PrimaryWorkPx, sourceDpi: PrimaryDpi);
         Check(activeTab.ScreenKey == SecondaryKey && mixedTab.ScreenKey == SecondaryKey
             && activeTab.Placement.MonitorLocal is not null && mixedTab.Placement.MonitorLocal is not null,
             "整组移回副屏后全部标签页应统一记录 ScreenKey 与 MonitorLocal");
-
-        var offline = ScreenProfileAccessor.FindDisconnectedScreenWidgets(
-            state, connectedSecondaryKeys: new HashSet<string>(StringComparer.Ordinal));
-        var boxEntries = offline.Where(e => e.KindName == ScreenProfileAccessor.DisconnectedFileBoxKind).ToList();
-        Check(boxEntries.Count == 1 && boxEntries[0].Title.Contains("组合", StringComparison.Ordinal),
-            $"离线发现对同 GroupId 多页收纳盒只能上报 1 条组合条目，实际 {boxEntries.Count} 条");
 
         // Merge adopts target's ScreenKey & MonitorLocal; Detach & SplitAll preserve host's ScreenKey and offset MonitorLocal.
         var standalonePrimary = new FileBoxState { Title = "主屏独立盒", ScreenKey = null };
@@ -686,8 +817,8 @@ internal static class MultiScreenTests
         [
             new QuickPlaceState { Icon = "\uE8B7", Name = "副屏专属", Target = @"D:\Secondary\Only" }
         ];
-        var moved = ScreenProfileAccessor.MoveDisconnectedQuickPlacesToPrimary(qpState, SecondaryKey);
-        Check(!moved && secProfile.QuickPlaces.Any(p => p.Target == @"D:\Secondary\Only")
+        var destination = ScreenProfileAccessor.MoveQuickPlacesToScreen(qpState, SecondaryKey, null);
+        Check(destination.Count == QuickPlaceRules.MaximumItems && secProfile.QuickPlaces.Any(p => p.Target == @"D:\Secondary\Only")
             && secProfile.Experience.GetComponent(DesktopComponentKind.QuickLaunch).IsVisible,
             "主屏快捷入口已满 12 条时迁移不得丢失副屏快捷入口");
 
@@ -698,12 +829,11 @@ internal static class MultiScreenTests
         var emptySecProfile = ScreenProfileAccessor.EnsureScreenProfile(emptyQpState, SecondaryKey);
         emptySecProfile.Experience.GetComponent(DesktopComponentKind.QuickLaunch).IsVisible = true;
         emptySecProfile.QuickPlaces = [];
-        Check(ScreenProfileAccessor.MoveDisconnectedQuickPlacesToPrimary(emptyQpState, SecondaryKey)
-            && emptyQpState.QuickPlaces.Count == 0
-            && emptyQpState.DesktopExperience.GetComponent(DesktopComponentKind.QuickLaunch).IsVisible,
+        ScreenProfileAccessor.MoveQuickPlacesToScreen(emptyQpState, SecondaryKey, null);
+        Check(emptyQpState.QuickPlaces.Count == 0,
             "副屏清空的快捷入口移回隐藏默认主屏时必须保留空列表，不得复活默认 6 项");
 
-        // 2. Friendly-name pass must respect primary model exclusion AND preserve ambiguity before exclusion.
+        // 2. Matching model and friendly names never identify a physical owner.
         var modelState = LocalStateStore.CreateDefault();
         modelState.MultiScreen = new MultiScreenState { IsEnabled = true };
         var oldSameModel = ScreenProfileAccessor.EnsureScreenProfile(
@@ -716,10 +846,7 @@ internal static class MultiScreenTests
                 HardwareId: @"DISPLAY#DELA001#4&2222&0&UID2",
                 DeviceName: @"\\.\DISPLAY3",
                 FriendlyName: "Dell U2723QE",
-                DisplayLabel: "Dell U2723QE")],
-            primaryHardwareId: @"DISPLAY#DELA001#4&0000&0&UID0",
-            primaryModelId: "DISPLAY#DELA001",
-            primaryFriendlyName: null);
+                DisplayLabel: "Dell U2723QE")]);
         Check(migratedCount == 0 && modelState.MultiScreen.Screens.ContainsKey(@"DISPLAY#DELA001#4&1111&0&UID1"),
             "主屏与副屏同型号且主屏友好名缺失时，友好名回退同样必须排除主屏型号");
 
@@ -733,10 +860,7 @@ internal static class MultiScreenTests
                 HardwareId: null,
                 DeviceName: @"\\.\DISPLAY5",
                 FriendlyName: "Dell U2723QE",
-                DisplayLabel: "Dell U2723QE")],
-            primaryHardwareId: @"DISPLAY#DELA001#4&0000&0&UID0",
-            primaryModelId: "DISPLAY#DELA001",
-            primaryFriendlyName: null);
+                DisplayLabel: "Dell U2723QE")]);
         Check(ambiguousCount == 0 && modelState.MultiScreen.Screens.ContainsKey(@"FALLBACK_DELL_B"),
             "两条离线配置同名时须先判歧义再排主屏型号，不得把无型号配置误当唯一匹配");
 

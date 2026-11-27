@@ -174,6 +174,10 @@ public sealed partial class TopBarWindow : Window
     private readonly DesktopStyleState _style;
     private readonly ITopBarEnvironment _environment;
     private readonly IPerformanceSamplingService _sampler;
+    private SurfaceMonitorSelection? _screenTarget;
+    private bool _ownsGlobalEvents;
+    private double BarHeight => _screenTarget?.Preferences?.TopBarHeight ?? _state.Height;
+    private TopBarVisibilityMode VisibilityMode => _screenTarget?.Preferences?.TopBarVisibilityMode ?? _state.VisibilityMode;
     private readonly StackPanel _attentionPanel = new()
     {
         Orientation = System.Windows.Controls.Orientation.Horizontal
@@ -184,6 +188,7 @@ public sealed partial class TopBarWindow : Window
     private readonly Dictionary<string, ImageSource?> _attentionIcons = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _attentionIconsLoading = new(StringComparer.OrdinalIgnoreCase);
     private readonly WindowCatalog _catalog = new();
+    private readonly MaximizeStateWatcher _maximizeWatcher;
     private readonly DispatcherTimer _foregroundTimer;
     private readonly DispatcherTimer _ambientTimer;
     private readonly DispatcherTimer _minuteTimer;
@@ -263,16 +268,28 @@ public sealed partial class TopBarWindow : Window
         DesktopStyleState style,
         ITopBarEnvironment environment,
         IPerformanceSamplingService sampler,
-        bool enableExperimentalCapsule = false)
+        bool enableExperimentalCapsule = false,
+        SurfaceMonitorSelection? screenTarget = null,
+        bool ownsGlobalEvents = true)
     {
         _state = state;
         _style = style;
         _environment = environment;
         _sampler = sampler;
         _enableExperimentalCapsule = enableExperimentalCapsule;
+        _screenTarget = screenTarget;
+        _ownsGlobalEvents = ownsGlobalEvents;
         InitializeComponent();
         SourceInitialized += OnSourceInitialized;
         Closing += OnClosing;
+        _maximizeWatcher = new MaximizeStateWatcher(Dispatcher);
+        _maximizeWatcher.TopLevelStateChanged += () =>
+        {
+            if (!_closing)
+            {
+                UpdateForForeground();
+            }
+        };
         _foregroundTimer = new DispatcherTimer(
             FullScreenCheckInterval,
             DispatcherPriority.Background,
@@ -308,9 +325,12 @@ public sealed partial class TopBarWindow : Window
         _sampler.Sampled += OnSampled;
         // A network address change is the one system fact with an event source; the
         // others ride the sampling or ambient tick.
-        System.Net.NetworkInformation.NetworkChange.NetworkAddressChanged += OnNetworkAddressChanged;
-        SystemEvents.TimeChanged += OnSystemTimeChanged;
-        SystemEvents.PowerModeChanged += OnPowerModeChanged;
+        if (_ownsGlobalEvents)
+        {
+            System.Net.NetworkInformation.NetworkChange.NetworkAddressChanged += OnNetworkAddressChanged;
+            SystemEvents.TimeChanged += OnSystemTimeChanged;
+            SystemEvents.PowerModeChanged += OnPowerModeChanged;
+        }
         // The centred search box must not sit on top of the side modules when they
         // leave little room: every size change on the bar or either module group
         // re-clamps the box width around the true centre.
@@ -334,6 +354,7 @@ public sealed partial class TopBarWindow : Window
         _monitor = ResolveMonitor();
         if (_monitor is null)
         {
+            Close();
             return;
         }
 
@@ -357,7 +378,7 @@ public sealed partial class TopBarWindow : Window
         {
             if (TopBarRules.EffectiveSearchPlacement(_state) == TopBarSearchPlacement.CenterBar)
             {
-                searchButton.Height = Math.Clamp(_state.Height - 10d, 18d, 30d);
+                searchButton.Height = Math.Clamp(BarHeight - 10d, 18d, 30d);
             }
             SetModuleGlassToolTip(
                 searchButton,
@@ -366,20 +387,24 @@ public sealed partial class TopBarWindow : Window
                     : $"搜索应用、文件（{_state.SearchHotkey}）");
         }
         ApplySurface();
-        _autoHide = new DockAutoHideState();
+        var wasReserved = _appBar?.IsReserved == true;
         _nativeTaskbar = TaskbarEdgeGuard.GetNativeTaskbarLayout(_monitor.Bounds);
         // The top edge is taken (a taskbar moved to the top on Windows 10): behave as
         // smart-hide instead of fighting over the space. A bar that already holds the
         // edge keeps it — its own reservation is not a foreign occupier.
         var reserve = TopBarReserveRules.ShouldReserve(
-            !IsCapsule && _state.VisibilityMode == TopBarVisibilityMode.ReserveTopEdge,
+            !IsCapsule && VisibilityMode == TopBarVisibilityMode.ReserveTopEdge,
             _appBar?.IsReserved == true,
             _monitor.Bounds,
             BingLan.App.Dock.DockAppBarController.GetLiveWorkingArea(_monitor),
             nativeTopEdgeOccupied: _nativeTaskbar?.Edge == DockEdge.Top);
+        if (reserve || wasReserved)
+        {
+            _autoHide = new DockAutoHideState();
+        }
         var previousBounds = _appBar?.Bounds;
         _appBar?.Apply(_monitor, reserve,
-            IsCapsule ? (_capsuleExpanded ? _capsuleExpandedHeight : CapsuleHeight) : _state.Height,
+            IsCapsule ? (_capsuleExpanded ? _capsuleExpandedHeight : CapsuleHeight) : BarHeight,
             IsCapsule ? (_capsuleExpanded ? CapsuleExpandedWidth : _capsuleCompactWidth) : null);
         if (previousBounds is { } before && _appBar is { } afterBar && before != afterBar.Bounds)
         {
@@ -400,17 +425,76 @@ public sealed partial class TopBarWindow : Window
         RenderModules();
         RefreshSystemFacts();
         UpdateBackdropSampling(immediate: true);
+        if (!reserve && _appBar is not null)
+        {
+            UpdateForForeground();
+        }
     }
 
-    private MonitorSnapshot? ResolveMonitor()
+    internal void ApplyScreenTarget(SurfaceMonitorSelection target)
     {
-        var monitors = MonitorCatalog.GetAll();
-        return monitors.FirstOrDefault(candidate => string.Equals(
-                candidate.DeviceName,
-                _state.MonitorDeviceName,
-                StringComparison.OrdinalIgnoreCase))
-            ?? monitors.FirstOrDefault(candidate => candidate.IsPrimary)
-            ?? monitors.FirstOrDefault();
+        _screenTarget = target;
+        ApplyState();
+    }
+
+    internal int? GetReservedBottomForMonitor(MonitorSnapshot monitor) =>
+        !_closing && _appBar is { IsReserved: true } bar
+            && bar.Monitor?.MonitorHandle == monitor.MonitorHandle
+            && bar.Bounds.Bottom > monitor.Bounds.Top
+            && TopBarReserveRules.IsWorkAreaReserved(DockAppBarController.GetLiveWorkingArea(monitor), bar.Bounds)
+            ? bar.Bounds.Bottom
+            : null;
+
+    private MonitorSnapshot? ResolveMonitor() => _screenTarget is { } target
+        ? MonitorCatalog.GetAll().FirstOrDefault(monitor => monitor.MonitorHandle == target.Monitor.MonitorHandle
+            && string.Equals(monitor.DeviceName, target.Monitor.DeviceName, StringComparison.OrdinalIgnoreCase))
+        : SurfaceMonitorTargetResolver.Resolve(_state.MonitorKey, _state.MonitorDeviceName);
+
+    private void OnEnvironmentChanged()
+    {
+        if (EnvironmentChanged is { } changed) changed();
+        else ApplyState();
+    }
+
+    internal void SetGlobalEventOwner(bool enabled)
+    {
+        if (_ownsGlobalEvents == enabled) return;
+        _ownsGlobalEvents = enabled;
+        if (enabled)
+        {
+            System.Net.NetworkInformation.NetworkChange.NetworkAddressChanged += OnNetworkAddressChanged;
+            SystemEvents.TimeChanged += OnSystemTimeChanged;
+            SystemEvents.PowerModeChanged += OnPowerModeChanged;
+            RegisterShellHook();
+            SubscribeInputMethodChanges();
+            RefreshSystemFacts();
+        }
+        else
+        {
+            UnregisterSearchHotkey();
+            System.Net.NetworkInformation.NetworkChange.NetworkAddressChanged -= OnNetworkAddressChanged;
+            SystemEvents.TimeChanged -= OnSystemTimeChanged;
+            SystemEvents.PowerModeChanged -= OnPowerModeChanged;
+            _inputMethodSubscription?.Dispose();
+            _inputMethodSubscription = null;
+            if (_shellHookActive && _handle != 0)
+            {
+                DockNativeMethods.DeregisterShellHookWindow(_handle);
+                HwndSource.FromHwnd(_handle)?.RemoveHook(OnShellHook);
+                _shellHookActive = false;
+            }
+        }
+    }
+
+    private void RegisterShellHook()
+    {
+        if (_handle == 0 || _shellHookActive || !_ownsGlobalEvents || _closing) return;
+        _shellHookMessage = DockNativeMethods.RegisterWindowMessageW("SHELLHOOK");
+        if (DockNativeMethods.RegisterShellHookWindow(_handle))
+        {
+            _shellHookActive = true;
+            HwndSource.FromHwnd(_handle)?.AddHook(OnShellHook);
+        }
     }
 
     private void OnSourceInitialized(object? sender, EventArgs e)
@@ -430,28 +514,15 @@ public sealed partial class TopBarWindow : Window
         HwndSource.FromHwnd(_handle)?.AddHook(PreventActivation);
         HwndSource.FromHwnd(_handle)?.AddHook(OnHotkeyMessage);
 
-        // The bar registers its own shell hook: the dock's hook lives on its window and
-        // disappears with it, while the bar needs the flash signal either way.
-        _shellHookMessage = DockNativeMethods.RegisterWindowMessageW("SHELLHOOK");
-        if (DockNativeMethods.RegisterShellHookWindow(_handle))
-        {
-            _shellHookActive = true;
-            HwndSource.FromHwnd(_handle)?.AddHook(OnShellHook);
-        }
+        RegisterShellHook();
 
-        _appBar = new TopBarAppBarController(this, _state.Height);
-        _appBar.EnvironmentChanged += ApplyState;
+        _appBar = new TopBarAppBarController(this, BarHeight);
+        _appBar.EnvironmentChanged += OnEnvironmentChanged;
         _appBar.ExplorerNotified += () => ExplorerNotified?.Invoke();
         _appBar.ExplorerRestarted += RenderModules;
         _appBar.ReservationFallbackTriggered += UpdateForForeground;
-        _inputMethodSubscription?.Dispose();
-        _inputMethodSubscription = TopBarSystemInfo.SubscribeInputMethodChanges(() =>
-            Dispatcher.BeginInvoke(() =>
-            {
-                if (_closing || !_modules.ContainsKey(TopBarModuleKind.InputMethod)) return;
-                RefreshActiveInputMethodName();
-                PollInputMethod(forceProfileRefresh: true);
-            }));
+        SubscribeInputMethodChanges();
+        _maximizeWatcher.Start();
         ApplyAcrylicBackdrop();
         ApplyState();
     }
@@ -459,6 +530,35 @@ public sealed partial class TopBarWindow : Window
     internal event Action? ShellRecovered;
 
     internal event Action? ExplorerNotified;
+
+    internal event Action? EnvironmentChanged;
+
+    internal event Action<int, nint>? ShellEventReceived;
+
+    internal event Action<TopBarSystemFacts>? SystemFactsChanged;
+
+    internal event Action? InputMethodChanged;
+
+    internal Action? SearchRequested { get; set; }
+
+    private void SubscribeInputMethodChanges()
+    {
+        _inputMethodSubscription?.Dispose();
+        _inputMethodSubscription = _ownsGlobalEvents ? TopBarSystemInfo.SubscribeInputMethodChanges(() =>
+            Dispatcher.BeginInvoke(() =>
+            {
+                if (_closing) return;
+                RefreshInputMethod();
+                InputMethodChanged?.Invoke();
+            })) : null;
+    }
+
+    internal void RefreshInputMethod()
+    {
+        if (_closing || !_modules.ContainsKey(TopBarModuleKind.InputMethod)) return;
+        RefreshActiveInputMethodName();
+        PollInputMethod(forceProfileRefresh: true);
+    }
 
     internal IEnumerable<nint> ActiveDesktopHandles()
     {
@@ -498,6 +598,7 @@ public sealed partial class TopBarWindow : Window
         try
         {
             Hide();
+            _appBar?.EnsureLayer();
         }
         finally
         {
@@ -561,16 +662,24 @@ public sealed partial class TopBarWindow : Window
         }
 
         var shellEvent = (int)wParam;
+        HandleShellEvent(shellEvent, lParam);
+        ShellEventReceived?.Invoke(shellEvent, lParam);
+        return 0;
+    }
+
+    internal void HandleShellEvent(int shellEvent, nint window)
+    {
+        if (_closing) return;
         var changed = shellEvent switch
         {
-            HshellFlash => MarkFlashed(lParam),
-            HshellWindowActivated or HshellRudeAppActivated => ClearActivatedAttention(lParam),
-            HshellWindowDestroyed => _attention.Closed(lParam),
+            HshellFlash => MarkFlashed(window),
+            HshellWindowActivated or HshellRudeAppActivated => ClearActivatedAttention(window),
+            HshellWindowDestroyed => _attention.Closed(window),
             _ => false
         };
-        if (shellEvent == HshellWindowDestroyed && lParam != 0)
+        if (shellEvent == HshellWindowDestroyed && window != 0)
         {
-            _observedTopWindows.Remove(lParam);
+            _observedTopWindows.Remove(window);
         }
         else if (shellEvent is HshellWindowActivated or HshellRudeAppActivated)
         {
@@ -582,7 +691,6 @@ public sealed partial class TopBarWindow : Window
         {
             RefreshAttention();
         }
-        return 0;
     }
 
     private bool MarkFlashed(nint window)
@@ -640,6 +748,7 @@ public sealed partial class TopBarWindow : Window
     private void OnClosing(object? sender, System.ComponentModel.CancelEventArgs e)
     {
         _closing = true;
+        SetGlobalEventOwner(false);
         if (_barMenu is { } barMenu)
         {
             barMenu.IsOpen = false;
@@ -656,22 +765,14 @@ public sealed partial class TopBarWindow : Window
             _searchPopup = null;
             searchPopup.RequestClose();
         }
-        _inputMethodSubscription?.Dispose();
-        _inputMethodSubscription = null;
         _foregroundTimer.Stop();
         _ambientTimer.Stop();
         _minuteTimer.Stop();
         _backdropTimer.Stop();
         _nudgeRecheckTimer.Stop();
+        _maximizeWatcher.Dispose();
         AccessibilityThemeManager.HighContrastChanged -= OnHighContrastChanged;
         _sampler.Sampled -= OnSampled;
-        System.Net.NetworkInformation.NetworkChange.NetworkAddressChanged -= OnNetworkAddressChanged;
-        SystemEvents.TimeChanged -= OnSystemTimeChanged;
-        SystemEvents.PowerModeChanged -= OnPowerModeChanged;
-        if (_shellHookActive && _handle != 0)
-        {
-            DockNativeMethods.DeregisterShellHookWindow(_handle);
-        }
         _appBar?.Dispose();
         _appBar = null;
     }
@@ -719,14 +820,18 @@ public sealed partial class TopBarWindow : Window
 
     private void OnAmbientTick()
     {
-        if (_closing || _sampler.IsRunning || !IsLoaded || !IsVisible)
+        if (_closing || _sampler.IsRunning || !IsLoaded)
         {
             return;
         }
 
-        RefreshSystemFacts();
-        _environment.RefreshWeatherIfDue();
-        RenderModules();
+        // The owner can be smart-hidden while a peer remains visible on another screen.
+        if (_ownsGlobalEvents)
+        {
+            RefreshSystemFacts();
+            _environment.RefreshWeatherIfDue();
+        }
+        if (IsVisible) RenderModules();
     }
 
     private void OnSampled(PerformanceSnapshot snapshot)
@@ -735,23 +840,27 @@ public sealed partial class TopBarWindow : Window
         // System facts are read off the UI thread: network enumeration and the volume COM
         // call are not free. The tick counter keeps them on their slower cadence.
         TopBarSystemFacts? facts = null;
-        if (Interlocked.Increment(ref _tick) % SystemInfoTickDivisor == 0)
+        if (_ownsGlobalEvents && Interlocked.Increment(ref _tick) % SystemInfoTickDivisor == 0)
         {
             facts = ReadSystemFacts();
         }
         Dispatcher.BeginInvoke(() =>
         {
+            if (_closing) return;
+            if (_ownsGlobalEvents)
+            {
+                if (facts is not null)
+                {
+                    ApplySharedSystemFacts(facts);
+                    SystemFactsChanged?.Invoke(facts);
+                }
+                _environment.RefreshWeatherIfDue();
+            }
             // A smart-hidden bar is not on screen; its projection waits until it shows.
             if (!IsLoaded || !IsVisible || _closing)
             {
                 return;
             }
-            if (facts is not null)
-            {
-                _facts = facts;
-                RenderSystemModules();
-            }
-            _environment.RefreshWeatherIfDue();
             RenderModules();
         });
     }
@@ -763,7 +872,7 @@ public sealed partial class TopBarWindow : Window
 
     private void RefreshSystemFacts()
     {
-        if (_closing)
+        if (_closing || !_ownsGlobalEvents)
         {
             return;
         }
@@ -772,7 +881,7 @@ public sealed partial class TopBarWindow : Window
         // are not free, and ApplyState can run on every display or settings change.
         Task.Run(() =>
         {
-            if (_closing)
+            if (_closing || !_ownsGlobalEvents)
             {
                 return;
             }
@@ -780,22 +889,26 @@ public sealed partial class TopBarWindow : Window
             var facts = ReadSystemFacts();
             Dispatcher.BeginInvoke(() =>
             {
-                if (_closing)
+                if (_closing || !_ownsGlobalEvents)
                 {
                     return;
                 }
-                _facts = facts;
-                if (IsLoaded)
-                {
-                    RenderSystemModules();
-                }
+                ApplySharedSystemFacts(facts);
+                SystemFactsChanged?.Invoke(facts);
             });
         });
     }
 
     // The input method leaves the background facts cadence: its TSF name read needs the
     // UI thread (STA), so the whole module rides the fast focus tick.
-    private sealed record TopBarSystemFacts(
+    internal void ApplySharedSystemFacts(TopBarSystemFacts facts)
+    {
+        if (_closing) return;
+        _facts = facts;
+        if (IsLoaded && IsVisible) RenderSystemModules();
+    }
+
+    internal sealed record TopBarSystemFacts(
         (int Percent, TopBarBatteryStatus Status) Battery,
         (int Percent, bool Muted)? Volume,
         TopBarNetworkStatus Network);
@@ -1097,7 +1210,7 @@ public sealed partial class TopBarWindow : Window
             var block = new Border
             {
                 Padding = new Thickness(8, 0, 8, 0),
-                MinHeight = _state.Height,
+                MinHeight = BarHeight,
                 Child = content
             };
             System.Windows.Automation.AutomationProperties.SetName(block, $"{label}模块");
@@ -2709,7 +2822,7 @@ public sealed partial class TopBarWindow : Window
             Style = (Style)Resources["SearchEntryButton"],
             Width = SearchBoxWidth,
             MinWidth = TopBarSearchRules.MinCenteredEntryWidth,
-            Height = Math.Clamp(_state.Height - 10d, 18d, 30d),
+            Height = Math.Clamp(BarHeight - 10d, 18d, 30d),
             VerticalAlignment = VerticalAlignment.Center,
             Focusable = true,
             Content = content
@@ -2791,6 +2904,12 @@ public sealed partial class TopBarWindow : Window
 
     internal void TriggerSearch()
     {
+        if (SearchRequested is { } requested) requested();
+        else TriggerOwnedSearch();
+    }
+
+    internal void TriggerOwnedSearch()
+    {
         if (_closing || !IsSearchEntryEnabled)
         {
             return;
@@ -2860,6 +2979,13 @@ public sealed partial class TopBarWindow : Window
         };
         _searchPopup = popup;
         popup.Show();
+    }
+
+    internal void CloseSearchPopup()
+    {
+        if (_searchPopup is not { } popup) return;
+        _searchPopup = null;
+        popup.RequestClose();
     }
 
 
@@ -3669,7 +3795,9 @@ public sealed partial class TopBarWindow : Window
             return;
         }
 
-        if (TaskbarEdgeGuard.GetNativeTaskbarLayout(monitor.Bounds) != _nativeTaskbar)
+        var liveTaskbar = TaskbarEdgeGuard.GetNativeTaskbarLayout(monitor.Bounds);
+        if (liveTaskbar?.Edge != _nativeTaskbar?.Edge
+            || liveTaskbar?.AutoHidden != _nativeTaskbar?.AutoHidden)
         {
             var autoHide = _autoHide;
             ApplyState();
@@ -3689,6 +3817,7 @@ public sealed partial class TopBarWindow : Window
 
         var bounds = _appBar.Bounds;
         var foreground = ForegroundWindowRect(out var foregroundBounds, out var foregroundWindow);
+        var hasBacking = TransientForegroundResolver.TryResolveBackingWindow(foregroundWindow, _handle, out var backing);
         // The keyboard layout follows the focused window, and the IME's own
         // Chinese/English toggle changes no window at all, so the module re-reads on
         // every fast tick instead of waiting for the slower system-info cadence.
@@ -3698,9 +3827,44 @@ public sealed partial class TopBarWindow : Window
         }
 
         var fullScreen = foreground && DockVacateRules.CoversMonitor(foregroundBounds, monitor.Bounds);
-        var zoomed = foreground && foregroundWindow != 0 && DockNativeMethods.IsZoomed(foregroundWindow);
-        var directTrueFullScreen = DockVacateRules.IsTrueFullScreen(fullScreen, zoomed);
+        var zoomed = foreground && foregroundWindow != 0 && DockNativeMethods.IsZoomed(foregroundWindow)
+            && DockNativeMethods.MonitorFromWindow(foregroundWindow, DockNativeMethods.MonitorDefaultToNearest) == monitor.MonitorHandle;
+        var foregroundOwnProcess = false;
+        var hasStandardChrome = false;
+        var isToolOrOverlay = false;
+        var isTopmost = false;
+        if (foreground && foregroundWindow != 0)
+        {
+            DockNativeMethods.GetWindowThreadProcessId(foregroundWindow, out var foregroundPid);
+            foregroundOwnProcess = foregroundPid == (uint)Environment.ProcessId;
+            if (!foregroundOwnProcess)
+            {
+                var exStyle = NativeMethods.GetExStyleOf(foregroundWindow);
+                isToolOrOverlay = (exStyle & (NativeMethods.WsExToolWindow | NativeMethods.WsExTransparent)) != 0;
+                isTopmost = (exStyle & NativeMethods.WsExTopmost) != 0;
+                if (fullScreen && !zoomed)
+                {
+                    var style = (long)NativeMethods.GetWindowLongPtr(foregroundWindow, NativeMethods.GwlStyle);
+                    var className = new StringBuilder(64);
+                    DockNativeMethods.GetClassNameW(foregroundWindow, className, className.Capacity);
+                    var isApplicationFrame = string.Equals(
+                        className.ToString(),
+                        "ApplicationFrameWindow",
+                        StringComparison.Ordinal);
+                    hasStandardChrome = !isApplicationFrame
+                        && (style & NativeMethods.WsCaption) == NativeMethods.WsCaption
+                        && (style & NativeMethods.WsThickFrame) != 0;
+                }
+            }
+        }
+        var directTrueFullScreen = DockVacateRules.IsTrueFullScreen(
+            fullScreen && !foregroundOwnProcess,
+            zoomed,
+            hasStandardChrome,
+            isToolOrOverlay,
+            isTopmost);
         var backingFullScreen = !directTrueFullScreen
+            && !foregroundOwnProcess
             && foregroundWindow != 0
             && FullScreenWatcher.IsTrueFullScreenContext(foregroundWindow, monitor.MonitorHandle);
         var trueFullScreen = DockVacateRules.IsEffectiveFullScreen(directTrueFullScreen, backingFullScreen);
@@ -3731,8 +3895,8 @@ public sealed partial class TopBarWindow : Window
             var coveredByForeground = fullScreen
                 || trueFullScreen
                 || (!nudgedAsynchronously
-                    && foreground
-                    && TopBarReserveRules.IsWindowCoveringReservedBar(foregroundBounds, bounds));
+                    && ((foreground && TopBarReserveRules.IsWindowCoveringReservedBar(foregroundBounds, bounds))
+                        || (hasBacking && TopBarReserveRules.IsWindowCoveringReservedBar(backing.Bounds, bounds))));
             _appBar.SetFullScreenDetected(coveredByForeground);
             if (coveredByForeground)
             {
@@ -3754,22 +3918,50 @@ public sealed partial class TopBarWindow : Window
             : SmartHideCheckInterval;
         DockNativeMethods.GetCursorPos(out var cursor);
         var revealDepth = Math.Max(2, (int)Math.Round(2 * monitor.Dpi / 96d));
-        var pointerOverBar = IsVisible
-            && cursor.X >= bounds.Left && cursor.X < bounds.Right
-            && cursor.Y >= bounds.Top && cursor.Y < bounds.Bottom;
-        var overlaps = foreground && foregroundBounds.Intersects(bounds);
+        var directOverlaps = foreground && foregroundBounds.Intersects(bounds);
+        var backingOverlaps = hasBacking && backing.Bounds.Intersects(bounds);
+        var backingZoomed = hasBacking && backing.IsZoomed && backing.MonitorHandle == monitor.MonitorHandle;
+        var (overlaps, effectiveZoomed) = DockVacateRules.ResolveEffectiveSmartHideOverlap(
+            directOverlaps,
+            zoomed,
+            backingOverlaps,
+            backingZoomed);
+        PixelRect monitorCoveringBounds = default;
+        if (!(overlaps && effectiveZoomed)
+            && TransientForegroundResolver.TryFindCoveringWindowOnMonitor(
+                monitor.MonitorHandle,
+                bounds,
+                _handle,
+                out var monitorOverlaps,
+                out var monitorMaximized,
+                out monitorCoveringBounds))
+        {
+            overlaps |= monitorOverlaps;
+            effectiveZoomed |= monitorMaximized;
+        }
         var revealBounds = IsCapsule ? bounds with
         {
             Top = Math.Max(monitor.Bounds.Top, bounds.Top - (int)Math.Round(6d * monitor.Dpi / 96d))
         } : bounds;
-        var captionExclusionPx = !IsCapsule && foreground && overlaps
+        var captionSourceBounds = foreground && directOverlaps
+            ? foregroundBounds
+            : hasBacking && backingOverlaps
+                ? backing.Bounds
+                : monitorCoveringBounds;
+        var captionExclusionPx = !IsCapsule && captionSourceBounds.HasArea
             ? (int)Math.Round(TopBarRevealRules.CaptionButtonsExclusionDip * monitor.Dpi / 96d)
             : 0;
         var excludedCaptionSpan = captionExclusionPx > 0
-            ? TopBarRevealRules.ComputeCaptionButtonExclusion(foregroundBounds, bounds, captionExclusionPx)
+            ? TopBarRevealRules.ComputeCaptionButtonExclusion(captionSourceBounds, bounds, captionExclusionPx)
             : null;
+        var pointerOverBar = TopBarRevealRules.IsPointerOverBar(
+            cursor.X,
+            cursor.Y,
+            IsVisible,
+            bounds,
+            excludedCaptionSpan);
         var input = new DockAutoHideInput(
-            WindowOverlapsDock: overlaps,
+            WindowOverlapsDock: overlaps || effectiveZoomed,
             ForegroundIsFullScreen: trueFullScreen,
             PointerInRevealZone: TopBarRevealRules.IsInRevealZone(
                 cursor.X,
@@ -3781,13 +3973,14 @@ public sealed partial class TopBarWindow : Window
             InteractionActive: _menuOpen || _capsuleExpanded
                 || _todoFlyout?.IsOpen == true || _clockFlyout?.IsOpen == true
                 || _inputMethodFlyout?.IsOpen == true || HasOpenSystemFlyout || _searchPopup is not null,
-            OverlapIsMaximizedWindow: zoomed);
+            OverlapIsMaximizedWindow: effectiveZoomed);
         _autoHide.Update(input, DateTimeOffset.UtcNow);
         if (_autoHide.IsShown != IsVisible)
         {
             if (_autoHide.IsShown)
             {
                 Show();
+                _appBar.EnsureLayer();
                 RenderModules();
                 RenderSystemModules();
             }

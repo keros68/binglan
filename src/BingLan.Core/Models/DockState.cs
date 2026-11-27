@@ -81,6 +81,9 @@ public sealed class DockState
     /// Whether the "show desktop" entry appears in the Dock command group. Machine-local.
     /// </summary>
     public bool ShowDesktopButton { get; set; } = true;
+    /// <summary>Persistent physical display identity; null follows Windows primary when no legacy choice remains.</summary>
+    public string? MonitorKey { get; set; }
+    /// <summary>Unconfirmed legacy display name, retained until the user explicitly chooses a target.</summary>
     public string? MonitorDeviceName { get; set; }
     /// <summary>Which monitor edge the dock sits on: Bottom (default), Left, or Right. Top is rejected.</summary>
     public DockEdge Edge { get; set; } = DockEdge.Bottom;

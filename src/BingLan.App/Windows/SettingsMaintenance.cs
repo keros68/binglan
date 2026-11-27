@@ -42,6 +42,12 @@ public sealed record MoveWidgetResult(
     string Message,
     WidgetWindowBase? ResultingWindow);
 
+/// <summary>Current effective state of both surfaces on one physical monitor.</summary>
+public sealed record ScreenSurfaceStatus(string DockStatus, string TopBarStatus);
+
+/// <summary>A saved offline desktop that may be associated with a blank connected monitor.</summary>
+public sealed record OfflineScreenProfileOption(string ScreenKey, string DisplayLabel, int CardCount, bool CanBind);
+
 /// <summary>
 /// Bridge between <see cref="SettingsWindow"/> and <see cref="WidgetCoordinator"/> for
 /// multi-screen card profile management. Null in single-screen tests that do not attach it.
@@ -53,7 +59,14 @@ public sealed class MultiScreenSettingsBridge
     public Func<int> GetConnectedMonitorCount { get; init; } = () => 1;
     public Func<bool> HasSavedSecondaryState { get; init; } = () => false;
     public Action<bool> SetEnabled { get; init; } = _ => { };
+    public Func<bool> CanBindLegacyRoot { get; init; } = () => false;
+    public Func<string, bool> BindLegacyRoot { get; init; } = _ => false;
     public Func<IReadOnlyList<MonitorCardOption>> GetScreens { get; init; } = () => [];
+    public Func<string, BingLan.Core.Models.ScreenSurfacePreferences?> GetSurfacePreferences { get; init; } = _ => null;
+    public Action<string, BingLan.Core.Models.ScreenSurfacePreferences> ApplySurfacePreferences { get; init; } = (_, _) => { };
+    public Func<string, ScreenSurfaceStatus> GetSurfaceStatus { get; init; } = _ => new(string.Empty, string.Empty);
+    public Func<string, IReadOnlyList<OfflineScreenProfileOption>> GetOfflineProfiles { get; init; } = _ => [];
+    public Func<string, string, bool> BindOfflineProfile { get; init; } = (_, _) => false;
     public Func<string?, BingLan.Core.Models.DesktopExperienceState> GetExperience { get; init; } =
         _ => BingLan.Core.Models.DesktopExperienceRules.CreateDefault();
     public Action<string?, BingLan.Core.Models.DesktopExperienceState> ApplyExperience { get; init; } = (_, _) => { };
@@ -69,10 +82,6 @@ public sealed class MultiScreenSettingsBridge
     public Func<string, string> CopyPrimaryProfileToScreen { get; init; } = _ => string.Empty;
     public Func<WidgetWindowBase, string?, MoveWidgetResult> MoveWidgetToScreen { get; init; } =
         (_, _) => new MoveWidgetResult(false, string.Empty, null);
-    public Func<IReadOnlyList<BingLan.Core.Models.DisconnectedScreenWidget>> GetDisconnectedWidgets { get; init; } =
-        () => [];
-    public Func<Guid, string, bool> MoveDisconnectedWidgetToPrimary { get; init; } = (_, _) => false;
-    public Func<string, int> MoveAllDisconnectedFromScreenToPrimary { get; init; } = _ => 0;
 }
 
 /// <summary>Startup, data folder, backup and theme actions offered by the settings window.</summary>

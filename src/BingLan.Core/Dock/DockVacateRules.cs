@@ -203,6 +203,52 @@ public static class DockVacateRules
         usesSmartHide && revealOnAttention && !isFullScreen && !isSuppressed;
 
     /// <summary>
+    /// Whether a foreground window is a transient menu, popup, dialog, or tool overlay
+    /// (such as a Win32 <c>#32768</c> context menu or an app's custom popup menu) whose
+    /// underlying owner/same-process window should remain counted for smart-hide overlap
+    /// and maximized-window vacation.
+    /// </summary>
+    public static bool IsTransientPopupForSmartHide(
+        string className,
+        bool isZoomed,
+        bool isPopup,
+        bool isToolWindow,
+        bool hasStandardResizableFrame,
+        bool isAppWindow)
+    {
+        if (isZoomed)
+        {
+            return false;
+        }
+
+        if (string.Equals(className, "#32768", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        return IsTransientFullScreenChildWindow(
+            isZoomed: false,
+            isPopup: isPopup,
+            isDialogClass: string.Equals(className, "#32770", StringComparison.Ordinal),
+            isToolWindow: isToolWindow,
+            hasStandardResizableFrame: hasStandardResizableFrame,
+            isAppWindow: isAppWindow);
+    }
+
+    /// <summary>
+    /// Combines the direct foreground window with a resolved backing host window (when
+    /// foreground is a transient popup/context menu) so smart-hide and maximize-vacate
+    /// stay stable while menus open over an overlapping or maximized application.
+    /// </summary>
+    public static (bool WindowOverlapsDock, bool OverlapIsMaximizedWindow) ResolveEffectiveSmartHideOverlap(
+        bool foregroundOverlapsDock,
+        bool foregroundMaximizedOnDockMonitor,
+        bool backingOverlapsDock,
+        bool backingMaximizedOnDockMonitor) =>
+        (foregroundOverlapsDock || backingOverlapsDock,
+            foregroundMaximizedOnDockMonitor || backingMaximizedOnDockMonitor);
+
+    /// <summary>
     /// Decides whether the dock should step aside for a foreground Windows shell surface
     /// (taskbar, Start menu, Quick Settings, tray overflow). When the foreground is the
     /// taskbar itself on a different screen edge and does not overlap the dock (for example
@@ -213,15 +259,50 @@ public static class DockVacateRules
         bool isTaskbarWindow,
         DockEdge dockEdge,
         DockEdge? nativeTaskbarEdge,
-        bool surfaceIntersectsDock)
+        bool surfaceIntersectsDock) =>
+        ShouldYieldToSystemSurface(
+            !isSystemMenuForeground
+                ? SystemSurfaceKind.None
+                : isTaskbarWindow
+                    ? SystemSurfaceKind.Taskbar
+                    : SystemSurfaceKind.GlobalSystemMenu,
+            dockEdge,
+            nativeTaskbarEdge,
+            surfaceIntersectsDock,
+            isTaskbarCollapsed: false);
+
+    /// <summary>
+    /// Fine-grained system-surface yield rule:
+    /// - Start menu / Search / Quick Settings (<see cref="SystemSurfaceKind.GlobalSystemMenu"/>)
+    ///   keep yielding globally so native system panels remain unobstructed.
+    /// - Collapsed auto-hidden taskbar windows that passively received focus without
+    ///   intersecting the dock do not hide the dock.
+    /// - Taskbar windows and taskbar-anchored popups (tray overflow, taskbar context menus)
+    ///   on a different monitor edge that do not intersect the dock do not hide the dock.
+    /// </summary>
+    public static bool ShouldYieldToSystemSurface(
+        SystemSurfaceKind surfaceKind,
+        DockEdge dockEdge,
+        DockEdge? nativeTaskbarEdge,
+        bool surfaceIntersectsDock,
+        bool isTaskbarCollapsed = false)
     {
-        if (!isSystemMenuForeground)
+        if (surfaceKind == SystemSurfaceKind.None)
         {
             return false;
         }
 
-        if (isTaskbarWindow
-            && nativeTaskbarEdge is { } taskbarEdge
+        if (surfaceKind == SystemSurfaceKind.GlobalSystemMenu)
+        {
+            return true;
+        }
+
+        if (surfaceKind == SystemSurfaceKind.Taskbar && isTaskbarCollapsed && !surfaceIntersectsDock)
+        {
+            return false;
+        }
+
+        if (nativeTaskbarEdge is { } taskbarEdge
             && taskbarEdge != DockEdgeRules.Normalize(dockEdge)
             && !surfaceIntersectsDock)
         {
@@ -230,4 +311,12 @@ public static class DockVacateRules
 
         return true;
     }
+}
+
+public enum SystemSurfaceKind
+{
+    None,
+    Taskbar,
+    TaskbarPopup,
+    GlobalSystemMenu
 }

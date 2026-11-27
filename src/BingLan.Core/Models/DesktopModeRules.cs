@@ -25,6 +25,14 @@ public static class DesktopModeRules
         DesktopComponentKind.Performance
     ];
 
+    public static bool TopBarDuplicatesCard(TopBarModuleSwitches modules, DesktopComponentKind kind) => kind switch
+    {
+        DesktopComponentKind.TimeDate => TopBarRules.IsModuleOn(modules, TopBarModuleKind.Clock),
+        DesktopComponentKind.Weather => TopBarRules.IsModuleOn(modules, TopBarModuleKind.Weather),
+        DesktopComponentKind.Performance => TopBarRules.IsModuleOn(modules, TopBarModuleKind.Performance),
+        _ => false
+    };
+
     public static void Apply(DesktopMode mode, DockState dock, TaskbarState taskbar)
     {
         ArgumentNullException.ThrowIfNull(dock);
@@ -67,7 +75,8 @@ public static class DesktopModeRules
         DockState dock,
         TaskbarState taskbar,
         TopBarState topBar,
-        DesktopExperienceState experience)
+        DesktopExperienceState experience,
+        bool updateInformationCards = true)
     {
         ArgumentNullException.ThrowIfNull(topBar);
         ArgumentNullException.ThrowIfNull(experience);
@@ -78,9 +87,12 @@ public static class DesktopModeRules
         {
             TopBarRules.ApplyDensityPreset(topBar, TopBarDensityPreset.MacMinimal);
         }
-        foreach (var kind in TopBarInfoCardKinds)
+        if (updateInformationCards)
         {
-            experience.GetComponent(kind).IsVisible = mode != DesktopMode.AppleStyle;
+            foreach (var kind in TopBarInfoCardKinds)
+            {
+                experience.GetComponent(kind).IsVisible = mode != DesktopMode.AppleStyle;
+            }
         }
     }
 

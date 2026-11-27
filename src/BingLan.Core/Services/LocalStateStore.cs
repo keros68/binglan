@@ -1052,10 +1052,21 @@ public sealed class LocalStateStore
         {
             state.SchemaVersion = 65;
         }
+        if (state.SchemaVersion < 66)
+        {
+            // Earlier root layouts have no physical-monitor evidence. Keep their content and
+            // ownership intact until the user explicitly binds the legacy layout.
+            state.SchemaVersion = 66;
+        }
         if (state.MultiScreen is not null)
         {
             MultiScreenRules.Normalize(state.MultiScreen, state.TodoWidgets);
         }
+        state.Dock.MonitorKey = MultiScreenRules.NormalizeScreenKey(state.Dock.MonitorKey);
+        state.TopBar.MonitorKey = MultiScreenRules.NormalizeScreenKey(state.TopBar.MonitorKey);
+        state.TopBar.MonitorDeviceName = string.IsNullOrWhiteSpace(state.TopBar.MonitorDeviceName)
+            ? null
+            : state.TopBar.MonitorDeviceName.Trim();
         if (!Enum.IsDefined(state.Taskbar.Mode))
         {
             state.Taskbar.Mode = TaskbarMode.SystemDefault;

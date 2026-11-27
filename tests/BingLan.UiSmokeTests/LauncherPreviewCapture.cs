@@ -161,7 +161,7 @@ internal static class LauncherPreviewCapture
         const BindingFlags privateInstance = BindingFlags.Instance | BindingFlags.NonPublic;
         var coordinatorType = typeof(WidgetCoordinator);
         var existingBoxes = app.Windows.OfType<FileBoxWindow>().ToHashSet();
-        coordinatorType.GetMethod("AddFileBox", privateInstance)!.Invoke(coordinator, [null]);
+        coordinatorType.GetMethod("AddFileBox", privateInstance)!.Invoke(coordinator, null);
         var target = app.Windows.OfType<FileBoxWindow>().Single(box => !existingBoxes.Contains(box));
         var sample = Path.Combine(dataDirectory, $"发送途中删除目标-{Guid.NewGuid():N}.txt");
         File.WriteAllText(sample, "分组盒只保存路径映射");

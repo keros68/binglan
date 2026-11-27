@@ -5,9 +5,8 @@ using BingLan.Core.Models;
 namespace BingLan.App.Dock;
 
 /// <summary>
-/// Owns the ice-blue dock window for the app lifetime. The dock is opt-in; a failure
-/// while opening or applying it closes the dock (releasing any reserved work area)
-/// without affecting desktop widgets.
+/// Owns the enabled dock surfaces for the app lifetime. Each surface releases its
+/// reserved work area when its display is disabled or disconnected.
 /// </summary>
 internal sealed class DockHost : IDisposable
 {
@@ -16,7 +15,8 @@ internal sealed class DockHost : IDisposable
     private readonly Action _stateChanged;
     private readonly Action _openSettings;
     private readonly Action<string> _notify;
-    private IceBlueDockWindow? _window;
+    private readonly Dictionary<string, IceBlueDockWindow> _windows = new(StringComparer.OrdinalIgnoreCase);
+    private readonly DockRuntime _runtime = new();
     private bool _suppressed;
 
     internal DockHost(
@@ -48,17 +48,30 @@ internal sealed class DockHost : IDisposable
     internal Func<nint, nint>? ResolvePanelForeground { get; set; }
     internal Func<MonitorSnapshot, int?>? ResolveTopBarReservedBottomPx { get; set; }
     internal Func<bool> IsLauncherEnabled { get; set; } = () => true;
+    internal Func<IReadOnlyDictionary<string, ScreenSurfacePreferences>?>? ReadScreenPreferences { get; set; }
+    internal Func<string, ScreenSurfacePreferences?>? GetOrCreateScreenPreferences { get; set; }
 
     internal IEnumerable<nint> ActiveDesktopHandles() =>
-        _window?.ActiveDesktopHandles() ?? [];
+        _windows.Values.SelectMany(window => window.ActiveDesktopHandles());
 
-    internal void EnsureAboveDesktop() =>
-        _window?.EnsureAboveDesktop();
+    internal void EnsureAboveDesktop()
+    {
+        foreach (var window in _windows.Values.ToArray()) window.EnsureAboveDesktop();
+    }
 
-    internal void RefreshAdaptiveAppearance() =>
-        _window?.RefreshAdaptiveAppearance();
+    internal void RefreshAdaptiveAppearance()
+    {
+        foreach (var window in _windows.Values.ToArray()) window.RefreshAdaptiveAppearance();
+    }
 
     internal bool IsSuppressed => _suppressed;
+
+    internal bool HasAttention => _windows.Values.Any(window => window.HasAttention);
+
+    internal bool IsRunningOnMonitor(string monitorKey) => _windows.ContainsKey(monitorKey);
+
+    internal bool IsVisibleOnMonitor(string monitorKey) =>
+        _windows.TryGetValue(monitorKey, out var window) && window.ActiveDesktopHandles().Any();
 
     internal void SetSuppressed(bool suppressed)
     {
@@ -72,7 +85,7 @@ internal sealed class DockHost : IDisposable
 
     internal void Apply()
     {
-        if (!_state.IsEnabled || _suppressed)
+        if (_suppressed)
         {
             Close();
             return;
@@ -80,15 +93,37 @@ internal sealed class DockHost : IDisposable
 
         try
         {
-            if (_window is null)
+            var preferences = ReadScreenPreferences?.Invoke();
+            var targets = SurfaceMonitorTargetResolver.ResolveTargets(
+                _state.MonitorKey, _state.MonitorDeviceName, _state.IsEnabled,
+                preferences, screen => screen.DockEnabled);
+            var activeKeys = targets.Select(target => target.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            foreach (var key in _windows.Keys.Where(key => !activeKeys.Contains(key)).ToArray())
             {
-                Open();
+                Close(key);
             }
-            else
+            foreach (var target in targets)
             {
-                _window.LauncherEnabled = IsLauncherEnabled();
-                _window.ApplyState();
-                _window.RefreshWindows();
+                try
+                {
+                    if (!_windows.TryGetValue(target.Key, out var window))
+                    {
+                        Open(target, preferences is not null);
+                    }
+                    else
+                    {
+                        window.ScreenSelection = preferences is null ? null : target;
+                        window.LauncherEnabled = IsLauncherEnabled();
+                        window.ApplyState();
+                        window.RefreshWindows();
+                    }
+                }
+                catch (Exception exception)
+                {
+                    System.Diagnostics.Debug.WriteLine($"Dock 打开失败：{exception}");
+                    Close(target.Key);
+                    _notify("冰蓝 Dock 未能打开，已恢复屏幕工作区。");
+                }
             }
         }
         catch (Exception exception)
@@ -114,16 +149,18 @@ internal sealed class DockHost : IDisposable
         }
         if (added > 0)
         {
-            _window?.RefreshWindows();
+            RefreshSharedItems();
             _stateChanged();
         }
         return added;
     }
 
-    private void Open()
+    private void Open(SurfaceMonitorSelection target, bool useScreenPreferences)
     {
-        var window = new IceBlueDockWindow(_state, _style)
+        var window = new IceBlueDockWindow(_state, _style, _runtime)
         {
+            ScreenSelection = useScreenPreferences ? target : null,
+            GetOrCreateScreenPreferences = () => GetOrCreateScreenPreferences?.Invoke(target.Key),
             ReadFileBoxes = ReadFileBoxes,
             SendToFileBox = SendToFileBox,
             ResolvePanelForeground = ResolvePanelForeground,
@@ -135,6 +172,7 @@ internal sealed class DockHost : IDisposable
             window.LauncherRequested += LauncherRequested;
         }
         window.DockStateChanged += _stateChanged;
+        window.SharedItemsChanged += RefreshSharedItems;
         window.SettingsRequested += _openSettings;
         window.CommandFailed += _notify;
         window.ShellRecovered += () => ShellRecovered?.Invoke();
@@ -142,25 +180,48 @@ internal sealed class DockHost : IDisposable
         window.ShowDesktopTriggered += () => ShowDesktopTriggered?.Invoke();
         window.HideRequested += () =>
         {
-            _state.IsEnabled = false;
-            Close();
+            if (window.ScreenSelection is not null)
+            {
+                if (GetOrCreateScreenPreferences?.Invoke(target.Key) is not { } preferences)
+                {
+                    return;
+                }
+                preferences.DockEnabled = false;
+                Close(target.Key);
+            }
+            else
+            {
+                _state.IsEnabled = false;
+                Apply();
+            }
             _stateChanged();
         };
         window.Closed += (_, _) =>
         {
-            if (ReferenceEquals(_window, window))
+            if (_windows.TryGetValue(target.Key, out var current) && ReferenceEquals(current, window))
             {
-                _window = null;
+                _windows.Remove(target.Key);
             }
         };
-        _window = window;
+        _windows.Add(target.Key, window);
         window.Show();
+    }
+
+    private void RefreshSharedItems()
+    {
+        _runtime.InvalidateVisuals();
+        foreach (var window in _windows.Values.ToArray()) window.RefreshSharedItems();
+    }
+
+    private void Close(string key)
+    {
+        if (_windows.Remove(key, out var window)) window.Close();
     }
 
     private void Close()
     {
-        var window = _window;
-        _window = null;
-        window?.Close();
+        var windows = _windows.Values.ToArray();
+        _windows.Clear();
+        foreach (var window in windows) window.Close();
     }
 }

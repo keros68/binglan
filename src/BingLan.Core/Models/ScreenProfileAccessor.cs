@@ -3,23 +3,13 @@ using BingLan.Core.Services;
 
 namespace BingLan.Core.Models;
 
-/// <summary>
-/// Summary of a card currently stored on a disconnected secondary monitor so the settings UI
-/// can surface it and let the user move it back to the primary display.
-/// </summary>
-public sealed record DisconnectedScreenWidget(
-    Guid Id,
-    string Title,
-    string KindName,
-    string ScreenKey,
-    bool IsHidden);
-
 public sealed record MonitorIdentityCandidate(
     string MonitorKey,
     string? HardwareId,
     string? DeviceName,
     string? FriendlyName,
-    string? DisplayLabel);
+    string? DisplayLabel,
+    string? LegacyDeviceKey = null);
 
 /// <summary>
 /// Result of copying the primary display's desktop card profile to a secondary monitor.
@@ -31,8 +21,8 @@ public sealed record CopyPrimaryProfileResult(
     PixelRect? CreatedTodoPixelBounds);
 
 /// <summary>
-/// Unified pure accessor bridging the primary display (stored in root <see cref="AppState"/>
-/// fields) and secondary displays (stored in <see cref="AppState.MultiScreen"/>), plus
+/// Unified pure accessor bridging the root profile (stored in <see cref="AppState"/>
+/// fields, addressed by a null key) and independent displays (stored in <see cref="AppState.MultiScreen"/>), plus
 /// target-monitor local-DIP to physical-pixel placement rules.
 /// </summary>
 public static class ScreenProfileAccessor
@@ -40,12 +30,6 @@ public static class ScreenProfileAccessor
     public const double DefaultDpi = 96d;
     public const double MinimumWidgetWidthDip = 226d;
     public const double MinimumWidgetHeightDip = 166d;
-
-    public const string DisconnectedTodoKind = "待办卡片";
-    public const string DisconnectedNoteKind = "普通便签";
-    public const string DisconnectedFileBoxKind = "文件收纳盒";
-    public const string DisconnectedQuickLaunchKind = "快捷入口";
-    public const string DisconnectedBuiltInInfoKind = "桌面信息卡片";
 
     public static bool IsPrimary(string? screenKey) =>
         MultiScreenRules.NormalizeScreenKey(screenKey) is null;
@@ -58,6 +42,69 @@ public static class ScreenProfileAccessor
 
     public static bool IsMultiScreenEnabled(AppState state) =>
         state?.MultiScreen is { IsEnabled: true };
+
+    /// <summary>Explicitly pins the existing root layout without copying or moving any card.</summary>
+    public static bool BindLegacyRootToScreen(AppState state, string screenKey)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        var normalized = MultiScreenRules.NormalizeScreenKey(screenKey);
+        if (normalized is null
+            || MultiScreenRules.NormalizeScreenKey(state.MultiScreen?.RootMonitorKey) is not null
+            || state.MultiScreen?.Screens.ContainsKey(normalized) == true
+            || HasCardsForScreen(state, normalized))
+        {
+            return false;
+        }
+
+        state.MultiScreen ??= new MultiScreenState();
+        state.MultiScreen.RootMonitorKey = normalized;
+        return true;
+    }
+
+    private static bool HasCardsForScreen(AppState state, string screenKey) =>
+        state.TodoWidgets.Any(todo => MatchesScreen(todo.ScreenKey, screenKey))
+        || state.NoteWidgets.Any(note => MatchesScreen(note.ScreenKey, screenKey))
+        || state.FileBoxes.Any(box => MatchesScreen(box.ScreenKey, screenKey));
+
+    public static bool CanBindArchivedProfile(AppState state, string targetKey) =>
+        MultiScreenRules.NormalizeScreenKey(targetKey) is { } target
+        && state.MultiScreen is { IsEnabled: true } multiScreen
+        && !MatchesScreen(multiScreen.RootMonitorKey, target)
+        && !multiScreen.Screens.ContainsKey(target)
+        && !multiScreen.SurfacePreferences.ContainsKey(target)
+        && !HasCardsForScreen(state, target);
+
+    public static bool BindArchivedProfile(AppState state, string sourceKey, MonitorIdentityCandidate target)
+    {
+        var source = MultiScreenRules.NormalizeScreenKey(sourceKey);
+        var destination = MultiScreenRules.NormalizeScreenKey(target.MonitorKey);
+        if (source is null || destination is null || MatchesScreen(source, destination)
+            || !CanBindArchivedProfile(state, destination) || state.MultiScreen is not { } multiScreen)
+        {
+            return false;
+        }
+
+        if (MatchesScreen(multiScreen.RootMonitorKey, source))
+        {
+            multiScreen.RootMonitorKey = destination;
+        }
+        else if (multiScreen.Screens.ContainsKey(source))
+        {
+            return MigrateScreenKey(state, source, destination, target.DeviceName, target.DisplayLabel,
+                target.HardwareId, target.FriendlyName);
+        }
+        else if (!multiScreen.SurfacePreferences.ContainsKey(source))
+        {
+            return false;
+        }
+
+        if (multiScreen.SurfacePreferences.Remove(source, out var preferences))
+        {
+            preferences.DisplayLabel = target.DisplayLabel;
+            multiScreen.SurfacePreferences[destination] = preferences;
+        }
+        return true;
+    }
 
     public static DesktopExperienceState GetExperience(AppState state, string? screenKey)
     {
@@ -950,46 +997,6 @@ public static class ScreenProfileAccessor
         return (GetQuickPlaces(state, dstKey), leftover, transferredAny);
     }
 
-    public static bool MoveDisconnectedQuickPlacesToPrimary(AppState state, string sourceScreenKey)
-    {
-        ArgumentNullException.ThrowIfNull(state);
-        var srcKey = MultiScreenRules.NormalizeScreenKey(sourceScreenKey);
-        if (srcKey is null
-            || state.MultiScreen is null
-            || !state.MultiScreen.Screens.TryGetValue(srcKey, out var profile))
-        {
-            return false;
-        }
-
-        var srcComponent = profile.Experience.GetComponent(DesktopComponentKind.QuickLaunch);
-        var normalizedSrc = QuickPlaceRules.Normalize(profile.QuickPlaces);
-        var hadContentToMove = srcComponent.IsVisible
-            || !AreQuickPlacesEquivalent(normalizedSrc, QuickPlaceRules.CreateDefaults());
-        if (!hadContentToMove)
-        {
-            return false;
-        }
-
-        var primaryComponent = state.DesktopExperience.GetComponent(DesktopComponentKind.QuickLaunch);
-        var (_, leftover, transferredAny) = MoveQuickPlacesCore(state, srcKey, targetScreenKey: null);
-        if (!transferredAny && leftover.Count > 0)
-        {
-            return false;
-        }
-        if (!primaryComponent.IsVisible)
-        {
-            primaryComponent.IsVisible = true;
-            CopyAppearance(primaryComponent.Appearance, srcComponent.Appearance);
-            primaryComponent.CornerRadius = srcComponent.CornerRadius;
-            primaryComponent.FontScale = srcComponent.FontScale;
-        }
-        if (leftover.Count == 0)
-        {
-            srcComponent.IsVisible = false;
-        }
-        return true;
-    }
-
     private static bool AreQuickPlacesEquivalent(
         IReadOnlyList<QuickPlaceState> a,
         IReadOnlyList<QuickPlaceState> b)
@@ -1009,158 +1016,6 @@ public static class ScreenProfileAccessor
             }
         }
         return true;
-    }
-
-    public static bool MoveDisconnectedBuiltInToPrimary(
-        AppState state,
-        string sourceScreenKey,
-        DesktopComponentKind kind)
-    {
-        ArgumentNullException.ThrowIfNull(state);
-        var srcKey = MultiScreenRules.NormalizeScreenKey(sourceScreenKey);
-        if (srcKey is null
-            || kind is not (DesktopComponentKind.TimeDate or DesktopComponentKind.Greeting
-                or DesktopComponentKind.Weather or DesktopComponentKind.Performance)
-            || state.MultiScreen is null
-            || !state.MultiScreen.Screens.TryGetValue(srcKey, out var profile))
-        {
-            return false;
-        }
-
-        var srcComponent = profile.Experience.GetComponent(kind);
-        if (!srcComponent.IsVisible)
-        {
-            return false;
-        }
-
-        var primaryComponent = state.DesktopExperience.GetComponent(kind);
-        if (!primaryComponent.IsVisible)
-        {
-            primaryComponent.IsVisible = true;
-            CopyAppearance(primaryComponent.Appearance, srcComponent.Appearance);
-            primaryComponent.CornerRadius = srcComponent.CornerRadius;
-            primaryComponent.FontScale = srcComponent.FontScale;
-            primaryComponent.FontFamily = srcComponent.FontFamily;
-            primaryComponent.Density = srcComponent.Density;
-            primaryComponent.ShowDivider = srcComponent.ShowDivider;
-            primaryComponent.DividerThickness = srcComponent.DividerThickness;
-        }
-        srcComponent.IsVisible = false;
-        return true;
-    }
-
-    public static Guid CreateDisconnectedComponentId(string screenKey, DesktopComponentKind kind)
-    {
-        var input = System.Text.Encoding.UTF8.GetBytes($"binglan:ms:{screenKey}:{(int)kind}");
-        var hash = System.Security.Cryptography.SHA256.HashData(input);
-        return new Guid(hash.AsSpan(0, 16));
-    }
-
-    public static IReadOnlyList<DisconnectedScreenWidget> FindDisconnectedScreenWidgets(
-        AppState state,
-        IReadOnlySet<string> connectedSecondaryKeys)
-    {
-        ArgumentNullException.ThrowIfNull(state);
-        ArgumentNullException.ThrowIfNull(connectedSecondaryKeys);
-
-        var result = new List<DisconnectedScreenWidget>();
-        foreach (var todo in state.TodoWidgets)
-        {
-            var key = MultiScreenRules.NormalizeScreenKey(todo.ScreenKey);
-            if (key is not null && !connectedSecondaryKeys.Contains(key))
-            {
-                result.Add(new DisconnectedScreenWidget(todo.Id, todo.Title, DisconnectedTodoKind, key, IsHidden: false));
-            }
-        }
-        foreach (var note in state.NoteWidgets)
-        {
-            var key = MultiScreenRules.NormalizeScreenKey(note.ScreenKey);
-            if (key is not null && !connectedSecondaryKeys.Contains(key))
-            {
-                result.Add(new DisconnectedScreenWidget(note.Id, note.Title, DisconnectedNoteKind, key, note.IsHidden));
-            }
-        }
-        var disconnectedBoxes = state.FileBoxes
-            .Where(box => MultiScreenRules.NormalizeScreenKey(box.ScreenKey) is { } k
-                && !connectedSecondaryKeys.Contains(k))
-            .ToList();
-        foreach (var members in FileBoxGroupRules.PartitionIntoHosts(disconnectedBoxes))
-        {
-            var lead = members.FirstOrDefault(m => m.IsActiveTab) ?? members[0];
-            var key = MultiScreenRules.NormalizeScreenKey(lead.ScreenKey)!;
-            var title = FileBoxGroupRules.FormatGroupDisplayTitle(members, lead.Id);
-            result.Add(new DisconnectedScreenWidget(lead.Id, title, DisconnectedFileBoxKind, key, lead.IsHidden));
-        }
-
-        if (state.MultiScreen?.Screens is { Count: > 0 } screens)
-        {
-            foreach (var (rawKey, profile) in screens)
-            {
-                var key = MultiScreenRules.NormalizeScreenKey(rawKey);
-                if (key is null || profile is null || connectedSecondaryKeys.Contains(key))
-                {
-                    continue;
-                }
-
-                var quickComponent = profile.Experience.GetComponent(DesktopComponentKind.QuickLaunch);
-                if (quickComponent.IsVisible || HasCustomQuickPlaces(profile.QuickPlaces))
-                {
-                    result.Add(new DisconnectedScreenWidget(
-                        CreateDisconnectedComponentId(key, DesktopComponentKind.QuickLaunch),
-                        DesktopExperienceRules.GetComponentName(DesktopComponentKind.QuickLaunch),
-                        DisconnectedQuickLaunchKind,
-                        key,
-                        IsHidden: !quickComponent.IsVisible));
-                }
-
-                foreach (var kind in new[]
-                         {
-                             DesktopComponentKind.TimeDate,
-                             DesktopComponentKind.Greeting,
-                             DesktopComponentKind.Weather,
-                             DesktopComponentKind.Performance
-                         })
-                {
-                    if (profile.Experience.GetComponent(kind).IsVisible)
-                    {
-                        result.Add(new DisconnectedScreenWidget(
-                            CreateDisconnectedComponentId(key, kind),
-                            DesktopExperienceRules.GetComponentName(kind),
-                            DisconnectedBuiltInInfoKind,
-                            key,
-                            IsHidden: false));
-                    }
-                }
-            }
-        }
-
-        return result;
-    }
-
-    private static bool HasCustomQuickPlaces(IReadOnlyList<QuickPlaceState>? items)
-    {
-        if (items is null || items.Count == 0)
-        {
-            return false;
-        }
-
-        var defaults = QuickPlaceRules.CreateDefaults();
-        if (items.Count != defaults.Count)
-        {
-            return true;
-        }
-
-        for (var i = 0; i < items.Count; i++)
-        {
-            if (!string.Equals(items[i].Icon, defaults[i].Icon, StringComparison.Ordinal)
-                || !string.Equals(items[i].Name, defaults[i].Name, StringComparison.Ordinal)
-                || !string.Equals(items[i].Target, defaults[i].Target, StringComparison.OrdinalIgnoreCase))
-            {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     public static void RecordMonitorLocalPlacement(
@@ -1274,7 +1129,10 @@ public static class ScreenProfileAccessor
             || string.Equals(normalizedOld, normalizedNew, StringComparison.Ordinal)
             || state.MultiScreen?.Screens is not { } screens
             || !screens.TryGetValue(normalizedOld, out var profile)
-            || screens.ContainsKey(normalizedNew))
+            || screens.ContainsKey(normalizedNew)
+            || state.MultiScreen.SurfacePreferences.ContainsKey(normalizedNew)
+            || MatchesScreen(state.MultiScreen.RootMonitorKey, normalizedNew)
+            || HasCardsForScreen(state, normalizedNew))
         {
             return false;
         }
@@ -1296,6 +1154,11 @@ public static class ScreenProfileAccessor
         profile.FriendlyName = MultiScreenRules.NormalizeFriendlyName(friendlyName)
             ?? profile.FriendlyName;
         screens[normalizedNew] = profile;
+        if (state.MultiScreen.SurfacePreferences.Remove(normalizedOld, out var surfacePreferences))
+        {
+            surfacePreferences.DisplayLabel = displayLabel ?? surfacePreferences.DisplayLabel;
+            state.MultiScreen.SurfacePreferences[normalizedNew] = surfacePreferences;
+        }
 
         foreach (var todo in state.TodoWidgets)
         {
@@ -1335,177 +1198,72 @@ public static class ScreenProfileAccessor
         return true;
     }
 
+    /// <summary>
+    /// Upgrades only an exact old device path supplied by the connected monitor identity.
+    /// Model, friendly name, GDI display number and port similarity are not ownership evidence.
+    /// </summary>
     public static int ReconcileConnectedProfileKeys(
         AppState state,
-        IReadOnlyList<MonitorIdentityCandidate> connectedSecondary,
-        string? primaryHardwareId = null,
-        string? primaryModelId = null,
-        string? primaryFriendlyName = null)
+        IReadOnlyList<MonitorIdentityCandidate> connectedMonitors)
     {
         ArgumentNullException.ThrowIfNull(state);
-        ArgumentNullException.ThrowIfNull(connectedSecondary);
-
-        if (state.MultiScreen?.Screens is not { Count: > 0 } screens || connectedSecondary.Count == 0)
+        ArgumentNullException.ThrowIfNull(connectedMonitors);
+        if (state.MultiScreen?.Screens is not { Count: > 0 } screens)
         {
             return 0;
         }
 
-        var normalizedPrimaryKey = MultiScreenRules.NormalizeScreenKey(primaryHardwareId);
-        var excludedPrimaryModel = MultiScreenRules.ExtractHardwareModelId(primaryModelId)
-            ?? MultiScreenRules.ExtractHardwareModelId(primaryHardwareId);
-        var excludedPrimaryFriendly = MultiScreenRules.NormalizeFriendlyName(primaryFriendlyName);
-
-        var claimedMonitors = new HashSet<string>(StringComparer.Ordinal);
-        var claimedProfiles = new HashSet<string>(StringComparer.Ordinal);
-
-        // Pass 1: exact MonitorKey matches take strict precedence.
-        foreach (var monitor in connectedSecondary)
-        {
-            var key = MultiScreenRules.NormalizeScreenKey(monitor.MonitorKey);
-            if (key is not null && screens.ContainsKey(key))
-            {
-                claimedMonitors.Add(key);
-                claimedProfiles.Add(key);
-            }
-        }
-
-        static string? EffectiveProfileModel(string key, ScreenProfileState profile) =>
-            MultiScreenRules.ExtractHardwareModelId(profile.HardwareModelId)
-            ?? MultiScreenRules.ExtractHardwareModelId(key);
-
-        static string? EffectiveMonitorModel(MonitorIdentityCandidate monitor) =>
-            MultiScreenRules.ExtractHardwareModelId(monitor.HardwareId)
-            ?? MultiScreenRules.ExtractHardwareModelId(monitor.MonitorKey);
-
+        var candidates = connectedMonitors
+            .Select(monitor => (Monitor: monitor, LegacyKey: NormalizeLegacyDeviceKey(monitor.LegacyDeviceKey)))
+            .Where(candidate => candidate.LegacyKey is not null)
+            .GroupBy(candidate => candidate.LegacyKey!, StringComparer.Ordinal)
+            .Where(group => group.Count() == 1)
+            .Select(group => group.Single())
+            .ToArray();
         var migrated = 0;
-
-        // Pass 2: 1-to-1 unambiguous EDID hardware model match (e.g. re-plugged on a different HDMI/USB-C port).
-        var unmatchedMonitorsByModel = connectedSecondary
-            .Where(m => MultiScreenRules.NormalizeScreenKey(m.MonitorKey) is { } k && !claimedMonitors.Contains(k))
-            .Select(m => (Candidate: m, ModelId: EffectiveMonitorModel(m)))
-            .Where(x => x.ModelId is not null
-                && !string.Equals(x.ModelId, excludedPrimaryModel, StringComparison.Ordinal))
-            .GroupBy(x => x.ModelId!, StringComparer.Ordinal)
-            .ToDictionary(g => g.Key, g => g.Select(x => x.Candidate).ToList(), StringComparer.Ordinal);
-
-        var offlineProfiles = screens
-            .Where(pair => !claimedProfiles.Contains(pair.Key)
-                && !string.Equals(pair.Key, normalizedPrimaryKey, StringComparison.Ordinal))
-            .ToList();
-
-        var offlineByModel = offlineProfiles
-            .Select(pair => (pair.Key, Profile: pair.Value, ModelId: EffectiveProfileModel(pair.Key, pair.Value)))
-            .Where(x => x.ModelId is not null
-                && !string.Equals(x.ModelId, excludedPrimaryModel, StringComparison.Ordinal))
-            .GroupBy(x => x.ModelId!, StringComparer.Ordinal)
-            .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.Ordinal);
-
-        foreach (var (modelId, monitorGroup) in unmatchedMonitorsByModel)
+        foreach (var (monitor, legacyKey) in candidates)
         {
-            if (monitorGroup.Count != 1
-                || !offlineByModel.TryGetValue(modelId, out var profileGroup)
-                || profileGroup.Count != 1)
+            var matchingKeys = screens.Keys
+                .Where(key => string.Equals(NormalizeLegacyDeviceKey(key), legacyKey, StringComparison.Ordinal))
+                .Take(2)
+                .ToArray();
+            if (matchingKeys.Length != 1)
             {
                 continue;
             }
 
-            var targetMonitor = monitorGroup[0];
-            var targetNewKey = MultiScreenRules.NormalizeScreenKey(targetMonitor.MonitorKey);
-            var sourceOldKey = profileGroup[0].Key;
-            if (targetNewKey is null
-                || claimedMonitors.Contains(targetNewKey)
-                || claimedProfiles.Contains(sourceOldKey))
+            if (MigrateScreenKey(state, matchingKeys[0], monitor.MonitorKey,
+                monitor.DeviceName, monitor.DisplayLabel, monitor.HardwareId, monitor.FriendlyName))
             {
-                continue;
-            }
-
-            if (MigrateScreenKey(
-                    state,
-                    sourceOldKey,
-                    targetNewKey,
-                    targetMonitor.DeviceName,
-                    targetMonitor.DisplayLabel,
-                    modelId,
-                    targetMonitor.FriendlyName))
-            {
-                claimedMonitors.Add(targetNewKey);
-                claimedProfiles.Add(targetNewKey);
-                claimedProfiles.Add(sourceOldKey);
                 migrated++;
             }
         }
-
-        // Pass 3: 1-to-1 unambiguous non-generic FriendlyName fallback when hardware models do not conflict.
-        // Group before excluding primary-model entries so two displays/profiles sharing a friendly name
-        // remain ambiguous even if only one carries a known primary model ID.
-        var remainingMonitorsByFriendly = connectedSecondary
-            .Where(m => MultiScreenRules.NormalizeScreenKey(m.MonitorKey) is { } k && !claimedMonitors.Contains(k))
-            .Select(m => (Candidate: m, Friendly: MultiScreenRules.NormalizeFriendlyName(m.FriendlyName)))
-            .Where(x => x.Friendly is not null
-                && !string.Equals(x.Friendly, excludedPrimaryFriendly, StringComparison.OrdinalIgnoreCase))
-            .GroupBy(x => x.Friendly!, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(g => g.Key, g => g.Select(x => x.Candidate).ToList(), StringComparer.OrdinalIgnoreCase);
-
-        var remainingProfilesByFriendly = screens
-            .Where(pair => !claimedProfiles.Contains(pair.Key)
-                && !string.Equals(pair.Key, normalizedPrimaryKey, StringComparison.Ordinal))
-            .Select(pair => (pair.Key, Profile: pair.Value, Friendly: MultiScreenRules.NormalizeFriendlyName(pair.Value.FriendlyName)))
-            .Where(x => x.Friendly is not null
-                && !string.Equals(x.Friendly, excludedPrimaryFriendly, StringComparison.OrdinalIgnoreCase))
-            .GroupBy(x => x.Friendly!, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
-
-        foreach (var (friendly, monitorGroup) in remainingMonitorsByFriendly)
-        {
-            if (monitorGroup.Count != 1
-                || !remainingProfilesByFriendly.TryGetValue(friendly, out var profileGroup)
-                || profileGroup.Count != 1)
-            {
-                continue;
-            }
-
-            var targetMonitor = monitorGroup[0];
-            var sourceOldKey = profileGroup[0].Key;
-            var monitorModel = EffectiveMonitorModel(targetMonitor);
-            var profileModel = EffectiveProfileModel(sourceOldKey, profileGroup[0].Profile);
-            if (excludedPrimaryModel is not null
-                && (string.Equals(monitorModel, excludedPrimaryModel, StringComparison.Ordinal)
-                    || string.Equals(profileModel, excludedPrimaryModel, StringComparison.Ordinal)))
-            {
-                continue;
-            }
-            if (monitorModel is not null
-                && profileModel is not null
-                && !string.Equals(monitorModel, profileModel, StringComparison.Ordinal))
-            {
-                continue;
-            }
-
-            var targetNewKey = MultiScreenRules.NormalizeScreenKey(targetMonitor.MonitorKey);
-            if (targetNewKey is null
-                || claimedMonitors.Contains(targetNewKey)
-                || claimedProfiles.Contains(sourceOldKey))
-            {
-                continue;
-            }
-
-            if (MigrateScreenKey(
-                    state,
-                    sourceOldKey,
-                    targetNewKey,
-                    targetMonitor.DeviceName,
-                    targetMonitor.DisplayLabel,
-                    monitorModel,
-                    targetMonitor.FriendlyName))
-            {
-                claimedMonitors.Add(targetNewKey);
-                claimedProfiles.Add(targetNewKey);
-                claimedProfiles.Add(sourceOldKey);
-                migrated++;
-            }
-        }
-
         return migrated;
+    }
+
+    private static string? NormalizeLegacyDeviceKey(string? key)
+    {
+        var normalized = MultiScreenRules.NormalizeScreenKey(key);
+        if (normalized is null)
+        {
+            return null;
+        }
+        if (normalized.StartsWith(@"\\?\", StringComparison.Ordinal))
+        {
+            normalized = normalized[4..];
+        }
+        var guidIndex = normalized.IndexOf("#{", StringComparison.Ordinal);
+        if (guidIndex > 0)
+        {
+            normalized = normalized[..guidIndex];
+        }
+        var parts = normalized.Split('#');
+        return parts.Length == 3
+            && string.Equals(parts[0], "DISPLAY", StringComparison.OrdinalIgnoreCase)
+            && !string.IsNullOrWhiteSpace(parts[1])
+            && !string.IsNullOrWhiteSpace(parts[2])
+            ? normalized.ToUpperInvariant()
+            : null;
     }
 
     public static double ResolveScale(uint dpi) =>

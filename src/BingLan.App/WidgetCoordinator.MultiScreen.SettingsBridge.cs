@@ -18,7 +18,15 @@ public sealed partial class WidgetCoordinator
         GetConnectedMonitorCount = MonitorIdentityResolver.GetConnectedMonitorCount,
         HasSavedSecondaryState = HasSavedSecondaryState,
         SetEnabled = SetMultiScreenEnabled,
+        CanBindLegacyRoot = () => _state.MultiScreen?.RootMonitorKey is null,
+        BindLegacyRoot = BindLegacyRootToScreen,
         GetScreens = BuildMonitorCardOptions,
+        GetSurfacePreferences = monitorKey => _state.MultiScreen?.SurfacePreferences.GetValueOrDefault(monitorKey) is { } preferences
+            ? preferences with { } : null,
+        ApplySurfacePreferences = ApplyScreenSurfacePreferences,
+        GetSurfaceStatus = GetScreenSurfaceStatus,
+        GetOfflineProfiles = GetOfflineScreenProfiles,
+        BindOfflineProfile = BindOfflineScreenProfile,
         GetExperience = screenKey => ScreenProfileAccessor.GetExperience(_state, screenKey),
         ApplyExperience = (screenKey, experience) =>
         {
@@ -105,13 +113,13 @@ public sealed partial class WidgetCoordinator
                 switch (kind)
                 {
                     case NewWidgetKind.Note:
-                        AddNote();
+                        AddRootNote();
                         return _windows.OfType<NoteWidgetWindow>().LastOrDefault(win => !IsSecondaryWindow(win));
                     case NewWidgetKind.FileBox:
-                        AddFileBox();
+                        AddRootFileBox();
                         return _windows.OfType<FileBoxWindow>().LastOrDefault(win => !IsSecondaryWindow(win));
                     default:
-                        AddTodo();
+                        AddRootTodo();
                         return _windows.OfType<TodoWidgetWindow>().LastOrDefault(win => !IsSecondaryWindow(win));
                 }
             }
@@ -153,26 +161,22 @@ public sealed partial class WidgetCoordinator
             }
             var monitors = MonitorIdentityResolver.ResolveConnected();
             return _multiScreen.MoveWindowToScreen(window, targetScreenKey, monitors);
-        },
-        GetDisconnectedWidgets = GetDisconnectedSecondaryWidgets,
-        MoveDisconnectedWidgetToPrimary = MoveDisconnectedWidgetToPrimary,
-        MoveAllDisconnectedFromScreenToPrimary = MoveAllDisconnectedFromScreenToPrimary
+        }
     };
 
     private IReadOnlyList<MonitorCardOption> BuildMonitorCardOptions()
     {
         // Zero QueryDisplayConfig guarantee: when multi-screen is disabled, never call ResolveConnected().
-        if (!ScreenProfileAccessor.IsMultiScreenEnabled(_state)
-            || !MonitorIdentityResolver.HasMultipleMonitors())
+        if (!ScreenProfileAccessor.IsMultiScreenEnabled(_state))
         {
             return [];
         }
 
-        var monitors = MonitorIdentityResolver.ResolveConnected();
+        var monitors = _multiScreen?.ConnectedMonitors ?? MonitorIdentityResolver.ResolveConnected();
         var options = new List<MonitorCardOption>(monitors.Count);
-        foreach (var monitor in monitors)
+        foreach (var monitor in monitors.Where(m => m.IsPersistentIdentity))
         {
-            var screenKey = monitor.ScreenKey;
+            var screenKey = _multiScreen is { } host ? host.GetScreenKeyForMonitor(monitor) : monitor.MonitorKey;
             var cardCount = CountVisibleCardsOnScreen(screenKey);
             var shortLabel = monitor.IsPrimary ? "主屏" : $"副屏 {monitor.DisplayIndex}";
             options.Add(new MonitorCardOption(
@@ -198,7 +202,7 @@ public sealed partial class WidgetCoordinator
         var experience = ScreenProfileAccessor.GetExperience(_state, screenKey);
         var builtIn = DesktopExperienceRules.ComponentOrder
             .Where(kind => kind != DesktopComponentKind.Todo)
-            .Count(kind => experience.GetComponent(kind).IsVisible);
+            .Count(kind => experience.GetComponent(kind).IsVisible && !IsInformationCardSuppressed(screenKey, kind));
         var todos = experience.GetComponent(DesktopComponentKind.Todo).IsVisible
             ? ScreenProfileAccessor.GetTodosForScreen(_state, screenKey).Count
             : 0;

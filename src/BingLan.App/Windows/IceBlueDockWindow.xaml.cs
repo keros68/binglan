@@ -44,7 +44,7 @@ public partial class IceBlueDockWindow : Window
     internal static MotionLevel Motion { get; set; } = MotionLevel.Standard;
     private static readonly TimeSpan ReservationRetryInterval = TimeSpan.FromSeconds(30);
     private readonly DockState _state;
-    private readonly WindowCatalog _catalog = new();
+    private readonly DockRuntime _runtime;
     private readonly WindowEventWatcher _watcher;
     private readonly MaximizeStateWatcher _maximizeWatcher;
     private readonly DispatcherTimer _foregroundTimer;
@@ -72,6 +72,7 @@ public partial class IceBlueDockWindow : Window
     private bool _isChangingVisibilityByApp;
     private bool _refreshRunning;
     private bool _refreshQueued;
+    private int _sharedItemsVersion;
     private bool _menuOpen;
     private bool _revealPending;
     private bool _suppressedBySystemMenu;
@@ -89,8 +90,8 @@ public partial class IceBlueDockWindow : Window
     private NonActivatingPopupMenu? _openMenu;
     private DateTimeOffset _lastReservationAttempt;
     private readonly DockAttention _attention = new();
-    private readonly DockToggleCooldown _toggleCooldown = new(() => Environment.TickCount64);
-    private readonly DockLaunchCooldown _launchCooldown = new(() => Environment.TickCount64);
+    private readonly DockToggleCooldown _toggleCooldown;
+    private readonly DockLaunchCooldown _launchCooldown;
     // The icon size the row is built with: the chosen size, shrunk while auto-fitting.
     private double _effectiveIconSize = DockState.DefaultIconSize;
     private bool _dockOverflowing;
@@ -185,9 +186,12 @@ public partial class IceBlueDockWindow : Window
     private ColorContrastRules.SrgbColor? _sampledBackdrop;
     private bool? _lastAdaptiveDarkInk;
 
-    internal IceBlueDockWindow(DockState state, DesktopStyleState? style = null)
+    internal IceBlueDockWindow(DockState state, DesktopStyleState? style = null, DockRuntime? runtime = null)
     {
         _state = state;
+        _runtime = runtime ?? new DockRuntime();
+        _toggleCooldown = _runtime.ToggleCooldown;
+        _launchCooldown = _runtime.LaunchCooldown;
         _style = style ?? new DesktopStyleState();
         InitializeComponent();
         _morph = new DockMorphAnimator(DockSurface);
@@ -289,7 +293,8 @@ public partial class IceBlueDockWindow : Window
         };
     }
 
-    private DockEdge CurrentEdge => DockEdgeRules.Normalize(_state.Edge);
+    private DockEdge CurrentEdge => DockEdgeRules.Normalize(ScreenSelection?.Preferences?.DockEdge ?? _state.Edge);
+    private DockVisibilityMode CurrentVisibilityMode => ScreenSelection?.Preferences?.DockVisibilityMode ?? _state.VisibilityMode;
     private bool IsVertical => DockEdgeRules.IsVertical(CurrentEdge);
 
     private static PlacementMode InwardMenuPlacement(DockEdge edge) => DockEdgeRules.Normalize(edge) switch
@@ -315,6 +320,10 @@ public partial class IceBlueDockWindow : Window
     private double ItemCellStep() => DockLayoutMetrics.ItemCell(_effectiveIconSize);
 
     internal event Action? DockStateChanged;
+    internal event Action? SharedItemsChanged;
+
+    internal SurfaceMonitorSelection? ScreenSelection { get; set; }
+    internal Func<ScreenSurfacePreferences?>? GetOrCreateScreenPreferences { get; init; }
 
     internal event Action? SettingsRequested;
     internal event Action? LauncherRequested;
@@ -324,6 +333,8 @@ public partial class IceBlueDockWindow : Window
     internal Func<Guid, string, Task<string>>? SendToFileBox { get; init; }
     internal Func<nint, nint>? ResolvePanelForeground { get; init; }
     internal Func<MonitorSnapshot, int?>? ResolveTopBarReservedBottomPx { get; init; }
+
+    internal bool HasAttention => _attention.Count > 0;
 
     internal event Action? HideRequested;
 
@@ -397,15 +408,14 @@ public partial class IceBlueDockWindow : Window
 
         using var _ = UiDiagnostics.Measure("Dock 状态应用");
 
-        var monitors = MonitorCatalog.GetAll();
-        var monitor = monitors.FirstOrDefault(candidate => string.Equals(
-                candidate.DeviceName,
-                _state.MonitorDeviceName,
-                StringComparison.OrdinalIgnoreCase))
-            ?? monitors.FirstOrDefault(candidate => candidate.IsPrimary)
-            ?? monitors.FirstOrDefault();
+        var monitor = ScreenSelection is { } selection
+            ? MonitorCatalog.GetAll().FirstOrDefault(candidate =>
+                candidate.MonitorHandle == selection.Monitor.MonitorHandle
+                && string.Equals(candidate.DeviceName, selection.Monitor.DeviceName, StringComparison.OrdinalIgnoreCase))
+            : SurfaceMonitorTargetResolver.Resolve(_state.MonitorKey, _state.MonitorDeviceName);
         if (monitor is null)
         {
+            Close();
             return;
         }
 
@@ -415,7 +425,7 @@ public partial class IceBlueDockWindow : Window
         _handleWindow?.SetFrostedGlass(_state.FrostedGlass);
         // A window maximized on the dock's monitor may take over the reserved strip;
         // while it does, the dock follows smart-hide rules instead of holding the space.
-        var reserveWorkArea = _state.VisibilityMode == DockVisibilityMode.ReserveWorkArea
+        var reserveWorkArea = CurrentVisibilityMode == DockVisibilityMode.ReserveWorkArea
             && !_vacatedForMaximized;
         _lastReservationAttempt = DateTimeOffset.UtcNow;
         UpdateEffectiveIconSize(monitor, _items);
@@ -490,7 +500,7 @@ public partial class IceBlueDockWindow : Window
     // falls back to smart hide until the reservation succeeds (without blinking during
     // Explorer restart recovery).
     private bool UsesSmartHide =>
-        _state.VisibilityMode == DockVisibilityMode.SmartHide
+        CurrentVisibilityMode == DockVisibilityMode.SmartHide
         || (_appBar is not { IsReserved: true } && _appBar is not { IsRecovering: true });
 
     internal void RefreshWindows()
@@ -513,6 +523,15 @@ public partial class IceBlueDockWindow : Window
         }
 
         _ = RefreshWindowsLoopAsync();
+    }
+
+    internal void RefreshSharedItems()
+    {
+        _sharedItemsVersion++;
+        _visuals.Clear();
+        _lastSignature = string.Empty;
+        _lastStructureKey = string.Empty;
+        RefreshWindows();
     }
 
     private void OnSourceInitialized(object? sender, EventArgs e)
@@ -752,9 +771,15 @@ public partial class IceBlueDockWindow : Window
             {
                 UiDiagnostics.Hit(UiActivity.DockRefresh);
                 _refreshQueued = false;
+                var sharedItemsVersion = _sharedItemsVersion;
                 var pinned = _state.PinnedApps.ToArray();
                 var hidden = _state.HiddenApps.ToArray();
-                var snapshot = await Task.Run(_catalog.Capture);
+                var snapshot = await _runtime.CaptureAsync();
+                if (sharedItemsVersion != _sharedItemsVersion)
+                {
+                    _refreshQueued = true;
+                    continue;
+                }
                 IReadOnlyList<DockItem> items;
                 using (UiDiagnostics.Measure("Dock 窗口分组"))
                 {
@@ -769,12 +794,17 @@ public partial class IceBlueDockWindow : Window
                 {
                     _visuals.Remove(stale);
                 }
+                _runtime.RetainVisuals(items.Select(item => item.Key));
                 var missing = items.Where(item => !_visuals.ContainsKey(item.Key)).ToArray();
                 if (missing.Length > 0)
                 {
-                    var resolved = await Task.Run(() => missing
-                        .Select(item => (item.Key, Visual: DockAppResolver.Resolve(item)))
-                        .ToArray());
+                    var resolved = await Task.WhenAll(missing.Select(async item =>
+                        (item.Key, Visual: await _runtime.ResolveVisualAsync(item))));
+                    if (sharedItemsVersion != _sharedItemsVersion)
+                    {
+                        _refreshQueued = true;
+                        continue;
+                    }
                     foreach (var (key, visual) in resolved)
                     {
                         _visuals[key] = visual;
@@ -2309,7 +2339,14 @@ public partial class IceBlueDockWindow : Window
                 var menu = CreateMenu();
                 menu.AddItem("添加应用…", PickAppToPin);
                 menu.AddItem("Dock 设置…", () => SettingsRequested?.Invoke());
-                menu.AddItem("关闭冰蓝 Dock", () => HideRequested?.Invoke());
+                if (ScreenSelection is null)
+                {
+                    menu.AddItem("关闭冰蓝 Dock", () => HideRequested?.Invoke());
+                }
+                else if (ScreenSelection.IsPersistentIdentity)
+                {
+                    menu.AddItem("关闭此屏的 Dock", () => HideRequested?.Invoke());
+                }
                 menu.IsOpen = true;
             },
             DispatcherPriority.Input);
@@ -2800,8 +2837,10 @@ public partial class IceBlueDockWindow : Window
 
     private void PinsChanged()
     {
+        _runtime.InvalidateVisuals();
+        RefreshSharedItems();
+        SharedItemsChanged?.Invoke();
         DockStateChanged?.Invoke();
-        RefreshWindows();
     }
 
     private double ContentLengthDip()
@@ -2882,20 +2921,12 @@ public partial class IceBlueDockWindow : Window
 
         var edge = CurrentEdge;
         var bounds = _appBar.Bounds;
-        // Native menus own this interaction, except a taskbar on a different edge (such as a
-        // bottom Windows taskbar paired with a left/right dock) that does not touch the dock.
-        var isSystemMenu = ShellSurfaceNativeMethods.TryGetForegroundSystemMenu(out var isTaskbarSurface, out var systemMenuBounds);
-        var nativeTaskbarEdge = isTaskbarSurface
-            ? TaskbarEdgeGuard.GetNativeTaskbarLayout(monitor.Bounds)?.Edge
-            : null;
-        var shouldYield = DockVacateRules.ShouldYieldToSystemSurface(
-            isSystemMenu,
-            isTaskbarSurface,
-            edge,
-            nativeTaskbarEdge,
-            systemMenuBounds.HasArea && systemMenuBounds.Intersects(bounds));
+        // Native menus own this interaction, except a collapsed auto-hidden taskbar or a
+        // taskbar / taskbar-anchored popup on a different edge that does not touch the dock.
+        var shouldYield = ShouldYieldToCurrentSystemSurface(monitor.Bounds, edge, bounds);
         if (YieldToSystemMenu(shouldYield)) return;
         var foreground = ForegroundWindowRect(out var foregroundBounds, out var foregroundWindow);
+        var hasBacking = TransientForegroundResolver.TryResolveBackingWindow(foregroundWindow, _handle, out var backing);
         var fullScreen = foreground && DockVacateRules.CoversMonitor(foregroundBounds, monitor.Bounds);
         var foregroundZoomed = foreground && foregroundWindow != 0 && DockNativeMethods.IsZoomed(foregroundWindow);
         // A maximized window on the dock's monitor both vacates the reservation and,
@@ -2905,6 +2936,10 @@ public partial class IceBlueDockWindow : Window
             && DockNativeMethods.MonitorFromWindow(
                 foregroundWindow,
                 DockNativeMethods.MonitorDefaultToNearest) == monitor.MonitorHandle;
+        var backingMaximizedOnDockMonitor = hasBacking
+            && backing.IsZoomed
+            && backing.MonitorHandle == monitor.MonitorHandle;
+        var backingOverlapsDock = hasBacking && backing.Bounds.Intersects(bounds);
         // A maximized window filling the monitor (for example while the taskbar auto-hides),
         // an ordinary resizable desktop window with standard chrome, or a tool/overlay window
         // is still working space rather than a true full-screen app.
@@ -2948,10 +2983,11 @@ public partial class IceBlueDockWindow : Window
             && FullScreenWatcher.IsTrueFullScreenContext(foregroundWindow, monitor.MonitorHandle);
         var trueFullScreen = DockVacateRules.IsEffectiveFullScreen(directTrueFullScreen, backingFullScreen);
         _trueFullScreenForeground = trueFullScreen;
+        var effectiveMaximizedOnDockMonitor = maximizedOnDockMonitor || backingMaximizedOnDockMonitor;
         var shouldVacate = DockVacateRules.ShouldReleaseForMaximized(
-            _state.VisibilityMode,
+            CurrentVisibilityMode,
             _state.ReleaseWhenMaximized,
-            maximizedOnDockMonitor);
+            effectiveMaximizedOnDockMonitor);
         if (shouldVacate != _vacatedForMaximized)
         {
             _vacatedForMaximized = shouldVacate;
@@ -2977,7 +3013,7 @@ public partial class IceBlueDockWindow : Window
             return;
         }
 
-        if (_state.VisibilityMode == DockVisibilityMode.ReserveWorkArea
+        if (CurrentVisibilityMode == DockVisibilityMode.ReserveWorkArea
             && !_vacatedForMaximized
             && DateTimeOffset.UtcNow - _lastReservationAttempt >= ReservationRetryInterval)
         {
@@ -3020,7 +3056,25 @@ public partial class IceBlueDockWindow : Window
             revealedFromHandle: pointerOverHandle,
             pointerOverStrip: pointerOverStrip,
             clearRequested: trueFullScreen || (_handleWindow?.IsDragActive ?? false));
-        var overlaps = foreground && foregroundBounds.Intersects(bounds);
+        var directOverlaps = foreground && foregroundBounds.Intersects(bounds);
+        var (effectiveOverlaps, effectiveOverlapMaximized) = DockVacateRules.ResolveEffectiveSmartHideOverlap(
+            directOverlaps,
+            maximizedOnDockMonitor,
+            backingOverlapsDock,
+            backingMaximizedOnDockMonitor);
+        if (!_state.AutoHideAlways
+            && !(effectiveOverlaps && effectiveOverlapMaximized)
+            && TransientForegroundResolver.TryFindCoveringWindowOnMonitor(
+                monitor.MonitorHandle,
+                bounds,
+                _handle,
+                out var monitorOverlaps,
+                out var monitorMaximized,
+                out var _monitorCoveringBounds))
+        {
+            effectiveOverlaps |= monitorOverlaps;
+            effectiveOverlapMaximized |= monitorMaximized;
+        }
         var pointerOverDock = pointerOverStrip || pointerOverHandle;
         var input = new DockAutoHideInput(
             // This input is only built while smart-hiding, where a maximized window on
@@ -3029,7 +3083,7 @@ public partial class IceBlueDockWindow : Window
             // has covered the pixels, or the collapse would lag the maximize click.
             WindowOverlapsDock: DockAutoHideState.TreatAsOverlapping(
                 _state.AutoHideAlways,
-                overlaps || maximizedOnDockMonitor),
+                effectiveOverlaps || effectiveOverlapMaximized),
             ForegroundIsFullScreen: trueFullScreen,
             PointerInRevealZone: edgeReveal != DockEdgeReveal.None
                 && DockRevealRules.IsInRevealZone(
@@ -3046,7 +3100,7 @@ public partial class IceBlueDockWindow : Window
             PointerOverDock: pointerOverDock,
             InteractionActive: _menuOpen || _dragging || _externalDragActive
                 || now < _attentionRevealUntil || now < _handleRevealUntil,
-            OverlapIsMaximizedWindow: maximizedOnDockMonitor);
+            OverlapIsMaximizedWindow: effectiveOverlapMaximized);
         if (_trueFullScreenForeground && _morph.IsCollapsing)
         {
             // Nothing may animate over a truly full-screen app: land the pending
@@ -3113,6 +3167,34 @@ public partial class IceBlueDockWindow : Window
         return false;
     }
 
+    private static bool ShouldYieldToCurrentSystemSurface(
+        PixelRect monitorBounds,
+        DockEdge dockEdge,
+        PixelRect dockBounds)
+    {
+        if (!ShellSurfaceNativeMethods.TryGetForegroundSystemMenu(out var surfaceKind, out var systemMenuBounds))
+        {
+            return false;
+        }
+
+        var nativeTaskbarEdge = surfaceKind is SystemSurfaceKind.Taskbar or SystemSurfaceKind.TaskbarPopup
+            ? TaskbarEdgeGuard.InferNativeTaskbarEdge(
+                monitorBounds,
+                surfaceKind == SystemSurfaceKind.Taskbar ? systemMenuBounds : null)
+            : null;
+        var isTaskbarCollapsed = surfaceKind == SystemSurfaceKind.Taskbar
+            && TaskbarEdgeGuard.IsAutoHideTaskbarCollapsed(
+                systemMenuBounds,
+                monitorBounds,
+                nativeTaskbarEdge ?? dockEdge);
+        return DockVacateRules.ShouldYieldToSystemSurface(
+            surfaceKind,
+            dockEdge,
+            nativeTaskbarEdge,
+            systemMenuBounds.HasArea && systemMenuBounds.Intersects(dockBounds),
+            isTaskbarCollapsed);
+    }
+
     private void CheckYieldRelease()
     {
         if (_closing || !_suppressedBySystemMenu)
@@ -3120,7 +3202,8 @@ public partial class IceBlueDockWindow : Window
             _yieldReleaseTimer.Stop();
             return;
         }
-        if (ShellSurfaceNativeMethods.IsSystemMenuForeground())
+        if (_appBar?.Monitor is { } monitor
+            && ShouldYieldToCurrentSystemSurface(monitor.Bounds, CurrentEdge, _appBar.Bounds))
         {
             // Reopened before the taskbar left: stay aside.
             _yieldReleaseTimer.Stop();
@@ -3349,8 +3432,21 @@ public partial class IceBlueDockWindow : Window
             var rect = DockHandleGeometry.ClampToWorkArea(_handleWindow.CurrentRect, workArea);
             _handleWindow.MoveTo(rect);
             var scale = monitor.Dpi / 96d;
-            _state.HiddenHandleLeftDip = (rect.Left - monitor.Bounds.Left) / scale;
-            _state.HiddenHandleTopDip = (rect.Top - monitor.Bounds.Top) / scale;
+            var left = (rect.Left - monitor.Bounds.Left) / scale;
+            var top = (rect.Top - monitor.Bounds.Top) / scale;
+            if (ScreenSelection is { } selection)
+            {
+                var preferences = GetOrCreateScreenPreferences?.Invoke()
+                    ?? selection.Preferences ?? new ScreenSurfacePreferences();
+                preferences.DockHiddenHandleLeftDip = left;
+                preferences.DockHiddenHandleTopDip = top;
+                ScreenSelection = selection with { Preferences = preferences };
+            }
+            else
+            {
+                _state.HiddenHandleLeftDip = left;
+                _state.HiddenHandleTopDip = top;
+            }
             DockStateChanged?.Invoke();
         };
         _handleWindow.FileDragEntered += () =>
@@ -3384,7 +3480,9 @@ public partial class IceBlueDockWindow : Window
         var workArea = DockAppBarController.GetLiveWorkingArea(monitor);
         var edgeGapPixels = Math.Max(0, (int)Math.Round(_state.BottomGapDip * scale));
         PixelRect handleRect;
-        if (_state.HiddenHandleLeftDip is { } left && _state.HiddenHandleTopDip is { } top)
+        var savedLeft = ScreenSelection?.Preferences?.DockHiddenHandleLeftDip ?? _state.HiddenHandleLeftDip;
+        var savedTop = ScreenSelection?.Preferences?.DockHiddenHandleTopDip ?? _state.HiddenHandleTopDip;
+        if (savedLeft is { } left && savedTop is { } top)
         {
             handleRect = DockHandleGeometry.ClampToWorkArea(
                 new PixelRect(

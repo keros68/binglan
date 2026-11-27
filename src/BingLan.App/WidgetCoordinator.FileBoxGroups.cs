@@ -23,7 +23,7 @@ public sealed partial class WidgetCoordinator
     {
         var ordered = members.OrderBy(m => m.TabOrder).ToList();
         var lead = ordered.FirstOrDefault(m => m.IsActiveTab) ?? ordered[0];
-        SanitizePlacement(lead.Placement);
+        SanitizeRootPlacement(lead.Placement);
         if (ordered.Count > 1)
         {
             FileBoxGroupRules.SyncGroupSharedProperties(lead, ordered);
@@ -53,7 +53,7 @@ public sealed partial class WidgetCoordinator
         _windows.Add(window);
         if (!window.State.IsHidden)
         {
-            window.Show();
+            ShowRootWindow(window);
             if (window.IsEdgeDocked)
             {
                 _edgeDock.ApplyAll();

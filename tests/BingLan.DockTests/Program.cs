@@ -6,6 +6,7 @@ using BingLan.Core.Taskbar;
 using BingLan.Core.TopBar;
 
 var failures = new List<string>();
+Run("Dock 与顶栏显示器目标：主屏跟随、固定设备、断开恢复与旧名称待确认", TestSurfaceMonitorTargets);
 Run("Dock 四边几何与负坐标", TestDockGeometry);
 Run("原生任务栏四边占用与顶栏保留预留冲突", TestNativeTaskbarGeometry);
 Run("Dock 非法厚度", TestInvalidThickness);
@@ -77,6 +78,9 @@ Run("Dock 顶层窗口过滤规则：排除零尺寸、穿透阴影与无标题�
 Run("Dock 激活目标选择：WPS 最小化主窗优先于未最小化的禁用辅助窗", TestSelectActivationTarget);
 Run("Dock 权限隔离提示文案：区分目标提权、前台提权与常规拦截", TestActivationBlockedMessages);
 Run("免激活右键菜单防闪退与外部点击收起状态机", TestMenuDismissState);
+Run("智能隐藏瞬态右键菜单/弹窗宿主重叠与最大化合并规则", TestTransientPopupSmartHideRules);
+Run("系统表面礼让细化与异边/折叠任务栏推断规则", TestSystemSurfaceYieldAndEdgeInference);
+Run("最小化后被动聚焦自动隐藏任务栏的恢复守卫规则", TestTaskbarPassiveFocusRules);
 
 if (failures.Count > 0)
 {
@@ -3152,6 +3156,233 @@ static void Assert(bool condition, string message)
     {
         throw new InvalidOperationException(message);
     }
+}
+
+static void TestSurfaceMonitorTargets()
+{
+    SurfaceMonitorTarget[] initial = [new("device:A", true, true), new("device:B", false, true)];
+    SurfaceMonitorTarget[] swapped = [new("device:B", true, true), new("device:A", false, true)];
+    AssertEqual(0, SurfaceMonitorTargetRules.ResolveIndex(null, null, initial), "默认跟随当前主屏");
+    AssertEqual(0, SurfaceMonitorTargetRules.ResolveIndex(null, null, swapped), "Windows 更换主屏后应跟随");
+    AssertEqual(1, SurfaceMonitorTargetRules.ResolveIndex("device:B", null, initial), "可固定副屏");
+    AssertEqual(0, SurfaceMonitorTargetRules.ResolveIndex("device:B", null, swapped), "固定设备成为主屏后仍指向同一设备");
+    AssertEqual(1, SurfaceMonitorTargetRules.ResolveIndex("device:A", null, swapped), "固定原主屏不应跟随主屏变化");
+    Assert(SurfaceMonitorTargetRules.ResolveIndex("device:B", null, [initial[0]]) is null, "固定设备断开不能回退其他屏幕");
+    AssertEqual(1, SurfaceMonitorTargetRules.ResolveIndex("device:B", null, initial), "同一设备重连后恢复原选择");
+    Assert(SurfaceMonitorTargetRules.ResolveIndex(null, @"\\.\DISPLAY1", initial) is null, "旧显示器名称不能自动认作当前同名设备");
+    Assert(SurfaceMonitorTargetRules.ResolveIndex("slot:DISPLAY1", null, [new("slot:DISPLAY1", true, false)]) is null,
+        "无持久身份的显示器不能用临时编号固定");
+    Assert(SurfaceMonitorTargetRules.ResolveIndex("device:A", null, [initial[0], initial[0]]) is null,
+        "身份有歧义时不能任意选中一台");
+    Assert(SurfaceMonitorTargetRules.ResolveIndex(null, null, []) is null, "没有连接的主屏时保持隐藏");
+
+    var temp = Path.Combine(Path.GetTempPath(), $"BingLan-surface-target-{Guid.NewGuid():N}");
+    try
+    {
+        var store = new LocalStateStore(temp);
+        var state = LocalStateStore.CreateDefault();
+        state.Dock.MonitorKey = "device:A";
+        state.TopBar.MonitorKey = "device:B";
+        store.Save(state);
+        var loaded = store.Load();
+        AssertEqual("device:A", loaded.Dock.MonitorKey, "Dock 的目标设备应保存");
+        AssertEqual("device:B", loaded.TopBar.MonitorKey, "顶栏的目标设备应独立保存");
+        var package = ThemeRules.Export(loaded, "目标隔离", new ThemeArea(0, 0, 1920, 1040), new Version(0, 1, 0));
+        var json = System.Text.Json.JsonSerializer.Serialize(package);
+        Assert(!json.Contains("device:A", StringComparison.Ordinal) && !json.Contains("device:B", StringComparison.Ordinal),
+            "主题导出不得包含物理显示器身份");
+        state.Dock.MonitorKey = null;
+        state.Dock.MonitorDeviceName = @"\\.\DISPLAY2";
+        state.TopBar.MonitorKey = null;
+        state.TopBar.MonitorDeviceName = @"\\.\DISPLAY1";
+        store.Save(state);
+        loaded = store.Load();
+        AssertEqual(@"\\.\DISPLAY2", loaded.Dock.MonitorDeviceName, "Dock 旧名称应保留供明确重选");
+        AssertEqual(@"\\.\DISPLAY1", loaded.TopBar.MonitorDeviceName, "顶栏旧名称应保留供明确重选");
+        Assert(loaded.Dock.MonitorKey is null && loaded.TopBar.MonitorKey is null, "旧名称不能自动迁移为当前连接设备");
+    }
+    finally
+    {
+        if (Directory.Exists(temp)) Directory.Delete(temp, true);
+    }
+}
+
+static void TestTransientPopupSmartHideRules()
+{
+    Assert(DockVacateRules.IsTransientPopupForSmartHide(
+            "#32768",
+            isZoomed: false,
+            isPopup: true,
+            isToolWindow: false,
+            hasStandardResizableFrame: false,
+            isAppWindow: false),
+        "Win32 右键菜单 #32768 应识别为瞬态弹窗");
+    Assert(DockVacateRules.IsTransientPopupForSmartHide(
+            "CorelPopupMenu",
+            isZoomed: false,
+            isPopup: true,
+            isToolWindow: false,
+            hasStandardResizableFrame: false,
+            isAppWindow: false),
+        "应用自绘无框 WS_POPUP 右键菜单应识别为瞬态弹窗");
+    Assert(DockVacateRules.IsTransientPopupForSmartHide(
+            "#32770",
+            isZoomed: false,
+            isPopup: true,
+            isToolWindow: false,
+            hasStandardResizableFrame: true,
+            isAppWindow: false),
+        "应用弹出的标准对话框 #32770 应识别为瞬态弹窗");
+    Assert(!DockVacateRules.IsTransientPopupForSmartHide(
+            "Notepad",
+            isZoomed: false,
+            isPopup: false,
+            isToolWindow: false,
+            hasStandardResizableFrame: true,
+            isAppWindow: true),
+        "普通可调大小的主应用窗口不得识别为瞬态弹窗");
+    Assert(!DockVacateRules.IsTransientPopupForSmartHide(
+            "CorelMainFrame",
+            isZoomed: true,
+            isPopup: true,
+            isToolWindow: false,
+            hasStandardResizableFrame: false,
+            isAppWindow: false),
+        "最大化窗口不得识别为瞬态弹窗");
+
+    var merged = DockVacateRules.ResolveEffectiveSmartHideOverlap(
+        foregroundOverlapsDock: false,
+        foregroundMaximizedOnDockMonitor: false,
+        backingOverlapsDock: true,
+        backingMaximizedOnDockMonitor: true);
+    Assert(merged is { WindowOverlapsDock: true, OverlapIsMaximizedWindow: true },
+        "右键菜单自身不压 Dock 时应继承背后最大化宿主窗口的重叠与最大化状态");
+
+    var nonOverlapping = DockVacateRules.ResolveEffectiveSmartHideOverlap(
+        foregroundOverlapsDock: false,
+        foregroundMaximizedOnDockMonitor: false,
+        backingOverlapsDock: false,
+        backingMaximizedOnDockMonitor: false);
+    Assert(nonOverlapping is { WindowOverlapsDock: false, OverlapIsMaximizedWindow: false },
+        "前台与宿主均未遮挡 Dock 时不应视为重叠");
+}
+
+static void TestSystemSurfaceYieldAndEdgeInference()
+{
+    Assert(!DockVacateRules.ShouldYieldToSystemSurface(
+            SystemSurfaceKind.TaskbarPopup,
+            DockEdge.Bottom,
+            DockEdge.Right,
+            surfaceIntersectsDock: false),
+        "右侧任务栏打开托盘溢出浮窗且不与底部 Dock 相交时，底部 Dock 不应隐藏");
+    Assert(DockVacateRules.ShouldYieldToSystemSurface(
+            SystemSurfaceKind.TaskbarPopup,
+            DockEdge.Bottom,
+            DockEdge.Bottom,
+            surfaceIntersectsDock: false),
+        "同在底部的任务栏浮窗弹出时，底部 Dock 仍应让位");
+    Assert(DockVacateRules.ShouldYieldToSystemSurface(
+            SystemSurfaceKind.TaskbarPopup,
+            DockEdge.Bottom,
+            DockEdge.Right,
+            surfaceIntersectsDock: true),
+        "异边任务栏浮窗若几何上压到 Dock 时仍应让位");
+    Assert(DockVacateRules.ShouldYieldToSystemSurface(
+            SystemSurfaceKind.GlobalSystemMenu,
+            DockEdge.Bottom,
+            DockEdge.Right,
+            surfaceIntersectsDock: false),
+        "开始菜单或快速设置作为全局系统面板仍保持礼让");
+    Assert(!DockVacateRules.ShouldYieldToSystemSurface(
+            SystemSurfaceKind.Taskbar,
+            DockEdge.Bottom,
+            DockEdge.Bottom,
+            surfaceIntersectsDock: false,
+            isTaskbarCollapsed: true),
+        "已折叠成细边的自动隐藏任务栏被动获焦时不应隐藏底部 Dock");
+    Assert(DockVacateRules.ShouldYieldToSystemSurface(
+            SystemSurfaceKind.Taskbar,
+            DockEdge.Bottom,
+            DockEdge.Bottom,
+            surfaceIntersectsDock: false,
+            isTaskbarCollapsed: false),
+        "已展开的同边任务栏仍应让底部 Dock 让位");
+
+    var monitor = new PixelRect(0, 0, 1920, 1080);
+    AssertEqual(
+        DockEdge.Right,
+        TaskbarLayoutRules.InferDockedEdge(new PixelRect(1856, 60, 1920, 1020), monitor),
+        "非满高的右侧竖排任务栏应能推断为右侧边缘");
+    AssertEqual(
+        DockEdge.Left,
+        TaskbarLayoutRules.InferDockedEdge(new PixelRect(0, 40, 64, 1040), monitor),
+        "非满高的左侧竖排任务栏应能推断为左侧边缘");
+    Assert(
+        TaskbarLayoutRules.InferDockedEdge(new PixelRect(500, 300, 1100, 700), monitor) is null,
+        "屏幕中央普通矩形不应误判为贴边任务栏");
+
+    Assert(
+        TaskbarLayoutRules.IsCollapsedAutoHideTaskbar(new PixelRect(0, 1078, 1920, 1080), monitor, DockEdge.Bottom),
+        "底边 2px 细条应识别为已折叠自动隐藏任务栏");
+    Assert(
+        !TaskbarLayoutRules.IsCollapsedAutoHideTaskbar(new PixelRect(0, 1032, 1920, 1080), monitor, DockEdge.Bottom),
+        "底边 48px 展开任务栏不应识别为已折叠");
+    Assert(
+        TaskbarLayoutRules.IsCollapsedAutoHideTaskbar(new PixelRect(1918, 0, 1920, 1080), monitor, DockEdge.Right),
+        "右边 2px 细条应识别为已折叠自动隐藏任务栏");
+    Assert(
+        !TaskbarLayoutRules.IsCollapsedAutoHideTaskbar(new PixelRect(1860, 0, 1920, 1080), monitor, DockEdge.Right),
+        "右边 60px 展开任务栏不应识别为已折叠");
+}
+
+static void TestTaskbarPassiveFocusRules()
+{
+    Assert(TaskbarPassiveFocusRules.ShouldRecordMinimize(isTaskbarOrShellWindow: false, pointerInTaskbar: false),
+        "普通窗口在任务栏外最小化时应记录");
+    Assert(!TaskbarPassiveFocusRules.ShouldRecordMinimize(isTaskbarOrShellWindow: true, pointerInTaskbar: false),
+        "外壳或任务栏窗口自身最小化事件不应记录");
+    Assert(!TaskbarPassiveFocusRules.ShouldRecordMinimize(isTaskbarOrShellWindow: false, pointerInTaskbar: true),
+        "鼠标在任务栏内点击图标最小化时不应拦截任务栏焦点");
+
+    var valid = new TaskbarPassiveFocusInput(
+        IsTaskbarForeground: true,
+        AutoHideEnabled: true,
+        ElapsedSinceMinimizeMs: 120,
+        AlreadyRestoredForMinimize: false,
+        PointerInTaskbarOrEdge: false,
+        AnyModifierHeld: false,
+        AnyMouseButtonDown: false,
+        HasAttentionFlash: false,
+        SystemPopupOpen: false);
+    Assert(TaskbarPassiveFocusRules.ShouldRestoreDesktopFocus(valid),
+        "满足全部门禁时应将最小化后被动落到任务栏的焦点归还桌面");
+    Assert(!TaskbarPassiveFocusRules.ShouldRestoreDesktopFocus(valid with { ElapsedSinceMinimizeMs = 600 }),
+        "超过最小化宽限窗口后不得干预任务栏焦点");
+    Assert(!TaskbarPassiveFocusRules.ShouldRestoreDesktopFocus(valid with { AlreadyRestoredForMinimize = true }),
+        "同一次最小化只能归还一次焦点，防止重试循环");
+    Assert(!TaskbarPassiveFocusRules.ShouldRestoreDesktopFocus(valid with { AutoHideEnabled = false }),
+        "未开启系统自动隐藏时无需干预任务栏焦点");
+    Assert(!TaskbarPassiveFocusRules.ShouldRestoreDesktopFocus(valid with { PointerInTaskbarOrEdge = true }),
+        "光标靠近任务栏或屏幕边缘时不得夺走焦点");
+    Assert(!TaskbarPassiveFocusRules.ShouldRestoreDesktopFocus(valid with { AnyModifierHeld = true }),
+        "按下修饰键（如 Win+B）时不得夺走焦点");
+    Assert(!TaskbarPassiveFocusRules.ShouldRestoreDesktopFocus(valid with { AnyMouseButtonDown = true }),
+        "鼠标按键按下期间不得夺走焦点");
+    Assert(!TaskbarPassiveFocusRules.ShouldRestoreDesktopFocus(valid with { HasAttentionFlash = true }),
+        "存在应用闪烁提醒时不得压制任务栏");
+    Assert(!TaskbarPassiveFocusRules.ShouldRestoreDesktopFocus(valid with { SystemPopupOpen = true }),
+        "开始菜单或快速设置已打开时不得干预");
+
+    var monitor = new PixelRect(0, 0, 1920, 1080);
+    var bottomBar = new PixelRect(0, 1032, 1920, 1080);
+    Assert(TaskbarPassiveFocusRules.IsPointerNearTaskbarOrEdge(960, 1050, bottomBar, monitor, DockEdge.Bottom),
+        "光标在任务栏矩形内应判定为靠近任务栏");
+    Assert(TaskbarPassiveFocusRules.IsPointerNearTaskbarOrEdge(960, 1075, new PixelRect(0, 1078, 1920, 1080), monitor, DockEdge.Bottom),
+        "光标在底边窄带内应判定为靠近边缘");
+    Assert(!TaskbarPassiveFocusRules.IsPointerNearTaskbarOrEdge(1800, 18, bottomBar, monitor, DockEdge.Bottom),
+        "光标在窗口右上角最小化按钮处不应判定为靠近任务栏");
+    Assert(TaskbarPassiveFocusRules.IsPointerNearTaskbarOrEdge(1915, 540, new PixelRect(1918, 0, 1920, 1080), monitor, DockEdge.Right),
+        "右侧自动隐藏任务栏应检测右边缘窄带");
 }
 
 static void AssertEqual<T>(T expected, T actual, string message)

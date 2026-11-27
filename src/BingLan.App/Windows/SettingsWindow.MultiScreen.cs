@@ -33,7 +33,7 @@ public partial class SettingsWindow
     private bool IsMultiScreenActive =>
         _maintenance.MultiScreen is { } bridge
         && bridge.IsEnabled()
-        && bridge.HasMultipleMonitors();
+        && _multiScreenOptions.Count > 0;
 
     private DesktopExperienceState ActiveDesktopExperience =>
         _maintenance.MultiScreen is { } bridge
@@ -158,14 +158,9 @@ public partial class SettingsWindow
 
     private string ActiveScreenDisplayName()
     {
-        if (_activeScreenKey is null)
-        {
-            return "主屏";
-        }
-
         return _multiScreenOptions
             .FirstOrDefault(option => string.Equals(option.ScreenKey, _activeScreenKey, StringComparison.Ordinal))
-            ?.DisplayLabel ?? "副屏";
+            ?.DisplayLabel ?? "桌面布局";
     }
 
     private void SyncActiveScreenForTargetWindow(WidgetWindowBase window)
@@ -221,56 +216,47 @@ public partial class SettingsWindow
         }
 
         var hasMultiple = bridge.HasMultipleMonitors();
-        var hasSavedSecondary = bridge.HasSavedSecondaryState();
-        if (!hasMultiple && !hasSavedSecondary)
+        var enabled = bridge.IsEnabled();
+        var hasSavedProfiles = !hasMultiple && bridge.HasSavedSecondaryState();
+        if (!hasMultiple && !enabled && !hasSavedProfiles)
         {
             // Strict zero-overhead single-screen path: collapse all placeholders with Child = null.
             CollapseAllMultiScreenHosts();
             return;
         }
 
-        var enabled = bridge.IsEnabled();
         var connectedCount = hasMultiple ? Math.Max(2, bridge.GetConnectedMonitorCount()) : 1;
         // Never invoke ResolveConnected()/QueryDisplayConfig while multi-screen is disabled.
-        IReadOnlyList<MonitorCardOption> screens = enabled && hasMultiple ? bridge.GetScreens() : [];
-        var disconnected = bridge.GetDisconnectedWidgets();
-        _multiScreenOptions = screens;
-
-        if (!enabled
-            || _activeScreenKey is not null
-            && !screens.Any(option => string.Equals(option.ScreenKey, _activeScreenKey, StringComparison.Ordinal)))
+        IReadOnlyList<MonitorCardOption> screens = enabled ? bridge.GetScreens() : [];
+        var selectedKey = !enabled ? null
+            : screens.Any(option => string.Equals(option.ScreenKey, _activeScreenKey, StringComparison.Ordinal))
+                ? _activeScreenKey
+                : (screens.FirstOrDefault(option => option.IsPrimary) ?? screens.FirstOrDefault())?.ScreenKey;
+        if (!string.Equals(selectedKey, _activeScreenKey, StringComparison.Ordinal))
         {
             FlushPendingComponentEditsBeforeScreenSwitch();
-            _activeScreenKey = null;
+            _activeScreenKey = selectedKey;
         }
+        _multiScreenOptions = screens;
 
         _updatingMultiScreenUi = true;
         try
         {
-            BuildSchemeMultiScreenSection(bridge, hasMultiple, enabled, connectedCount, disconnected);
+            BuildSchemeMultiScreenSection(hasMultiple || hasSavedProfiles, enabled, connectedCount);
 
-            if (enabled && screens.Count >= 2)
+            if (enabled && screens.Count > 0)
             {
                 ComponentsMultiScreenBarHost.Child = BuildTopologySwitcherCard(
                     bridge,
                     screens,
-                    disconnected,
                     isLayoutBar: false);
                 ComponentsMultiScreenBarHost.Visibility = Visibility.Visible;
 
                 LayoutMultiScreenBarHost.Child = BuildTopologySwitcherCard(
                     bridge,
                     screens,
-                    disconnected: [],
                     isLayoutBar: true);
                 LayoutMultiScreenBarHost.Visibility = Visibility.Visible;
-            }
-            else if (disconnected.Count > 0)
-            {
-                ComponentsMultiScreenBarHost.Child = BuildDisconnectedRecoveryBanner(bridge, disconnected);
-                ComponentsMultiScreenBarHost.Visibility = Visibility.Visible;
-                LayoutMultiScreenBarHost.Child = null;
-                LayoutMultiScreenBarHost.Visibility = Visibility.Collapsed;
             }
             else
             {
@@ -293,6 +279,7 @@ public partial class SettingsWindow
             {
                 RefreshComponentList(_selectedComponentEntry?.Window, _selectedComponentEntry?.Kind);
             }
+            SyncPresetRadiosForActiveScreen();
             RefreshAppearanceOverrides();
         }
     }
@@ -304,19 +291,18 @@ public partial class SettingsWindow
             return;
         }
 
-        if (!bridge.IsEnabled() || !bridge.HasMultipleMonitors())
+        if (!bridge.IsEnabled())
         {
             return;
         }
 
         var screens = bridge.GetScreens();
-        var disconnected = bridge.GetDisconnectedWidgets();
         _multiScreenOptions = screens;
-        if (screens.Count >= 2)
+        if (screens.Count > 0)
         {
-            ComponentsMultiScreenBarHost.Child = BuildTopologySwitcherCard(bridge, screens, disconnected, isLayoutBar: false);
+            ComponentsMultiScreenBarHost.Child = BuildTopologySwitcherCard(bridge, screens, isLayoutBar: false);
             ComponentsMultiScreenBarHost.Visibility = Visibility.Visible;
-            LayoutMultiScreenBarHost.Child = BuildTopologySwitcherCard(bridge, screens, disconnected: [], isLayoutBar: true);
+            LayoutMultiScreenBarHost.Child = BuildTopologySwitcherCard(bridge, screens, isLayoutBar: true);
             LayoutMultiScreenBarHost.Visibility = Visibility.Visible;
         }
     }
@@ -431,12 +417,7 @@ public partial class SettingsWindow
         }
     }
 
-    private void BuildSchemeMultiScreenSection(
-        MultiScreenSettingsBridge bridge,
-        bool hasMultiple,
-        bool enabled,
-        int connectedMonitorCount,
-        IReadOnlyList<DisconnectedScreenWidget> disconnected)
+    private void BuildSchemeMultiScreenSection(bool canEnable, bool enabled, int connectedMonitorCount)
     {
         var stack = new StackPanel();
         var header = new TextBlock { Text = "多屏" };
@@ -449,25 +430,25 @@ public partial class SettingsWindow
         var group = new SettingsGroup();
         var toggleRow = new SettingsRow
         {
-            Header = "每屏独立桌面卡片",
-            Description = hasMultiple
-                ? $"已识别 {connectedMonitorCount} 台显示器；开启后可分别为每块屏幕配置桌面卡片与布局预设，新副屏默认保持空白。关闭后立即释放副屏窗口并保留配置。"
-                : "当前仅连接 1 台显示器；已保存的副屏配置会在重连原显示器时自动恢复。"
+            Header = "每屏独立桌面",
+            Description = connectedMonitorCount > 1
+                ? $"已连接 {connectedMonitorCount} 台显示器。开启后可分别设置各屏卡片、布局、Dock 和顶栏，新显示器从空白开始。"
+                : "当前连接 1 台显示器。"
         };
 
         var controls = new StackPanel { Orientation = Orientation.Horizontal };
-        if (enabled && hasMultiple)
+        if (enabled)
         {
             var jumpButton = new Button
             {
-                Content = "管理各屏卡片 →",
+                Content = "管理各屏桌面 →",
                 Margin = new Thickness(0, 0, 12, 0)
             };
             if (TryFindResource("GhostButtonStyle") is Style ghostStyle)
             {
                 jumpButton.Style = ghostStyle;
             }
-            AutomationProperties.SetName(jumpButton, "前往桌面卡片管理各屏");
+            AutomationProperties.SetName(jumpButton, "前往桌面卡片管理各屏桌面");
             jumpButton.Click += (_, _) =>
             {
                 SelectNavigationPage("Components");
@@ -480,13 +461,13 @@ public partial class SettingsWindow
         var toggle = new CheckBox
         {
             IsChecked = enabled,
-            IsEnabled = hasMultiple || enabled
+            IsEnabled = canEnable || enabled
         };
         if (TryFindResource("ToggleSwitchStyle") is Style toggleStyle)
         {
             toggle.Style = toggleStyle;
         }
-        AutomationProperties.SetName(toggle, "每屏独立桌面卡片");
+        AutomationProperties.SetName(toggle, "每屏独立桌面");
         toggle.Checked += (_, _) =>
         {
             if (!_updatingMultiScreenUi)
@@ -506,13 +487,6 @@ public partial class SettingsWindow
         group.Items.Add(toggleRow);
         stack.Children.Add(group);
 
-        if (disconnected.Count > 0)
-        {
-            var recovery = BuildDisconnectedRecoveryBanner(bridge, disconnected);
-            recovery.Margin = new Thickness(0, 10, 0, 0);
-            stack.Children.Add(recovery);
-        }
-
         SchemeMultiScreenHost.Child = stack;
         SchemeMultiScreenHost.Visibility = Visibility.Visible;
     }
@@ -520,7 +494,6 @@ public partial class SettingsWindow
     private Border BuildTopologySwitcherCard(
         MultiScreenSettingsBridge bridge,
         IReadOnlyList<MonitorCardOption> screens,
-        IReadOnlyList<DisconnectedScreenWidget> disconnected,
         bool isLayoutBar)
     {
         var outer = new Border
@@ -552,8 +525,8 @@ public partial class SettingsWindow
         var titleLine = new TextBlock
         {
             Text = isLayoutBar
-                ? $"当前布局作用屏幕：{ActiveScreenDisplayName()}"
-                : $"当前正在配置：{ActiveScreenDisplayName()}",
+                ? $"布局应用于 {ActiveScreenDisplayName()}"
+                : $"正在配置 {ActiveScreenDisplayName()}",
             FontSize = 13,
             FontWeight = FontWeights.SemiBold
         };
@@ -583,16 +556,15 @@ public partial class SettingsWindow
         Grid.SetColumn(centerStack, 1);
         rowGrid.Children.Add(centerStack);
 
-        // Right: copy primary profile action when configuring a secondary screen.
-        if (_activeScreenKey is { } secondaryKey)
+        if (_activeScreenKey is { } secondaryKey && !bridge.CanBindLegacyRoot())
         {
             var copyButton = new Button
             {
-                Content = "从主屏复制方案到本屏",
+                Content = "复制原桌面布局",
                 VerticalAlignment = VerticalAlignment.Center,
                 Padding = new Thickness(12, 6, 12, 6)
             };
-            AutomationProperties.SetName(copyButton, "从主屏复制方案到本屏");
+            AutomationProperties.SetName(copyButton, "复制原桌面布局");
             copyButton.Click += (_, _) =>
             {
                 var status = bridge.CopyPrimaryProfileToScreen(secondaryKey);
@@ -614,11 +586,12 @@ public partial class SettingsWindow
 
         rootStack.Children.Add(rowGrid);
 
-        if (disconnected.Count > 0)
+        var selectedScreen = screens.FirstOrDefault(screen => screen.IsConnected
+            && string.Equals(screen.ScreenKey, _activeScreenKey, StringComparison.Ordinal));
+        if (selectedScreen is not null)
         {
-            var recovery = BuildDisconnectedRecoveryBanner(bridge, disconnected);
-            recovery.Margin = new Thickness(0, 10, 0, 0);
-            rootStack.Children.Add(recovery);
+            AddSelectedScreenSurfaceControls(rootStack, bridge, selectedScreen);
+            AddOfflineScreenProfileControls(rootStack, bridge, selectedScreen);
         }
 
         outer.Child = rootStack;
@@ -703,104 +676,6 @@ public partial class SettingsWindow
 
         frame.Child = canvas;
         return frame;
-    }
-
-    private Border BuildDisconnectedRecoveryBanner(
-        MultiScreenSettingsBridge bridge,
-        IReadOnlyList<DisconnectedScreenWidget> disconnected)
-    {
-        var banner = new Border
-        {
-            CornerRadius = new CornerRadius(8),
-            BorderThickness = new Thickness(1),
-            Padding = new Thickness(12, 8, 12, 8)
-        };
-        banner.SetResourceReference(Border.BackgroundProperty, "SettingsWarnBrush");
-        banner.SetResourceReference(Border.BorderBrushProperty, "SettingsSurfaceBorderBrush");
-
-        var stack = new StackPanel();
-        var headerGrid = new Grid();
-        headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-
-        var notice = new TextBlock
-        {
-            Text = $"有 {disconnected.Count} 张卡片位于当前未连接的副屏（重连该显示器会自动恢复，或立即移回主屏）：",
-            FontSize = 12.5,
-            TextWrapping = TextWrapping.Wrap,
-            VerticalAlignment = VerticalAlignment.Center
-        };
-        notice.SetResourceReference(TextBlock.ForegroundProperty, "SettingsWarnTextBrush");
-        Grid.SetColumn(notice, 0);
-        headerGrid.Children.Add(notice);
-
-        var moveAllButton = new Button
-        {
-            Content = "全部移回主屏",
-            Margin = new Thickness(10, 0, 0, 0),
-            Padding = new Thickness(10, 4, 10, 4)
-        };
-        AutomationProperties.SetName(moveAllButton, "将离线副屏卡片全部移回主屏");
-        moveAllButton.Click += (_, _) =>
-        {
-            var totalMoved = 0;
-            foreach (var screenKey in disconnected.Select(item => item.ScreenKey).Distinct(StringComparer.Ordinal))
-            {
-                totalMoved += bridge.MoveAllDisconnectedFromScreenToPrimary(screenKey);
-            }
-            if (ComponentSettingsStatusText is not null)
-            {
-                ComponentSettingsStatusText.Text = totalMoved > 0
-                    ? $"已将 {totalMoved} 张离线卡片移回主屏"
-                    : "没有可移回主屏的卡片";
-            }
-            RefreshMultiScreenUi();
-            RefreshComponentList();
-        };
-        Grid.SetColumn(moveAllButton, 1);
-        headerGrid.Children.Add(moveAllButton);
-        stack.Children.Add(headerGrid);
-
-        var itemWrap = new WrapPanel();
-        foreach (var item in disconnected)
-        {
-            var moveOne = new Button
-            {
-                Content = $"移回主屏：{item.Title}（{item.KindName}）",
-                Margin = new Thickness(0, 2, 8, 2),
-                Padding = new Thickness(8, 3, 8, 3),
-                FontSize = 12
-            };
-            AutomationProperties.SetName(moveOne, $"将 {item.Title} 移回主屏");
-            var id = item.Id;
-            var kindName = item.KindName;
-            var title = item.Title;
-            moveOne.Click += (_, _) =>
-            {
-                if (bridge.MoveDisconnectedWidgetToPrimary(id, kindName))
-                {
-                    if (ComponentSettingsStatusText is not null)
-                    {
-                        ComponentSettingsStatusText.Text = $"已将“{title}”移回主屏";
-                    }
-                    RefreshMultiScreenUi();
-                    RefreshComponentList();
-                }
-            };
-            itemWrap.Children.Add(moveOne);
-        }
-        var scrollHost = new ScrollViewer
-        {
-            Margin = new Thickness(0, 6, 0, 0),
-            MaxHeight = 128,
-            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
-            Content = itemWrap
-        };
-        stack.Children.Add(scrollHost);
-
-        banner.Child = stack;
-        return banner;
     }
 
     private void UpdateMoveScreenControls(DesktopComponentSettingsEntry? entry)

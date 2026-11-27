@@ -343,6 +343,7 @@ public partial class SettingsWindow : Window
             {
                 ApplyHostWorkAreaConstraint(recenter: false);
                 RefreshMultiScreenUi();
+                RefreshSurfaceMonitorChoices();
             }
         });
 
@@ -523,14 +524,14 @@ public partial class SettingsWindow : Window
         try
         {
             QuietInformationPresetRadio.IsChecked =
-                _desktopExperience.ActivePreset == DesktopLayoutPreset.QuietInformation;
+                ActiveDesktopExperience.ActivePreset == DesktopLayoutPreset.QuietInformation;
             GlacierWorkbenchPresetRadio.IsChecked =
-                _desktopExperience.ActivePreset == DesktopLayoutPreset.GlacierWorkbench;
+                ActiveDesktopExperience.ActivePreset == DesktopLayoutPreset.GlacierWorkbench;
             TransparentApplePresetRadio.IsChecked =
-                _desktopExperience.ActivePreset == DesktopLayoutPreset.TransparentApple;
+                ActiveDesktopExperience.ActivePreset == DesktopLayoutPreset.TransparentApple;
             CenterClockPresetRadio.IsChecked =
-                _desktopExperience.ActivePreset == DesktopLayoutPreset.CenterClock;
-            UpdatePresetPreview(_desktopExperience.ActivePreset);
+                ActiveDesktopExperience.ActivePreset == DesktopLayoutPreset.CenterClock;
+            UpdatePresetPreview(ActiveDesktopExperience.ActivePreset);
         }
         finally
         {
@@ -1376,7 +1377,7 @@ public partial class SettingsWindow : Window
             }
             var sizeEdited = Math.Abs(component.Placement.Width - previousWidth) > 0.5d
                 || Math.Abs(component.Placement.Height - previousHeight) > 0.5d;
-            if (sizeEdited && _activeScreenKey is not null)
+            if (sizeEdited && IsMultiScreenActive)
             {
                 if (component.Placement.MonitorLocal is { } editedLocal)
                 {
@@ -2134,6 +2135,7 @@ public partial class SettingsWindow : Window
         TaskbarPage.Visibility = page == SettingsNavigationRules.TaskbarPageKey ? Visibility.Visible : Visibility.Collapsed;
         LauncherPage.Visibility = page == SettingsNavigationRules.LauncherPageKey ? Visibility.Visible : Visibility.Collapsed;
         GeneralPage.Visibility = page == SettingsNavigationRules.GeneralPageKey ? Visibility.Visible : Visibility.Collapsed;
+        RefreshSurfaceMonitorChoices();
         if (!_initializingNavigation)
         {
             _maintenance.SetLastSettingsPage?.Invoke(page);
@@ -3051,9 +3053,9 @@ public partial class SettingsWindow : Window
         _loadingDesktopMode = true;
         try
         {
-            WindowsNativeModeRadio.IsChecked = match.IsExact && match.Mode == DesktopMode.WindowsNative;
-            IceBlueHybridModeRadio.IsChecked = match.IsExact && match.Mode == DesktopMode.IceBlueHybrid;
-            AppleStyleModeRadio.IsChecked = match.IsExact && match.Mode == DesktopMode.AppleStyle;
+            WindowsNativeModeRadio.IsChecked = match.Mode == DesktopMode.WindowsNative;
+            IceBlueHybridModeRadio.IsChecked = match.Mode == DesktopMode.IceBlueHybrid;
+            AppleStyleModeRadio.IsChecked = match.Mode == DesktopMode.AppleStyle;
         }
         finally
         {
@@ -3167,7 +3169,9 @@ public partial class SettingsWindow : Window
         {
             // The apple mode also turns the top bar on and hides the three information
             // cards it replaces, so the same facts do not show twice.
-            DesktopModeRules.Apply(mode, _dockState, _taskbarState, _topBarState, _desktopExperience);
+            var perScreenCards = _maintenance.MultiScreen?.IsEnabled() == true;
+            DesktopModeRules.Apply(mode, _dockState, _taskbarState, _topBarState, _desktopExperience,
+                updateInformationCards: !perScreenCards);
             _applyDesktopExperience(_desktopExperience);
             _applyTopBar?.Invoke();
             LoadTopBarSettings();
@@ -3356,19 +3360,9 @@ public partial class SettingsWindow : Window
             DockBottomGapSlider.Value = _dockState.BottomGapDip;
             DockBottomGapText.Text = $"{_dockState.BottomGapDip:0} DIP";
 
-            DockMonitorComboBox.Items.Clear();
-            foreach (var monitor in MonitorCatalog.GetAll())
+            if (DockPage.Visibility == Visibility.Visible)
             {
-                var item = new ComboBoxItem { Content = monitor.Label, Tag = monitor.DeviceName };
-                DockMonitorComboBox.Items.Add(item);
-                if (string.Equals(
-                        monitor.DeviceName,
-                        _dockState.MonitorDeviceName,
-                        StringComparison.OrdinalIgnoreCase)
-                    || (DockMonitorComboBox.SelectedItem is null && monitor.IsPrimary))
-                {
-                    DockMonitorComboBox.SelectedItem = item;
-                }
+                LoadSurfaceMonitorChoices(DockMonitorComboBox, _dockState.MonitorKey, _dockState.MonitorDeviceName);
             }
 
             RefreshDockPinnedList();
@@ -3377,6 +3371,72 @@ public partial class SettingsWindow : Window
         finally
         {
             _loadingDock = false;
+        }
+    }
+
+    private sealed record SurfaceMonitorChoice(string? MonitorKey, string? LegacyDeviceName = null);
+
+    private static void LoadSurfaceMonitorChoices(ComboBox combo, string? monitorKey, string? legacyDeviceName)
+    {
+        combo.Items.Clear();
+        var followsPrimary = SurfaceMonitorTargetRules.FollowsPrimary(monitorKey, legacyDeviceName);
+        var followItem = new ComboBoxItem
+        {
+            Content = "跟随 Windows 主显示器",
+            Tag = new SurfaceMonitorChoice(null)
+        };
+        combo.Items.Add(followItem);
+        if (followsPrimary)
+        {
+            combo.SelectedItem = followItem;
+        }
+        foreach (var monitor in MonitorIdentityResolver.ResolveConnected().Where(monitor => monitor.IsPersistentIdentity))
+        {
+            var item = new ComboBoxItem
+            {
+                Content = $"固定在 {monitor.DisplayLabel} · {monitor.ResolutionSummary}",
+                Tag = new SurfaceMonitorChoice(monitor.MonitorKey)
+            };
+            combo.Items.Add(item);
+            if (string.Equals(monitor.MonitorKey, monitorKey, StringComparison.OrdinalIgnoreCase))
+            {
+                combo.SelectedItem = item;
+            }
+        }
+        if (combo.SelectedItem is null)
+        {
+            var item = new ComboBoxItem
+            {
+                Content = string.IsNullOrWhiteSpace(monitorKey)
+                    ? $"原显示器选择待确认（{legacyDeviceName}），请重新选择"
+                    : "固定显示器未连接，连接后自动恢复",
+                Tag = new SurfaceMonitorChoice(monitorKey, legacyDeviceName)
+            };
+            combo.Items.Add(item);
+            combo.SelectedItem = item;
+        }
+    }
+
+    private void RefreshSurfaceMonitorChoices()
+    {
+        var loadingDock = _loadingDock;
+        var loadingTopBar = _loadingTopBar;
+        _loadingDock = _loadingTopBar = true;
+        try
+        {
+            if (DockPage.Visibility == Visibility.Visible)
+            {
+                LoadSurfaceMonitorChoices(DockMonitorComboBox, _dockState.MonitorKey, _dockState.MonitorDeviceName);
+            }
+            if (TopBarPage.Visibility == Visibility.Visible && _topBarState is { } state)
+            {
+                LoadSurfaceMonitorChoices(TopBarMonitorComboBox, state.MonitorKey, state.MonitorDeviceName);
+            }
+        }
+        finally
+        {
+            _loadingDock = loadingDock;
+            _loadingTopBar = loadingTopBar;
         }
     }
 
@@ -3466,9 +3526,11 @@ public partial class SettingsWindow : Window
         _dockState.ShowStartMenuButton = DockStartMenuButtonCheckBox.IsChecked == true;
         _dockState.ShowLauncherButton = DockLauncherButtonCheckBox.IsChecked == true;
         _dockState.ShowDesktopButton = DockShowDesktopButtonCheckBox.IsChecked == true;
-        if (DockMonitorComboBox.SelectedItem is ComboBoxItem { Tag: string deviceName })
+        if (ReferenceEquals(sender, DockMonitorComboBox)
+            && DockMonitorComboBox.SelectedItem is ComboBoxItem { Tag: SurfaceMonitorChoice choice })
         {
-            _dockState.MonitorDeviceName = deviceName;
+            _dockState.MonitorKey = choice.MonitorKey;
+            _dockState.MonitorDeviceName = choice.LegacyDeviceName;
         }
         ApplyDockChange(_dockState.IsEnabled ? "已应用" : "冰蓝 Dock 已关闭");
         LoadDesktopMode();
@@ -3604,19 +3666,9 @@ public partial class SettingsWindow : Window
                 TopBarState.MaximumHeightDip);
             LoadTopBarSearchHotkey();
 
-            TopBarMonitorComboBox.Items.Clear();
-            foreach (var monitor in MonitorCatalog.GetAll())
+            if (TopBarPage.Visibility == Visibility.Visible)
             {
-                var item = new ComboBoxItem { Content = monitor.Label, Tag = monitor.DeviceName };
-                TopBarMonitorComboBox.Items.Add(item);
-                if (string.Equals(
-                        monitor.DeviceName,
-                        state.MonitorDeviceName,
-                        StringComparison.OrdinalIgnoreCase)
-                    || (TopBarMonitorComboBox.SelectedItem is null && monitor.IsPrimary))
-                {
-                    TopBarMonitorComboBox.SelectedItem = item;
-                }
+                LoadSurfaceMonitorChoices(TopBarMonitorComboBox, state.MonitorKey, state.MonitorDeviceName);
             }
 
             LoadTopBarVisualEditor();
@@ -3645,9 +3697,11 @@ public partial class SettingsWindow : Window
         state.VisibilityMode = TopBarSmartHideRadio.IsChecked == true
             ? TopBarVisibilityMode.SmartHide
             : TopBarVisibilityMode.ReserveTopEdge;
-        if (TopBarMonitorComboBox.SelectedItem is ComboBoxItem { Tag: string deviceName })
+        if (ReferenceEquals(sender, TopBarMonitorComboBox)
+            && TopBarMonitorComboBox.SelectedItem is ComboBoxItem { Tag: SurfaceMonitorChoice choice })
         {
-            state.MonitorDeviceName = deviceName;
+            state.MonitorKey = choice.MonitorKey;
+            state.MonitorDeviceName = choice.LegacyDeviceName;
         }
         LoadTopBarVisualEditor();
         LoadTopBarOrderList();

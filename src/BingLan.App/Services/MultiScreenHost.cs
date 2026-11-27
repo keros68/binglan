@@ -36,6 +36,7 @@ internal sealed class MultiScreenCoordinatorCallbacks
     public required Func<bool> IsDesktopHidden { get; init; }
     public required Action EnsureDesktopVisible { get; init; }
     public required Action<Action> RunSuppressingExperienceChanges { get; init; }
+    public Func<string?, DesktopComponentKind, bool>? IsInformationCardSuppressed { get; init; }
 }
 
 /// <summary>
@@ -118,7 +119,7 @@ internal sealed class MultiScreenHost : IDisposable
 
         _connectedMonitors = connectedMonitors;
         var secondaryByKey = connectedMonitors
-            .Where(m => !m.IsPrimary)
+            .Where(m => m.IsPersistentIdentity && GetScreenKeyForMonitor(m) is not null)
             .ToDictionary(m => m.MonitorKey, StringComparer.Ordinal);
 
         // Step 1: Hard-close and destroy windows whose secondary monitor disconnected.
@@ -139,21 +140,16 @@ internal sealed class MultiScreenHost : IDisposable
             return;
         }
 
-        var primaryMonitor = connectedMonitors.FirstOrDefault(m => m.IsPrimary);
         var secondaryCandidates = secondaryByKey.Values
             .Select(m => new MonitorIdentityCandidate(
                 m.MonitorKey,
                 m.HardwareId,
                 m.DeviceName,
                 m.FriendlyName,
-                m.DisplayLabel))
+                m.DisplayLabel,
+                m.LegacyDeviceKey))
             .ToList();
-        if (ScreenProfileAccessor.ReconcileConnectedProfileKeys(
-                _state,
-                secondaryCandidates,
-                primaryMonitor?.HardwareId,
-                MultiScreenRules.ExtractHardwareModelId(primaryMonitor?.HardwareId),
-                primaryMonitor?.FriendlyName) > 0)
+        if (ScreenProfileAccessor.ReconcileConnectedProfileKeys(_state, secondaryCandidates) > 0)
         {
             _callbacks.ScheduleSave();
         }
@@ -248,6 +244,11 @@ internal sealed class MultiScreenHost : IDisposable
 
                 _state.TodoWidgets.Add(created);
                 profile.PrimaryTodoId = created.Id.ToString("D");
+            }
+            else if (ScreenProfileAccessor.GetPrimaryTodoId(_state, normalized) is { } id
+                && _state.TodoWidgets.FirstOrDefault(todo => todo.Id == id) is { } firstTodo)
+            {
+                firstTodo.Placement = ScreenProfileAccessor.ClonePlacement(todoComponent.Placement);
             }
 
             if (monitor is not null)
@@ -604,36 +605,13 @@ internal sealed class MultiScreenHost : IDisposable
     internal void UntrackSecondaryWindow(WidgetWindowBase window) =>
         _secondaryWindows.Remove(window);
 
-    internal ResolvedMonitor? TryFindSecondaryMonitorForDipPlacement(WindowPlacement placement)
-    {
-        if (_disposed || _connectedMonitors.Count < 2)
-        {
-            return null;
-        }
+    internal string? GetScreenKeyForMonitor(ResolvedMonitor monitor) =>
+        string.Equals(monitor.MonitorKey, _state.MultiScreen?.RootMonitorKey, StringComparison.Ordinal)
+            ? null
+            : monitor.MonitorKey;
 
-        var primaryMonitor = _connectedMonitors.FirstOrDefault(m => m.IsPrimary);
-        var primaryScale = ScreenProfileAccessor.ResolveScale(primaryMonitor?.Dpi ?? 96u);
-        var pxLeft = (int)Math.Round(placement.Left * primaryScale);
-        var pxTop = (int)Math.Round(placement.Top * primaryScale);
-        var pxWidth = Math.Max(1, (int)Math.Round((placement.Width > 0 ? placement.Width : 320d) * primaryScale));
-        var pxHeight = Math.Max(1, (int)Math.Round((placement.Height > 0 ? placement.Height : 260d) * primaryScale));
-        var targetRect = new PixelRect(pxLeft, pxTop, pxLeft + pxWidth, pxTop + pxHeight);
-        var monitor = MonitorIdentityResolver.FindByBounds(_connectedMonitors, targetRect);
-        if (monitor is not { IsPrimary: false })
-        {
-            return null;
-        }
-
-        ScreenProfileAccessor.EnsureScreenProfile(
-            _state,
-            monitor.MonitorKey,
-            monitor.DeviceName,
-            monitor.DisplayLabel,
-            monitor.HardwareId,
-            monitor.FriendlyName);
-        ScreenProfileAccessor.RecordMonitorLocalPlacement(placement, targetRect, monitor.WorkingArea, monitor.Dpi);
-        return monitor;
-    }
+    private ResolvedMonitor? FindRootMonitor() =>
+        _connectedMonitors.FirstOrDefault(m => m.IsPersistentIdentity && GetScreenKeyForMonitor(m) is null);
 
     internal FileBoxWindow? ShowDetachedFileBoxOnScreen(string screenKey, FileBoxState box)
     {
@@ -673,22 +651,18 @@ internal sealed class MultiScreenHost : IDisposable
             return new MoveWidgetResult(false, "该卡片已位于目标屏幕", window);
         }
 
-        var targetMonitor = destKey is null
-            ? allMonitors.FirstOrDefault(m => m.IsPrimary)
-            : allMonitors.FirstOrDefault(m => !m.IsPrimary && string.Equals(m.MonitorKey, destKey, StringComparison.Ordinal));
+        var targetMonitor = destKey is null ? FindRootMonitor() : FindConnectedMonitor(destKey);
         if (targetMonitor is null)
         {
             return new MoveWidgetResult(false, "目标屏幕当前未连接", null);
         }
 
-        var sourceMonitor = sourceKey is null
-            ? allMonitors.FirstOrDefault(m => m.IsPrimary)
-            : allMonitors.FirstOrDefault(m => !m.IsPrimary && string.Equals(m.MonitorKey, sourceKey, StringComparison.Ordinal));
+        var sourceMonitor = sourceKey is null ? FindRootMonitor() : FindConnectedMonitor(sourceKey);
         var sourceBounds = TryReadWindowPixelBounds(window);
         var sourceWork = sourceMonitor?.WorkingArea;
         var sourceDpi = sourceMonitor?.Dpi ?? 96u;
         var layoutKey = CurrentLayoutKey(allMonitors);
-        PixelRect? targetSecondaryWork = destKey is not null ? targetMonitor.WorkingArea : null;
+        var targetWorkArea = targetMonitor.WorkingArea;
 
         if (destKey is not null)
         {
@@ -729,7 +703,7 @@ internal sealed class MultiScreenHost : IDisposable
                         {
                             todo.Show();
                         }
-                        ApplyPhysicalBounds(todo, targetPx, targetMonitor.Dpi, todo.State.Placement, layoutKey, targetSecondaryWork);
+                        ApplyPhysicalBounds(todo, targetPx, targetMonitor.Dpi, todo.State.Placement, layoutKey, targetWorkArea);
                     }
                 });
                 if (destKey is not null && ScreenProfileAccessor.GetPrimaryTodoId(_state, destKey) == todo.State.Id)
@@ -774,7 +748,7 @@ internal sealed class MultiScreenHost : IDisposable
                         }
                         if (note.IsVisible)
                         {
-                            ApplyPhysicalBounds(note, targetPx, targetMonitor.Dpi, note.State.Placement, layoutKey, targetSecondaryWork);
+                            ApplyPhysicalBounds(note, targetPx, targetMonitor.Dpi, note.State.Placement, layoutKey, targetWorkArea);
                         }
                     }
                 });
@@ -809,7 +783,7 @@ internal sealed class MultiScreenHost : IDisposable
                         }
                         if (box.IsVisible)
                         {
-                            ApplyPhysicalBounds(box, targetPx, targetMonitor.Dpi, box.State.Placement, layoutKey, targetSecondaryWork);
+                            ApplyPhysicalBounds(box, targetPx, targetMonitor.Dpi, box.State.Placement, layoutKey, targetWorkArea);
                         }
                         box.SyncGroupSharedProperties();
                     }
@@ -863,7 +837,7 @@ internal sealed class MultiScreenHost : IDisposable
                         {
                             infoWindow.Show();
                         }
-                        ApplyPhysicalBounds(infoWindow, targetPx, targetMonitor.Dpi, destComponent.Placement, layoutKey, targetSecondaryWork);
+                        ApplyPhysicalBounds(infoWindow, targetPx, targetMonitor.Dpi, destComponent.Placement, layoutKey, targetWorkArea);
                     }
                 });
                 _callbacks.SaveNow();
@@ -919,7 +893,7 @@ internal sealed class MultiScreenHost : IDisposable
                         {
                             quickWindow.Show();
                         }
-                        ApplyPhysicalBounds(quickWindow, targetPx, targetMonitor.Dpi, destComponent.Placement, layoutKey, targetSecondaryWork);
+                        ApplyPhysicalBounds(quickWindow, targetPx, targetMonitor.Dpi, destComponent.Placement, layoutKey, targetWorkArea);
                     }
                 });
                 _callbacks.SaveNow();
@@ -932,7 +906,7 @@ internal sealed class MultiScreenHost : IDisposable
 
     internal bool IsMonitorStillLive(string? screenKey)
     {
-        if (WindowScreenRecovery.IsLayoutTransitioning() || !MonitorIdentityResolver.HasMultipleMonitors())
+        if (WindowScreenRecovery.IsLayoutTransitioning())
         {
             return false;
         }
@@ -944,21 +918,7 @@ internal sealed class MultiScreenHost : IDisposable
         }
 
         var monitor = FindConnectedMonitor(normalized);
-        if (monitor is null)
-        {
-            return false;
-        }
-
-        if (!string.IsNullOrWhiteSpace(monitor.DeviceName))
-        {
-            var connectedSecondaryDevices = MonitorIdentityResolver.GetConnectedSecondaryDeviceNames();
-            if (!connectedSecondaryDevices.Contains(monitor.DeviceName.Trim()))
-            {
-                return false;
-            }
-        }
-
-        return true;
+        return monitor is not null && MonitorIdentityResolver.IsDeviceConnected(monitor.DeviceName);
     }
 
     /// <summary>
@@ -988,12 +948,12 @@ internal sealed class MultiScreenHost : IDisposable
         }
 
         var landingMonitor = MonitorIdentityResolver.FindByBounds(_connectedMonitors, bounds);
-        if (landingMonitor is null)
+        if (landingMonitor is not { IsPersistentIdentity: true })
         {
             return false;
         }
 
-        var destinationKey = landingMonitor.ScreenKey;
+        var destinationKey = GetScreenKeyForMonitor(landingMonitor);
         if (string.Equals(previousKey, destinationKey, StringComparison.Ordinal))
         {
             return false;
@@ -1014,22 +974,9 @@ internal sealed class MultiScreenHost : IDisposable
 
         void UpdateMonitorLocalForLanding(WindowPlacement targetPlacement)
         {
-            if (destinationKey is null)
-            {
-                targetPlacement.MonitorLocal = null;
-            }
-            else
-            {
-                if (!string.IsNullOrEmpty(landingLayoutKey))
-                {
-                    DisplayLayoutRules.Remember(targetPlacement, landingLayoutKey, bounds);
-                }
-                ScreenProfileAccessor.RecordMonitorLocalPlacement(
-                    targetPlacement,
-                    bounds,
-                    landingMonitor.WorkingArea,
-                    landingMonitor.Dpi);
-            }
+            DisplayLayoutRules.Remember(targetPlacement, landingLayoutKey, bounds);
+            ScreenProfileAccessor.RecordMonitorLocalPlacement(
+                targetPlacement, bounds, landingMonitor.WorkingArea, landingMonitor.Dpi);
         }
 
         switch (window)
@@ -1138,9 +1085,7 @@ internal sealed class MultiScreenHost : IDisposable
         DesktopComponentKind kind,
         string layoutKey)
     {
-        var sourceMonitor = previousKey is null
-            ? _connectedMonitors.FirstOrDefault(m => m.IsPrimary)
-            : _connectedMonitors.FirstOrDefault(m => string.Equals(m.MonitorKey, previousKey, StringComparison.Ordinal));
+        var sourceMonitor = previousKey is null ? FindRootMonitor() : FindConnectedMonitor(previousKey);
         if (sourceMonitor is null)
         {
             return;
@@ -1150,7 +1095,7 @@ internal sealed class MultiScreenHost : IDisposable
         PixelRect restorePx;
         if (window.LastDragStartBounds is { HasArea: true } startBounds
             && MonitorIdentityResolver.FindByBounds(_connectedMonitors, startBounds) is { } startMonitor
-            && string.Equals(startMonitor.ScreenKey, previousKey, StringComparison.Ordinal))
+            && string.Equals(GetScreenKeyForMonitor(startMonitor), previousKey, StringComparison.Ordinal))
         {
             restorePx = startBounds;
         }
@@ -1165,7 +1110,7 @@ internal sealed class MultiScreenHost : IDisposable
             sourceMonitor.Dpi,
             srcComponent.Placement,
             layoutKey,
-            previousKey is not null ? sourceMonitor.WorkingArea : null);
+            sourceMonitor.WorkingArea);
         _callbacks.ScheduleSave();
     }
 
@@ -1388,22 +1333,36 @@ internal sealed class MultiScreenHost : IDisposable
         _connectedMonitors = [];
     }
 
-    private void SyncProfileWindows(
-        ScreenProfileState profile,
-        ResolvedMonitor monitor,
-        string layoutKey)
+    internal void RefreshInformationCardVisibility()
+    {
+        var layoutKey = CurrentLayoutKey(_connectedMonitors);
+        _callbacks.RunSuppressingExperienceChanges(() =>
+        {
+            using (WindowScreenRecovery.DeferShowRecovery())
+            {
+                foreach (var monitor in _connectedMonitors.Where(monitor => monitor.IsPersistentIdentity))
+                {
+                    if (GetScreenKeyForMonitor(monitor) is { } key
+                        && _state.MultiScreen?.Screens.TryGetValue(key, out var profile) == true)
+                    {
+                        SyncInformationCards(profile, monitor, layoutKey);
+                    }
+                }
+            }
+        });
+    }
+
+    private void SyncInformationCards(ScreenProfileState profile, ResolvedMonitor monitor, string layoutKey)
     {
         var screenKey = profile.MonitorKey;
         var experience = profile.Experience;
-        var hasVisibleInfo = InformationComponentKinds.Any(kind => experience.GetComponent(kind).IsVisible);
-
         // 1. Information built-in cards (TimeDate, Greeting, Weather, Performance).
         // Shared InformationWidgets[0] metadata, performance sampler, and weather service.
         foreach (var kind in InformationComponentKinds)
         {
             var component = experience.GetComponent(kind);
             var existing = FindLiveComponentWindow(screenKey, kind) as InformationWidgetWindow;
-            if (!hasVisibleInfo || !component.IsVisible)
+            if (!component.IsVisible || _callbacks.IsInformationCardSuppressed?.Invoke(screenKey, kind) == true)
             {
                 if (existing is not null)
                 {
@@ -1433,6 +1392,16 @@ internal sealed class MultiScreenHost : IDisposable
                 }
             }
         }
+    }
+
+    private void SyncProfileWindows(
+        ScreenProfileState profile,
+        ResolvedMonitor monitor,
+        string layoutKey)
+    {
+        var screenKey = profile.MonitorKey;
+        var experience = profile.Experience;
+        SyncInformationCards(profile, monitor, layoutKey);
 
         // 2. Quick launch bar.
         SyncQuickPlacesWindow(profile, monitor, layoutKey);
@@ -1828,7 +1797,7 @@ internal sealed class MultiScreenHost : IDisposable
 
     private ResolvedMonitor? FindConnectedMonitor(string screenKey) =>
         _connectedMonitors.FirstOrDefault(m =>
-            !m.IsPrimary && string.Equals(m.MonitorKey, screenKey, StringComparison.Ordinal));
+            m.IsPersistentIdentity && string.Equals(GetScreenKeyForMonitor(m), screenKey, StringComparison.Ordinal));
 
     internal static string CurrentLayoutKey(IReadOnlyList<ResolvedMonitor> monitors) =>
         monitors.Count > 0
@@ -1967,7 +1936,7 @@ internal sealed class MultiScreenHost : IDisposable
         return moved;
     }
 
-    private static PixelRect? TryReadWindowPixelBounds(WidgetWindowBase window)
+    internal static PixelRect? TryReadWindowPixelBounds(WidgetWindowBase window)
     {
         var handle = new WindowInteropHelper(window).Handle;
         if (handle == 0 || !DockNativeMethods.GetWindowRect(handle, out var rect))

@@ -5,9 +5,7 @@ using BingLan.Core.Models;
 namespace BingLan.App.Dock;
 
 /// <summary>
-/// A connected display with both live Win32 geometry/DPI and a stable hardware-backed
-/// <see cref="MonitorKey"/> that survives GDI <c>\\.\DISPLAYn</c> renumbering across reboots
-/// and cable replugs.
+/// A connected display with live Win32 geometry/DPI and its physical identity when available.
 /// </summary>
 internal sealed record ResolvedMonitor(
     string MonitorKey,
@@ -22,21 +20,37 @@ internal sealed record ResolvedMonitor(
     bool IsPrimary,
     uint Dpi)
 {
+    internal MonitorIdentityKind IdentityKind { get; init; }
+
+    internal bool IsPersistentIdentity => IdentityKind == MonitorIdentityKind.DeviceInterfacePath;
+
+    // Legacy role-based ownership uses the primary sentinel and exact device paths.
+    internal string? LegacyScreenKey { get; init; }
+
+    internal string LegacyDeviceKey { get; init; } = string.Empty;
+
     /// <summary>
-    /// Normalized key used in persisted widget/profile models: null for the primary display,
-    /// stable non-empty <see cref="MonitorKey"/> for secondary displays.
+    /// Legacy ownership key: null for the Windows primary and the prior device key otherwise.
     /// </summary>
-    internal string? ScreenKey => IsPrimary ? null : MonitorKey;
+    internal string? ScreenKey => IsPrimary ? null : LegacyScreenKey ?? MonitorKey;
 
     internal int ScalePercent => Dpi > 0 ? (int)Math.Round(Dpi * 100d / 96d) : 100;
 
     internal string ResolutionSummary => $"{Bounds.Width}×{Bounds.Height} · {ScalePercent}%";
 }
 
+internal enum MonitorIdentityKind
+{
+    Fallback,
+    DeviceInterfacePath
+}
+
 internal sealed record MonitorHardwareInfo(
     string DevicePath,
     string FriendlyName,
-    uint? TargetId = null);
+    uint? TargetId = null,
+    bool IsAmbiguous = false,
+    bool IsVirtual = false);
 
 /// <summary>
 /// Resolves stable hardware identities for connected monitors on demand.
@@ -50,6 +64,9 @@ internal static class MonitorIdentityResolver
     private const uint DisplayConfigDeviceInfoGetSourceName = 1;
     private const uint DisplayConfigDeviceInfoGetTargetName = 2;
     private const uint EddGetDeviceInterfaceName = 0x00000001;
+    private const uint DisplayDeviceActive = 0x00000001;
+    private const uint DisplayDeviceMirroringDriver = 0x00000008;
+    private const uint OutputTechnologyIndirectVirtual = 17;
 
     private static int _queryDisplayConfigCallCountForTests;
 
@@ -88,32 +105,17 @@ internal static class MonitorIdentityResolver
     internal static bool HasMultipleMonitors() => GetConnectedMonitorCount() >= 2;
 
     /// <summary>
-    /// Returns the GDI device names (e.g. <c>\\.\DISPLAY1</c>) of currently attached secondary
-    /// monitors using lightweight <c>EnumDisplayMonitors</c> only (zero <c>QueryDisplayConfig</c> calls).
+    /// Checks all attached roles with lightweight geometry enumeration only.
     /// </summary>
-    internal static IReadOnlySet<string> GetConnectedSecondaryDeviceNames()
+    internal static bool IsDeviceConnected(string deviceName)
     {
-        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (string.IsNullOrWhiteSpace(deviceName)) return false;
         if (ResolveOverrideForTests is { } overrideResolver)
         {
-            foreach (var monitor in overrideResolver())
-            {
-                if (!monitor.IsPrimary && !string.IsNullOrWhiteSpace(monitor.DeviceName))
-                {
-                    names.Add(monitor.DeviceName.Trim());
-                }
-            }
-            return names;
+            return overrideResolver().Any(m => string.Equals(m.DeviceName.Trim(), deviceName.Trim(), StringComparison.OrdinalIgnoreCase));
         }
 
-        foreach (var snapshot in MonitorCatalog.GetAll())
-        {
-            if (!snapshot.IsPrimary && !string.IsNullOrWhiteSpace(snapshot.DeviceName))
-            {
-                names.Add(snapshot.DeviceName.Trim());
-            }
-        }
-        return names;
+        return MonitorCatalog.GetAll().Any(m => string.Equals(m.DeviceName.Trim(), deviceName.Trim(), StringComparison.OrdinalIgnoreCase));
     }
 
     internal static IReadOnlyList<ResolvedMonitor> ResolveConnected()
@@ -132,11 +134,6 @@ internal static class MonitorIdentityResolver
         if (snapshots.Count == 0)
         {
             return [];
-        }
-
-        if (snapshots.Count == 1)
-        {
-            return BuildResolvedMonitors(snapshots, hardwareLookup: null);
         }
 
         var hardwareLookup = QueryHardwareLookup(snapshots);
@@ -235,16 +232,11 @@ internal static class MonitorIdentityResolver
             .ThenBy(m => m.Bounds.Top)
             .ToArray();
 
-        // Count duplicate normalized hardware paths ahead of time so identical monitors
-        // disambiguate deterministically by QueryDisplayConfig port targetInfo.id first,
-        // rather than unstable left-to-right geometry order.
+        // Include the primary when rejecting duplicated exact device paths.
         var hardwareCounts = new Dictionary<string, int>(StringComparer.Ordinal);
+        var legacyHardwareCounts = new Dictionary<string, int>(StringComparer.Ordinal);
         foreach (var snapshot in ordered)
         {
-            if (snapshot.IsPrimary)
-            {
-                continue;
-            }
             if (hardwareLookup is not null
                 && !string.IsNullOrWhiteSpace(snapshot.DeviceName)
                 && hardwareLookup.TryGetValue(snapshot.DeviceName, out var lookupInfo))
@@ -255,11 +247,17 @@ internal static class MonitorIdentityResolver
                     hardwareCounts[norm] = hardwareCounts.TryGetValue(norm, out var existingCount)
                         ? existingCount + 1
                         : 1;
+                    if (!snapshot.IsPrimary)
+                    {
+                        legacyHardwareCounts[norm] = legacyHardwareCounts.GetValueOrDefault(norm) + 1;
+                    }
                 }
+
             }
         }
 
         var seenKeys = new Dictionary<string, int>(StringComparer.Ordinal);
+        var seenLegacyKeys = new Dictionary<string, int>(StringComparer.Ordinal);
         var result = new List<ResolvedMonitor>(ordered.Length);
         for (var index = 0; index < ordered.Length; index++)
         {
@@ -270,51 +268,40 @@ internal static class MonitorIdentityResolver
             string rawHardwarePath = string.Empty;
             string friendlyName = string.Empty;
             uint? targetId = null;
+            MonitorHardwareInfo? hardware = null;
             if (hardwareLookup is not null
                 && !string.IsNullOrWhiteSpace(snapshot.DeviceName)
                 && hardwareLookup.TryGetValue(snapshot.DeviceName, out var info))
             {
+                hardware = info;
                 rawHardwarePath = info.DevicePath;
                 friendlyName = info.FriendlyName;
                 targetId = info.TargetId;
             }
 
             var normalizedHardware = NormalizeHardwareMonitorPath(rawHardwarePath);
-            string baseKey;
-            if (snapshot.IsPrimary)
-            {
-                baseKey = MultiScreenRules.PrimaryScreenSentinel;
-            }
-            else if (!string.IsNullOrEmpty(normalizedHardware))
-            {
-                baseKey = hardwareCounts.TryGetValue(normalizedHardware, out var dupCount)
-                    && dupCount > 1
-                    && targetId is { } portId
-                        ? $"{normalizedHardware}@PORT:{portId}"
-                        : normalizedHardware;
-            }
-            else
-            {
-                // Resolution-independent fallback for virtual/RDP monitors without a hardware path.
-                baseKey = !string.IsNullOrEmpty(shortGdi)
-                    ? $"slot:{shortGdi.ToUpperInvariant()}"
-                    : $"slot:{displayIndex}";
-            }
+            var slotKey = !string.IsNullOrEmpty(shortGdi)
+                ? $"slot:{shortGdi.ToUpperInvariant()}"
+                : $"slot:{displayIndex}";
+            var legacyKey = snapshot.IsPrimary
+                ? MultiScreenRules.PrimaryScreenSentinel
+                : !string.IsNullOrEmpty(normalizedHardware)
+                    ? legacyHardwareCounts.GetValueOrDefault(normalizedHardware) > 1 && targetId is { } legacyPort
+                        ? $"{normalizedHardware}@PORT:{legacyPort}"
+                        : normalizedHardware
+                    : slotKey;
+            legacyKey = MakeUniqueKey(legacyKey, seenLegacyKeys);
 
-            var uniqueKey = baseKey;
-            if (!snapshot.IsPrimary)
+            var identityKind = MonitorIdentityKind.Fallback;
+            var baseKey = slotKey;
+            if (hardware is { IsAmbiguous: false, IsVirtual: false }
+                && IsPhysicalDevicePath(normalizedHardware)
+                && hardwareCounts.GetValueOrDefault(normalizedHardware) == 1)
             {
-                if (seenKeys.TryGetValue(baseKey, out var count))
-                {
-                    count++;
-                    seenKeys[baseKey] = count;
-                    uniqueKey = $"{baseKey}#{count}";
-                }
-                else
-                {
-                    seenKeys[baseKey] = 1;
-                }
+                baseKey = normalizedHardware;
+                identityKind = MonitorIdentityKind.DeviceInterfacePath;
             }
+            var uniqueKey = MakeUniqueKey(baseKey, seenKeys);
 
             var cleanFriendly = string.IsNullOrWhiteSpace(friendlyName) ? string.Empty : friendlyName.Trim();
             var labelSuffix = !string.IsNullOrEmpty(cleanFriendly) ? cleanFriendly : shortGdi;
@@ -333,10 +320,33 @@ internal static class MonitorIdentityResolver
                 Bounds: snapshot.Bounds,
                 WorkingArea: snapshot.WorkingArea,
                 IsPrimary: snapshot.IsPrimary,
-                Dpi: snapshot.Dpi));
+                Dpi: snapshot.Dpi)
+            {
+                IdentityKind = identityKind,
+                LegacyScreenKey = snapshot.IsPrimary ? null : legacyKey,
+                LegacyDeviceKey = normalizedHardware
+            });
         }
 
         return result;
+    }
+
+    private static string MakeUniqueKey(string key, Dictionary<string, int> seen)
+    {
+        var count = seen.GetValueOrDefault(key) + 1;
+        seen[key] = count;
+        return count == 1 ? key : $"{key}#{count}";
+    }
+
+    private static bool IsPhysicalDevicePath(string normalizedPath)
+    {
+        var parts = normalizedPath.Split('#');
+        return parts.Length == 3
+            && parts[0] == "DISPLAY"
+            && parts[1].Length > 0 && parts[2].Length > 0
+            && !parts[1].Contains("DEFAULT", StringComparison.Ordinal)
+            && !parts[1].Contains("RDP", StringComparison.Ordinal)
+            && !parts[1].Contains("VIRTUAL", StringComparison.Ordinal);
     }
 
     internal static string NormalizeHardwareMonitorPath(string? rawDevicePath)
@@ -381,8 +391,11 @@ internal static class MonitorIdentityResolver
 
         try
         {
-            Interlocked.Increment(ref _queryDisplayConfigCallCountForTests);
-            QueryDisplayConfigActivePaths(map);
+            if (snapshots.Count > 1)
+            {
+                Interlocked.Increment(ref _queryDisplayConfigCallCountForTests);
+                QueryDisplayConfigActivePaths(map);
+            }
         }
         catch
         {
@@ -398,12 +411,18 @@ internal static class MonitorIdentityResolver
                 continue;
             }
 
-            if (TryQueryEnumDisplayDevice(snapshot.DeviceName, out var fallbackPath, out var fallbackFriendly))
+            if (TryQueryEnumDisplayDevice(snapshot.DeviceName) is { } fallback)
             {
                 var friendly = !string.IsNullOrWhiteSpace(existing?.FriendlyName)
                     ? existing.FriendlyName
-                    : fallbackFriendly;
-                map[snapshot.DeviceName] = new MonitorHardwareInfo(fallbackPath, friendly, existing?.TargetId);
+                    : fallback.FriendlyName;
+                map[snapshot.DeviceName] = fallback with
+                {
+                    FriendlyName = friendly,
+                    TargetId = existing?.TargetId,
+                    IsAmbiguous = fallback.IsAmbiguous || existing?.IsAmbiguous == true,
+                    IsVirtual = fallback.IsVirtual || existing?.IsVirtual == true
+                };
             }
         }
 
@@ -480,9 +499,16 @@ internal static class MonitorIdentityResolver
                 var gdiName = sourceName.ViewGdiDeviceName.Trim();
                 var devicePath = targetName.MonitorDevicePath?.Trim() ?? string.Empty;
                 var friendly = targetName.MonitorFriendlyDeviceName?.Trim() ?? string.Empty;
-                if (!map.ContainsKey(gdiName) || !string.IsNullOrEmpty(devicePath))
+                if (map.TryGetValue(gdiName, out var previous))
                 {
-                    map[gdiName] = new MonitorHardwareInfo(devicePath, friendly, path.TargetInfo.Id);
+                    // Cloned targets share one logical desktop surface; no individual
+                    // physical display may inherit that surface's saved profile.
+                    map[gdiName] = previous with { IsAmbiguous = true };
+                }
+                else
+                {
+                    map[gdiName] = new MonitorHardwareInfo(devicePath, friendly, path.TargetInfo.Id,
+                        IsVirtual: targetName.OutputTechnology == OutputTechnologyIndirectVirtual);
                 }
             }
 
@@ -490,32 +516,32 @@ internal static class MonitorIdentityResolver
         }
     }
 
-    private static bool TryQueryEnumDisplayDevice(
-        string gdiDeviceName,
-        out string devicePath,
-        out string friendlyName)
+    private static MonitorHardwareInfo? TryQueryEnumDisplayDevice(string gdiDeviceName)
     {
-        devicePath = string.Empty;
-        friendlyName = string.Empty;
+        MonitorHardwareInfo? result = null;
+        for (uint index = 0; ; index++)
+        {
+            var monitorDevice = new DisplayDeviceW { Cb = (uint)Marshal.SizeOf<DisplayDeviceW>() };
+            if (!EnumDisplayDevicesW(gdiDeviceName, index, ref monitorDevice, EddGetDeviceInterfaceName)) break;
+            if ((monitorDevice.StateFlags & DisplayDeviceActive) == 0) continue;
 
-        var monitorDevice = new DisplayDeviceW
-        {
-            Cb = (uint)Marshal.SizeOf<DisplayDeviceW>()
-        };
-        if (!EnumDisplayDevicesW(gdiDeviceName, 0, ref monitorDevice, EddGetDeviceInterfaceName))
-        {
-            return false;
+            if (result is not null)
+            {
+                result = result with { IsAmbiguous = true };
+                continue;
+            }
+
+            var friendlyName = monitorDevice.DeviceString?.Trim() ?? string.Empty;
+            if (string.Equals(friendlyName, "Generic PnP Monitor", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(friendlyName, "通用即插即用监视器", StringComparison.OrdinalIgnoreCase))
+            {
+                friendlyName = string.Empty;
+            }
+            result = new MonitorHardwareInfo(monitorDevice.DeviceID?.Trim() ?? string.Empty, friendlyName,
+                IsVirtual: (monitorDevice.StateFlags & DisplayDeviceMirroringDriver) != 0);
         }
 
-        devicePath = monitorDevice.DeviceID?.Trim() ?? string.Empty;
-        friendlyName = monitorDevice.DeviceString?.Trim() ?? string.Empty;
-        if (string.Equals(friendlyName, "Generic PnP Monitor", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(friendlyName, "通用即插即用监视器", StringComparison.OrdinalIgnoreCase))
-        {
-            friendlyName = string.Empty;
-        }
-
-        return !string.IsNullOrEmpty(devicePath) || !string.IsNullOrEmpty(friendlyName);
+        return result;
     }
 
     [StructLayout(LayoutKind.Sequential)]

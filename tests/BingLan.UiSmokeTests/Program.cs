@@ -117,6 +117,61 @@ internal static class Program
             failures.ForEach(Console.Error.WriteLine);
             return failures.Count == 0 ? 0 : 1;
         }
+        if (Environment.GetCommandLineArgs().Contains("--multi-screen-tests"))
+        {
+            Run("多屏档案、旧档迁移、混合缩放和拓扑恢复", () => MultiScreenUiTests.Run(ShowAndPump, Pump), failures);
+            failures.ForEach(Console.Error.WriteLine);
+            return failures.Count == 0 ? 0 : 1;
+        }
+        if (Environment.GetCommandLineArgs().Contains("--screen-surface-settings-tests"))
+        {
+            Run("选中屏幕的 Dock、顶栏和离线档案设置", ScreenSurfaceSettingsTests.Run, failures);
+            failures.ForEach(Console.Error.WriteLine);
+            return failures.Count == 0 ? 0 : 1;
+        }
+        if (Environment.GetCommandLineArgs().Contains("--multi-screen-settings-preview"))
+        {
+            var dataDirectory = Path.Combine(Path.GetTempPath(), "BingLan-MultiScreen-Preview-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dataDirectory);
+            var seed = LocalStateStore.CreateDefault();
+            seed.OnboardingCompleted = true;
+            seed.LauncherEnabled = false;
+            seed.MultiScreen = new MultiScreenState
+            {
+                IsEnabled = true,
+                RootMonitorKey = "DISPLAY#PREVIEW_ROOT#OFFLINE"
+            };
+            var note = NoteService.CreateDefaultWidget();
+            note.Title = "原屏预览便签";
+            note.Content = "原屏档案中的预览内容";
+            seed.NoteWidgets.Add(note);
+            const string archivedKey = "DISPLAY#PREVIEW_ARCHIVED#OFFLINE";
+            ScreenProfileAccessor.EnsureScreenProfile(seed, archivedKey, displayLabel: "离线预览屏幕");
+            var archivedNote = NoteService.CreateDefaultWidget();
+            archivedNote.Title = "离线档案预览便签";
+            archivedNote.Content = "关联档案后应保留的预览内容";
+            archivedNote.ScreenKey = archivedKey;
+            seed.NoteWidgets.Add(archivedNote);
+            seed.MultiScreen.SurfacePreferences[archivedKey] = new ScreenSurfacePreferences
+            {
+                DockEnabled = false,
+                TopBarEnabled = false,
+                DockEdge = DockEdge.Left,
+                TopBarHeight = 40
+            };
+            File.WriteAllText(Path.Combine(dataDirectory, "widgets.json"), System.Text.Json.JsonSerializer.Serialize(seed));
+
+            using var coordinator = new WidgetCoordinator(interactiveQa: true, dataDirectory);
+            app.Dispatcher.BeginInvoke(() =>
+            {
+                coordinator.Start();
+                typeof(WidgetCoordinator).GetMethod("OpenSettings",
+                    System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic,
+                    binder: null, types: Type.EmptyTypes, modifiers: null)!.Invoke(coordinator, null);
+                app.Windows.OfType<SettingsWindow>().Single().Closed += (_, _) => app.Shutdown();
+            });
+            return app.Run();
+        }
         if (Environment.GetCommandLineArgs().Contains("--shell-surfaces-preview"))
         {
             ShellSurfacePreview.Run(app);
@@ -6866,11 +6921,11 @@ internal static class Program
             Require<CheckBox>(window, "DockEnabledCheckBox").IsChecked = false;
             Pump();
             Assert(
-                Require<RadioButton>(window, "WindowsNativeModeRadio").IsChecked != true &&
+                Require<RadioButton>(window, "WindowsNativeModeRadio").IsChecked == true &&
                 Require<RadioButton>(window, "IceBlueHybridModeRadio").IsChecked != true &&
                 Require<RadioButton>(window, "AppleStyleModeRadio").IsChecked != true &&
                 Require<TextBlock>(window, "DesktopModeStatusText").Text.Contains("自定义", StringComparison.Ordinal),
-                "不属于三种模式的组合应显示为自定义");
+                "在基础方案上自定义时应保留最接近的基础方案卡高亮并显示自定义说明");
             Assert(!Require<FrameworkElement>(window, "DockOptionsPanel").IsEnabled, "Dock 关闭后其余 Dock 设置应变灰");
 
             window.ShowSettingsPage("About");
@@ -7203,9 +7258,10 @@ internal static class Program
 
             Require<RadioButton>(window, "TaskbarTransparentRadio").IsChecked = true;
             Pump();
-            Assert(Require<FrameworkElement>(window, "DesktopModeDriftPanel").Visibility == Visibility.Visible
+            Assert(Require<RadioButton>(window, "AppleStyleModeRadio").IsChecked == true
+                    && Require<FrameworkElement>(window, "DesktopModeDriftPanel").Visibility == Visibility.Visible
                     && Require<TextBlock>(window, "DesktopModeStatusText").Text == "在苹果式基础上自定义：任务栏改为透明",
-                "偏离方案时首页应说明在哪个方案基础上改了什么");
+                "偏离方案时首页应保留基础方案卡高亮并说明在哪个方案基础上改了什么");
             Assert(Require<FrameworkElement>(window, "SchemeTaskbarCustomTag").Visibility == Visibility.Visible
                     && Require<FrameworkElement>(window, "SchemeDockCustomTag").Visibility == Visibility.Collapsed
                     && Require<FrameworkElement>(window, "SchemeTopBarCustomTag").Visibility == Visibility.Collapsed,

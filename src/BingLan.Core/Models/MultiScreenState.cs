@@ -4,7 +4,7 @@ using System.Text.Json.Serialization;
 namespace BingLan.Core.Models;
 
 /// <summary>
-/// Per-display card profiles for secondary monitors. Null or disabled keeps the single-screen
+/// Physical ownership and independent display card profiles. Null or disabled keeps the single-screen
 /// code path with zero extra runtime allocations, windows, hooks, or timers.
 /// Machine-local: never exported into shared themes.
 /// </summary>
@@ -13,17 +13,26 @@ public sealed class MultiScreenState
     public bool IsEnabled { get; set; }
 
     /// <summary>
+    /// Physical owner of the root AppState layout and null-owned cards. Null keeps legacy
+    /// layouts unbound until the user explicitly chooses their screen.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? RootMonitorKey { get; set; }
+
+    /// <summary>
     /// Profiles for secondary monitors keyed by stable hardware <c>MonitorKey</c>.
-    /// The primary monitor always stays in the root <see cref="AppState"/> fields.
+    /// The root owner stays in the root <see cref="AppState"/> fields.
     /// </summary>
     public Dictionary<string, ScreenProfileState> Screens { get; set; } = new(StringComparer.Ordinal);
+
+    public Dictionary<string, ScreenSurfacePreferences> SurfacePreferences { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? ExtensionData { get; set; }
 }
 
 /// <summary>
-/// Independent desktop card profile owned by one secondary monitor.
+/// Independent desktop card profile owned by one physical monitor.
 /// </summary>
 public sealed class ScreenProfileState
 {
@@ -208,6 +217,26 @@ public static class MultiScreenRules
         IReadOnlyList<TodoWidgetState>? allTodos = null)
     {
         ArgumentNullException.ThrowIfNull(state);
+
+        state.RootMonitorKey = NormalizeScreenKey(state.RootMonitorKey);
+
+        var surfacePreferences = new Dictionary<string, ScreenSurfacePreferences>(StringComparer.OrdinalIgnoreCase);
+        if (state.SurfacePreferences is not null)
+        {
+            foreach (var (rawKey, preferences) in state.SurfacePreferences)
+            {
+                if (NormalizeScreenKey(rawKey) is not { } key || preferences is null)
+                {
+                    continue;
+                }
+                preferences.Normalize();
+                if (!preferences.IsEmpty)
+                {
+                    surfacePreferences.TryAdd(key, preferences);
+                }
+            }
+        }
+        state.SurfacePreferences = surfacePreferences;
 
         var cleaned = new Dictionary<string, ScreenProfileState>(StringComparer.Ordinal);
         if (state.Screens is not null)

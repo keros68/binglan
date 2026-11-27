@@ -71,6 +71,44 @@ internal static class TaskbarEdgeGuard
         return layout;
     }
 
+    /// <summary>
+    /// Resolves the native taskbar's monitor edge for dock-yield decisions, falling back to
+    /// geometry inference when a third-party side-docked or floating taskbar does not match
+    /// the strict full-edge <see cref="TaskbarLayoutRules.GetEdge"/> check.
+    /// </summary>
+    internal static DockEdge? InferNativeTaskbarEdge(CoreRect monitor, CoreRect? foregroundTaskbarBounds = null)
+    {
+        if (GetNativeTaskbarLayout(monitor) is { } layout)
+        {
+            return layout.Edge;
+        }
+
+        if (foregroundTaskbarBounds is { HasArea: true } fgBounds
+            && TaskbarLayoutRules.InferDockedEdge(fgBounds, monitor) is { } fgEdge)
+        {
+            return fgEdge;
+        }
+
+        foreach (var window in TaskbarAdapter.FindTaskbars())
+        {
+            if (DockNativeMethods.IsWindowVisible(window)
+                && DockNativeMethods.GetWindowRect(window, out var rect))
+            {
+                var bounds = new CoreRect(rect.Left, rect.Top, rect.Right, rect.Bottom);
+                if (TaskbarLayoutRules.InferDockedEdge(bounds, monitor) is { } inferred)
+                {
+                    return inferred;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    internal static bool IsAutoHideTaskbarCollapsed(CoreRect taskbarBounds, CoreRect monitor, DockEdge edge) =>
+        TaskbarAdapter.IsWindowsAutoHideOn()
+        && TaskbarLayoutRules.IsCollapsedAutoHideTaskbar(taskbarBounds, monitor, edge);
+
     internal static CoreRect AvoidNativeTaskbar(CoreRect workArea, CoreRect monitor)
     {
         if (!workArea.HasArea || !monitor.HasArea || GetNativeTaskbarLayout(monitor) is not { } layout)

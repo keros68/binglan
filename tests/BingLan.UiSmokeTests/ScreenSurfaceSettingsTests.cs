@@ -1,0 +1,133 @@
+using System.Windows;
+using System.Windows.Controls;
+using BingLan.App.Windows;
+using BingLan.Core.Dock;
+using BingLan.Core.Models;
+using BingLan.Core.Services;
+
+/// <summary>Exercises the real settings controls without showing a window or injecting input.</summary>
+internal static class ScreenSurfaceSettingsTests
+{
+    internal static void Run()
+    {
+        const string rootMonitor = "DISPLAY#SETTINGS_ROOT#1";
+        const string otherMonitor = "DISPLAY#SETTINGS_OTHER#2";
+        const string offlineMonitor = "DISPLAY#SETTINGS_OFFLINE#3";
+        var preferences = new Dictionary<string, ScreenSurfacePreferences>();
+        var writes = new List<string>();
+        var archiveQueries = 0;
+        var associations = new List<(string Source, string Destination)>();
+        var canBind = true;
+        var bridge = new MultiScreenSettingsBridge
+        {
+            IsEnabled = () => true,
+            HasMultipleMonitors = () => true,
+            GetConnectedMonitorCount = () => 2,
+            GetScreens = () =>
+            [
+                new(null, rootMonitor, "原屏", "原屏", "1920×1080", 1, true, true,
+                    new(0, 0, 1920, 1080), new(0, 0, 1920, 1040), 96, 0),
+                new(otherMonitor, otherMonitor, "第二屏", "第二屏", "2560×1440", 2, false, true,
+                    new(1920, 0, 4480, 1440), new(1920, 0, 4480, 1400), 120, canBind ? 0 : 1)
+            ],
+            GetSurfacePreferences = key => preferences.GetValueOrDefault(key),
+            ApplySurfacePreferences = (key, value) =>
+            {
+                preferences[key] = value;
+                writes.Add(key);
+            },
+            GetSurfaceStatus = _ => new("已显示", "未启用"),
+            GetOfflineProfiles = _ =>
+            {
+                archiveQueries++;
+                return [new(offlineMonitor, "离线屏幕", 2, canBind)];
+            },
+            BindOfflineProfile = (source, destination) =>
+            {
+                associations.Add((source, destination));
+                return canBind;
+            }
+        };
+        var settings = new SettingsWindow(new CityLookupService(), new InformationWidgetState(),
+            DesktopExperienceRules.CreateDefault(), (_, _) => { }, _ => { }, _ => { },
+            maintenance: new SettingsMaintenance { MultiScreen = bridge });
+        try
+        {
+            Check(!settings.IsVisible, "范围测试不得显示设置窗口");
+            Check(archiveQueries == 0, "展开离线区域前不得查询或创建档案条目");
+            var topology = Topology(settings);
+            Check(topology.Children.OfType<TextBlock>().Single().Text == "Dock：已显示　顶栏：未启用",
+                "选中屏应同时显示两种表面的当前状态");
+
+            Choose(settings, "Dock", "开启");
+            Check(writes.Last() == rootMonitor && preferences[rootMonitor].DockEnabled == true,
+                "根布局的空 ScreenKey 必须转换为选中屏的物理 MonitorKey");
+            settings.SelectActiveScreen(otherMonitor);
+            Choose(settings, "Dock", "关闭");
+            Choose(settings, "Dock 位置", "左侧");
+            Choose(settings, "Dock 显示方式", "智能隐藏");
+            Choose(settings, "顶端信息条", "开启");
+            Choose(settings, "顶栏显示方式", "智能隐藏");
+            Choose(settings, "顶栏高度", "40 DIP");
+            var saved = preferences[otherMonitor];
+            Check(saved.DockEnabled == false && saved.DockEdge == DockEdge.Left
+                && saved.DockVisibilityMode == DockVisibilityMode.SmartHide && saved.TopBarEnabled == true
+                && saved.TopBarVisibilityMode == TopBarVisibilityMode.SmartHide && saved.TopBarHeight == 40,
+                "各个本屏控件应只改变对应字段并保留之前的单独设置");
+            Check(preferences[rootMonitor].DockEnabled == true && archiveQueries == 0,
+                "修改第二屏不得改动根屏设置或展开离线档案");
+            Choose(settings, "Dock", "跟随全局");
+            Check(preferences[otherMonitor].DockEnabled is null && preferences[otherMonitor].TopBarEnabled == true,
+                "单项跟随全局只清除该项覆盖");
+            var reset = (Button)SurfaceRows(settings).Single(row => row.Header == "恢复跟随全局").Content;
+            reset.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Check(preferences[otherMonitor].IsEmpty, "恢复跟随应清除本屏全部表面设置");
+
+            var offline = Topology(settings).Children.OfType<Expander>().Single(item => Equals(item.Header, "未连接的桌面档案"));
+            Check(offline.Content is null && archiveQueries == 0, "未展开的离线区域应保持惰性创建");
+            offline.IsExpanded = true;
+            var list = offline.Content as StackPanel ?? throw new InvalidOperationException("离线面板未创建");
+            var row = list.Children.OfType<SettingsGroup>().Single().Items.OfType<SettingsRow>().Single();
+            var associate = (Button)row.Content;
+            Check(archiveQueries == 1 && associate.IsEnabled, "展开后才查询档案，并允许关联空白屏");
+            associate.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Check(associations.SequenceEqual([(offlineMonitor, otherMonitor)]) && settings.ActiveScreenKey == otherMonitor,
+                "明确点击后应将该档案关联到当前物理屏，并保持屏幕选择");
+
+            canBind = false;
+            settings.RefreshMultiScreenUi();
+            offline = Topology(settings).Children.OfType<Expander>().Single(item => Equals(item.Header, "未连接的桌面档案"));
+            row = ((StackPanel)offline.Content).Children.OfType<SettingsGroup>().Single().Items.OfType<SettingsRow>().Single();
+            Check(!((Button)row.Content).IsEnabled && associations.Count == 1,
+                "已有内容的屏幕应禁用关联，刷新不得自动迁移或合并档案");
+        }
+        finally
+        {
+            settings.Close();
+        }
+    }
+
+    private static StackPanel Topology(SettingsWindow settings) =>
+        (StackPanel)((Border)((Border)settings.FindName("ComponentsMultiScreenBarHost")).Child).Child;
+
+    private static IEnumerable<SettingsRow> SurfaceRows(SettingsWindow settings)
+    {
+        var options = Topology(settings).Children.OfType<Expander>().Single(item => Equals(item.Header, "此屏 Dock 与顶栏"));
+        options.IsExpanded = true;
+        return ((SettingsGroup)options.Content).Items.OfType<SettingsRow>();
+    }
+
+    private static void Choose(SettingsWindow settings, string rowHeader, string label)
+    {
+        var combo = (ComboBox)SurfaceRows(settings).Single(row => row.Header == rowHeader).Content;
+        combo.SelectedItem = combo.Items.OfType<ComboBoxItem>().Single(item => Equals(item.Content, label));
+    }
+
+    private static void Check(bool condition, string message)
+    {
+        if (!condition)
+        {
+            throw new InvalidOperationException(message);
+        }
+    }
+}

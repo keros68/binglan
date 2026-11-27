@@ -42,6 +42,7 @@ public sealed partial class WidgetCoordinator : IDisposable
     private readonly TaskbarAdapter _taskbar;
     private readonly CleanDesktopAdapter _cleanDesktop;
     private readonly TaskbarCornerReveal _cornerReveal = new();
+    private readonly TaskbarMinimizeFocusGuard _taskbarMinimizeFocusGuard;
     private readonly DockIconStore _iconStore;
     private readonly AppUpdater _updater;
     private TrayMenuItem? _updateMenuItem;
@@ -118,7 +119,7 @@ public sealed partial class WidgetCoordinator : IDisposable
         _hotkeys = new GlobalHotkeyHost();
         _hotkeys.HotkeyPressed += OnGlobalHotkeyPressed;
         _peek = new DesktopPeekController(ReturnPeekedFileBoxes, ReturnSingleFileBoxToDesktop);
-        _edgeDock = new FileBoxEdgeDockController(_peek, _windows, ScheduleSave);
+        _edgeDock = new FileBoxEdgeDockController(_peek, _windows, ScheduleSave, GetFileBoxOwnerDeviceName);
         // Only the installed app checks on its own; test and interactive runs keep quiet.
         _updater = new AppUpdater(_state.Updates, AppVersion, ScheduleSave, ExitAsync, canAutoCheck: dataDirectory is null);
         _updater.ReleaseFound += OnReleaseFound;
@@ -132,6 +133,7 @@ public sealed partial class WidgetCoordinator : IDisposable
             {
                 ScheduleSave();
                 _settingsWindow?.RefreshDockSettings();
+                NotifyMultiScreenUiChanged();
             },
             () => OpenSettings("Dock"),
             message => _trayIcon.ShowBalloonTip(
@@ -144,11 +146,15 @@ public sealed partial class WidgetCoordinator : IDisposable
         _dock.ReadFileBoxes = ReadLauncherFileBoxes;
         _dock.SendToFileBox = SendLauncherPathToFileBoxAsync;
         _dock.ResolvePanelForeground = ResolveLauncherForeground;
-        _dock.ResolveTopBarReservedBottomPx = ResolveTopBarBottomForMonitor;
+        _dock.ReadScreenPreferences = ReadScreenSurfacePreferences;
+        _dock.GetOrCreateScreenPreferences = GetOrCreateScreenSurfacePreferences;
         _dock.ShellRecovered += _desktopSurfaceWatcher.ScheduleCheck;
         _dock.ExplorerNotified += _cornerReveal.ScheduleZOrderCheck;
         _dock.ShowDesktopTriggered += _desktopSurfaceWatcher.ScheduleToggleDesktopCheck;
         _taskbar = new TaskbarAdapter(TaskbarCheckpointPath(_store.DataDirectory));
+        _taskbarMinimizeFocusGuard = new TaskbarMinimizeFocusGuard(
+            Dispatcher.CurrentDispatcher,
+            () => _dock.HasAttention);
         _taskbar.StatusChanged += OnTaskbarStatusChanged;
         _taskbar.AutoHideTakenOver += () =>
         {
@@ -168,6 +174,8 @@ public sealed partial class WidgetCoordinator : IDisposable
                 TrayTipKind.Info));
         _topBar.ShellRecovered += _desktopSurfaceWatcher.ScheduleCheck;
         _topBar.ExplorerNotified += _cornerReveal.ScheduleZOrderCheck;
+        _topBar.ReadScreenPreferences = ReadScreenSurfacePreferences;
+        _dock.ResolveTopBarReservedBottomPx = _topBar.GetReservedBottomForMonitor;
         StartupLog.Open(_store.DataDirectory);
         UiDiagnostics.Start(
             Dispatcher.CurrentDispatcher,
@@ -193,6 +201,47 @@ public sealed partial class WidgetCoordinator : IDisposable
     public void Start()
     {
         _trayIcon.Visible = true;
+        _cardRuntimeStarted = true;
+        SyncMultiScreenRuntime();
+        ApplyDisplayRecovery();
+        WindowScreenRecovery.SettleLayout();
+        // Catches deletions that happened while the app was off; later ones arrive through
+        // the mapping watcher, as do new desktop items through the import watcher. All of
+        // it only when the user opted in to file-box automation.
+        ApplyFileBoxAutomation();
+        StartShellModulesAsync().ContinueWith(
+            task => StartupLog.Write($"启动未完成：{task.Exception?.GetBaseException().Message}"),
+            CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted,
+            TaskScheduler.Default);
+        // Leaving high contrast puts the default row surface back; the material's one returns.
+        AccessibilityThemeManager.HighContrastChanged += OnHighContrastChanged;
+        _fullScreenWatcher.Changed += UpdateSamplingMode;
+        _fullScreenWatcher.Changed += () => _cornerReveal.SetSuspended(_fullScreenWatcher.IsGameLikeFullScreenInFront);
+        _cornerReveal.Raised += () => _dock.EnsureAboveDesktop();
+        _taskbar.ExplorerRestarted += () =>
+        {
+            ClearProcessIconCachesOnExplorerRestart();
+            _cornerReveal.Update();
+            _edgeDock.ApplyAll();
+        };
+        _fullScreenWatcher.Start();
+        _edgeDock.ApplyAll();
+        _desktopSurfaceWatcher.Changed += OnDesktopSurfaceChanged;
+        _desktopSurfaceWatcher.Start();
+        _taskbarMinimizeFocusGuard.Start();
+        SyncGlobalHotkeys();
+        SystemEvents.DisplaySettingsChanged += OnDisplaySettingsChanged;
+        WindowScreenRecovery.LayoutChanged += OnDisplayLayoutChanged;
+        SaveNow();
+        if (_showOnboarding && !_state.OnboardingCompleted)
+        {
+            ShowOnboarding();
+        }
+    }
+
+    private void RestoreRootWindows()
+    {
         using (WindowScreenRecovery.DeferShowRecovery())
         {
             var informationVisible = HasVisibleInformationComponent();
@@ -201,7 +250,8 @@ public sealed partial class WidgetCoordinator : IDisposable
                 if (informationVisible)
                 {
                     foreach (var kind in InformationComponentKinds.Where(
-                                 kind => _state.DesktopExperience.GetComponent(kind).IsVisible))
+                                 kind => _state.DesktopExperience.GetComponent(kind).IsVisible
+                                     && !IsInformationCardSuppressed(null, kind)))
                     {
                         ShowInformation(information, kind);
                     }
@@ -239,41 +289,6 @@ public sealed partial class WidgetCoordinator : IDisposable
             {
                 ShowFileBoxGroup(group);
             }
-        }
-        SyncMultiScreenRuntime();
-        ApplyDisplayRecovery();
-        WindowScreenRecovery.SettleLayout();
-        // Catches deletions that happened while the app was off; later ones arrive through
-        // the mapping watcher, as do new desktop items through the import watcher. All of
-        // it only when the user opted in to file-box automation.
-        ApplyFileBoxAutomation();
-        StartShellModulesAsync().ContinueWith(
-            task => StartupLog.Write($"启动未完成：{task.Exception?.GetBaseException().Message}"),
-            CancellationToken.None,
-            TaskContinuationOptions.OnlyOnFaulted,
-            TaskScheduler.Default);
-        // Leaving high contrast puts the default row surface back; the material's one returns.
-        AccessibilityThemeManager.HighContrastChanged += OnHighContrastChanged;
-        _fullScreenWatcher.Changed += UpdateSamplingMode;
-        _fullScreenWatcher.Changed += () => _cornerReveal.SetSuspended(_fullScreenWatcher.IsGameLikeFullScreenInFront);
-        _cornerReveal.Raised += () => _dock.EnsureAboveDesktop();
-        _taskbar.ExplorerRestarted += () =>
-        {
-            ClearProcessIconCachesOnExplorerRestart();
-            _cornerReveal.Update();
-            _edgeDock.ApplyAll();
-        };
-        _fullScreenWatcher.Start();
-        _edgeDock.ApplyAll();
-        _desktopSurfaceWatcher.Changed += OnDesktopSurfaceChanged;
-        _desktopSurfaceWatcher.Start();
-        SyncGlobalHotkeys();
-        SystemEvents.DisplaySettingsChanged += OnDisplaySettingsChanged;
-        WindowScreenRecovery.LayoutChanged += OnDisplayLayoutChanged;
-        SaveNow();
-        if (_showOnboarding && !_state.OnboardingCompleted)
-        {
-            ShowOnboarding();
         }
     }
 
@@ -343,8 +358,9 @@ public sealed partial class WidgetCoordinator : IDisposable
         RunShellStep("桌面空白双击监听", () => _ = SyncDesktopDoubleClickWatcher());
         _settingsWindow?.RefreshCleanDesktopSettings();
 
-        RunShellStep("Dock ", _dock.Apply);
         RunShellStep("顶端信息条", _topBar.Apply);
+        RunShellStep("Dock ", _dock.Apply);
+        RefreshInformationCardVisibility();
         // A bar-only desktop has no information card whose load would start the shared
         // sampler, so the bar brings it up itself here.
         RunShellStep("共享采样", UpdateSamplingMode);
@@ -622,10 +638,12 @@ public sealed partial class WidgetCoordinator : IDisposable
                     _state.Dock,
                     _state.Taskbar,
                     _state.TopBar,
-                    _state.DesktopExperience);
+                    _state.DesktopExperience,
+                    updateInformationCards: !ScreenProfileAccessor.IsMultiScreenEnabled(_state));
+                _topBar.Apply();
                 _dock.Apply();
                 ApplyDesktopExperience(_state.DesktopExperience);
-                _topBar.Apply();
+                RefreshInformationCardVisibility();
                 UpdateSamplingMode();
                 _ = ApplyTaskbarModeAsync();
                 SaveNow();
@@ -670,7 +688,7 @@ public sealed partial class WidgetCoordinator : IDisposable
             var box = _state.FileBoxes.FirstOrDefault();
             if (box is null)
             {
-                AddFileBox();
+                AddRootFileBox();
                 box = _state.FileBoxes[^1];
             }
             var window = _windows.OfType<FileBoxWindow>().FirstOrDefault(candidate => candidate.State.Id == box.Id);
@@ -692,7 +710,7 @@ public sealed partial class WidgetCoordinator : IDisposable
             && _windows.OfType<InformationWidgetWindow>().Any(window =>
                 window.IsVisible
                 && window.ComponentKind is null or DesktopComponentKind.Performance);
-        var hasTopBarPerformance = _state.TopBar.IsEnabled
+        var hasTopBarPerformance = _topBar.HasWindow
             && !_gameModeActive
             && TopBarRules.IsModuleOn(_state.TopBar.Modules, TopBarModuleKind.Performance);
         if (hasVisiblePerformanceCard || hasTopBarPerformance)
@@ -731,7 +749,15 @@ public sealed partial class WidgetCoordinator : IDisposable
                 }
 
                 HandleMultiScreenDisplayLayoutChanged();
-                ApplyDisplayRecovery();
+                _topBar.Apply();
+                _dock.Apply();
+                RefreshInformationCardVisibility();
+                UpdateSamplingMode();
+                NotifyMultiScreenUiChanged();
+                if (!ScreenProfileAccessor.IsMultiScreenEnabled(_state))
+                {
+                    ApplyDisplayRecovery();
+                }
                 // A restored spot can sit under the taskbar or dock of this arrangement.
                 foreach (var window in _windows)
                 {
@@ -755,6 +781,15 @@ public sealed partial class WidgetCoordinator : IDisposable
     // of the cards that already settled.
     private void ApplyDisplayRecovery()
     {
+        if (ScreenProfileAccessor.IsMultiScreenEnabled(_state))
+        {
+            foreach (var window in _windows.Where(window => !IsSecondaryWindow(window) && window.IsVisible))
+            {
+                PlaceRootWindow(window);
+            }
+            return;
+        }
+
         var arrivals = new List<WidgetWindowBase>();
         var settled = new List<WidgetWindowBase>();
         foreach (var window in _windows)
@@ -783,12 +818,19 @@ public sealed partial class WidgetCoordinator : IDisposable
         _desktopToggleVersion++;
         if (_desktopHidden)
         {
+            _desktopHidden = false;
             foreach (var window in _windowsHiddenFromTray.Where(_windows.Contains))
             {
-                window.Show();
+                if (IsSecondaryWindow(window))
+                {
+                    window.Show();
+                }
+                else
+                {
+                    ShowRootWindow(window);
+                }
             }
             _windowsHiddenFromTray.Clear();
-            _desktopHidden = false;
             SyncMultiScreenRuntime();
         }
         else
@@ -828,8 +870,9 @@ public sealed partial class WidgetCoordinator : IDisposable
             }
         }
 
-        _dock.SetSuppressed(active);
         _topBar.SetSuppressed(active);
+        _dock.SetSuppressed(active);
+        RefreshInformationCardVisibility();
         SyncGlobalHotkeys();
         if (_gameModeMenuItem is not null)
         {
@@ -943,6 +986,7 @@ public sealed partial class WidgetCoordinator : IDisposable
         _mappingWatcher.Dispose();
         _edgeDock.Dispose();
         _dock.Dispose();
+        _taskbarMinimizeFocusGuard.Dispose();
         _cornerReveal.Dispose();
         _taskbar.Dispose();
         _cleanDesktop.Dispose();
@@ -957,7 +1001,7 @@ public sealed partial class WidgetCoordinator : IDisposable
 
     private TodoWidgetWindow CreateTodoWindow(TodoWidgetState state)
     {
-        SanitizePlacement(state.Placement);
+        SanitizeRootPlacement(state.Placement);
         var window = new TodoWidgetWindow(state)
         {
             ShowInTaskbar = false
@@ -979,7 +1023,7 @@ public sealed partial class WidgetCoordinator : IDisposable
     private TodoWidgetWindow ShowTodo(TodoWidgetState state)
     {
         var window = CreateTodoWindow(state);
-        window.Show();
+        ShowRootWindow(window);
         return window;
     }
 
@@ -1049,7 +1093,7 @@ public sealed partial class WidgetCoordinator : IDisposable
 
     private void ShowNote(NoteWidgetState state)
     {
-        SanitizePlacement(state.Placement);
+        SanitizeRootPlacement(state.Placement);
         var window = new NoteWidgetWindow(state)
         {
             ShowInTaskbar = false
@@ -1061,7 +1105,7 @@ public sealed partial class WidgetCoordinator : IDisposable
         _windows.Add(window);
         if (!state.IsHidden)
         {
-            window.Show();
+            ShowRootWindow(window);
         }
     }
 
@@ -1070,7 +1114,7 @@ public sealed partial class WidgetCoordinator : IDisposable
         DesktopComponentKind componentKind)
     {
         var component = _state.DesktopExperience.GetComponent(componentKind);
-        SanitizePlacement(component.Placement);
+        SanitizeRootPlacement(component.Placement);
         var window = new InformationWidgetWindow(
             state,
             _performanceSampler,
@@ -1092,7 +1136,7 @@ public sealed partial class WidgetCoordinator : IDisposable
         var component = _state.DesktopExperience.GetComponent(componentKind);
         var window = CreateInformationWindow(state, componentKind);
         window.ApplyPlacement(component.Placement, component.IsLocked);
-        window.Show();
+        ShowRootWindow(window);
         return window;
     }
 
@@ -1312,6 +1356,11 @@ public sealed partial class WidgetCoordinator : IDisposable
             return;
         }
 
+        using var suppressPlacement = ScreenProfileAccessor.IsMultiScreenEnabled(_state)
+            && (_rootMonitor is null || WindowScreenRecovery.IsLayoutTransitioning()
+                || !MonitorIdentityResolver.IsDeviceConnected(_rootMonitor.DeviceName))
+            ? window.SuppressPlacementCapture()
+            : null;
         switch (window)
         {
             case TodoWidgetWindow todo:
@@ -1345,6 +1394,10 @@ public sealed partial class WidgetCoordinator : IDisposable
                 quick.IsLocked = places.IsWidgetLocked;
                 break;
         }
+        if (suppressPlacement is null)
+        {
+            CaptureRootLocalPosition(window);
+        }
     }
 
     private static bool IsModelOwnedBySecondaryScreen(WidgetWindowBase window) =>
@@ -1357,6 +1410,14 @@ public sealed partial class WidgetCoordinator : IDisposable
         };
 
     private void AddTodo()
+    {
+        if (!TryAddWidgetOnCurrentMainScreen(NewWidgetKind.Todo))
+        {
+            AddRootTodo();
+        }
+    }
+
+    private void AddRootTodo()
     {
         var todoComponent = _state.DesktopExperience.GetComponent(DesktopComponentKind.Todo);
         todoComponent.IsVisible = true;
@@ -1383,7 +1444,15 @@ public sealed partial class WidgetCoordinator : IDisposable
         ScheduleSave();
     }
 
-    private void AddFileBox(WindowPlacement? placement = null)
+    private void AddFileBox()
+    {
+        if (!TryAddWidgetOnCurrentMainScreen(NewWidgetKind.FileBox))
+        {
+            AddRootFileBox();
+        }
+    }
+
+    private FileBoxWindow AddRootFileBox(WindowPlacement? placement = null)
     {
         var offset = ScreenProfileAccessor.GetFileBoxesForScreen(_state, screenKey: null).Count * 24;
         var state = new FileBoxState
@@ -1396,37 +1465,38 @@ public sealed partial class WidgetCoordinator : IDisposable
                 Height = 306
             }
         };
+        InitializeFileBox(state);
+        var window = ShowFileBox(state);
+        ScheduleSave();
+        return window;
+    }
+
+    private void InitializeFileBox(FileBoxState state)
+    {
         state.Title = WidgetTitleRules.NextTitle(state.Title, _state.FileBoxes.Select(box => box.Title));
         UseSharedLook(state.Appearance);
         _state.FileBoxes.Add(state);
-        if (placement is not null
-            && _multiScreen is not null
-            && _multiScreen.TryFindSecondaryMonitorForDipPlacement(state.Placement) is { } secondaryMonitor)
+    }
+
+    private bool TryAddWidgetOnCurrentMainScreen(NewWidgetKind kind)
+    {
+        if (_multiScreen is not { } host)
         {
-            _multiScreen.ShowDetachedFileBoxOnScreen(secondaryMonitor.MonitorKey, state);
-            NotifyMultiScreenUiChanged(refreshComponentList: true);
-            ScheduleSave();
-            return;
+            return false;
         }
-        var created = ShowFileBox(state);
-        if (placement is not null && _multiScreen is not null)
+
+        var monitor = host.ConnectedMonitors.FirstOrDefault(candidate => candidate.IsPrimary);
+        if (monitor is { IsPersistentIdentity: true })
         {
-            if (_multiScreen.ReconcileWindowScreenAfterMove(created))
+            var key = host.GetScreenKeyForMonitor(monitor);
+            if (key is null)
             {
-                Capture(created);
+                return false;
             }
-            created.Dispatcher.BeginInvoke(DispatcherPriority.Loaded, () =>
-            {
-                if (!_isExiting
-                    && _windows.Contains(created)
-                    && _multiScreen?.ReconcileWindowScreenAfterMove(created) == true)
-                {
-                    Capture(created);
-                    ScheduleSave();
-                }
-            });
+
+            host.AddWidgetOnScreen(key, kind);
         }
-        ScheduleSave();
+        return true;
     }
 
     // 框选新建：托盘发起的瞬态全屏遮罩。用户拖出的矩形就是新分组盒的位置与尺寸；
@@ -1450,81 +1520,99 @@ public sealed partial class WidgetCoordinator : IDisposable
                 placement.Left = Math.Round(placement.Left / cell) * cell;
                 placement.Top = Math.Round(placement.Top / cell) * cell;
             }
-            SanitizePlacement(placement);
-            AddFileBox(placement);
-        };
-        overlay.PhysicalBoxSelected += physical =>
-        {
-            var monitors = MonitorCatalog.GetAll();
-            var centerX = (physical.Left + physical.Right) / 2;
-            var centerY = (physical.Top + physical.Bottom) / 2;
-            var monitor = monitors.FirstOrDefault(screen =>
-                    centerX >= screen.Bounds.Left && centerX < screen.Bounds.Right
-                    && centerY >= screen.Bounds.Top && centerY < screen.Bounds.Bottom)
-                ?? monitors.FirstOrDefault(screen => screen.IsPrimary)
-                ?? monitors.FirstOrDefault();
-            var scale = monitor is { Dpi: > 0 } ? monitor.Dpi / 96d : 1d;
-            var minWidthPx = (int)Math.Ceiling(226d * scale);
-            var minHeightPx = (int)Math.Ceiling(166d * scale);
-            var leftPx = physical.Left;
-            var topPx = physical.Top;
-            var widthPx = Math.Max(physical.Width, minWidthPx);
-            var heightPx = Math.Max(physical.Height, minHeightPx);
-            if (WidgetWindowBase.GridSnapEnabled)
+            if (_multiScreen is null)
             {
-                var cellPx = DesktopStyleRules.GridCellDip * scale;
-                if (cellPx > 0d)
-                {
-                    var originX = monitor is not null && monitor.WorkingArea.HasArea ? monitor.WorkingArea.Left : 0;
-                    var originY = monitor is not null && monitor.WorkingArea.HasArea ? monitor.WorkingArea.Top : 0;
-                    leftPx = originX + (int)Math.Round(Math.Round((leftPx - originX) / cellPx) * cellPx);
-                    topPx = originY + (int)Math.Round(Math.Round((topPx - originY) / cellPx) * cellPx);
-                }
-            }
-            if (monitor is not null && monitor.WorkingArea.HasArea)
-            {
-                var work = monitor.WorkingArea;
-                widthPx = Math.Min(widthPx, Math.Max(minWidthPx, work.Width));
-                heightPx = Math.Min(heightPx, Math.Max(minHeightPx, work.Height));
-                leftPx = Math.Clamp(leftPx, work.Left, Math.Max(work.Left, work.Right - widthPx));
-                topPx = Math.Clamp(topPx, work.Top, Math.Max(work.Top, work.Bottom - heightPx));
-            }
-            var targetPx = new PixelRect(leftPx, topPx, leftPx + widthPx, topPx + heightPx);
-            var placement = new WindowPlacement
-            {
-                Left = leftPx / scale,
-                Top = topPx / scale,
-                Width = Math.Max(widthPx / scale, 226d),
-                Height = Math.Max(heightPx / scale, 166d)
-            };
-            SanitizePlacement(placement, monitors);
-            AddFileBox(placement);
-            if (_state.FileBoxes.LastOrDefault() is { } createdState
-                && _windows.OfType<FileBoxWindow>().LastOrDefault(w => w.State.Id == createdState.Id) is { } createdWindow
-                && createdWindow.WindowHandle is var handle && handle != 0)
-            {
-                for (var attempt = 0; attempt < 2; attempt++)
-                {
-                    if (DockNativeMethods.GetWindowRect(handle, out var current)
-                        && new PixelRect(current.Left, current.Top, current.Right, current.Bottom) == targetPx)
-                    {
-                        break;
-                    }
-                    NativeMethods.SetWindowPos(
-                        handle,
-                        0,
-                        targetPx.Left,
-                        targetPx.Top,
-                        targetPx.Width,
-                        targetPx.Height,
-                        NativeMethods.SwpNoZOrder | NativeMethods.SwpNoActivate);
-                }
-                WindowScreenRecovery.RememberLayout(createdWindow, createdState.Placement, targetPx);
-                createdWindow.CaptureState();
-                ScheduleSave();
+                SanitizePlacement(placement);
+                AddRootFileBox(placement);
             }
         };
+        overlay.PhysicalBoxSelected += physical => AddMarqueeFileBox(physical);
         overlay.Show();
+    }
+
+    internal FileBoxWindow? AddMarqueeFileBox(PixelRect physical)
+    {
+        if (!physical.HasArea)
+        {
+            return null;
+        }
+
+        var monitors = _multiScreen?.ConnectedMonitors.Select(screen => new MonitorSnapshot(
+            screen.MonitorHandle, screen.DeviceName, screen.Bounds, screen.WorkingArea, screen.IsPrimary, screen.Dpi)).ToArray()
+            ?? MonitorCatalog.GetAll();
+        var centerX = physical.Left + physical.Width / 2;
+        var centerY = physical.Top + physical.Height / 2;
+        var monitor = monitors.FirstOrDefault(screen =>
+            centerX >= screen.Bounds.Left && centerX < screen.Bounds.Right
+            && centerY >= screen.Bounds.Top && centerY < screen.Bounds.Bottom);
+        if (monitor is null)
+        {
+            return null;
+        }
+
+        var scale = ScreenProfileAccessor.ResolveScale(monitor.Dpi);
+        var minWidth = (int)Math.Ceiling(226d * scale);
+        var minHeight = (int)Math.Ceiling(166d * scale);
+        var work = monitor.WorkingArea;
+        var left = physical.Left;
+        var top = physical.Top;
+        if (WidgetWindowBase.GridSnapEnabled)
+        {
+            var cell = DesktopStyleRules.GridCellDip * scale;
+            left = work.Left + (int)Math.Round(Math.Round((left - work.Left) / cell) * cell);
+            top = work.Top + (int)Math.Round(Math.Round((top - work.Top) / cell) * cell);
+        }
+
+        var width = Math.Clamp(physical.Width, minWidth, Math.Max(minWidth, work.Width));
+        var height = Math.Clamp(physical.Height, minHeight, Math.Max(minHeight, work.Height));
+        left = Math.Clamp(left, work.Left, Math.Max(work.Left, work.Right - width));
+        top = Math.Clamp(top, work.Top, Math.Max(work.Top, work.Bottom - height));
+        var bounds = new PixelRect(left, top, left + width, top + height);
+        var placement = new WindowPlacement
+        {
+            Left = left / scale,
+            Top = top / scale,
+            Width = width / scale,
+            Height = height / scale
+        };
+
+        if (_multiScreen is { } host)
+        {
+            var target = host.ConnectedMonitors.FirstOrDefault(candidate => candidate.IsPersistentIdentity
+                && candidate.MonitorHandle == monitor.MonitorHandle
+                && string.Equals(candidate.DeviceName, monitor.DeviceName, StringComparison.OrdinalIgnoreCase));
+            if (target is null)
+            {
+                return null;
+            }
+
+            if (!MonitorIdentityResolver.IsDeviceConnected(target.DeviceName)
+                || WindowScreenRecovery.IsLayoutTransitioning())
+            {
+                return null;
+            }
+
+            ScreenProfileAccessor.RecordMonitorLocalPlacement(placement, bounds, work, target.Dpi);
+            DisplayLayoutRules.Remember(placement, MultiScreenHost.CurrentLayoutKey(host.ConnectedMonitors), bounds);
+            if (host.GetScreenKeyForMonitor(target) is { } key)
+            {
+                ScreenProfileAccessor.EnsureScreenProfile(
+                    _state, key, target.DeviceName, target.DisplayLabel, target.HardwareId, target.FriendlyName);
+                var state = new FileBoxState { ScreenKey = key, Placement = placement };
+                InitializeFileBox(state);
+                var window = host.ShowDetachedFileBoxOnScreen(key, state);
+                NotifyMultiScreenUiChanged(refreshComponentList: true);
+                ScheduleSave();
+                return window;
+            }
+
+            return AddRootFileBox(placement);
+        }
+
+        var rootWindow = AddRootFileBox(placement);
+        MultiScreenHost.ApplyPhysicalBounds(rootWindow, bounds, monitor.Dpi, placement,
+            WindowScreenRecovery.CurrentLayout());
+        return rootWindow;
     }
 
     // A new card starts in the shared card look, like the cards already on the desktop.
@@ -1539,6 +1627,14 @@ public sealed partial class WidgetCoordinator : IDisposable
     }
 
     private void AddNote()
+    {
+        if (!TryAddWidgetOnCurrentMainScreen(NewWidgetKind.Note))
+        {
+            AddRootNote();
+        }
+    }
+
+    private void AddRootNote()
     {
         var offset = ScreenProfileAccessor.GetNotesForScreen(_state, screenKey: null).Count * 24;
         var state = NoteService.CreateDefaultWidget();
@@ -1878,6 +1974,11 @@ public sealed partial class WidgetCoordinator : IDisposable
     {
         DesktopExperienceRules.Normalize(experience);
         _state.DesktopExperience = experience;
+        if (!CanPresentRootWidgets)
+        {
+            ScheduleSave();
+            return;
+        }
         if (HasVisibleInformationComponent() && !_state.InformationWidgets.Any())
         {
             _state.InformationWidgets.Add(new InformationWidgetState());
@@ -1891,41 +1992,7 @@ public sealed partial class WidgetCoordinator : IDisposable
             _state.TodoWidgets.Add(created);
             primaryTodos = [created];
         }
-        if (HasVisibleInformationComponent())
-        {
-            foreach (var state in _state.InformationWidgets)
-            {
-                foreach (var kind in InformationComponentKinds)
-                {
-                    var component = experience.GetComponent(kind);
-                    var window = _windows
-                        .OfType<InformationWidgetWindow>()
-                        .FirstOrDefault(candidate =>
-                            !IsSecondaryWindow(candidate) &&
-                            candidate.State.Id == state.Id &&
-                            candidate.ComponentKind == kind);
-                    if (!component.IsVisible)
-                    {
-                        window?.HideFromApp();
-                        continue;
-                    }
-                    if (window is null)
-                    {
-                        window = CreateInformationWindow(state, kind);
-                    }
-                    window.ApplyDesktopExperience(experience);
-                    window.ApplyPlacement(component.Placement, component.IsLocked);
-                    window.Show();
-                }
-            }
-        }
-        else
-        {
-            foreach (var window in _windows.OfType<InformationWidgetWindow>().Where(win => !IsSecondaryWindow(win)))
-            {
-                window.HideFromApp();
-            }
-        }
+        ApplyRootInformationCards(experience);
 
         if (todoComponent.IsVisible)
         {
@@ -1940,14 +2007,14 @@ public sealed partial class WidgetCoordinator : IDisposable
                 }
                 if (IsPrimaryTodo(state))
                 {
-                    SanitizePlacement(todoComponent.Placement);
+                    SanitizeRootPlacement(todoComponent.Placement);
                     CopyTodoLookFromComponent(state, todoComponent);
                     ApplyTodoComponent(window, todoComponent);
                     state.IsLocked = todoComponent.IsLocked;
                     state.Placement = todoComponent.Placement;
                 }
                 window.ApplyPlacement(state.Placement, state.IsLocked);
-                window.Show();
+                ShowRootWindow(window);
             }
         }
         else
@@ -1970,19 +2037,63 @@ public sealed partial class WidgetCoordinator : IDisposable
         }
     }
 
+    private void ApplyRootInformationCards(DesktopExperienceState experience)
+    {
+        if (HasVisibleInformationComponent())
+        {
+            foreach (var state in _state.InformationWidgets)
+            {
+                foreach (var kind in InformationComponentKinds)
+                {
+                    var component = experience.GetComponent(kind);
+                    var window = _windows
+                        .OfType<InformationWidgetWindow>()
+                        .FirstOrDefault(candidate =>
+                            !IsSecondaryWindow(candidate) &&
+                            candidate.State.Id == state.Id &&
+                            candidate.ComponentKind == kind);
+                    if (!component.IsVisible || IsInformationCardSuppressed(null, kind))
+                    {
+                        if (window is not null)
+                        {
+                            _windowsHiddenFromTray.Remove(window);
+                            window.HideFromApp();
+                        }
+                        continue;
+                    }
+                    if (window is null)
+                    {
+                        window = CreateInformationWindow(state, kind);
+                    }
+                    window.ApplyDesktopExperience(experience);
+                    window.ApplyPlacement(component.Placement, component.IsLocked);
+                    ShowRootWindow(window);
+                }
+            }
+        }
+        else
+        {
+            foreach (var window in _windows.OfType<InformationWidgetWindow>().Where(win => !IsSecondaryWindow(win)))
+            {
+                window.HideFromApp();
+            }
+        }
+
+    }
+
     // The row of system places follows its component: shown, placed and coloured by it.
     private void ApplyQuickPlaces()
     {
         var component = _state.DesktopExperience.GetComponent(DesktopComponentKind.QuickLaunch);
         var window = _windows.OfType<QuickPlacesWindow>().FirstOrDefault(win => !IsSecondaryWindow(win));
-        if (!component.IsVisible)
+        if (!CanPresentRootWidgets || !component.IsVisible)
         {
             window?.HideFromApp();
             return;
         }
         if (window is null)
         {
-            SanitizePlacement(component.Placement);
+            SanitizeRootPlacement(component.Placement);
             window = new QuickPlacesWindow();
             Wire(window);
             _windows.Add(window);
@@ -1990,14 +2101,22 @@ public sealed partial class WidgetCoordinator : IDisposable
         window.SetItems(_state.QuickPlaces);
         window.ApplyComponent(component);
         window.ApplyPlacement(component.Placement, component.IsLocked);
-        window.Show();
+        ShowRootWindow(window);
     }
 
     private void ApplyLayoutPreset(DesktopExperienceState experience)
     {
         DesktopExperienceRules.Normalize(experience);
         _state.DesktopExperience = experience;
-        ApplyPresetPlacements(experience.ActivePreset);
+        if (_rootMonitor is { } monitor && _multiScreen is { } host)
+        {
+            ScreenProfileAccessor.ApplyPresetToScreen(_state, null, experience.ActivePreset,
+                monitor.WorkingArea, monitor.Dpi, MultiScreenHost.CurrentLayoutKey(host.ConnectedMonitors));
+        }
+        else if (!ScreenProfileAccessor.IsMultiScreenEnabled(_state))
+        {
+            ApplyPresetPlacements(experience.ActivePreset);
+        }
         ApplyDesktopExperience(experience);
     }
 
@@ -2005,36 +2124,18 @@ public sealed partial class WidgetCoordinator : IDisposable
     {
         ApplyItemSurface();
         _dock.Apply();
+        RefreshInformationCardVisibility();
+        NotifyMultiScreenUiChanged();
         _cornerReveal.RaiseIfBehindTaskbar();
         SaveNow();
-    }
-
-    private int? ResolveTopBarBottomForMonitor(MonitorSnapshot monitor)
-    {
-        if (!_state.TopBar.IsEnabled || _state.TopBar.DisplayMode != TopBarDisplayMode.FullWidth)
-        {
-            return null;
-        }
-
-        var targetsSameMonitor = string.IsNullOrWhiteSpace(_state.TopBar.MonitorDeviceName)
-            ? monitor.IsPrimary
-            : string.Equals(_state.TopBar.MonitorDeviceName, monitor.DeviceName, StringComparison.OrdinalIgnoreCase);
-        if (!targetsSameMonitor)
-        {
-            return null;
-        }
-
-        var scale = monitor.Dpi / 96d;
-        return monitor.Bounds.Top + Math.Max(1, (int)Math.Ceiling(_state.TopBar.Height * scale));
     }
 
     private void ApplyTopBar()
     {
         _topBar.Apply();
-        if (_state.Dock.IsEnabled && DockEdgeRules.IsVertical(_state.Dock.Edge))
-        {
-            _dock.Apply();
-        }
+        _dock.Apply();
+        RefreshInformationCardVisibility();
+        NotifyMultiScreenUiChanged();
         _cornerReveal.RaiseIfBehindTaskbar();
         SyncGlobalHotkeys();
         UpdateSamplingMode();
@@ -2634,6 +2735,8 @@ public sealed partial class WidgetCoordinator : IDisposable
             _ = ApplyTaskbarModeAsync();
         }
         _cornerReveal.SetMode(_state.Taskbar.EdgeRevealMode);
+        RefreshInformationCardVisibility();
+        UpdateSamplingMode();
         SaveNow();
     }
 
@@ -2723,8 +2826,14 @@ public sealed partial class WidgetCoordinator : IDisposable
     private bool ResetWidgetPlacement(WidgetWindowBase? window, DesktopComponentKind? kind)
     {
         var area = SystemParameters.WorkArea;
-        if (kind is { } componentKind
-            && PresetPlacements(_state.DesktopExperience.ActivePreset).TryGetValue(componentKind, out var preset))
+        var activePreset = _state.DesktopExperience.ActivePreset;
+        var rootMonitor = _rootMonitor;
+        var layoutKey = _multiScreen is { } host ? MultiScreenHost.CurrentLayoutKey(host.ConnectedMonitors) : null;
+        var presets = rootMonitor is { } monitor
+            ? ScreenProfileAccessor.ComputePresetPlacementsForMonitor(activePreset, monitor.WorkingArea, monitor.Dpi, layoutKey)
+                .ToDictionary(entry => entry.Key, entry => entry.Value.Placement)
+            : PresetPlacements(activePreset);
+        if (kind is { } componentKind && presets.TryGetValue(componentKind, out var preset))
         {
             _state.DesktopExperience.GetComponent(componentKind).Placement = preset;
             if (componentKind == DesktopComponentKind.Todo
@@ -2749,9 +2858,21 @@ public sealed partial class WidgetCoordinator : IDisposable
         }
 
         Capture(window);
-        placement.Left = area.Left + defaultLeft;
-        placement.Top = area.Top + defaultTop;
-        window.ApplyPlacement(placement, window.IsWidgetLocked);
+        if (rootMonitor is { } target)
+        {
+            var bounds = ScreenProfileAccessor.LocalDipToPhysicalBounds(defaultLeft, defaultTop,
+                placement.Width, placement.Height, target.WorkingArea, target.Dpi);
+            using (window.SuppressPlacementCapture())
+            {
+                MultiScreenHost.ApplyPhysicalBounds(window, bounds, target.Dpi, placement, layoutKey, target.WorkingArea);
+            }
+        }
+        else
+        {
+            placement.Left = area.Left + defaultLeft;
+            placement.Top = area.Top + defaultTop;
+            window.ApplyPlacement(placement, window.IsWidgetLocked);
+        }
         SaveNow();
         return true;
     }
@@ -2783,7 +2904,7 @@ public sealed partial class WidgetCoordinator : IDisposable
                     }
                     else
                     {
-                        box.Show();
+                        ShowRootWindow(box);
                     }
                     if (box.IsEdgeDocked)
                     {
@@ -2815,7 +2936,7 @@ public sealed partial class WidgetCoordinator : IDisposable
                     }
                     else
                     {
-                        note.Show();
+                        ShowRootWindow(note);
                     }
                 }
                 else
@@ -3020,9 +3141,10 @@ public sealed partial class WidgetCoordinator : IDisposable
         _state.Dock.PinnedApps = bindings.Resolved
             .Concat(_state.Dock.PinnedApps.Where(DockPinRules.IsPathPin))
             .ToList();
-        _dock.Apply();
         ThemeRules.ApplyTopBar(package, _state.TopBar);
         _topBar.Apply();
+        _dock.Apply();
+        RefreshInformationCardVisibility();
         UpdateSamplingMode();
         SaveNow();
         _settingsWindow?.RefreshDockSettings();
@@ -3554,6 +3676,7 @@ public sealed partial class WidgetCoordinator : IDisposable
         _hotkeys.Dispose();
         _mappingWatcher.Dispose();
         _dock.Dispose();
+        _taskbarMinimizeFocusGuard.Dispose();
         _cornerReveal.Dispose();
         _taskbar.Dispose();
         _cleanDesktop.Dispose();

@@ -20,6 +20,7 @@ internal sealed class FileBoxEdgeDockController : IDisposable
     private readonly DesktopPeekController _peek;
     private readonly IReadOnlyList<WidgetWindowBase> _windows;
     private readonly Action _saveState;
+    private readonly Func<FileBoxWindow, string?>? _getOwnedMonitorDeviceName;
     private readonly DispatcherTimer _timer;
     private readonly Dictionary<Guid, DockTracker> _trackers = [];
     private EdgeDockMonitorEntry[] _cachedEntries = [];
@@ -46,11 +47,13 @@ internal sealed class FileBoxEdgeDockController : IDisposable
     internal FileBoxEdgeDockController(
         DesktopPeekController peek,
         IReadOnlyList<WidgetWindowBase> windows,
-        Action saveState)
+        Action saveState,
+        Func<FileBoxWindow, string?>? getOwnedMonitorDeviceName = null)
     {
         _peek = peek;
         _windows = windows;
         _saveState = saveState;
+        _getOwnedMonitorDeviceName = getOwnedMonitorDeviceName;
         _timer = new DispatcherTimer(PollInterval, DispatcherPriority.Background, (_, _) => Tick(), Dispatcher.CurrentDispatcher);
         _timer.Stop();
     }
@@ -61,7 +64,7 @@ internal sealed class FileBoxEdgeDockController : IDisposable
         {
             for (var i = 0; i < _windows.Count; i++)
             {
-                if (_windows[i] is FileBoxWindow box && box.IsEdgeDocked && box.IsVisible)
+                if (_windows[i] is FileBoxWindow box && box.IsEdgeDocked && !box.IsEdgeDockSuspended && box.IsVisible)
                 {
                     return true;
                 }
@@ -77,15 +80,7 @@ internal sealed class FileBoxEdgeDockController : IDisposable
         {
             return;
         }
-        RefreshMonitorCache();
-        for (var i = 0; i < _windows.Count; i++)
-        {
-            if (_windows[i] is FileBoxWindow box && box.IsEdgeDocked && box.IsVisible && box.State.EdgeDockSide is { } side)
-            {
-                var tracker = GetTracker(box.State.Id);
-                UpdateTrackerMonitor(box, side, tracker);
-            }
-        }
+        ApplyAll();
     }
 
     internal bool ToggleEdgeDock(FileBoxWindow box, bool enable) =>
@@ -105,20 +100,26 @@ internal sealed class FileBoxEdgeDockController : IDisposable
         }
 
         var boxRect = ReadWindowRect(box);
-        var currentEntry = FindMonitorEntryForDragRelease(boxRect, cursorX, cursorY)
-            ?? _cachedEntries[0];
+        var ownedDevice = _getOwnedMonitorDeviceName?.Invoke(box);
+        var currentEntry = !string.IsNullOrWhiteSpace(ownedDevice)
+            ? FindMonitorEntryByDevice(ownedDevice)
+            : FindMonitorEntryForDragRelease(boxRect, cursorX, cursorY) ?? _cachedEntries[0];
+        if (currentEntry is not { } dragEntry)
+        {
+            return false;
+        }
         var side = FileBoxEdgeDockRules.TryDetectDragDockSide(
             cursorX,
             boxRect,
-            currentEntry.Monitor.Bounds,
-            currentEntry.Monitor.Dpi,
+            dragEntry.Monitor.Bounds,
+            dragEntry.Monitor.Dpi,
             _cachedBounds);
         if (side is null)
         {
             return false;
         }
 
-        return ToggleEdgeDock(box, enable: true, explicitSide: side, explicitEntry: currentEntry);
+        return ToggleEdgeDock(box, enable: true, explicitSide: side, explicitEntry: dragEntry);
     }
 
     private bool ToggleEdgeDock(
@@ -144,13 +145,7 @@ internal sealed class FileBoxEdgeDockController : IDisposable
             box.State.EdgeDockMonitorDeviceName = null;
             _trackers.Remove(box.State.Id);
 
-            var restoreRect = FileBoxEdgeDockRules.ComputeFreeRestoreBounds(
-                box.State.Placement,
-                savedDevice,
-                savedOffset,
-                EffectiveCardHeightDip(box),
-                _cachedLayoutKey,
-                _cachedMonitors);
+            var restoreRect = ComputeFreeRestoreBoundsForBox(box, savedDevice, savedOffset);
             box.ExitEdgeDockedVisual(restoreRect);
             if (wasExpanded)
             {
@@ -168,13 +163,26 @@ internal sealed class FileBoxEdgeDockController : IDisposable
         }
 
         var boxRect = ReadWindowRect(box);
-        var currentEntry = explicitEntry ?? FindMonitorEntryForRect(boxRect) ?? _cachedEntries[0];
-        var chosenSide = explicitSide ?? FileBoxEdgeDockRules.ChooseDockSide(boxRect, currentEntry.Monitor.Bounds, _cachedBounds);
+        var ownedDevice = _getOwnedMonitorDeviceName?.Invoke(box);
+        var hasOwner = !string.IsNullOrWhiteSpace(ownedDevice);
+        var currentEntry = hasOwner
+            ? FindMonitorEntryByDevice(ownedDevice)
+            : explicitEntry ?? FindMonitorEntryForRect(boxRect) ?? _cachedEntries[0];
+        if (currentEntry is not { } localEntry)
+        {
+            return false;
+        }
+        var chosenSide = explicitSide ?? FileBoxEdgeDockRules.ChooseDockSide(boxRect, localEntry.Monitor.Bounds, _cachedBounds);
+        if (hasOwner && (chosenSide is not { } ownerSide
+            || !FileBoxEdgeDockRules.IsOuterEdge(localEntry.Monitor.Bounds, ownerSide, _cachedBounds)))
+        {
+            return false;
+        }
         EdgeDockMonitorEntry targetEntry;
         FileBoxEdgeDockSide side;
         if (chosenSide is { } localSide)
         {
-            targetEntry = currentEntry;
+            targetEntry = localEntry;
             side = localSide;
         }
         else
@@ -196,7 +204,7 @@ internal sealed class FileBoxEdgeDockController : IDisposable
             side = Math.Abs(centerX - minLeft) <= Math.Abs(maxRight - centerX)
                 ? FileBoxEdgeDockSide.Left
                 : FileBoxEdgeDockSide.Right;
-            if (!TryResolveMonitorEntry(null, side, out targetEntry))
+            if (!TryResolveLegacyMonitorEntry(null, side, out targetEntry))
             {
                 return false;
             }
@@ -220,13 +228,13 @@ internal sealed class FileBoxEdgeDockController : IDisposable
 
     internal void RevealImmediatelyForDrag(FileBoxWindow box)
     {
-        if (_disposed || !box.IsEdgeDocked || box.IsEdgeDockExpanded || _peek.IsActive)
+        if (_disposed || !box.IsEdgeDocked || box.IsEdgeDockExpanded || box.IsEdgeDockSuspended || _peek.IsActive)
         {
             return;
         }
         EnsureMonitorCache();
         if (box.State.EdgeDockSide is not { } side
-            || !TryResolveMonitorEntry(box.State.EdgeDockMonitorDeviceName, side, out var entry))
+            || !TryResolveMonitorEntry(box, side, out var entry))
         {
             return;
         }
@@ -250,11 +258,12 @@ internal sealed class FileBoxEdgeDockController : IDisposable
             {
                 continue;
             }
-            if (!TryResolveMonitorEntry(box.State.EdgeDockMonitorDeviceName, side, out var entry))
+            if (!TryResolveMonitorEntry(box, side, out var entry))
             {
+                SuspendUnavailableOwnedEdge(box);
                 continue;
             }
-            if (box.IsEdgeDockExpanded)
+            if (box.IsEdgeDockExpanded && !box.IsEdgeDockSuspended)
             {
                 var expanded = ComputeExpandedRect(box, entry.Monitor, side);
                 var tracker = GetTracker(box.State.Id);
@@ -282,16 +291,18 @@ internal sealed class FileBoxEdgeDockController : IDisposable
         EnsureMonitorCache();
         for (var i = 0; i < _windows.Count; i++)
         {
-            if (_windows[i] is not FileBoxWindow box || !box.IsEdgeDocked || !box.IsEdgeDockExpanded || box.State.EdgeDockSide is not { } side)
+            if (_windows[i] is not FileBoxWindow box || !box.IsEdgeDocked || !box.IsEdgeDockExpanded
+                || box.IsEdgeDockSuspended || box.State.EdgeDockSide is not { } side)
             {
                 continue;
             }
-            if (TryResolveMonitorEntry(box.State.EdgeDockMonitorDeviceName, side, out var entry))
+            if (TryResolveMonitorEntry(box, side, out var entry))
             {
                 CollapseBox(box, entry, side);
             }
             else
             {
+                SuspendUnavailableOwnedEdge(box);
                 _peek.ReturnSingleBox(box);
             }
         }
@@ -359,7 +370,8 @@ internal sealed class FileBoxEdgeDockController : IDisposable
 
         for (var i = 0; i < _windows.Count; i++)
         {
-            if (_windows[i] is not FileBoxWindow box || !box.IsEdgeDocked || !box.IsVisible || box.State.EdgeDockSide is not { } side)
+            if (_windows[i] is not FileBoxWindow box || !box.IsEdgeDocked || box.IsEdgeDockSuspended
+                || !box.IsVisible || box.State.EdgeDockSide is not { } side)
             {
                 continue;
             }
@@ -507,7 +519,7 @@ internal sealed class FileBoxEdgeDockController : IDisposable
 
     private void UpdateTrackerMonitor(FileBoxWindow box, FileBoxEdgeDockSide side, DockTracker tracker)
     {
-        if (TryResolveMonitorEntry(box.State.EdgeDockMonitorDeviceName, side, out var entry))
+        if (TryResolveMonitorEntry(box, side, out var entry))
         {
             tracker.HasMonitor = true;
             tracker.ResolvedMonitor = entry;
@@ -520,6 +532,7 @@ internal sealed class FileBoxEdgeDockController : IDisposable
         else
         {
             tracker.HasMonitor = false;
+            SuspendUnavailableOwnedEdge(box);
         }
     }
 
@@ -554,7 +567,68 @@ internal sealed class FileBoxEdgeDockController : IDisposable
         _cachedLayoutKey = DisplayLayoutRules.Key(layoutInputs);
     }
 
-    private bool TryResolveMonitorEntry(string? preferredDeviceName, FileBoxEdgeDockSide side, out EdgeDockMonitorEntry entry)
+    private bool TryResolveMonitorEntry(FileBoxWindow box, FileBoxEdgeDockSide side, out EdgeDockMonitorEntry entry)
+    {
+        var ownedDevice = _getOwnedMonitorDeviceName?.Invoke(box);
+        if (string.IsNullOrWhiteSpace(ownedDevice))
+        {
+            return TryResolveLegacyMonitorEntry(box.State.EdgeDockMonitorDeviceName, side, out entry);
+        }
+        if (FindMonitorEntryByDevice(ownedDevice) is { } owner
+            && FileBoxEdgeDockRules.IsOuterEdge(owner.Monitor.Bounds, side, _cachedBounds))
+        {
+            entry = owner;
+            return true;
+        }
+        entry = default;
+        return false;
+    }
+
+    private void SuspendUnavailableOwnedEdge(FileBoxWindow box)
+    {
+        var ownedDevice = _getOwnedMonitorDeviceName?.Invoke(box);
+        if (string.IsNullOrWhiteSpace(ownedDevice) || FindMonitorEntryByDevice(ownedDevice) is not { } owner)
+        {
+            return;
+        }
+        _trackers.Remove(box.State.Id);
+        var freeBounds = FileBoxEdgeDockRules.ComputeFreeRestoreBounds(
+            box.State.Placement, ownedDevice, box.State.EdgeDockOffsetDip,
+            EffectiveCardHeightDip(box), _cachedLayoutKey, [owner.Monitor]);
+        box.SuspendEdgeDockedVisual(freeBounds);
+        _peek.ReturnSingleBox(box);
+    }
+
+    private PixelRect ComputeFreeRestoreBoundsForBox(FileBoxWindow box, string? savedDevice, double? savedOffset)
+    {
+        var ownedDevice = _getOwnedMonitorDeviceName?.Invoke(box);
+        IReadOnlyList<EdgeDockMonitor> monitors = _cachedMonitors;
+        if (!string.IsNullOrWhiteSpace(ownedDevice))
+        {
+            if (FindMonitorEntryByDevice(ownedDevice) is not { } owner)
+            {
+                return ReadWindowRect(box);
+            }
+            monitors = [owner.Monitor];
+            savedDevice = ownedDevice;
+        }
+        return FileBoxEdgeDockRules.ComputeFreeRestoreBounds(
+            box.State.Placement, savedDevice, savedOffset, EffectiveCardHeightDip(box), _cachedLayoutKey, monitors);
+    }
+
+    private EdgeDockMonitorEntry? FindMonitorEntryByDevice(string? deviceName)
+    {
+        for (var i = 0; i < _cachedEntries.Length; i++)
+        {
+            if (string.Equals(_cachedEntries[i].Monitor.DeviceName, deviceName, StringComparison.OrdinalIgnoreCase))
+            {
+                return _cachedEntries[i];
+            }
+        }
+        return null;
+    }
+
+    private bool TryResolveLegacyMonitorEntry(string? preferredDeviceName, FileBoxEdgeDockSide side, out EdgeDockMonitorEntry entry)
     {
         if (FileBoxEdgeDockRules.ResolveMonitor(preferredDeviceName, side, _cachedMonitors) is { } resolved)
         {

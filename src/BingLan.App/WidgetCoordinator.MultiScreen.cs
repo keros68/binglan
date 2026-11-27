@@ -1,9 +1,8 @@
-using System.Windows;
 using BingLan.App.Dock;
 using BingLan.App.Services;
 using BingLan.App.Windows;
-using BingLan.Core.Dock;
 using BingLan.Core.Models;
+using BingLan.Core.Dock;
 using BingLan.Core.Services;
 
 namespace BingLan.App;
@@ -11,6 +10,12 @@ namespace BingLan.App;
 public sealed partial class WidgetCoordinator
 {
     private MultiScreenHost? _multiScreen;
+    private ResolvedMonitor? _rootMonitor;
+    private bool _cardRuntimeStarted;
+    private bool _rootWindowsRestored;
+
+    private bool CanPresentRootWidgets =>
+        !ScreenProfileAccessor.IsMultiScreenEnabled(_state) || _rootMonitor is not null;
 
     internal bool HasActiveMultiScreenHost => _multiScreen is not null;
 
@@ -37,10 +42,6 @@ public sealed partial class WidgetCoordinator
     private DesktopExperienceState GetExperienceForWindow(WidgetWindowBase window) =>
         _multiScreen?.TryGetExperienceForWindow(window) ?? _state.DesktopExperience;
 
-    /// <summary>
-    /// Lazy startup/sync for secondary displays. Zero allocations, zero windows, and zero
-    /// <c>QueryDisplayConfig</c> calls when multi-screen is disabled or only one monitor is present.
-    /// </summary>
     private void SyncMultiScreenRuntime()
     {
         if (_isExiting)
@@ -48,29 +49,179 @@ public sealed partial class WidgetCoordinator
             return;
         }
 
+        if (ScreenProfileAccessor.IsMultiScreenEnabled(_state))
+        {
+            var monitors = MonitorIdentityResolver.ResolveConnected();
+            var rootKey = _state.MultiScreen?.RootMonitorKey;
+            _rootMonitor = monitors.FirstOrDefault(m => m.IsPersistentIdentity
+                && string.Equals(m.MonitorKey, rootKey, StringComparison.Ordinal));
+            _multiScreen ??= CreateMultiScreenHost();
+            _multiScreen.SyncConnectedScreens(monitors);
+        }
+        else
+        {
+            _rootMonitor = null;
+            DisposeMultiScreenHost(capturePlacement: !WindowScreenRecovery.IsLayoutTransitioning());
+        }
+
+        if (_cardRuntimeStarted)
+        {
+            SyncRootWindowLifecycle();
+        }
+    }
+
+    private void SyncRootWindowLifecycle()
+    {
+        if (!CanPresentRootWidgets)
+        {
+            _rootWindowsRestored = false;
+            foreach (var window in _windows.Where(window => !IsSecondaryWindow(window)).ToList())
+            {
+                Capture(window);
+                _windows.Remove(window);
+                _windowsHiddenFromTray.Remove(window);
+                if (!window.IsClosingOrClosed)
+                {
+                    window.CanClose = true;
+                    using (window.SuppressPlacementCapture())
+                    {
+                        window.Close();
+                    }
+                }
+            }
+        }
+        else if (!_rootWindowsRestored)
+        {
+            _rootWindowsRestored = true;
+            RestoreRootWindows();
+        }
+    }
+
+    private void ShowRootWindow(WidgetWindowBase window)
+    {
+        if (!CanPresentRootWidgets)
+        {
+            return;
+        }
+
+        if (_desktopHidden)
+        {
+            if (!_windowsHiddenFromTray.Contains(window))
+            {
+                _windowsHiddenFromTray.Add(window);
+            }
+            return;
+        }
+
+        if (_rootMonitor is null)
+        {
+            window.Show();
+            return;
+        }
+
+        var wasApplying = _isApplyingDesktopExperience;
+        _isApplyingDesktopExperience = true;
+        try
+        {
+            using (WindowScreenRecovery.DeferShowRecovery())
+            using (window.SuppressPlacementCapture())
+            {
+                window.Show();
+                PlaceRootWindow(window);
+            }
+        }
+        finally
+        {
+            _isApplyingDesktopExperience = wasApplying;
+        }
+    }
+
+    private void PlaceRootWindow(WidgetWindowBase window)
+    {
+        if (_rootMonitor is not { } monitor || _multiScreen is not { } host
+            || GetRootPlacement(window) is not { } placement)
+        {
+            return;
+        }
+
+        var layoutKey = MultiScreenHost.CurrentLayoutKey(host.ConnectedMonitors);
+        var bounds = MultiScreenHost.ResolveTargetPixelBounds(placement, monitor, layoutKey);
+        using (window.SuppressPlacementCapture())
+        {
+            MultiScreenHost.ApplyPhysicalBounds(window, bounds, monitor.Dpi);
+        }
+        if (placement.MonitorLocal is null && window.WindowHandle != 0)
+        {
+            DisplayLayoutRules.Remember(placement, layoutKey, bounds);
+            ScreenProfileAccessor.RecordMonitorLocalPlacement(placement, bounds, monitor.WorkingArea, monitor.Dpi);
+        }
+    }
+
+    private void CaptureRootLocalPosition(WidgetWindowBase window)
+    {
+        if (_rootMonitor is not { } monitor || _multiScreen is not { } host
+            || !window.IsVisible || window is FileBoxWindow { IsEdgeDocked: true }
+            || GetRootPlacement(window) is not { } placement
+            || MultiScreenHost.TryReadWindowPixelBounds(window) is not { } bounds
+            || MonitorIdentityResolver.FindByBounds(host.ConnectedMonitors, bounds)?.MonitorKey != monitor.MonitorKey)
+        {
+            return;
+        }
+
+        var layoutKey = MultiScreenHost.CurrentLayoutKey(host.ConnectedMonitors);
+        if (DisplayLayoutRules.TryRecall(placement, layoutKey, out var remembered))
+        {
+            bounds = remembered;
+        }
+        ScreenProfileAccessor.RecordMonitorLocalPlacement(placement, bounds, monitor.WorkingArea, monitor.Dpi);
+    }
+
+    private WindowPlacement? GetRootPlacement(WidgetWindowBase window) => window switch
+    {
+        TodoWidgetWindow todo => todo.State.Placement,
+        NoteWidgetWindow note => note.State.Placement,
+        FileBoxWindow box => box.State.Placement,
+        InformationWidgetWindow { ComponentKind: { } kind } =>
+            _state.DesktopExperience.GetComponent(kind).Placement,
+        QuickPlacesWindow => _state.DesktopExperience.GetComponent(DesktopComponentKind.QuickLaunch).Placement,
+        _ => null
+    };
+
+    private string? GetFileBoxOwnerDeviceName(FileBoxWindow box)
+    {
+        if (_multiScreen is not { } host)
+        {
+            return null;
+        }
+
+        var screenKey = host.TryGetScreenKey(box);
+        return screenKey is null ? _rootMonitor?.DeviceName
+            : host.ConnectedMonitors.FirstOrDefault(m => m.IsPersistentIdentity && m.MonitorKey == screenKey)?.DeviceName;
+    }
+
+    private void SanitizeRootPlacement(WindowPlacement placement)
+    {
         if (!ScreenProfileAccessor.IsMultiScreenEnabled(_state))
         {
-            var canCapturePlacement = !WindowScreenRecovery.IsLayoutTransitioning()
-                && MonitorIdentityResolver.HasMultipleMonitors();
-            DisposeMultiScreenHost(capturePlacement: canCapturePlacement);
-            return;
+            SanitizePlacement(placement);
         }
+    }
 
-        if (!MonitorIdentityResolver.HasMultipleMonitors())
+    internal bool BindLegacyRootToScreen(string monitorKey)
+    {
+        if (!ScreenProfileAccessor.IsMultiScreenEnabled(_state)
+            || _multiScreen?.ConnectedMonitors.Any(m => m.IsPersistentIdentity && m.MonitorKey == monitorKey) != true
+            || !ScreenProfileAccessor.BindLegacyRootToScreen(_state, monitorKey))
         {
-            DisposeMultiScreenHost(capturePlacement: false);
-            return;
+            return false;
         }
 
-        var monitors = MonitorIdentityResolver.ResolveConnected();
-        if (monitors.Count < 2)
-        {
-            DisposeMultiScreenHost(capturePlacement: false);
-            return;
-        }
-
-        _multiScreen ??= CreateMultiScreenHost();
-        _multiScreen.SyncConnectedScreens(monitors);
+        SyncMultiScreenRuntime();
+        ApplyDisplayRecovery();
+        _edgeDock.ApplyAll();
+        SaveNow();
+        NotifyMultiScreenUiChanged(refreshComponentList: true);
+        return true;
     }
 
     internal void HandleMultiScreenDisplayLayoutChanged()
@@ -83,6 +234,10 @@ public sealed partial class WidgetCoordinator
         // Always runs BEFORE ApplyDisplayRecovery so disconnected secondary monitors immediately
         // destroy their secondary windows instead of letting GatherOnArrival pull them onto primary.
         SyncMultiScreenRuntime();
+        if (ScreenProfileAccessor.IsMultiScreenEnabled(_state))
+        {
+            ApplyDisplayRecovery();
+        }
         NotifyMultiScreenUiChanged(refreshComponentList: true);
     }
 
@@ -139,7 +294,8 @@ public sealed partial class WidgetCoordinator
                 {
                     _isApplyingDesktopExperience = previous;
                 }
-            }
+            },
+            IsInformationCardSuppressed = IsInformationCardSuppressed
         });
 
     private InformationWidgetWindow CreateSecondaryInformationWindow(
@@ -269,7 +425,7 @@ public sealed partial class WidgetCoordinator
 
     private bool HasSavedSecondaryState()
     {
-        if (_state.MultiScreen is { Screens.Count: > 0 })
+        if (_state.MultiScreen is { Screens.Count: > 0 } or { SurfacePreferences.Count: > 0 } or { RootMonitorKey: not null })
         {
             return true;
         }
@@ -281,273 +437,41 @@ public sealed partial class WidgetCoordinator
 
     internal void SetMultiScreenEnabled(bool enabled)
     {
-        if (!enabled)
+        if (enabled == ScreenProfileAccessor.IsMultiScreenEnabled(_state))
         {
-            if (_state.MultiScreen is not null)
-            {
-                _state.MultiScreen.IsEnabled = false;
-            }
-            var canCapturePlacement = !WindowScreenRecovery.IsLayoutTransitioning()
-                && MonitorIdentityResolver.HasMultipleMonitors();
-            DisposeMultiScreenHost(capturePlacement: canCapturePlacement);
-            SaveNow();
-            NotifyMultiScreenUiChanged();
             return;
         }
 
+        var firstActivation = _state.MultiScreen is null;
         _state.MultiScreen ??= new MultiScreenState();
-        _state.MultiScreen.IsEnabled = true;
+        if (enabled && firstActivation)
+        {
+            // Enabling from the legacy desktop explicitly adopts the current main screen,
+            // provided it has no independent profile. Previously enabled v65 state awaits
+            // a screen choice because the upgrade-time main screen may be a different device.
+            var primary = MonitorIdentityResolver.ResolveConnected().FirstOrDefault(m => m.IsPrimary);
+            if (primary is { IsPersistentIdentity: true })
+            {
+                CaptureAll();
+                ScreenProfileAccessor.BindLegacyRootToScreen(_state, primary.MonitorKey);
+            }
+        }
+
+        _state.MultiScreen.IsEnabled = enabled;
         SyncMultiScreenRuntime();
+        _topBar.Apply();
+        _dock.Apply();
+        if (enabled)
+        {
+            RefreshInformationCardVisibility();
+        }
+        else if (CanPresentRootWidgets && _cardRuntimeStarted)
+        {
+            ApplyRootInformationCards(_state.DesktopExperience);
+        }
+        ApplyDisplayRecovery();
+        UpdateSamplingMode();
         SaveNow();
-        NotifyMultiScreenUiChanged();
-    }
-
-    internal IReadOnlyList<DisconnectedScreenWidget> GetDisconnectedSecondaryWidgets()
-    {
-        if (!HasSavedSecondaryState())
-        {
-            return [];
-        }
-
-        var connectedSecondaryKeys = new HashSet<string>(StringComparer.Ordinal);
-        if (MonitorIdentityResolver.HasMultipleMonitors())
-        {
-            if (ScreenProfileAccessor.IsMultiScreenEnabled(_state))
-            {
-                foreach (var monitor in MonitorIdentityResolver.ResolveConnected())
-                {
-                    if (!monitor.IsPrimary)
-                    {
-                        connectedSecondaryKeys.Add(monitor.MonitorKey);
-                    }
-                }
-            }
-            else
-            {
-                // Multi-screen switch is OFF while secondary display(s) remain physically attached:
-                // match against lightweight EnumDisplayMonitors device names (0 QueryDisplayConfig calls)
-                // so online secondary monitors are never misreported as disconnected.
-                var connectedDeviceNames = MonitorIdentityResolver.GetConnectedSecondaryDeviceNames();
-                if (_state.MultiScreen?.Screens is { Count: > 0 } savedScreens)
-                {
-                    foreach (var (key, profile) in savedScreens)
-                    {
-                        if (!string.IsNullOrWhiteSpace(profile.LastKnownDeviceName)
-                            && connectedDeviceNames.Contains(profile.LastKnownDeviceName.Trim()))
-                        {
-                            connectedSecondaryKeys.Add(key);
-                        }
-                    }
-                }
-            }
-        }
-
-        return ScreenProfileAccessor.FindDisconnectedScreenWidgets(_state, connectedSecondaryKeys);
-    }
-
-    internal bool MoveDisconnectedWidgetToPrimary(Guid widgetId, string kindName)
-    {
-        var primarySnapshot = MonitorCatalog.GetAll().FirstOrDefault(m => m.IsPrimary);
-        var workArea = primarySnapshot?.WorkingArea ?? PrimaryWorkAreaPixels();
-        var dpi = primarySnapshot?.Dpi ?? 96u;
-        var layoutKey = WindowScreenRecovery.CurrentLayout();
-
-        switch (kindName)
-        {
-            case ScreenProfileAccessor.DisconnectedTodoKind:
-            {
-                var movedPx = ScreenProfileAccessor.MoveTodoToScreen(
-                    _state,
-                    widgetId,
-                    targetScreenKey: null,
-                    workArea,
-                    dpi,
-                    currentLayoutKey: layoutKey);
-                if (movedPx is not { } targetPx)
-                {
-                    return false;
-                }
-
-                var todo = _state.TodoWidgets.FirstOrDefault(item => item.Id == widgetId);
-                if (todo is null)
-                {
-                    return false;
-                }
-
-                var window = _windows.OfType<TodoWidgetWindow>().FirstOrDefault(win => win.State.Id == widgetId);
-                using (WindowScreenRecovery.DeferShowRecovery())
-                {
-                    window ??= ShowTodo(todo);
-                    if (!window.IsVisible)
-                    {
-                        window.Show();
-                    }
-                    MultiScreenHost.ApplyPhysicalBounds(window, targetPx, dpi, todo.Placement, layoutKey);
-                }
-                SaveNow();
-                NotifyMultiScreenUiChanged(refreshComponentList: true);
-                return true;
-            }
-            case ScreenProfileAccessor.DisconnectedNoteKind:
-            {
-                var movedPx = ScreenProfileAccessor.MoveNoteToScreen(
-                    _state,
-                    widgetId,
-                    targetScreenKey: null,
-                    workArea,
-                    dpi,
-                    currentLayoutKey: layoutKey);
-                if (movedPx is not { } targetPx)
-                {
-                    return false;
-                }
-
-                var note = _state.NoteWidgets.FirstOrDefault(item => item.Id == widgetId);
-                if (note is null)
-                {
-                    return false;
-                }
-
-                note.IsHidden = false;
-                var window = _windows.OfType<NoteWidgetWindow>().FirstOrDefault(win => win.State.Id == widgetId);
-                using (WindowScreenRecovery.DeferShowRecovery())
-                {
-                    if (window is null)
-                    {
-                        ShowNote(note);
-                        window = _windows.OfType<NoteWidgetWindow>().FirstOrDefault(win => win.State.Id == widgetId);
-                    }
-                    else if (!window.IsVisible)
-                    {
-                        window.Show();
-                    }
-                    if (window is not null)
-                    {
-                        MultiScreenHost.ApplyPhysicalBounds(window, targetPx, dpi, note.Placement, layoutKey);
-                    }
-                }
-                SaveNow();
-                NotifyMultiScreenUiChanged(refreshComponentList: true);
-                return true;
-            }
-            case ScreenProfileAccessor.DisconnectedFileBoxKind:
-            {
-                var movedPx = ScreenProfileAccessor.MoveFileBoxToScreen(
-                    _state,
-                    widgetId,
-                    targetScreenKey: null,
-                    workArea,
-                    dpi,
-                    currentLayoutKey: layoutKey);
-                if (movedPx is not { } targetPx)
-                {
-                    return false;
-                }
-
-                var box = _state.FileBoxes.FirstOrDefault(item => item.Id == widgetId);
-                if (box is null)
-                {
-                    return false;
-                }
-
-                var members = ScreenProfileAccessor.GetFileBoxGroupMembers(_state, box);
-                foreach (var member in members)
-                {
-                    member.IsHidden = false;
-                }
-                var window = FindPrimaryFileBoxWindow(box.Id);
-                using (WindowScreenRecovery.DeferShowRecovery())
-                {
-                    window ??= ShowFileBoxGroup(members);
-                    if (!window.IsVisible)
-                    {
-                        window.Show();
-                    }
-                    MultiScreenHost.ApplyPhysicalBounds(window, targetPx, dpi, box.Placement, layoutKey);
-                    window.SyncGroupSharedProperties();
-                }
-                _edgeDock.ApplyAll();
-                SaveNow();
-                NotifyMultiScreenUiChanged(refreshComponentList: true);
-                return true;
-            }
-            case ScreenProfileAccessor.DisconnectedQuickLaunchKind:
-            {
-                var entry = GetDisconnectedSecondaryWidgets()
-                    .FirstOrDefault(item => item.Id == widgetId && item.KindName == kindName);
-                if (entry is null
-                    || !ScreenProfileAccessor.MoveDisconnectedQuickPlacesToPrimary(_state, entry.ScreenKey))
-                {
-                    return false;
-                }
-
-                ApplyQuickPlaces();
-                SaveNow();
-                NotifyMultiScreenUiChanged(refreshComponentList: true);
-                return true;
-            }
-            case ScreenProfileAccessor.DisconnectedBuiltInInfoKind:
-            {
-                var entry = GetDisconnectedSecondaryWidgets()
-                    .FirstOrDefault(item => item.Id == widgetId && item.KindName == kindName);
-                if (entry is null)
-                {
-                    return false;
-                }
-
-                DesktopComponentKind? matchedKind = null;
-                foreach (var candidate in InformationComponentKinds)
-                {
-                    if (ScreenProfileAccessor.CreateDisconnectedComponentId(entry.ScreenKey, candidate) == widgetId)
-                    {
-                        matchedKind = candidate;
-                        break;
-                    }
-                }
-                if (matchedKind is not { } kind
-                    || !ScreenProfileAccessor.MoveDisconnectedBuiltInToPrimary(_state, entry.ScreenKey, kind))
-                {
-                    return false;
-                }
-
-                ApplyDesktopExperience(_state.DesktopExperience);
-                NotifyMultiScreenUiChanged(refreshComponentList: true);
-                return true;
-            }
-            default:
-                return false;
-        }
-    }
-
-    internal int MoveAllDisconnectedFromScreenToPrimary(string screenKey)
-    {
-        var items = GetDisconnectedSecondaryWidgets()
-            .Where(item => string.Equals(item.ScreenKey, screenKey, StringComparison.Ordinal))
-            .ToList();
-        var moved = 0;
-        foreach (var item in items)
-        {
-            if (MoveDisconnectedWidgetToPrimary(item.Id, item.KindName))
-            {
-                moved++;
-            }
-        }
-        return moved;
-    }
-
-    private static PixelRect PrimaryWorkAreaPixels()
-    {
-        var primary = MonitorCatalog.GetAll().FirstOrDefault(m => m.IsPrimary);
-        if (primary is not null)
-        {
-            return primary.WorkingArea;
-        }
-
-        var area = SystemParameters.WorkArea;
-        return new PixelRect(
-            (int)Math.Round(area.Left),
-            (int)Math.Round(area.Top),
-            (int)Math.Round(area.Right),
-            (int)Math.Round(area.Bottom));
+        NotifyMultiScreenUiChanged(refreshComponentList: true);
     }
 }

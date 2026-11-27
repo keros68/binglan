@@ -590,10 +590,12 @@ internal sealed class TopBarAppBarController : IDisposable
     }
 
     // A reserved bar behaves like the taskbar: above normal windows, below a full-screen
-    // app. A smart-hide bar is only on top while it is shown.
+    // app. A smart-hide bar stays topmost only while visible; once hidden it drops out of
+    // the topmost band so it never lingers over maximized applications.
     private void UpdateWindowLayer()
     {
-        var insertAfter = _reservation.IsRegistered && _fullScreenDetected
+        var insertAfter = (_reservation.IsRegistered && _fullScreenDetected)
+            || (!_reservation.IsRegistered && !_window.IsVisible)
             ? DockNativeMethods.HwndBottom
             : DockNativeMethods.HwndTopmost;
         var previous = _updatingLayer;

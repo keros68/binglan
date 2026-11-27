@@ -109,24 +109,29 @@ internal static class ShellSurfaceNativeMethods
         || (GetAsyncKeyState(VkMButton) & 0x8000) != 0;
 
     internal static bool IsSystemMenuForeground() =>
-        TryGetForegroundSystemMenu(out _, out _);
+        TryGetForegroundSystemMenu(out var kind, out _) && kind != BingLan.Core.Dock.SystemSurfaceKind.None;
 
     internal static bool TryGetForegroundSystemMenu(
-        out bool isTaskbarWindow,
+        out BingLan.Core.Dock.SystemSurfaceKind surfaceKind,
         out BingLan.Core.Dock.PixelRect bounds)
     {
-        isTaskbarWindow = false;
+        surfaceKind = BingLan.Core.Dock.SystemSurfaceKind.None;
         bounds = default;
         var window = DockNativeMethods.GetForegroundWindow();
         var name = ClassNameOf(window);
         if (name is not ("Shell_TrayWnd" or "Shell_SecondaryTrayWnd" or "Xaml_WindowedPopupClass"
             or "Windows.UI.Core.CoreWindow" or "ControlCenterWindow" or "TopLevelWindowForOverflowXamlIsland")) return false;
-        if (ProcessNameOf(window) is not { } processName || !IsSystemMenu(name, processName))
+        if (ProcessNameOf(window) is not { } processName)
         {
             return false;
         }
 
-        isTaskbarWindow = name is "Shell_TrayWnd" or "Shell_SecondaryTrayWnd";
+        surfaceKind = ClassifySystemMenu(name, processName);
+        if (surfaceKind == BingLan.Core.Dock.SystemSurfaceKind.None)
+        {
+            return false;
+        }
+
         if (DockNativeMethods.GetWindowRect(window, out var rect))
         {
             bounds = new BingLan.Core.Dock.PixelRect(rect.Left, rect.Top, rect.Right, rect.Bottom);
@@ -247,10 +252,31 @@ internal static class ShellSurfaceNativeMethods
         }
     }
 
+    internal static BingLan.Core.Dock.SystemSurfaceKind ClassifySystemMenu(string className, string processName)
+    {
+        if (processName == "explorer")
+        {
+            if (className is "Shell_TrayWnd" or "Shell_SecondaryTrayWnd")
+            {
+                return BingLan.Core.Dock.SystemSurfaceKind.Taskbar;
+            }
+            if (className is "Xaml_WindowedPopupClass" or "TopLevelWindowForOverflowXamlIsland")
+            {
+                return BingLan.Core.Dock.SystemSurfaceKind.TaskbarPopup;
+            }
+        }
+
+        if (IsStartMenuSurface(className, processName)
+            || (processName is "ShellHost" or "ShellExperienceHost" && className == "ControlCenterWindow"))
+        {
+            return BingLan.Core.Dock.SystemSurfaceKind.GlobalSystemMenu;
+        }
+
+        return BingLan.Core.Dock.SystemSurfaceKind.None;
+    }
+
     internal static bool IsSystemMenu(string className, string processName) =>
-        (processName == "explorer" && className is "Shell_TrayWnd" or "Shell_SecondaryTrayWnd" or "Xaml_WindowedPopupClass" or "TopLevelWindowForOverflowXamlIsland")
-        || IsStartMenuSurface(className, processName)
-        || (processName is "ShellHost" or "ShellExperienceHost" && className == "ControlCenterWindow");
+        ClassifySystemMenu(className, processName) != BingLan.Core.Dock.SystemSurfaceKind.None;
 
     internal static bool SendChord(ushort modifier, ushort key) => SendChord([modifier], key);
 

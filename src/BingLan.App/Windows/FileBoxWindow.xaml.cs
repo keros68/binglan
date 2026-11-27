@@ -166,7 +166,16 @@ public partial class FileBoxWindow : WidgetWindowBase
 
     internal bool IsEdgeDocked => State.EdgeDockSide is not null;
 
-    internal bool IsEdgeDockExpanded { get; private set; }
+    private bool _edgeDockExpanded;
+
+    // The saved docking preference stays checked while a shared interior edge temporarily shows a full box.
+    internal bool IsEdgeDockSuspended { get; private set; }
+
+    internal bool IsEdgeDockExpanded
+    {
+        get => _edgeDockExpanded || IsEdgeDockSuspended;
+        private set => _edgeDockExpanded = value;
+    }
 
     internal bool IsEdgeDockInteractionBusy =>
         IsTitleEditing
@@ -317,6 +326,7 @@ public partial class FileBoxWindow : WidgetWindowBase
 
     internal void EnterEdgeDockedHiddenVisual(FileBoxEdgeDockSide side, BingLan.Core.Dock.PixelRect tabBounds)
     {
+        IsEdgeDockSuspended = false;
         IsEdgeDockExpanded = false;
         _autoCollapseTimer.Stop();
         _hoverExpandTimer.Stop();
@@ -350,6 +360,7 @@ public partial class FileBoxWindow : WidgetWindowBase
 
     internal void EnterEdgeDockedExpandedVisual(FileBoxEdgeDockSide side, BingLan.Core.Dock.PixelRect expandedBounds, bool animate)
     {
+        IsEdgeDockSuspended = false;
         IsEdgeDockExpanded = true;
         _autoCollapseTimer.Stop();
         _hoverExpandTimer.Stop();
@@ -400,8 +411,15 @@ public partial class FileBoxWindow : WidgetWindowBase
         BodySurface.Opacity = 1;
     }
 
-    internal void ExitEdgeDockedVisual(BingLan.Core.Dock.PixelRect restoredBounds)
+    internal void ExitEdgeDockedVisual(BingLan.Core.Dock.PixelRect restoredBounds) =>
+        RestoreFreeVisual(restoredBounds, suspended: false);
+
+    internal void SuspendEdgeDockedVisual(BingLan.Core.Dock.PixelRect restoredBounds) =>
+        RestoreFreeVisual(restoredBounds, suspended: true);
+
+    private void RestoreFreeVisual(BingLan.Core.Dock.PixelRect restoredBounds, bool suspended)
     {
+        IsEdgeDockSuspended = suspended;
         IsEdgeDockExpanded = false;
         EdgeDockSlideTransform.BeginAnimation(System.Windows.Media.TranslateTransform.XProperty, null);
         EdgeDockSlideTransform.X = 0;

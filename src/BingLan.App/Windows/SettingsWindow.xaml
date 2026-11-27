@@ -2547,7 +2547,7 @@
                         <local:SettingsGroup>
                                 <local:SettingsRow x:Name="DockEnabledRow"
                                                    Header="显示冰蓝 Dock"
-                                                   Description="屏幕底部居中显示固定的应用和正在运行的应用"
+                                                   Description="设置 Dock 的全局默认显示。开启每屏独立桌面后可单独调整各屏。"
                                                    local:SettingsSearch.Keywords="顶栏与底栏 顶栏底栏 Dock 开关 启动">
                                     <CheckBox x:Name="DockEnabledCheckBox"
                                               AutomationProperties.Name="显示冰蓝 Dock"
@@ -2876,7 +2876,7 @@
                     <StackPanel x:Name="TopBarSection" Margin="0,12,0,0">
                         <local:SettingsGroup>
                                 <local:SettingsRow Header="显示顶部信息条"
-                                                   Description="屏幕最上方的状态栏（时间、天气、网速、音量等），点击模块进入对应设置"
+                                                   Description="设置顶部信息条的全局默认显示。开启每屏独立桌面后可单独调整各屏。"
                                                    local:SettingsSearch.Keywords="顶栏与底栏 顶栏底栏 顶端信息条 顶部信息条 顶栏 信息条 状态栏 菜单栏 开关">
                                     <CheckBox x:Name="TopBarEnabledCheckBox"
                                               AutomationProperties.Name="显示顶部信息条"
