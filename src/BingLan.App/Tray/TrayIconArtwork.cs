@@ -4,14 +4,18 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Security;
 using System.Security.Cryptography;
+using System.Text;
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Interop;
 using System.Windows.Automation;
 using Microsoft.Win32;
+using Microsoft.Win32.SafeHandles;
 
 namespace BingLan.App.Tray;
+
+internal sealed record TrayFeishuOwner(nint Window, uint ProcessId, uint IconId, string ExecutablePath);
 
 internal static class TrayIconArtwork
 {
@@ -19,8 +23,9 @@ internal static class TrayIconArtwork
     private const int MaximumTotalBytes = 8 * 1024 * 1024;
     private const int MaximumDimension = 256;
     private sealed record Snapshot(string Tooltip, string FirstLine, string Application, string Path, byte[] Bytes, string Digest, uint? Uid, Guid IconGuid);
+    private sealed record LocatedIcon(Snapshot Icon, Rect Bounds, nint Owner, uint ProcessId);
 
-    internal sealed record Artwork(string Name, BitmapSource? Image);
+    internal sealed record Artwork(string Name, BitmapSource? Image, TrayFeishuOwner? FeishuOwner = null);
 
     internal static IReadOnlyDictionary<string, Artwork> Load(IReadOnlyList<TrayEntry> entries)
     {
@@ -114,31 +119,29 @@ internal static class TrayIconArtwork
         return result;
     }
 
-    private static List<(Snapshot Icon, Rect Bounds)> LocateRegisteredIcons(
+    private static List<LocatedIcon> LocateRegisteredIcons(
         List<Snapshot> snapshots, Dictionary<uint, string> running)
     {
-        var locations = new List<(Snapshot, Rect)>();
+        var locations = new List<LocatedIcon>();
         var byPath = snapshots.ToLookup(icon => icon.Path, StringComparer.OrdinalIgnoreCase);
         var dpi = SetThreadDpiAwarenessContext(-4); // UI Automation supplies physical screen coordinates.
         try
         {
-            void Locate(Snapshot icon, nint owner)
+            void Locate(Snapshot icon, nint owner, uint processId)
             {
-                var id = new IconIdentifier { Size = (uint)Marshal.SizeOf<IconIdentifier>(),
-                    Owner = owner, Uid = icon.Uid.GetValueOrDefault(), Guid = icon.IconGuid };
-                if (Shell_NotifyIconGetRect(ref id, out var r) == 0 && r.Right > r.Left && r.Bottom > r.Top)
-                    locations.Add((icon, new Rect(r.Left, r.Top, r.Right - r.Left, r.Bottom - r.Top)));
+                if (ReadRegisteredBounds(owner, icon.Uid.GetValueOrDefault(), icon.IconGuid) is { } bounds)
+                    locations.Add(new LocatedIcon(icon, bounds, owner, processId));
             }
             foreach (var path in running.Values.Distinct(StringComparer.OrdinalIgnoreCase))
                 foreach (var icon in byPath[path])
-                    if (icon.IconGuid != Guid.Empty) Locate(icon, 0);
+                    if (icon.IconGuid != Guid.Empty) Locate(icon, 0, 0);
 
             void CheckOwner(nint window)
             {
                 Native.GetWindowThreadProcessId(window, out var pid);
                 if (!running.TryGetValue(pid, out var path)) return;
                 foreach (var icon in byPath[path])
-                    if (icon.IconGuid == Guid.Empty && icon.Uid.HasValue) Locate(icon, window);
+                    if (icon.IconGuid == Guid.Empty && icon.Uid.HasValue) Locate(icon, window, pid);
             }
             Native.EnumWindows((window, _) => { CheckOwner(window); return true; }, 0);
             // Some applications register a message-only window as the tray callback owner.
@@ -154,16 +157,54 @@ internal static class TrayIconArtwork
         return locations;
     }
 
-    private static Artwork? ResolveUnnamed(TrayEntry entry, List<(Snapshot Icon, Rect Bounds)> locations)
+    internal static TrayFeishuOwner? VerifyFeishuOwner(TrayPanelEntry displayed, TrayEntry current)
     {
-        Rect bounds;
-        try { bounds = entry.Element.Current.BoundingRectangle; }
+        if (displayed.FeishuOwner is not { } owner || displayed.Identity != current.Identity
+            || displayed.Source != current.Source || !string.IsNullOrWhiteSpace(current.Name)
+            || ReadBounds(current) is not { } bounds
+            || Native.GetWindowThreadProcessId(owner.Window, out var processId) == 0 || processId != owner.ProcessId)
+        {
+            return null;
+        }
+
+        var dpi = SetThreadDpiAwarenessContext(-4);
+        try
+        {
+            return ReadRegisteredBounds(owner.Window, owner.IconId, Guid.Empty) is { } registered
+                && MatchBounds(bounds, registered)
+                && Native.GetWindowThreadProcessId(owner.Window, out processId) != 0 && processId == owner.ProcessId
+                ? owner : null;
+        }
+        finally { if (dpi != 0) SetThreadDpiAwarenessContext(dpi); }
+    }
+
+    private static Rect? ReadRegisteredBounds(nint owner, uint iconId, Guid iconGuid)
+    {
+        var id = new IconIdentifier { Size = (uint)Marshal.SizeOf<IconIdentifier>(), Owner = owner, Uid = iconId, Guid = iconGuid };
+        return Shell_NotifyIconGetRect(ref id, out var rect) == 0 && rect.Right > rect.Left && rect.Bottom > rect.Top
+            ? new Rect(rect.Left, rect.Top, rect.Right - rect.Left, rect.Bottom - rect.Top) : null;
+    }
+
+    private static Rect? ReadBounds(TrayEntry entry)
+    {
+        try
+        {
+            var bounds = entry.Element.Current.BoundingRectangle;
+            return bounds.IsEmpty || bounds.Width <= 0 || bounds.Height <= 0 ? null : bounds;
+        }
         catch (Exception ex) when (ex is ElementNotAvailableException or COMException) { return null; }
-        if (bounds.IsEmpty || bounds.Width <= 0 || bounds.Height <= 0) return null;
-        // Explorer's accessibility and shell rectangles can differ by a physical pixel at mixed DPI.
-        var matches = locations.Where(item => Math.Abs(item.Bounds.Left - bounds.Left) <= 2
-            && Math.Abs(item.Bounds.Top - bounds.Top) <= 2 && Math.Abs(item.Bounds.Right - bounds.Right) <= 2
-            && Math.Abs(item.Bounds.Bottom - bounds.Bottom) <= 2).Select(item => item.Icon).Distinct().ToArray();
+    }
+
+    // Explorer's accessibility and shell rectangles can differ by a physical pixel at mixed DPI.
+    private static bool MatchBounds(Rect bounds, Rect registered) => Math.Abs(registered.Left - bounds.Left) <= 2
+        && Math.Abs(registered.Top - bounds.Top) <= 2 && Math.Abs(registered.Right - bounds.Right) <= 2
+        && Math.Abs(registered.Bottom - bounds.Bottom) <= 2;
+
+    private static Artwork? ResolveUnnamed(TrayEntry entry, List<LocatedIcon> locations)
+    {
+        if (ReadBounds(entry) is not { } bounds) return null;
+        var matchingLocations = locations.Where(item => MatchBounds(bounds, item.Bounds)).Distinct().ToArray();
+        var matches = matchingLocations.Select(item => item.Icon).Distinct().ToArray();
         if (matches.Length != 1) return null;
         var icon = matches[0];
         string? displayName = null;
@@ -173,7 +214,11 @@ internal static class TrayIconArtwork
         if (displayName.Equals("Feishu", StringComparison.OrdinalIgnoreCase)) displayName = "飞书";
         var image = IsOneDriveAccountName(icon.Application) ? CreateOneDriveArtwork()
             : (icon.Bytes.Length > 0 ? Decode(icon.Bytes) : null) ?? ExtractApplicationIcon(icon.Path);
-        return new Artwork(displayName, image);
+        var owner = matchingLocations is [var match] && match.Owner != 0 && match.ProcessId != 0
+            && icon.Uid is { } uid && icon.Tooltip.Length == 0
+            && icon.Application.Equals("Feishu", StringComparison.OrdinalIgnoreCase)
+            ? new TrayFeishuOwner(match.Owner, match.ProcessId, uid, icon.Path) : null;
+        return new Artwork(displayName, image, owner);
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -186,6 +231,11 @@ internal static class TrayIconArtwork
     private static extern nint FindWindowExW(nint parent, nint after, string? className, string? title);
     [DllImport("user32.dll")]
     private static extern nint SetThreadDpiAwarenessContext(nint context);
+    [DllImport("kernel32.dll", ExactSpelling = true)]
+    private static extern SafeProcessHandle OpenProcess(uint access, [MarshalAs(UnmanagedType.Bool)] bool inherit, uint processId);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool QueryFullProcessImageNameW(SafeProcessHandle process, uint flags, StringBuilder path, ref uint length);
 
     private static int Match(string name, string firstLine, Snapshot snapshot)
     {
@@ -267,8 +317,10 @@ internal static class TrayIconArtwork
 
     private static Dictionary<uint, string> ReadRunningProcesses(IReadOnlyList<Snapshot> snapshots)
     {
+        const uint processQueryLimitedInformation = 0x1000;
         var result = new Dictionary<uint, string>();
         var applications = snapshots.Select(snapshot => snapshot.Application).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var path = new StringBuilder(32768);
         foreach (var process in Process.GetProcesses())
         {
             using (process)
@@ -276,8 +328,11 @@ internal static class TrayIconArtwork
                 try
                 {
                     if (!applications.Contains(process.ProcessName)) continue;
-                    var path = process.MainModule?.FileName;
-                    if (path is not null) result[(uint)process.Id] = Path.GetFullPath(path);
+                    var processId = (uint)process.Id;
+                    using var handle = OpenProcess(processQueryLimitedInformation, false, processId);
+                    var length = (uint)path.Capacity;
+                    if (!handle.IsInvalid && QueryFullProcessImageNameW(handle, 0, path, ref length))
+                        result[processId] = Path.GetFullPath(path.ToString());
                 }
                 catch (Exception exception) when (IsReadFailure(exception) || exception is System.ComponentModel.Win32Exception) { }
             }

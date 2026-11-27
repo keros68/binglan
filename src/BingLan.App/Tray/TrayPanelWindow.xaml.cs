@@ -26,11 +26,14 @@ internal sealed partial class TrayPanelWindow : Window
     private readonly bool _anchored;
 
     private readonly Action? _openNativeTray;
+    private readonly Func<uint, string, CancellationToken, Task<bool?>>? _activateFeishu;
 
-    internal TrayPanelWindow(Action? openNativeTray = null)
+    internal TrayPanelWindow(Action? openNativeTray = null,
+        Func<uint, string, CancellationToken, Task<bool?>>? activateFeishu = null)
     {
         InitializeComponent();
         _openNativeTray = openNativeTray;
+        _activateFeishu = activateFeishu;
         _anchored = openNativeTray is not null;
         NativeTrayButton.Visibility = _anchored ? Visibility.Visible : Visibility.Collapsed;
         if (!_anchored)
@@ -46,7 +49,12 @@ internal sealed partial class TrayPanelWindow : Window
             Resources["Hover"] = SystemColors.ControlBrush;
             Resources["FocusRing"] = SystemColors.HighlightBrush;
         }
-        Loaded += async (_, _) => await RefreshAsync();
+        Loaded += async (_, _) =>
+        {
+            if (_anchored && IsActive && !IsKeyboardFocusWithin)
+                MoveFocus(new TraversalRequest(FocusNavigationDirection.First));
+            await RefreshAsync();
+        };
     }
 
     protected override void OnSourceInitialized(EventArgs e)
@@ -86,7 +94,9 @@ internal sealed partial class TrayPanelWindow : Window
     }
     private void OnWindowKeyDown(object sender, KeyEventArgs e)
     {
-        if (e.Key == Key.Escape) Close();
+        if (e.Key != Key.Escape) return;
+        e.Handled = true;
+        Close();
     }
 
     private void UpdateStatus()
@@ -266,7 +276,14 @@ internal sealed partial class TrayPanelWindow : Window
         _invoking = true;
         try
         {
-            var result = await TrayReader.InvokeAsync(identity, contextMenu, _lifetime.Token);
+            var displayedEntry = _shown?.FirstOrDefault(entry => entry.Identity == identity);
+            var result = await TrayReader.InvokeAsync(identity, contextMenu, _lifetime.Token, _activateFeishu, displayedEntry);
+            if (_closed) return;
+            if (_anchored && result is ("invoked" or "context-requested"))
+            {
+                Close();
+                return;
+            }
             _actionMessage = result switch
             {
                 "invoked" or "context-requested" => null,

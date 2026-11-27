@@ -132,11 +132,16 @@ internal static class ShellSurfaceNativeMethods
 
     internal static bool TryGetForegroundSystemMenu(
         out BingLan.Core.Dock.SystemSurfaceKind surfaceKind,
+        out BingLan.Core.Dock.PixelRect bounds) =>
+        TryGetSystemMenu(DockNativeMethods.GetForegroundWindow(), out surfaceKind, out bounds);
+
+    internal static bool TryGetSystemMenu(
+        nint window,
+        out BingLan.Core.Dock.SystemSurfaceKind surfaceKind,
         out BingLan.Core.Dock.PixelRect bounds)
     {
         surfaceKind = BingLan.Core.Dock.SystemSurfaceKind.None;
         bounds = default;
-        var window = DockNativeMethods.GetForegroundWindow();
         var name = ClassNameOf(window);
         if (name is not ("Shell_TrayWnd" or "Shell_SecondaryTrayWnd" or "Xaml_WindowedPopupClass"
             or "Windows.UI.Core.CoreWindow" or "ControlCenterWindow" or "TopLevelWindowForOverflowXamlIsland")) return false;

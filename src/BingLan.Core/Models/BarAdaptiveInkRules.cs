@@ -76,7 +76,7 @@ public static class BarAdaptiveInkRules
     public const string LightFlyoutBorder = "#38122C44";
     public const string DarkFlyoutBorder = "#33FFFFFF";
 
-    public static bool NeedsBackdropSampling(string surfaceWithAlpha, bool hasDarkAcrylicScrim)
+    public static bool NeedsBackdropSampling(string surfaceWithAlpha, bool hasDarkAcrylicScrim = false)
     {
         if (hasDarkAcrylicScrim)
         {
@@ -169,20 +169,19 @@ public static class BarAdaptiveInkRules
 
     public static TopBarAdaptivePalette ResolveTopBarPalette(
         DockGlass baseGlass,
-        bool hasDarkAcrylicScrim,
+        bool hasAcrylicBackdrop,
         ColorContrastRules.SrgbColor? sampledBackdrop,
         bool? previousUseDarkInk)
     {
         ArgumentNullException.ThrowIfNull(baseGlass);
 
-        var useDarkInk = ResolveUseDarkInk(
-            baseGlass.Surface,
-            hasDarkAcrylicScrim,
-            sampledBackdrop,
-            previousUseDarkInk);
+        var surface = ParseSurfaceOrDefault(baseGlass.Surface);
+        var useDarkInk = surface.A >= OpaqueSurfaceAlphaThreshold || (hasAcrylicBackdrop && sampledBackdrop is null)
+            ? LauncherReadabilityRules.Resolve("#" + FormatHex(surface)[3..], surface.A).DarkInk
+            : ResolveUseDarkInk(baseGlass.Surface, false, sampledBackdrop, previousUseDarkInk);
 
         var barBorder = ResolveTopBarBorder(baseGlass.Border, useDarkInk);
-        var flyout = ResolveTopBarFlyout(baseGlass, hasDarkAcrylicScrim, useDarkInk);
+        var flyout = ResolveTopBarFlyout(baseGlass, hasAcrylicBackdrop, useDarkInk);
 
         if (useDarkInk)
         {
@@ -220,7 +219,7 @@ public static class BarAdaptiveInkRules
 
     public static TopBarFlyoutPalette ResolveTopBarFlyout(
         DockGlass baseGlass,
-        bool hasDarkAcrylicScrim,
+        bool hasAcrylicBackdrop,
         bool barUseDarkInk)
     {
         ArgumentNullException.ThrowIfNull(baseGlass);
@@ -229,14 +228,14 @@ public static class BarAdaptiveInkRules
         string border;
         bool flyoutDarkInk;
 
-        if (hasDarkAcrylicScrim || (surface.A >= OpaqueSurfaceAlphaThreshold && !barUseDarkInk))
+        if ((hasAcrylicBackdrop || surface.A >= OpaqueSurfaceAlphaThreshold) && !barUseDarkInk)
         {
             flyoutDarkInk = false;
             var alpha = Math.Max(surface.A, MinimumDarkFlyoutOpacity);
             background = FormatHex(surface with { A = alpha });
             border = DarkFlyoutBorder;
         }
-        else if (surface.A >= OpaqueSurfaceAlphaThreshold && barUseDarkInk)
+        else if (hasAcrylicBackdrop || surface.A >= OpaqueSurfaceAlphaThreshold)
         {
             flyoutDarkInk = true;
             var alpha = Math.Max(surface.A, MinimumLightFlyoutOpacity);

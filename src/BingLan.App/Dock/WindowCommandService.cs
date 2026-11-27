@@ -14,7 +14,7 @@ internal sealed record WindowCommandResult(
     bool Succeeded,
     string Message,
     bool NoLiveWindows = false,
-    bool OpenSystemTrayRecommended = false);
+    bool OpenTrayRecommended = false);
 
 internal static class WindowCommandService
 {
@@ -118,7 +118,8 @@ internal static class WindowCommandService
     internal static async Task<WindowCommandResult> FocusAsync(
         TrackedWindow target,
         bool restore,
-        string? displayName = null)
+        string? displayName = null,
+        bool flashOnFailure = true)
     {
         var name = string.IsNullOrWhiteSpace(displayName) ? target.Title : displayName;
         var handle = target.Handle;
@@ -176,7 +177,7 @@ internal static class WindowCommandService
             }
         }
 
-        return BuildFocusFailureResult(handle, name);
+        return BuildFocusFailureResult(handle, name, flashOnFailure);
     }
 
     /// <summary>
@@ -420,7 +421,7 @@ internal static class WindowCommandService
                 return new WindowCommandResult(
                     false,
                     TrayAppRevealRules.FormatMultiInstanceTrayHint(app.DisplayName),
-                    OpenSystemTrayRecommended: true);
+                    OpenTrayRecommended: true);
             case TrayRevealAction.NotifyHotkeyUnavailable:
                 return new WindowCommandResult(false, TrayAppRevealRules.FormatTrayHotkeyHint(app.DisplayName));
             case TrayRevealAction.LaunchNewProcess:
@@ -767,11 +768,11 @@ internal static class WindowCommandService
         window != 0 && DockNativeMethods.IsWindow(window) && DockNativeMethods.IsWindowVisible(window)
         && !NativeMethods.IsWindowCloaked(window);
 
-    private static WindowCommandResult BuildFocusFailureResult(nint targetHandle, string name)
+    private static WindowCommandResult BuildFocusFailureResult(nint targetHandle, string name, bool flashOnFailure)
     {
         var targetElevated = ShellSurfaceNativeMethods.IsWindowElevated(ResolvePopupOrSelf(targetHandle));
         var foregroundElevated = !targetElevated && ShellSurfaceNativeMethods.IsForegroundElevated();
-        if (!targetElevated)
+        if (flashOnFailure && !targetElevated)
         {
             var info = new DockNativeMethods.FlashWindowInfo
             {

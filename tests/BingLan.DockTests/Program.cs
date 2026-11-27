@@ -74,7 +74,7 @@ Run("v31 状态迁移保留个人内容并开启开始菜单入口", TestStartMe
 Run("Dock 状态保存与加载往返保留顺序与取值", TestDockStateRoundTrip);
 Run("重复固定项保存后应去重", TestDockStateDuplicatePinsDeduped);
 Run("隐藏的应用不出现在 Dock 且可恢复", TestDockHiddenApps);
-Run("搜索会话持有前台时 Dock 评估借用前原窗口", TestDockForegroundRules);
+Run("总览卡和独立托盘临时持有前台时 Dock 评估原窗口", TestDockForegroundRules);
 Run("文件夹与文件固定项：识别、去重、不匹配运行窗口", TestPathPins);
 Run("文件夹与文件固定项保存往返且不进入主题导出", TestPathPinsPersistAndStayOutOfThemes);
 Run("拖拽文件到应用判定是否直接打开及收集有效目标", TestDockFileDropCanOpenFilesAndDecide);
@@ -2585,19 +2585,16 @@ static void TestDockForegroundRules()
 {
     Assert(
         DockForegroundRules.EffectiveForeground(40, 40, 30) == 30,
-        "搜索会话持有前台时应评估借用前的原窗口");
+        "总览卡或独立托盘持有前台时应评估借用前的原窗口");
     Assert(
         DockForegroundRules.EffectiveForeground(50, 40, 30) == 50,
-        "前台不在会话持有者窗口上时不替换");
+        "从独立托盘打开其他应用后，应立即评估新的前台窗口");
     Assert(
         DockForegroundRules.EffectiveForeground(50, 0, 30) == 50,
         "没有会话持有者时不替换");
     Assert(
-        DockForegroundRules.EffectiveForeground(50, 40, 0) == 50,
+        DockForegroundRules.EffectiveForeground(40, 40, 0) == 40,
         "没有借用前的窗口时不替换");
-    Assert(
-        DockForegroundRules.EffectiveForeground(50, 40, 40) == 50,
-        "会话从桌面自身开始（借用者即顶栏）时不替换");
 }
 
 static void TestDockFileDropCanOpenFilesAndDecide()

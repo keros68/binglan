@@ -183,8 +183,7 @@ public sealed class TopBarState
     /// dark menu-bar look reads white-on-charcoal; the card material is too light for it.</summary>
     public bool FollowCardLook { get; set; }
 
-    /// <summary>Whether a dark surface blurs the wallpaper behind it (WCA acrylic).
-    /// Light surfaces ignore this and always use the plain translucent colour.</summary>
+    /// <summary>Whether a visible surface tint uses native backdrop blur. A clear surface retains this preference.</summary>
     public bool FrostedGlass { get; set; } = true;
 
     public string SurfaceColor { get; set; } = DefaultSurfaceColor;

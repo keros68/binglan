@@ -347,7 +347,7 @@ public partial class IceBlueDockWindow : Window
     internal Func<Guid, string, Task<string>>? SendToFileBox { get; init; }
     internal Func<nint, nint>? ResolvePanelForeground { get; init; }
     internal Func<MonitorSnapshot, int?>? ResolveTopBarReservedBottomPx { get; init; }
-    internal Func<Task<bool>>? OpenTrayOverflowRequested { get; init; }
+    internal Func<nint, bool>? TryOpenTrayForApplication { get; init; }
 
     internal bool HasAttention => _attention.Count > 0;
 
@@ -1922,11 +1922,9 @@ public partial class IceBlueDockWindow : Window
         _revealPending = true;
         try
         {
-            await ReportCommandResultAsync(
-                await WindowCommandService.RevealOrLaunchAsync(
-                    launchTarget,
-                    launchCooldown: _launchCooldown),
-                item.DisplayName);
+            ReportCommandResult(await WindowCommandService.RevealOrLaunchAsync(
+                launchTarget,
+                launchCooldown: _launchCooldown));
         }
         finally
         {
@@ -1976,7 +1974,7 @@ public partial class IceBlueDockWindow : Window
                     RefreshAttentionBadges();
                 }
             }
-            await ReportCommandResultAsync(result, targetPin.DisplayName);
+            ReportCommandResult(result);
         }
         finally
         {
@@ -2559,23 +2557,14 @@ public partial class IceBlueDockWindow : Window
         }
     }
 
-    private async Task ReportCommandResultAsync(WindowCommandResult result, string? displayName)
+    private void ReportCommandResult(WindowCommandResult result)
     {
-        if (result.Succeeded)
+        if (!result.Succeeded && result.OpenTrayRecommended
+            && TryOpenTrayForApplication?.Invoke(_appBar?.Monitor?.MonitorHandle ?? 0) == true)
         {
             return;
         }
-
-        var message = result.Message;
-        if (result.OpenSystemTrayRecommended
-            && OpenTrayOverflowRequested is { } openTray
-            && await openTray())
-        {
-            message = TrayAppRevealRules.FormatMultiInstanceTrayOpenedHint(
-                string.IsNullOrWhiteSpace(displayName) ? "该应用" : displayName);
-        }
-
-        CommandFailed?.Invoke(message);
+        Report(result);
     }
 
     private void OpenItemMenu(DockItem item, string name, UIElement? anchor = null)
@@ -3330,7 +3319,9 @@ public partial class IceBlueDockWindow : Window
         }
     }
 
-    private void UpdateForForeground()
+    private void UpdateForForeground() => UpdateForForegroundWindow(DockNativeMethods.GetForegroundWindow());
+
+    private void UpdateForForegroundWindow(nint activeWindow)
     {
         UiDiagnostics.Hit(UiActivity.ForegroundCheck);
         if (_appBar?.Monitor is not { } monitor || _closing)
@@ -3342,7 +3333,6 @@ public partial class IceBlueDockWindow : Window
 
         if (_attention.Count > 0)
         {
-            var activeWindow = DockNativeMethods.GetForegroundWindow();
             if (activeWindow != 0
                 && !DockNativeMethods.IsIconic(activeWindow)
                 && _attention.Cleared(activeWindow, EffectiveAttentionProcessId(activeWindow)))
@@ -3356,9 +3346,9 @@ public partial class IceBlueDockWindow : Window
         var bounds = _appBar.Bounds;
         // Native menus own this interaction, except a collapsed auto-hidden taskbar or a
         // taskbar / taskbar-anchored popup on a different edge that does not touch the dock.
-        var shouldYield = ShouldYieldToCurrentSystemSurface(monitor.Bounds, edge, bounds);
+        var shouldYield = ShouldYieldToSystemSurface(activeWindow, monitor.Bounds, edge, bounds);
         if (YieldToSystemMenu(shouldYield)) return;
-        var foreground = ForegroundWindowRect(out var foregroundBounds, out var foregroundWindow);
+        var foreground = ForegroundWindowRect(activeWindow, out var foregroundBounds, out var foregroundWindow);
         var hasBacking = TransientForegroundResolver.TryResolveBackingWindow(foregroundWindow, _handle, out var backing);
         var fullScreen = foreground && DockVacateRules.CoversMonitor(foregroundBounds, monitor.Bounds);
         var foregroundZoomed = foreground && foregroundWindow != 0 && DockNativeMethods.IsZoomed(foregroundWindow);
@@ -3439,6 +3429,14 @@ public partial class IceBlueDockWindow : Window
             ApplyState();
         }
 
+        if (UsesSmartHide
+            && CurrentVisibilityMode == DockVisibilityMode.ReserveWorkArea
+            && !_vacatedForMaximized
+            && DateTimeOffset.UtcNow - _lastReservationAttempt >= ReservationRetryInterval)
+        {
+            ApplyState();
+        }
+
         if (!UsesSmartHide)
         {
             var reservedYield = DockVacateRules.ShouldReservedDockYield(
@@ -3455,18 +3453,8 @@ public partial class IceBlueDockWindow : Window
                 StopMagnification(animateReturn: false);
             }
             _appBar.SetFullScreenDetected(reservedYield);
+            ReleaseSystemMenuYield(reservedYield);
             return;
-        }
-
-        if (CurrentVisibilityMode == DockVisibilityMode.ReserveWorkArea
-            && !_vacatedForMaximized
-            && DateTimeOffset.UtcNow - _lastReservationAttempt >= ReservationRetryInterval)
-        {
-            ApplyState();
-            if (!UsesSmartHide)
-            {
-                return;
-            }
         }
 
         // Nothing can reveal the dock over a truly full-screen app, so check less often.
@@ -3492,7 +3480,7 @@ public partial class IceBlueDockWindow : Window
             && cursor.X >= handleRect.Left && cursor.X < handleRect.Right
             && cursor.Y >= handleRect.Top && cursor.Y < handleRect.Bottom;
         _pointerOverHandle = pointerOverHandle;
-        var pointerOverStrip = IsVisible
+        var pointerOverStrip = IsVisible && !_suppressedBySystemMenu
             && cursor.X >= bounds.Left && cursor.X < bounds.Right
             && cursor.Y >= bounds.Top && cursor.Y < bounds.Bottom;
         _handleRevealUntil = DockAutoHideState.UpdateHandleRevealDeadline(
@@ -3560,10 +3548,18 @@ public partial class IceBlueDockWindow : Window
                     menu.IsOpen = false;
                 }
                 _hiddenBySmartHide = true;
-                BeginSmartHide();
+                if (_suppressedBySystemMenu)
+                {
+                    CompleteSmartHideImmediately();
+                }
+                else
+                {
+                    BeginSmartHide();
+                }
             }
         }
 
+        ReleaseSystemMenuYield();
         SyncHandle();
     }
 
@@ -3572,6 +3568,10 @@ public partial class IceBlueDockWindow : Window
         if (active)
         {
             _yieldReleaseTimer.Stop();
+            if (_suppressedBySystemMenu)
+            {
+                return true;
+            }
             _suppressedBySystemMenu = true;
             _foregroundTimer.Interval = SmartHideCheckInterval;
             if (IsVisible)
@@ -3591,27 +3591,33 @@ public partial class IceBlueDockWindow : Window
             _handleWindow?.SetVisible(false);
             return true;
         }
-        if (_suppressedBySystemMenu && !_yieldReleaseTimer.IsEnabled)
+        if (!_suppressedBySystemMenu)
         {
-            if (TaskbarCoversDock())
-            {
-                _yieldReleaseDeadline = Environment.TickCount64 + (long)YieldReleaseLimit.TotalMilliseconds;
-                _yieldReleaseTimer.Start();
-            }
-            else
-            {
-                ReleaseSystemMenuYield();
-            }
+            return false;
         }
-        return false;
+        var now = Environment.TickCount64;
+        var releaseTimedOut = _yieldReleaseTimer.IsEnabled && now >= _yieldReleaseDeadline;
+        if (releaseTimedOut || !TaskbarCoversDock())
+        {
+            _yieldReleaseTimer.Stop();
+            // Recompute overlap, fullscreen and reservation before restoring visibility.
+            return false;
+        }
+        if (!_yieldReleaseTimer.IsEnabled)
+        {
+            _yieldReleaseDeadline = now + (long)YieldReleaseLimit.TotalMilliseconds;
+            _yieldReleaseTimer.Start();
+        }
+        return true;
     }
 
-    private static bool ShouldYieldToCurrentSystemSurface(
+    private static bool ShouldYieldToSystemSurface(
+        nint foregroundWindow,
         PixelRect monitorBounds,
         DockEdge dockEdge,
         PixelRect dockBounds)
     {
-        if (!ShellSurfaceNativeMethods.TryGetForegroundSystemMenu(out var surfaceKind, out var systemMenuBounds))
+        if (!ShellSurfaceNativeMethods.TryGetSystemMenu(foregroundWindow, out var surfaceKind, out var systemMenuBounds))
         {
             return false;
         }
@@ -3636,32 +3642,31 @@ public partial class IceBlueDockWindow : Window
 
     private void CheckYieldRelease()
     {
-        if (_closing || !_suppressedBySystemMenu)
+        if (_closing || !_suppressedBySystemMenu || _appBar?.Monitor is null)
         {
             _yieldReleaseTimer.Stop();
             return;
         }
-        if (_appBar?.Monitor is { } monitor
-            && ShouldYieldToCurrentSystemSurface(monitor.Bounds, CurrentEdge, _appBar.Bounds))
-        {
-            // Reopened before the taskbar left: stay aside.
-            _yieldReleaseTimer.Stop();
-            return;
-        }
-        if (TaskbarCoversDock() && Environment.TickCount64 < _yieldReleaseDeadline)
-        {
-            return;
-        }
-        _yieldReleaseTimer.Stop();
-        ReleaseSystemMenuYield();
+        UpdateForForeground();
     }
 
-    private void ReleaseSystemMenuYield()
+    private void ReleaseSystemMenuYield(bool reservedWindowCoversDock = false)
     {
+        if (!_suppressedBySystemMenu)
+        {
+            return;
+        }
+
         _yieldHideTimer.Stop();
+        if (reservedWindowCoversDock)
+        {
+            // A fullscreen window can take over as a native menu closes. Keep the
+            // dock hidden until its reserved strip is available again.
+            if (IsVisible) CompleteSmartHideImmediately();
+            return;
+        }
         _suppressedBySystemMenu = false;
         if (!UsesSmartHide || _autoHide.IsShown) ShowDock();
-        SyncHandle();
     }
 
     // An auto-hidden taskbar still sliding back down overlaps the dock's strip; a
@@ -3932,10 +3937,9 @@ public partial class IceBlueDockWindow : Window
         }
     }
 
-    private bool ForegroundWindowRect(out PixelRect bounds, out nint window)
+    private bool ForegroundWindowRect(nint currentForeground, out PixelRect bounds, out nint window)
     {
         bounds = default;
-        var currentForeground = DockNativeMethods.GetForegroundWindow();
         window = ResolvePanelForeground?.Invoke(currentForeground) ?? currentForeground;
         if (window == 0 || window == _handle || window == (_openMenu?.PopupHandle ?? 0) || DockNativeMethods.IsIconic(window))
         {

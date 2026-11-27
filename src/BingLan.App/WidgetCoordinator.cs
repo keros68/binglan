@@ -144,7 +144,6 @@ public sealed partial class WidgetCoordinator : IDisposable
         _dock.IsLauncherEnabled = () => _state.LauncherEnabled;
         _dock.ReadFileBoxes = ReadLauncherFileBoxes;
         _dock.SendToFileBox = SendLauncherPathToFileBoxAsync;
-        _dock.ResolvePanelForeground = ResolveLauncherForeground;
         _dock.ReadScreenPreferences = ReadScreenSurfacePreferences;
         _dock.GetOrCreateScreenPreferences = GetOrCreateScreenSurfacePreferences;
         _dock.ShellRecovered += _desktopSurfaceWatcher.ScheduleCheck;
@@ -173,11 +172,12 @@ public sealed partial class WidgetCoordinator : IDisposable
                 message,
                 TrayTipKind.Info));
         _topBar.ShellRecovered += _desktopSurfaceWatcher.ScheduleCheck;
+        _dock.ResolvePanelForeground = current => ResolveLauncherForeground(_topBar.ResolveTrayPanelForeground(current));
         _topBar.ExplorerNotified += _cornerReveal.ScheduleZOrderCheck;
         _topBar.ReadScreenPreferences = ReadScreenSurfacePreferences;
         _dock.ResolveTopBarReservedBottomPx = _topBar.GetReservedBottomForMonitor;
         _topBar.ResolveBottomDockTop = _dock.GetBottomDockTopForMonitor;
-        _dock.OpenTrayOverflowRequested = TryOpenTrayOverflowAsync;
+        _dock.TryOpenTrayForApplication = TryOpenTrayForApplication;
         StartupLog.Open(_store.DataDirectory);
         UiDiagnostics.Start(
             Dispatcher.CurrentDispatcher,
@@ -3673,32 +3673,20 @@ public sealed partial class WidgetCoordinator : IDisposable
         }
     }
 
-    internal async Task<bool> TryOpenTrayOverflowAsync()
+    private bool TryOpenTrayForApplication(nint monitorHandle)
     {
-        if (!TrayOverflowController.IsSupported || _exitRequested || _isExiting || _closingTrayOverflow is not null)
+        if (_exitRequested || _isExiting)
         {
             return false;
         }
 
         try
         {
-            if (_trayOverflow is { IsStopping: true }
-                && await CloseTrayOverflowAsync() != "closed")
-            {
-                return false;
-            }
-            if (_exitRequested || _isExiting)
-            {
-                return false;
-            }
-
-            var controller = _trayOverflow ??= new TrayOverflowController();
-            var result = await controller.OpenAsync();
-            return result is "opened" or "already-open";
+            return _topBar.TryOpenTrayForApplication(monitorHandle);
         }
         catch (Exception exception) when (exception is not OutOfMemoryException)
         {
-            Debug.WriteLine($"系统托盘入口自动唤起失败：{exception}");
+            Debug.WriteLine($"冰蓝托盘入口自动唤起失败：{exception}");
             return false;
         }
     }
@@ -4381,7 +4369,7 @@ public sealed partial class WidgetCoordinator : IDisposable
 
         public void OpenComponentSettings(DesktopComponentKind kind) => owner.OpenSettings(kind);
 
-        public bool ActivateWindow(nint handle, uint processId = 0)
+        public bool ActivateWindow(nint handle, uint processId, nint monitorHandle)
         {
             if (handle == 0 && processId == 0)
             {
@@ -4401,7 +4389,7 @@ public sealed partial class WidgetCoordinator : IDisposable
                 && !NativeMethods.IsWindowCloaked(handle)
                 && WindowCatalog.ShouldInclude(handle, DockNativeMethods.GetShellWindow()))
             {
-                _ = ActivateHandleOrProcessAsync(handle, processId);
+                _ = ActivateHandleOrProcessAsync(handle, processId, monitorHandle);
                 return true;
             }
 
@@ -4410,11 +4398,11 @@ public sealed partial class WidgetCoordinator : IDisposable
                 return false;
             }
 
-            _ = ActivateProcessAttentionAsync(processId);
+            _ = ActivateProcessAttentionAsync(processId, monitorHandle);
             return true;
         }
 
-        private async Task ActivateHandleOrProcessAsync(nint handle, uint processId)
+        private async Task ActivateHandleOrProcessAsync(nint handle, uint processId, nint monitorHandle)
         {
             var restore = DockNativeMethods.IsIconic(handle);
             var result = await WindowCommandService.FocusAsync(
@@ -4427,7 +4415,7 @@ public sealed partial class WidgetCoordinator : IDisposable
 
             if (result.NoLiveWindows && processId != 0)
             {
-                await ActivateProcessAttentionAsync(processId);
+                await ActivateProcessAttentionAsync(processId, monitorHandle);
                 return;
             }
 
@@ -4437,7 +4425,7 @@ public sealed partial class WidgetCoordinator : IDisposable
             }
         }
 
-        private async Task ActivateProcessAttentionAsync(uint processId)
+        private async Task ActivateProcessAttentionAsync(uint processId, nint monitorHandle)
         {
             var (running, instancePids, rootExecutablePath) = await Task.Run(() =>
             {
@@ -4485,15 +4473,13 @@ public sealed partial class WidgetCoordinator : IDisposable
             var result = await WindowCommandService.RevealOrLaunchAsync(pinned, preferredProcessId: processId);
             if (!result.Succeeded && !owner._isExiting)
             {
-                var message = result.Message;
-                if (result.OpenSystemTrayRecommended
-                    && await owner.TryOpenTrayOverflowAsync())
+                if (result.OpenTrayRecommended && owner.TryOpenTrayForApplication(monitorHandle))
                 {
-                    message = TrayAppRevealRules.FormatMultiInstanceTrayOpenedHint(pinned.DisplayName);
+                    return;
                 }
-                if (!string.IsNullOrWhiteSpace(message))
+                if (!string.IsNullOrWhiteSpace(result.Message))
                 {
-                    owner._trayIcon.ShowBalloonTip(3000, pinned.DisplayName, message, TrayTipKind.Info);
+                    owner._trayIcon.ShowBalloonTip(3000, pinned.DisplayName, result.Message, TrayTipKind.Info);
                 }
             }
         }

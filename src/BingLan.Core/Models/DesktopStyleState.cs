@@ -506,23 +506,15 @@ public static class DesktopStyleRules
     }
 
     /// <summary>
-    /// Whether the top bar uses the dark frosted scrim. Only visible dark tints
-    /// qualify when frosting is enabled.
+    /// Whether the top bar uses a frosted backdrop under its visible tint.
     /// </summary>
-    public static bool TopBarFrostedScrim(TopBarState? topBar, string surfaceWithAlpha)
-    {
-        // The bar's invisible hit-test fill follows the same alpha threshold as Composition.
-        if (topBar is not { FrostedGlass: true }
-            || surfaceWithAlpha.Length != 9
-            || Convert.ToInt32(surfaceWithAlpha.Substring(1, 2), 16) < DockGlassRules.MinimumBackdropSurfaceAlpha)
-        {
-            return false;
-        }
-        var red = Convert.ToInt32(surfaceWithAlpha.Substring(3, 2), 16);
-        var green = Convert.ToInt32(surfaceWithAlpha.Substring(5, 2), 16);
-        var blue = Convert.ToInt32(surfaceWithAlpha.Substring(7, 2), 16);
-        return (0.2126d * red + 0.7152d * green + 0.0722d * blue) / 255d <= 0.6d;
-    }
+    public static bool TopBarFrostedScrim(TopBarState? topBar, string surfaceWithAlpha) =>
+        topBar is { FrostedGlass: true } && SupportsTopBarFrostedScrim(surfaceWithAlpha);
+
+    public static bool SupportsTopBarFrostedScrim(string surfaceWithAlpha) =>
+        // The invisible hit-test fill stays below the native backdrop's alpha threshold.
+        surfaceWithAlpha.Length == 9
+        && Convert.ToInt32(surfaceWithAlpha.Substring(1, 2), 16) >= DockGlassRules.MinimumBackdropSurfaceAlpha;
 
     /// <summary>
     /// A dock in its own colour and opacity. A nearly clear dock drops its border; the

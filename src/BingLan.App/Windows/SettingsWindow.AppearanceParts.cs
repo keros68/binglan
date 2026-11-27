@@ -35,6 +35,10 @@ public partial class SettingsWindow
             AppearanceTopBarPartEditor,
             AppearanceTopBarCustomizeButton,
             part == AppearancePartKind.TopBar && _topBarState is not null);
+        if (part == AppearancePartKind.TopBar)
+        {
+            LoadTopBarLook();
+        }
     }
 
     private static void SetAccordionVisual(
@@ -394,6 +398,7 @@ public partial class SettingsWindow
 
         if (_topBarState is { } topBar)
         {
+            RefreshTopBarMaterialControls(topBar);
             var topBarStatus = AppearancePartLookRules.EvaluateBinaryPart(AppearancePartKind.TopBar, topBar.FollowCardLook);
             AppearanceTopBarPartRow.Description = topBarStatus.StatusText;
             AppearanceTopBarRestoreButton.IsEnabled = topBarStatus.CanRestoreFollow;

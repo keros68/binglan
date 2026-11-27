@@ -218,7 +218,6 @@ public partial class TopBarWindow
         var glassTint = ParseColorOrDefault(unified.GlassTint, Color.FromArgb(0xB8, 0xEC, 0xF6, 0xFF));
         var fallbackSurface = ParseColorOrDefault(unified.FallbackSurface, Color.FromArgb(0xE8, 0xEC, 0xF6, 0xFF));
         var borderColor = ParseColorOrDefault(unified.Border, Color.FromArgb(0x5C, 0xFF, 0xFF, 0xFF));
-        var activeBadgeBackground = unified.UseDarkInk ? "#82B9E1FA" : "#44FFFFFF";
         var flyoutPalette = new TopBarFlyoutPalette(
             UseDarkInk: unified.UseDarkInk,
             Background: unified.FallbackSurface,
@@ -226,7 +225,7 @@ public partial class TopBarWindow
             Foreground: unified.Foreground,
             Divider: unified.Divider,
             BadgeBackground: unified.BadgeBackground,
-            ActiveBadgeBackground: activeBadgeBackground,
+            ActiveBadgeBackground: unified.ActiveRowBackground,
             ActiveRowBackground: unified.ActiveRowBackground,
             HoverRowBackground: unified.HoverRowBackground);
         return new SystemFlyoutLook(
@@ -239,6 +238,23 @@ public partial class TopBarWindow
             UseTextShadow: !highContrast && unified.UseTextShadow);
     }
 
+    private static readonly DropShadowEffect DarkInkShadow = CreateInkShadow(Colors.White);
+    private static readonly DropShadowEffect LightInkShadow = CreateInkShadow(Colors.Black);
+
+    private static DropShadowEffect CreateInkShadow(Color color)
+    {
+        var shadow = new DropShadowEffect
+        {
+            Color = color,
+            Opacity = 0.65d,
+            BlurRadius = 8d,
+            ShadowDepth = 1d,
+            Direction = 270d
+        };
+        shadow.Freeze();
+        return shadow;
+    }
+
     private sealed class FlyoutCard : Border
     {
         private readonly DropShadowEffect? _contentShadow;
@@ -247,16 +263,7 @@ public partial class TopBarWindow
         {
             if (look.UseTextShadow)
             {
-                var shadow = new DropShadowEffect
-                {
-                    Color = look.Palette.UseDarkInk ? Colors.White : Colors.Black,
-                    Opacity = 0.65d,
-                    BlurRadius = 8d,
-                    ShadowDepth = 1d,
-                    Direction = 270d
-                };
-                shadow.Freeze();
-                _contentShadow = shadow;
+                _contentShadow = look.Palette.UseDarkInk ? DarkInkShadow : LightInkShadow;
             }
         }
 

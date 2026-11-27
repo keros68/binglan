@@ -83,7 +83,7 @@ public static class TopBarTests
     {
         var state = new TopBarState();
         Assert(DesktopStyleRules.TopBarFrostedScrim(state, "#D61E1F24"), "深色表面默认应有磨砂");
-        Assert(!DesktopStyleRules.TopBarFrostedScrim(state, "#D6D8CFF0"), "浅色表面不应有磨砂");
+        Assert(DesktopStyleRules.TopBarFrostedScrim(state, "#D6D8CFF0"), "可见的浅色表面也应启用磨砂");
         Assert(!DesktopStyleRules.TopBarFrostedScrim(state, "#01FFFFFF"), "近透明表面不应有磨砂");
         state.FrostedGlass = false;
         Assert(!DesktopStyleRules.TopBarFrostedScrim(state, "#D61E1F24"), "关闭磨砂后深色表面也不应有磨砂");
@@ -1008,7 +1008,7 @@ public static class TopBarTests
         var defaultBar = DesktopStyleRules.TopBar(new DesktopStyleState(), new TopBarState());
         Assert(!BarAdaptiveInkRules.NeedsBackdropSampling(defaultBar.Surface, hasDarkAcrylicScrim: true),
             "默认深色磨砂顶栏不应采样壁纸");
-        var defaultPalette = BarAdaptiveInkRules.ResolveTopBarPalette(defaultBar, hasDarkAcrylicScrim: true, white, null);
+        var defaultPalette = BarAdaptiveInkRules.ResolveTopBarPalette(defaultBar, hasAcrylicBackdrop: true, white, null);
         Assert(!defaultPalette.UseDarkInk && defaultPalette.Foreground == BarAdaptiveInkRules.LightInkColor,
             "深色磨砂顶栏应保持白字");
 
@@ -1016,11 +1016,13 @@ public static class TopBarTests
         var lightBar = DesktopStyleRules.TopBar(new DesktopStyleState(), new TopBarState { FollowCardLook = true });
         Assert(!BarAdaptiveInkRules.NeedsBackdropSampling(lightBar.Surface, hasDarkAcrylicScrim: false),
             "不透明浅色顶栏不需要采样壁纸");
-        var lightPalette = BarAdaptiveInkRules.ResolveTopBarPalette(lightBar, hasDarkAcrylicScrim: false, black, null);
+        var lightPalette = BarAdaptiveInkRules.ResolveTopBarPalette(lightBar, hasAcrylicBackdrop: false, black, null);
         Assert(lightPalette.UseDarkInk && lightPalette.Foreground == BarAdaptiveInkRules.DarkInkColor,
             "不透明浅色顶栏应使用深色文字与图标");
         Assert(ColorContrastRules.ParseHex(lightPalette.Flyout.Background).A >= BarAdaptiveInkRules.MinimumLightFlyoutOpacity - 0.01d,
             "浅色顶栏浮层应保持高不透明度");
+        var lightFrostedPalette = BarAdaptiveInkRules.ResolveTopBarPalette(lightBar, hasAcrylicBackdrop: true, black, null);
+        Assert(lightFrostedPalette == lightPalette, "可见的浅色顶栏开启磨砂后应保留深色文字与图标");
 
         // 3. Repro case: 0% transparent cyan top bar over pure white vs dark wallpaper.
         var clearCyanBar = DesktopStyleRules.TopBar(new DesktopStyleState(), new TopBarState
@@ -1031,7 +1033,7 @@ public static class TopBarTests
         });
         Assert(BarAdaptiveInkRules.NeedsBackdropSampling(clearCyanBar.Surface, hasDarkAcrylicScrim: false),
             "0% 透明顶栏需要采样底层壁纸亮度");
-        var overWhiteBar = BarAdaptiveInkRules.ResolveTopBarPalette(clearCyanBar, hasDarkAcrylicScrim: false, white, null);
+        var overWhiteBar = BarAdaptiveInkRules.ResolveTopBarPalette(clearCyanBar, hasAcrylicBackdrop: false, white, null);
         Assert(overWhiteBar.UseDarkInk && overWhiteBar.Foreground == BarAdaptiveInkRules.DarkInkColor,
             "纯白壁纸上的全透明顶栏应切深色字");
         Assert(overWhiteBar.BarBorderColor != "#00FFFFFF",
@@ -1039,7 +1041,7 @@ public static class TopBarTests
         Assert(overWhiteBar.Flyout.UseDarkInk && overWhiteBar.Flyout.Background == BarAdaptiveInkRules.ClearLightFlyoutBackground,
             "纯白壁纸上全透明顶栏的弹出浮层应使用不透明浅色底板配深色文字");
 
-        var overBlackBar = BarAdaptiveInkRules.ResolveTopBarPalette(clearCyanBar, hasDarkAcrylicScrim: false, black, overWhiteBar.UseDarkInk);
+        var overBlackBar = BarAdaptiveInkRules.ResolveTopBarPalette(clearCyanBar, hasAcrylicBackdrop: false, black, overWhiteBar.UseDarkInk);
         Assert(!overBlackBar.UseDarkInk && overBlackBar.Foreground == BarAdaptiveInkRules.LightInkColor,
             "切回暗色壁纸后全透明顶栏应切回白字");
         Assert(!overBlackBar.Flyout.UseDarkInk && overBlackBar.Flyout.Background == BarAdaptiveInkRules.ClearDarkFlyoutBackground,

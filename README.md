@@ -49,7 +49,7 @@
 
 ## 快速开始
 
-稳定版：[v0.6.6](https://github.com/keros68/binglan/releases/tag/v0.6.6) · [安装版](https://github.com/keros68/binglan/releases/download/v0.6.6/BingLan-Setup-0.6.6.exe) · [免安装版](https://github.com/keros68/binglan/releases/download/v0.6.6/BingLan-0.6.6-portable.zip)。另附[兼容性验收工具](https://github.com/keros68/binglan/releases/download/v0.2.52/BingLan-0.2.52-tray-preview.zip)，使用步骤见[托盘验收说明](docs/TRAY-PREVIEW.md)。
+稳定版：[v0.7.0](https://github.com/keros68/binglan/releases/tag/v0.7.0) · [安装版](https://github.com/keros68/binglan/releases/download/v0.7.0/BingLan-Setup-0.7.0.exe) · [免安装版](https://github.com/keros68/binglan/releases/download/v0.7.0/BingLan-0.7.0-portable.zip)。另附[兼容性验收工具](https://github.com/keros68/binglan/releases/download/v0.2.52/BingLan-0.2.52-tray-preview.zip)，使用步骤见[托盘验收说明](docs/TRAY-PREVIEW.md)。
 
 1. 打开 [Releases](https://github.com/keros68/binglan/releases/latest)，下载 `BingLan-Setup-*.exe`（安装版）或 `BingLan-*-portable.zip`（免安装版）。
 2. 安装版运行安装包，按当前用户安装，不需要管理员权限；免安装版解压到任意文件夹后运行其中的 `BingLan.exe`。两者均自带 .NET 运行时，尚未加入代码签名，首次运行需按 Windows 提示手动放行。

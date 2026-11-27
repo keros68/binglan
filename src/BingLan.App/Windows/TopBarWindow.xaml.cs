@@ -130,7 +130,7 @@ internal interface ITopBarEnvironment
     void OpenComponentSettings(DesktopComponentKind kind);
 
     /// <summary>Brings one window of an app that asked for attention to the front.</summary>
-    bool ActivateWindow(nint handle, uint processId = 0);
+    bool ActivateWindow(nint handle, uint processId, nint monitorHandle);
 
     bool IsLauncherEnabled { get; }
 
@@ -215,7 +215,7 @@ public sealed partial class TopBarWindow : Window
     private bool? _lastAdaptiveDarkInk;
     private TopBarAdaptivePalette _palette = BarAdaptiveInkRules.ResolveTopBarPalette(
         DesktopStyleRules.TopBar(new DesktopStyleState(), new TopBarState()),
-        hasDarkAcrylicScrim: true,
+        hasAcrylicBackdrop: true,
         sampledBackdrop: null,
         previousUseDarkInk: null);
     private readonly Dictionary<TopBarModuleKind, FrameworkElement> _modules = [];
@@ -275,7 +275,6 @@ public sealed partial class TopBarWindow : Window
     private bool _smartHideOverlappingWindow;
     private int _moduleMask = -1;
     private string _orderSignature = string.Empty;
-    private bool? _appliedAcrylic;
     private DockGlassSurface? _capsuleGlass;
     private bool _searchHotkeyRegistered;
 
@@ -438,7 +437,7 @@ public sealed partial class TopBarWindow : Window
             _lastAdaptiveDarkInk = null;
         }
         RefreshPopupAppearance();
-        ApplySurface();
+        ApplySurface(retryFailedAcrylic: true);
         var previousBounds = _appBar?.Bounds;
         _appBar?.Apply(_monitor, reserve,
             IsCapsule ? (_capsuleExpanded ? _capsuleExpandedHeight : CapsuleHeight) : BarHeight,
@@ -485,6 +484,7 @@ public sealed partial class TopBarWindow : Window
 
     private void OnEnvironmentChanged()
     {
+        _lastRequestedAcrylicTint = null;
         if (EnvironmentChanged is { } changed) changed();
         else ApplyState();
     }
@@ -546,17 +546,17 @@ public sealed partial class TopBarWindow : Window
             sizeof(int));
         HwndSource.FromHwnd(_handle)?.AddHook(PreventActivation);
         HwndSource.FromHwnd(_handle)?.AddHook(OnHotkeyMessage);
+        HwndSource.FromHwnd(_handle)?.AddHook(OnCompositionMessage);
 
         RegisterShellHook();
 
         _appBar = new TopBarAppBarController(this, BarHeight) { ResolveBottomDockTop = ResolveBottomDockTop };
         _appBar.EnvironmentChanged += OnEnvironmentChanged;
         _appBar.ExplorerNotified += () => ExplorerNotified?.Invoke();
-        _appBar.ExplorerRestarted += RenderModules;
+        _appBar.ExplorerRestarted += OnExplorerRestarted;
         _appBar.ReservationFallbackTriggered += UpdateForForeground;
         SubscribeInputMethodChanges();
         _maximizeWatcher.Start();
-        ApplyAcrylicBackdrop();
         ApplyState();
     }
 
@@ -3907,7 +3907,7 @@ public sealed partial class TopBarWindow : Window
                     {
                         RefreshAttention();
                     }
-                    _environment.ActivateWindow(capturedWindow, capturedProcessId);
+                    _environment.ActivateWindow(capturedWindow, capturedProcessId, ActiveMonitorHandle);
                 };
                 _attentionPanel.Children.Add(button);
             }
@@ -4017,30 +4017,56 @@ public sealed partial class TopBarWindow : Window
 
     // ---------------------------------------------------------------- appearance
 
-    /// <summary>Whether the WCA acrylic accent currently darkens this window.</summary>
-    private bool _acrylicBackdrop;
-
-    /// <summary>Whether the composition attribute accepted the acrylic accent at all.</summary>
-    private bool _acrylicAvailable;
-
-    // macOS's menu bar is blurred wallpaper under a dark scrim: the WCA acrylic accent
-    // supplies the blur and the tint's alpha sets the scrim strength. Where the accent
-    // is unavailable (older Windows, composition off) the theme's semi-transparent
-    // surface brush stands in. ABGR: #141419 at 55%.
-    private const uint AcrylicScrimAbgr = 0x8C191414u;
-    private const string AcrylicSurfaceTint = "#0F141419";
-
-    private void ApplyAcrylicBackdrop()
+    private nint OnCompositionMessage(nint hwnd, int message, nint wParam, nint lParam, ref bool handled)
     {
-        // Probe once: an unavailable composition attribute should not be retried on
-        // every material change. Whether the scrim stays is decided per material in
-        // ApplySurface, which disables the accent again for light or clear surfaces —
-        // a scrim left applied under a nearly transparent bar turns it muddy grey.
-        _acrylicAvailable = TaskbarNativeMethods.TrySetAccent(
-            _handle,
-            TaskbarNativeMethods.AccentEnableAcrylicBlurBehind,
-            AcrylicScrimAbgr);
-        ApplySurface();
+        if (message == NativeMethods.WmDwmCompositionChanged)
+        {
+            Dispatcher.BeginInvoke(DispatcherPriority.Background, ReapplyAcrylicAfterEnvironmentChange);
+        }
+        return 0;
+    }
+
+    private void OnExplorerRestarted()
+    {
+        ReapplyAcrylicAfterEnvironmentChange();
+        RenderModules();
+    }
+
+    private void ReapplyAcrylicAfterEnvironmentChange()
+    {
+        _lastRequestedAcrylicTint = null;
+        RefreshAppearance();
+    }
+
+    /// <summary>Whether the requested acrylic backdrop is active.</summary>
+    private bool _acrylicBackdrop;
+    private uint? _lastRequestedAcrylicTint = 0;
+    private uint _appliedAcrylicTint;
+    private bool _acrylicRequestFailed;
+
+    private bool ApplyAcrylicBackdrop(Color? tint, bool retryFailed)
+    {
+        // The WCA tint is ABGR. Cache the tint as well as the accent state so changes
+        // to a frosted bar's color or opacity reach the native backdrop immediately.
+        var nextTint = tint is { } color ? (uint)color.A << 24 | (uint)color.B << 16 | (uint)color.G << 8 | color.R : 0u;
+        if (_handle != 0 && (nextTint != _lastRequestedAcrylicTint || (retryFailed && _acrylicRequestFailed)))
+        {
+            // Retry failed native calls when reapplying settings, never on idle foreground checks.
+            _lastRequestedAcrylicTint = nextTint;
+            var accent = nextTint == 0 ? TaskbarNativeMethods.AccentDisabled : TaskbarNativeMethods.AccentEnableAcrylicBlurBehind;
+            _acrylicRequestFailed = !TaskbarNativeMethods.TrySetAccent(_handle, accent, nextTint);
+            if (!_acrylicRequestFailed)
+            {
+                _appliedAcrylicTint = nextTint;
+            }
+            else if (_appliedAcrylicTint != 0
+                && TaskbarNativeMethods.TrySetAccent(_handle, TaskbarNativeMethods.AccentDisabled, 0))
+            {
+                _appliedAcrylicTint = 0;
+                _acrylicRequestFailed = nextTint != 0;
+            }
+        }
+        return nextTint != 0 && !_acrylicRequestFailed && _appliedAcrylicTint == nextTint;
     }
 
     internal void RefreshAppearance()
@@ -4051,7 +4077,7 @@ public sealed partial class TopBarWindow : Window
         }
 
         RefreshPopupAppearance();
-        ApplySurface();
+        ApplySurface(retryFailedAcrylic: true);
         UpdateBackdropSampling(immediate: true);
     }
 
@@ -4068,44 +4094,14 @@ public sealed partial class TopBarWindow : Window
             RefreshAppearance();
         });
 
-    private void ApplySurface()
+    private void ApplySurface(bool retryFailedAcrylic = false)
     {
         var highContrast = AccessibilityThemeManager.IsHighContrastEnabled || SystemParameters.HighContrast;
         var glass = DesktopStyleRules.TopBar(_style, _state);
-        var needsTemporaryOverlapBacking = !IsCapsule
-            && !highContrast
-            && _smartHideOverlappingWindow
-            && BarAdaptiveInkRules.NeedsBackdropSampling(glass.Surface, hasDarkAcrylicScrim: false);
-        var effectiveGlass = glass;
-        var acrylic = !IsCapsule && !highContrast && _acrylicAvailable
-            && DesktopStyleRules.TopBarFrostedScrim(_state, glass.Surface);
-        if (needsTemporaryOverlapBacking)
-        {
-            // A low-opacity bar needs a readable temporary backing when it opens over app chrome.
-            if (!_palette.UseDarkInk)
-            {
-                effectiveGlass = glass with { Surface = "#D8162230", Border = "#38FFFFFF" };
-                acrylic = _acrylicAvailable && _state.FrostedGlass;
-            }
-            else
-            {
-                effectiveGlass = glass with
-                {
-                    Surface = BarAdaptiveInkRules.ClearLightFlyoutBackground,
-                    Border = BarAdaptiveInkRules.LightFlyoutBorder
-                };
-                acrylic = false;
-            }
-        }
+        var surfaceBrush = FrozenBrush(glass.Surface);
+        var acrylic = ApplyAcrylicBackdrop(!IsCapsule && !highContrast
+            && DesktopStyleRules.TopBarFrostedScrim(_state, glass.Surface) ? surfaceBrush.Color : null, retryFailedAcrylic);
         _acrylicBackdrop = acrylic;
-        // The first call must also clear the startup probe on a light surface.
-        if (_appliedAcrylic != acrylic && TaskbarNativeMethods.TrySetAccent(
-            _handle,
-            acrylic
-                ? TaskbarNativeMethods.AccentEnableAcrylicBlurBehind
-                : TaskbarNativeMethods.AccentDisabled,
-            acrylic ? AcrylicScrimAbgr : 0))
-            _appliedAcrylic = acrylic;
         Surface.BorderThickness = IsCapsule ? new Thickness(1) : new Thickness(0, 0, 0, 1);
         Surface.CornerRadius = IsCapsule ? new CornerRadius(20) : new CornerRadius(0);
         Surface.HorizontalAlignment = IsCapsule ? HorizontalAlignment.Center : HorizontalAlignment.Stretch;
@@ -4115,6 +4111,7 @@ public sealed partial class TopBarWindow : Window
         if (IsCapsule)
         {
             _backdropTimer.Stop();
+            ModuleHeader.Effect = CenterHost.Effect = null;
             if (!_state.FrostedGlass)
             {
                 _capsuleGlass?.Dispose();
@@ -4133,19 +4130,18 @@ public sealed partial class TopBarWindow : Window
         }
         _capsuleGlass?.Dispose();
         _capsuleGlass = null;
-        if (highContrast || needsTemporaryOverlapBacking || !BarAdaptiveInkRules.NeedsBackdropSampling(effectiveGlass.Surface, acrylic))
+        if (highContrast || !BarAdaptiveInkRules.NeedsBackdropSampling(glass.Surface))
         {
-            if (!needsTemporaryOverlapBacking)
-            {
-                _sampledBackdrop = null;
-                _lastAdaptiveDarkInk = null;
-            }
+            _sampledBackdrop = null;
+            _lastAdaptiveDarkInk = null;
             _backdropTimer.Stop();
         }
-        ApplyAdaptivePalette(effectiveGlass, acrylic, highContrast);
-        Surface.Background = highContrast
-            ? SystemColors.WindowBrush
-            : FrozenBrush(acrylic ? AcrylicSurfaceTint : effectiveGlass.Surface);
+        ApplyAdaptivePalette(glass, acrylic, highContrast);
+        var surfaceColor = surfaceBrush.Color;
+        // Keep the whole surface hit-testable while the accent supplies its tint.
+        Surface.Background = highContrast ? SystemColors.WindowBrush
+            : acrylic ? CreateFrozenColorBrush(Color.FromArgb(1, surfaceColor.R, surfaceColor.G, surfaceColor.B))
+            : surfaceBrush;
         Surface.BorderBrush = highContrast
             ? SystemColors.WindowTextBrush
             : FrozenBrush(_palette.BarBorderColor);
@@ -4160,8 +4156,11 @@ public sealed partial class TopBarWindow : Window
             _sampledBackdrop,
             _lastAdaptiveDarkInk);
         _palette = palette;
-        _lastAdaptiveDarkInk = BarAdaptiveInkRules.NeedsBackdropSampling(glass.Surface, acrylic)
+        _lastAdaptiveDarkInk = BarAdaptiveInkRules.NeedsBackdropSampling(glass.Surface)
             ? palette.UseDarkInk
+            : null;
+        ModuleHeader.Effect = CenterHost.Effect = !highContrast && _lastAdaptiveDarkInk is { } usesDarkInk
+            ? usesDarkInk ? DarkInkShadow : LightInkShadow
             : null;
 
         if (highContrast)
@@ -4189,17 +4188,21 @@ public sealed partial class TopBarWindow : Window
         Resources["TopBarAttentionBrush"] = FrozenBrush(palette.AttentionForeground);
     }
 
+    private bool CanSampleBackdrop => !_closing && !IsCapsule && IsVisible && !_trueFullScreenForeground
+        && !AccessibilityThemeManager.IsHighContrastEnabled && !SystemParameters.HighContrast;
+
+    private bool IsBackdropSampleObstructed => HasAnyOpenFlyout || _searchPopup is not null || _menuOpen;
+
     private void UpdateBackdropSampling(bool immediate)
     {
-        if (_closing || IsCapsule || !IsVisible || _trueFullScreenForeground || _smartHideOverlappingWindow
-            || AccessibilityThemeManager.IsHighContrastEnabled || SystemParameters.HighContrast)
+        if (!CanSampleBackdrop)
         {
             _backdropTimer.Stop();
             return;
         }
 
         var glass = DesktopStyleRules.TopBar(_style, _state);
-        if (!BarAdaptiveInkRules.NeedsBackdropSampling(glass.Surface, _acrylicBackdrop))
+        if (!BarAdaptiveInkRules.NeedsBackdropSampling(glass.Surface))
         {
             _backdropTimer.Stop();
             return;
@@ -4217,8 +4220,7 @@ public sealed partial class TopBarWindow : Window
 
     private void ScheduleBackdropSample()
     {
-        if (_closing || IsCapsule || !IsVisible || _trueFullScreenForeground || _smartHideOverlappingWindow
-            || AccessibilityThemeManager.IsHighContrastEnabled || SystemParameters.HighContrast)
+        if (!CanSampleBackdrop || IsBackdropSampleObstructed)
         {
             return;
         }
@@ -4230,7 +4232,7 @@ public sealed partial class TopBarWindow : Window
         }
 
         var glass = DesktopStyleRules.TopBar(_style, _state);
-        if (!BarAdaptiveInkRules.NeedsBackdropSampling(glass.Surface, _acrylicBackdrop))
+        if (!BarAdaptiveInkRules.NeedsBackdropSampling(glass.Surface))
         {
             _backdropTimer.Stop();
             return;
@@ -4242,6 +4244,8 @@ public sealed partial class TopBarWindow : Window
         }
 
         var surface = glass.Surface;
+        var sampledAcrylic = _acrylicBackdrop;
+        var sampledOverlap = _smartHideOverlappingWindow;
         Task.Run(() =>
         {
             try
@@ -4251,16 +4255,16 @@ public sealed partial class TopBarWindow : Window
                 if (_closing || sampled is null) return;
                 Dispatcher.BeginInvoke(() =>
                 {
-                    if (_closing || IsCapsule || !IsVisible || _smartHideOverlappingWindow) return;
-                    _sampledBackdrop = sampled;
+                    if (!CanSampleBackdrop || IsBackdropSampleObstructed || _appBar?.Bounds != barBounds
+                        || sampledOverlap != _smartHideOverlappingWindow) return;
                     var currentGlass = DesktopStyleRules.TopBar(_style, _state);
-                    var highContrast = AccessibilityThemeManager.IsHighContrastEnabled || SystemParameters.HighContrast;
+                    if (surface != currentGlass.Surface || sampledAcrylic != _acrylicBackdrop) return;
+                    _sampledBackdrop = sampled;
                     var previousDark = _palette.UseDarkInk;
-                    ApplyAdaptivePalette(currentGlass, _acrylicBackdrop, highContrast);
-                    if (!highContrast && previousDark != _palette.UseDarkInk)
+                    ApplyAdaptivePalette(currentGlass, _acrylicBackdrop, highContrast: false);
+                    if (previousDark != _palette.UseDarkInk)
                     {
                         Surface.BorderBrush = FrozenBrush(_palette.BarBorderColor);
-                        _searchPopup?.ApplyLook(ResolveSearchLook());
                     }
                 });
             }
@@ -4271,8 +4275,8 @@ public sealed partial class TopBarWindow : Window
         });
     }
 
-    /// <summary>Whether the current surface decided to sit on the acrylic scrim.</summary>
-    internal bool IsAcrylicSurface => _acrylicBackdrop;
+    /// <summary>Whether the last successful native accent command installed a tint.</summary>
+    internal bool IsAcrylicSurface => _appliedAcrylicTint != 0;
 
     // ---------------------------------------------------------------- visibility
 
@@ -4527,7 +4531,7 @@ public sealed partial class TopBarWindow : Window
         else if (overlapStateChanged && IsVisible)
         {
             ApplySurface();
-            UpdateBackdropSampling(immediate: !overlappingWhileShown);
+            UpdateBackdropSampling(immediate: true);
         }
     }
 

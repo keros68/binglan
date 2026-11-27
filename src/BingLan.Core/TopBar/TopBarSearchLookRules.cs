@@ -70,7 +70,7 @@ public static class TopBarSearchLookRules
             effectiveStyle.AccentColor,
             DesktopStyleRules.DefaultAccentColor);
         var readability = LauncherReadabilityRules.Resolve(baseRgb, opacity);
-        var samplesBackdrop = BarAdaptiveInkRules.NeedsBackdropSampling(glass.Surface, allowBackdropBlur);
+        var samplesBackdrop = BarAdaptiveInkRules.NeedsBackdropSampling(glass.Surface);
         var useAdaptiveInk = samplesBackdrop && adaptiveUseDarkInk.HasValue;
         var useDarkInk = useAdaptiveInk ? adaptiveUseDarkInk.GetValueOrDefault() : readability.DarkInk;
         var foreground = useDarkInk
@@ -84,19 +84,8 @@ public static class TopBarSearchLookRules
         }
 
         var glassTint = glass.Surface;
-        var fallbackSurface = glass.Surface;
-        if (allowBackdropBlur)
-        {
-            var readableOpacity = readability.SurfaceOpacity;
-            var fallbackOpacity = useDarkInk
-                ? BarAdaptiveInkRules.MinimumLightFlyoutOpacity
-                : BarAdaptiveInkRules.MinimumDarkFlyoutOpacity;
-            glassTint = WithAlphaByte(baseRgb, OpacityByte(readableOpacity));
-            fallbackSurface = WithAlphaByte(baseRgb, OpacityByte(Math.Max(readableOpacity, fallbackOpacity)));
-        }
-
-        // Plain glass retains the bar's actual opacity, including its invisible hit-test fill.
-        // Shadow separates the text where that fill cannot provide contrast on its own.
+        // Keep the selected translucency on both native and fallback surfaces; the
+        // content shadow supplies extra separation when the tint alone is too faint.
         var useTextShadow = !HasContrast(foreground, glassTint);
         var mutedCandidate = useDarkInk ? LightSurfaceMutedForeground : DarkSurfaceMutedForeground;
         var placeholderCandidate = useDarkInk ? LightSurfacePlaceholderForeground : DarkSurfacePlaceholderForeground;
@@ -112,7 +101,7 @@ public static class TopBarSearchLookRules
             AllowBackdropBlur: allowBackdropBlur,
             UseTextShadow: useTextShadow,
             GlassTint: glassTint,
-            FallbackSurface: fallbackSurface,
+            FallbackSurface: glassTint,
             Border: useDarkInk ? LightSurfaceBorder : DarkSurfaceBorder,
             Foreground: foreground,
             MutedForeground: muted,
@@ -178,8 +167,6 @@ public static class TopBarSearchLookRules
 
     private static bool IsDefaultAccent(string accentRgb) =>
         string.Equals(accentRgb, DesktopStyleRules.DefaultAccentColor, StringComparison.OrdinalIgnoreCase);
-
-    private static byte OpacityByte(double opacity) => (byte)Math.Ceiling(opacity * 255d - 1e-9);
 
     private static string WithAlphaByte(string rgb, byte alpha) =>
         $"#{alpha:X2}{rgb.TrimStart('#')}";

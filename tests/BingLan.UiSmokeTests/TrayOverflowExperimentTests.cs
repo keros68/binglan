@@ -1,5 +1,6 @@
 using BingLan.App.Taskbar;
 using BingLan.App;
+using BingLan.App.Tray;
 using System.IO;
 using System.Reflection;
 
@@ -7,6 +8,11 @@ internal static class TrayOverflowExperimentTests
 {
     internal static void Run(Action pump)
     {
+        Assert(TrayPanelWindow.IsFeishuMainWindow("飞书", "Chrome_WidgetWin_1"), "飞书主窗口应匹配实测标题和窗口类");
+        Assert(!TrayPanelWindow.IsFeishuMainWindow("飞书会议", "Chrome_WidgetWin_1"), "独立会议窗口应保留 Explorer 默认动作");
+        Assert(!TrayPanelWindow.IsFeishuMainWindow("文档 - 飞书", "Chrome_WidgetWin_1"), "文档窗口应保留 Explorer 默认动作");
+        Assert(!TrayPanelWindow.IsFeishuMainWindow("飞书", "未知窗口类"), "未知窗口类应保留 Explorer 默认动作");
+
         // Controlled pending work verifies the single-flight gates without issuing a native
         // toggle. Actual Explorer behavior is checked in the opt-in preview.
         using var experiment = new TrayOverflowController();

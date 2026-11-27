@@ -678,8 +678,7 @@ internal static class TopBarWindowTests
         var state = BarState();
         state.VisibilityMode = TopBarVisibilityMode.SmartHide;
         state.FollowCardLook = false;
-        // A light custom colour keeps the bar on the plain-brush path: the WCA acrylic
-        // scrim only applies to dark surfaces, so this test stays deterministic.
+        state.FrostedGlass = false;
         state.SurfaceColor = "#D8CFF0";
         state.SurfaceOpacity = 0.84d;
         using var sampler = new WindowsPerformanceSamplingService();
@@ -692,7 +691,7 @@ internal static class TopBarWindowTests
             var color = background.Color;
             Assert(color.A > 200 && color.R == 0xD8 && color.G == 0xCF && color.B == 0xF0,
                 $"玻璃底画刷应为淡紫 84%，实际 A={color.A} #{color.R:X2}{color.G:X2}{color.B:X2}");
-            Assert(!bar.IsAcrylicSurface, "浅色自定义材质不应启用亚克力薄纱（否则 0% 不透明度下发灰）");
+            Assert(!bar.IsAcrylicSurface, "关闭磨砂时应使用普通透色底板");
             Assert(bar.UsesDarkInk, "浅色不透明自定义顶栏应自动切换为深色文字与图标");
 
             // What actually reaches the screen: render the surface and sample the middle.
@@ -721,6 +720,18 @@ internal static class TopBarWindowTests
             Assert(middle.R > 40 && middle.B > 60 && middle.B > middle.G,
                 $"屏幕合成应有玻璃底色（中点 #{middle.R:X2}{middle.G:X2}{middle.B:X2}），" +
                 "分层窗口只画了文字没有底");
+
+            state.FrostedGlass = true;
+            bar.RefreshAppearance();
+            var accentTint = typeof(TopBarWindow).GetField("_appliedAcrylicTint", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            Assert(bar.IsAcrylicSurface && bar.UsesDarkInk && accentTint.GetValue(bar) is 0xD6F0CFD8u,
+                "开启浅紫色磨砂应将对应颜色和不透明度写入亚克力底板，保留深色文字");
+
+            state.SurfaceColor = "#213A57";
+            state.SurfaceOpacity = 0.8d;
+            bar.RefreshAppearance();
+            Assert(bar.IsAcrylicSurface && !bar.UsesDarkInk && accentTint.GetValue(bar) is 0xCC573A21u,
+                "磨砂开启时改为深色及不同不透明度应立即刷新底板，切换为浅色文字");
         }
         finally
         {
@@ -731,20 +742,19 @@ internal static class TopBarWindowTests
 
     private static void ReservedModeClearsSmartHideAppearance()
     {
-        var monitor = MonitorCatalog.GetAll().FirstOrDefault(candidate =>
-            TopBarReserveRules.ShouldReserve(true, false, candidate.Bounds,
-                DockAppBarController.GetLiveWorkingArea(candidate),
-                TaskbarEdgeGuard.GetNativeTaskbarLayout(candidate.Bounds)?.Edge == DockEdge.Top))
-            ?? throw new InvalidOperationException("预留模式外观回归需要一个未占用顶边的显示器");
+        var monitor = MonitorCatalog.GetAll().FirstOrDefault()
+            ?? throw new InvalidOperationException("顶栏外观回归需要一个显示器");
         var state = BarState();
         state.VisibilityMode = TopBarVisibilityMode.SmartHide;
         state.FollowCardLook = false;
+        state.SurfaceColor = "#FFFFFF";
         state.SurfaceOpacity = 0d;
-        state.FrostedGlass = false;
+        state.FrostedGlass = true;
         using var sampler = new WindowsPerformanceSamplingService();
         // Keep the window unshown so ApplyState can exercise the reservation decision
         // without registering a real AppBar or changing the desktop work area.
-        var bar = new TopBarWindow(state, new DesktopStyleState { Glass = GlassMode.Clear },
+        var style = new DesktopStyleState { Glass = GlassMode.Clear };
+        var bar = new TopBarWindow(state, style,
             new FakeEnvironment(), sampler,
             screenTarget: new SurfaceMonitorSelection(monitor.DeviceName, monitor, null),
             ownsGlobalEvents: false);
@@ -759,22 +769,54 @@ internal static class TopBarWindowTests
             var configuredBackground = (bar.Surface.Background as SolidColorBrush)?.Color
                 ?? throw new InvalidOperationException("顶栏底板应使用纯色画刷");
             // A 0% custom surface keeps one alpha step so its hit area still works.
-            Assert(configuredBackground.A <= 1, $"0% 自定义顶栏应接近透明，实际为 {configuredBackground}");
+            Assert(configuredBackground == Color.FromArgb(1, 255, 255, 255),
+                $"白色 0% 自定义顶栏应接近透明，实际为 {configuredBackground}");
             overlap.SetValue(bar, true);
             dwell.SetValue(bar, Environment.TickCount64);
             sample.SetValue(bar, new ColorContrastRules.SrgbColor(1d, 1d, 1d));
             previousInk.SetValue(bar, true);
             bar.RefreshAppearance();
-            Assert(bar.Surface.Background is SolidColorBrush overlapBrush && overlapBrush.Color.A > configuredBackground.A,
-                "智能隐藏覆盖窗口时应使用临时可读底板");
+            Assert(bar.Surface.Background is SolidColorBrush overlapBrush && overlapBrush.Color == configuredBackground
+                && !bar.IsAcrylicSurface && bar.UsesDarkInk && bar.ModuleHeader.Effect is not null,
+                "智能隐藏覆盖浅色应用时，白色 0% 顶栏应保留清透并使用带阴影的深色文字");
 
+            state.SurfaceColor = "#214365";
+            state.SurfaceOpacity = 0.32d;
+            bar.RefreshAppearance();
+            Assert(bar.Surface.Background is SolidColorBrush customBrush && customBrush.Color == Color.FromArgb(82, 33, 67, 101),
+                "智能隐藏覆盖窗口时应保留可见的自定义底色和不透明度");
+
+            state.FollowCardLook = true;
+            bar.RefreshAppearance();
+            Assert(bar.Surface.Background is SolidColorBrush sharedBrush && sharedBrush.Color == Color.FromArgb(1, 255, 255, 255),
+                "跟随全局无底板外观时，智能隐藏覆盖窗口也应保留清透");
+
+            style.Glass = GlassMode.Dark;
+            style.GlassDensity = DesktopStyleRules.MinimumGlassDensity;
+            bar.RefreshAppearance();
+            Assert(bar.Surface.Background is SolidColorBrush sharedDarkBrush && sharedDarkBrush.Color == Color.FromArgb(139, 24, 34, 47),
+                "智能隐藏覆盖窗口时应保留全局深色材质的底色和不透明度");
+
+            style.Glass = GlassMode.Clear;
+            bar.RefreshAppearance();
+
+            var canReserveTop = TopBarReserveRules.ShouldReserve(true, false, monitor.Bounds,
+                DockAppBarController.GetLiveWorkingArea(monitor),
+                TaskbarEdgeGuard.GetNativeTaskbarLayout(monitor.Bounds)?.Edge == DockEdge.Top);
             state.VisibilityMode = TopBarVisibilityMode.ReserveTopEdge;
             bar.ApplyState();
+            if (!canReserveTop)
+            {
+                Assert(overlap.GetValue(bar) is true && dwell.GetValue(bar) is not null,
+                    "顶边被占用时应继续使用智能隐藏");
+                state.ShowAtBottom = true;
+                bar.ApplyState();
+            }
             Assert(bar.Surface.Background is SolidColorBrush restoredBrush && restoredBrush.Color == configuredBackground,
-                "切换预留顶边后应立即恢复透明外观，不能保留智能隐藏的临时底板");
+                "切换预留模式后应保持所选透明外观");
             Assert(overlap.GetValue(bar) is false && dwell.GetValue(bar) is null
                 && sample.GetValue(bar) is null && !bar.UsesDarkInk,
-                "切换预留顶边后应清除覆盖状态、唤出停留时间和旧背景采样");
+                "切换预留模式后应清除覆盖状态、唤出停留时间和旧背景采样");
         }
         finally
         {
@@ -1105,6 +1147,28 @@ internal static class TopBarWindowTests
                 {
                     var trayPanel = Application.Current.Windows.OfType<BingLan.App.Tray.TrayPanelWindow>()
                         .Single(window => window.Owner == bar && window.IsVisible);
+                    Assert(trayPanel.ShowActivated, "键盘和辅助功能打开的托盘应能接收焦点");
+                    trayPanel.Close();
+
+                    Assert(bar.TryOpenTrayForApplication() && bar.TryOpenTrayForApplication(),
+                        "驻留应用应打开冰蓝托盘，并保留已打开的面板");
+                    trayPanel = Application.Current.Windows.OfType<BingLan.App.Tray.TrayPanelWindow>()
+                        .Single(window => window.Owner == bar && window.IsVisible);
+                    Assert(trayPanel.ShowActivated && environment.TrayOverflowRequested == 0,
+                        "驻留应用的账号选择应支持键盘操作，并保持 Windows 托盘关闭");
+                    trayPanel.Close();
+
+                    tray.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, 0, MouseButton.Left)
+                    {
+                        RoutedEvent = UIElement.PreviewMouseLeftButtonDownEvent
+                    });
+                    Invoke(tray);
+                    pump();
+                    trayPanel = Application.Current.Windows.OfType<BingLan.App.Tray.TrayPanelWindow>()
+                        .Single(window => window.Owner == bar && window.IsVisible);
+                    Assert(trayPanel.ShowActivated
+                        && (NativeMethods.GetExStyleOf(new WindowInteropHelper(trayPanel).Handle) & NativeMethods.WsExNoActivate) == 0,
+                        "鼠标打开托盘后应能在面板内使用 Tab 和 Escape");
                     Invoke((Button)trayPanel.FindName("NativeTrayButton"));
                     pump();
                     Assert(!trayPanel.IsVisible, "切换到 Windows 托盘时应关闭冰蓝托盘");
@@ -1115,6 +1179,8 @@ internal static class TopBarWindowTests
                 pump();
                 Assert(!AllButtons(bar).Any(button => AutomationProperties.GetName(button) == "托盘模块"),
                     "关闭托盘模块应移除入口");
+                Assert(!bar.TryOpenTrayForApplication() && environment.TrayOverflowRequested == 1,
+                    "独立托盘入口关闭时，驻留应用应回退到提示");
                 Assert(environment.TrayOverflowClosed > 0, "关闭托盘模块应清理本次面板会话");
             }
             Invoke(ButtonByName(bar, "性能模块"));
@@ -1885,7 +1951,7 @@ internal static class TopBarWindowTests
 
         public void OpenComponentSettings(DesktopComponentKind kind) => ComponentRequested = kind;
 
-        public bool ActivateWindow(nint handle, uint processId = 0) => false;
+        public bool ActivateWindow(nint handle, uint processId, nint monitorHandle) => false;
 
         public void ExitApp()
         {

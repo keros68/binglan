@@ -11,7 +11,7 @@ internal sealed record TrayEntry(string Key, string Name, string Source, uint Ex
 {
     internal TrayIdentity Identity => new(ExplorerProcessId, Key);
 }
-internal sealed record TrayPanelEntry(TrayIdentity Identity, string Name, string Source, BitmapSource? Thumbnail);
+internal sealed record TrayPanelEntry(TrayIdentity Identity, string Name, string Source, BitmapSource? Thumbnail, TrayFeishuOwner? FeishuOwner = null);
 internal sealed record ProbeNode(string Name, string Id, string Class, string Type, bool Offscreen, bool Enabled, string[] Patterns);
 internal sealed record ChildReport(string Handle, string Class, bool Visible, string[] RawFirstChildren, int? AccessibleChildren, string? Error);
 internal sealed record SurfaceReport(string Source, int ProcessId, string Class, ProbeNode[] Nodes, ChildReport[] Windows, string? Error);
@@ -69,7 +69,7 @@ internal static class TrayReader
                     var oldThumbnail = previous?.GetValueOrDefault(entry.Identity)?.Thumbnail;
                     thumbnail = CreateThumbnail(image, oldThumbnail);
                 }
-                snapshot[i] = new TrayPanelEntry(entry.Identity, artwork?.Name ?? entry.Name, entry.Source, thumbnail);
+                snapshot[i] = new TrayPanelEntry(entry.Identity, artwork?.Name ?? entry.Name, entry.Source, thumbnail, artwork?.FeishuOwner);
             }
             if (!IsCurrentExplorer((uint)taskbar.ProcessId)) return null;
             Volatile.Write(ref _cachedSnapshot, snapshot);
@@ -222,13 +222,18 @@ internal static class TrayReader
         return new ChildReport($"0x{window:X}", Native.ClassName(window), Native.IsWindowVisible(window), children.ToArray(), accessibleCount, error);
     }
 
-    internal static async Task<string> InvokeAsync(TrayIdentity identity, bool contextMenu = false, CancellationToken cancellation = default)
+    internal static async Task<string> InvokeAsync(
+        TrayIdentity identity,
+        bool contextMenu = false,
+        CancellationToken cancellation = default,
+        Func<uint, string, CancellationToken, Task<bool?>>? activateFeishu = null,
+        TrayPanelEntry? displayedEntry = null)
     {
         if (Interlocked.CompareExchange(ref _invoking, 1, 0) != 0) return "action-in-progress";
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
         timeout.CancelAfter(OperationTimeout);
         var token = timeout.Token;
-        return await Task.Run(() =>
+        return await Task.Run(async () =>
         {
             try
             {
@@ -245,6 +250,16 @@ internal static class TrayReader
                     var result = Native.BingLanTrayShowContextMenu(runtimeId, runtimeId.Length, identity.ExplorerProcessId, cancellationHandle);
                     return result >= 0 ? "context-requested" : $"context-error-0x{result:X8}";
                 }
+                if (activateFeishu is not null && displayedEntry is not null
+                    && TrayIconArtwork.VerifyFeishuOwner(displayedEntry, fresh) is { } owner)
+                {
+                    if (!IsCurrentExplorer(identity.ExplorerProcessId) || token.IsCancellationRequested)
+                        return "cancelled-before-invoke";
+                    var activated = await activateFeishu(owner.ProcessId, owner.ExecutablePath, token);
+                    // Only an unclaimed action can fall back to Explorer's default action.
+                    if (activated.HasValue) return activated.Value ? "invoked" : "activation-failed";
+                }
+                if (token.IsCancellationRequested) return "cancelled-before-invoke";
                 if (!fresh.Element.TryGetCurrentPattern(InvokePattern.Pattern, out var pattern) || pattern is not InvokePattern invoke) return "invoke-unavailable";
                 // After discovery, check the shell again before dispatching the action.
                 if (!IsCurrentExplorer(identity.ExplorerProcessId) || token.IsCancellationRequested) return "cancelled-before-invoke";

@@ -50,7 +50,7 @@ The interface is in Simplified Chinese.
 
 ## Get started
 
-Stable version: [v0.6.6](https://github.com/keros68/binglan/releases/tag/v0.6.6) · [Installer](https://github.com/keros68/binglan/releases/download/v0.6.6/BingLan-Setup-0.6.6.exe) · [Portable](https://github.com/keros68/binglan/releases/download/v0.6.6/BingLan-0.6.6-portable.zip). A standalone [compatibility tool](https://github.com/keros68/binglan/releases/download/v0.2.52/BingLan-0.2.52-tray-preview.zip) is also available; see the [guide (Chinese)](docs/TRAY-PREVIEW.md).
+Stable version: [v0.7.0](https://github.com/keros68/binglan/releases/tag/v0.7.0) · [Installer](https://github.com/keros68/binglan/releases/download/v0.7.0/BingLan-Setup-0.7.0.exe) · [Portable](https://github.com/keros68/binglan/releases/download/v0.7.0/BingLan-0.7.0-portable.zip). A standalone [compatibility tool](https://github.com/keros68/binglan/releases/download/v0.2.52/BingLan-0.2.52-tray-preview.zip) is also available; see the [guide (Chinese)](docs/TRAY-PREVIEW.md).
 
 1. Open [Releases](https://github.com/keros68/binglan/releases/latest) and download `BingLan-Setup-*.exe` (installer) or `BingLan-*-portable.zip` (portable).
 2. Installer: run it — it installs for the current user and needs no administrator rights. Portable: unzip anywhere and run `BingLan.exe` inside. Both include the .NET runtime and are not code-signed yet, so Windows asks for confirmation on first run.

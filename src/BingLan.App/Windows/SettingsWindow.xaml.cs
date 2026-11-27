@@ -2687,6 +2687,10 @@ public partial class SettingsWindow : Window
         GlassDensityText.Text = $"{_maintenance.Style.GlassDensity * 100:0}%";
         _maintenance.ApplyGlass();
         UpdatePresetPreview(GetSelectedPreset());
+        if (_topBarState is { FollowCardLook: true } topBar)
+        {
+            RefreshTopBarMaterialControls(topBar);
+        }
     }
 
     // Inner surfaces only change the shared brushes, so the cards keep their own colours.
@@ -3691,7 +3695,6 @@ public partial class SettingsWindow : Window
             TopBarOptionsPanel.IsEnabled = state.IsEnabled;
             TopBarSearchBehaviorGroup.IsEnabled = state.IsEnabled;
             TopBarAdvancedBehaviorPanel.IsEnabled = state.IsEnabled;
-            TopBarFrostedCheckBox.IsChecked = state.FrostedGlass;
             TopBarReserveRadio.IsChecked = state.VisibilityMode == TopBarVisibilityMode.ReserveTopEdge;
             TopBarSmartHideRadio.IsChecked = state.VisibilityMode == TopBarVisibilityMode.SmartHide;
             TopBarPositionComboBox.SelectedIndex = state.ShowAtBottom ? 1 : 0;
@@ -3728,7 +3731,6 @@ public partial class SettingsWindow : Window
         TopBarOptionsPanel.IsEnabled = state.IsEnabled;
         TopBarSearchBehaviorGroup.IsEnabled = state.IsEnabled;
         TopBarAdvancedBehaviorPanel.IsEnabled = state.IsEnabled;
-        state.FrostedGlass = TopBarFrostedCheckBox.IsChecked == true;
         state.VisibilityMode = TopBarSmartHideRadio.IsChecked == true
             ? TopBarVisibilityMode.SmartHide
             : TopBarVisibilityMode.ReserveTopEdge;
@@ -4073,16 +4075,50 @@ public partial class SettingsWindow : Window
             TopBarColorEditor.Text = state.SurfaceColor;
             TopBarOpacitySlider.Value = state.SurfaceOpacity;
             TopBarOpacityText.Text = $"{state.SurfaceOpacity * 100:0}%";
-            var preview = new System.Windows.Media.SolidColorBrush(
-                (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(state.SurfaceColor)!);
-            preview.Freeze();
-            TopBarColorPreview.Background = preview;
         }
         finally
         {
             _loadingTopBarLook = false;
         }
         RefreshAppearanceOverrides();
+    }
+
+    private void RefreshTopBarMaterialControls(TopBarState state)
+    {
+        if (TopBarColorPreview is null || TopBarFrostedCheckBox is null)
+        {
+            return;
+        }
+
+        var surface = DesktopStyleRules.TopBar(_maintenance.Style, state).Surface;
+        var color = (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(surface)!;
+        var preview = new System.Windows.Media.SolidColorBrush(color);
+        preview.Freeze();
+        TopBarColorPreview.Background = preview;
+
+        var canFrost = DesktopStyleRules.SupportsTopBarFrostedScrim(surface);
+        var wasLoading = _loadingTopBarLook;
+        _loadingTopBarLook = true;
+        TopBarFrostedCheckBox.IsChecked = canFrost && state.FrostedGlass;
+        TopBarFrostedCheckBox.IsEnabled = canFrost;
+        _loadingTopBarLook = wasLoading;
+        TopBarFrostedRow.Description = canFrost
+            ? "模糊底板背后的画面，弹层同步使用磨砂。"
+            : state.FollowCardLook && _maintenance.Style.Glass == GlassMode.Clear
+                ? "当前跟随无底板外观。"
+                : "当前不透明度过低，使用清透玻璃。";
+    }
+
+    private void TopBarFrosted_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_loadingTopBarLook || _loadingTopBar || _topBarState is not { } state
+            || TopBarFrostedCheckBox is not { IsEnabled: true })
+        {
+            return;
+        }
+
+        state.FrostedGlass = TopBarFrostedCheckBox.IsChecked == true;
+        ApplyTopBarChange(state.FrostedGlass ? "顶部信息条已切换为磨砂玻璃" : "顶部信息条已切换为清透玻璃");
     }
 
     private void TopBarLook_Changed(object sender, RoutedEventArgs e)
@@ -4099,13 +4135,14 @@ public partial class SettingsWindow : Window
 
     private void TopBarOpacity_Changed(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
-        if (_loadingTopBarLook || _loadingTopBar || _topBarState is null || TopBarOpacityText is null)
+        if (_loadingTopBarLook || _loadingTopBar || _topBarState is not { FollowCardLook: false } state || TopBarOpacityText is null)
         {
             return;
         }
 
-        _topBarState.SurfaceOpacity = e.NewValue;
+        state.SurfaceOpacity = e.NewValue;
         TopBarOpacityText.Text = $"{e.NewValue * 100:0}%";
+        RefreshTopBarMaterialControls(state);
         ApplyTopBarChange("已调整信息条不透明度");
     }
 
@@ -4137,7 +4174,7 @@ public partial class SettingsWindow : Window
 
     private void TopBarColorEditor_Commit(object sender, RoutedEventArgs e)
     {
-        if (_loadingTopBarLook || _topBarState is not { } state)
+        if (_loadingTopBarLook || _topBarState is not { FollowCardLook: false } state)
         {
             return;
         }
@@ -4153,7 +4190,7 @@ public partial class SettingsWindow : Window
 
     private void TopBarChooseColor_Click(object sender, RoutedEventArgs e)
     {
-        if (_topBarState is not { } state)
+        if (_topBarState is not { FollowCardLook: false } state)
         {
             return;
         }

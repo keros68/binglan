@@ -98,24 +98,23 @@ internal static class Program
     {
         try
         {
-            var blankIdentities = Task.Run(() => TrayReader.Read().Entries
-                .Where(entry => string.IsNullOrWhiteSpace(entry.Element.Current.Name))
-                .Select(entry => entry.Identity).ToHashSet()).WaitAsync(TrayReader.OperationTimeout).GetAwaiter().GetResult();
             var snapshot = TrayReader.WarmSnapshotAsync().WaitAsync(TrayReader.OperationTimeout).GetAwaiter().GetResult();
             if (snapshot is null || !ReferenceEquals(snapshot, TrayReader.CachedSnapshot))
                 throw new InvalidOperationException("The tray snapshot was unavailable in the shared cache.");
-            var entry = snapshot.SingleOrDefault(item => item.Name == "飞书" && blankIdentities.Contains(item.Identity));
-            if (entry?.Thumbnail is not { IsFrozen: true } thumbnail)
-                throw new InvalidOperationException($"No unnamed UI Automation entry became 飞书 with a frozen thumbnail. Unnamed entries: {blankIdentities.Count}.");
+            var candidates = snapshot.Where(item => item.Name == "飞书" && item.FeishuOwner is not null).Take(2).ToArray();
+            if (candidates is not [var entry] || entry.Thumbnail is not { IsFrozen: true } thumbnail)
+                throw new InvalidOperationException("No unique unnamed UI Automation entry became 飞书 with a verified owner and frozen thumbnail.");
 
             using var currentProcess = System.Diagnostics.Process.GetCurrentProcess();
-            var runningPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var running = new Dictionary<uint, string>();
             foreach (var process in System.Diagnostics.Process.GetProcessesByName("Feishu"))
             {
                 using (process)
                 {
                     if (process.SessionId == currentProcess.SessionId && process.MainModule?.FileName is { } path)
-                        runningPaths.Add(path);
+                    {
+                        running[(uint)process.Id] = path;
+                    }
                 }
             }
 
@@ -125,7 +124,7 @@ internal static class Program
             foreach (var id in tray.GetSubKeyNames())
             {
                 using var key = tray.OpenSubKey(id);
-                if (key?.GetValue("ExecutablePath") is not string path || !runningPaths.Contains(path)
+                if (key?.GetValue("ExecutablePath") is not string path || !running.Values.Contains(path, StringComparer.OrdinalIgnoreCase)
                     || key.GetValue("InitialTooltip") is not string { Length: 0 }
                     || key.GetValue("IconSnapshot") is not byte[] png) continue;
 
@@ -134,14 +133,24 @@ internal static class Program
                 if (thumbnail.PixelWidth != expected.PixelWidth || thumbnail.PixelHeight != expected.PixelHeight
                     || !actualPixels.AsSpan().SequenceEqual(CopyThumbnailPixels(expected))) continue;
 
-                var missing = Task.Run(() =>
+                var (owner, missing) = Task.Run(() =>
                 {
-                    var outsideTray = new TrayEntry("verify-no-location", "", "taskbar", entry.Identity.ExplorerProcessId, AutomationElement.RootElement);
-                    return !TrayIconArtwork.Load([outsideTray]).ContainsKey(outsideTray.Key);
+                    var current = TrayReader.Read().Entries.Where(item => item.Identity == entry.Identity).Take(2).ToArray();
+                    var outsideTray = new TrayEntry(entry.Identity.RuntimeId, "", entry.Source,
+                        entry.Identity.ExplorerProcessId, AutomationElement.RootElement);
+                    var feishu = current is [var live] ? TrayIconArtwork.VerifyFeishuOwner(entry, live) : null;
+                    var unmatched = !TrayIconArtwork.Load([outsideTray]).ContainsKey(outsideTray.Key)
+                        && TrayIconArtwork.VerifyFeishuOwner(entry, outsideTray) is null;
+                    return (feishu, unmatched);
                 }).WaitAsync(TrayReader.OperationTimeout).GetAwaiter().GetResult();
-                if (!missing) throw new InvalidOperationException("An unnamed entry outside the tray was assigned an application.");
+                if (!missing) throw new InvalidOperationException("An unrelated element reused the tray identity and inherited its owner.");
+                if (owner is not { } matched || !running.TryGetValue(matched.ProcessId, out var processPath)
+                    || !matched.ExecutablePath.Equals(processPath, StringComparison.OrdinalIgnoreCase)
+                    || !matched.ExecutablePath.Equals(path, StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException("The Feishu tray icon did not resolve to a registered owner from the running Feishu executable.");
                 Console.WriteLine($"FEISHU-SNAPSHOT PASS: empty UIA name became {entry.Name}; {thumbnail.PixelWidth}x{thumbnail.PixelHeight} pixels match the running application's tray artwork; shared cache published.");
-                Console.WriteLine("UNMATCHED-SNAPSHOT PASS: an unnamed entry with no matching tray location retained the fallback.");
+                Console.WriteLine("FEISHU-OWNER PASS: the unlabeled notification icon matched a registered Feishu owner window.");
+                Console.WriteLine("UNMATCHED-SNAPSHOT PASS: an unrelated element with the same tray identity retained the fallback.");
                 return 0;
             }
 

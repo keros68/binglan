@@ -5,6 +5,7 @@ using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Automation.Peers;
 using System.Windows.Controls;
+using System.Windows.Interop;
 using BingLan.App.Dock;
 using BingLan.App.Services;
 using BingLan.App.Taskbar;
@@ -70,16 +71,46 @@ internal static class ShellSurfaceTests
             "主副屏任务栏移动时都应立即复位两角细条");
         Assert(!TaskbarCornerReveal.IsTaskbarClass("CabinetWClass"), "资源管理器窗口移动不能触发细条复位");
 
-        var state = new DockState { IsEnabled = true, VisibilityMode = DockVisibilityMode.SmartHide, ShowLauncherButton = false };
-        var dock = new IceBlueDockWindow(state);
+        var state = new DockState
+        {
+            IsEnabled = true,
+            VisibilityMode = DockVisibilityMode.SmartHide,
+            RevealMode = DockRevealMode.HandleOnly,
+            ShowLauncherButton = false
+        };
+        nint trayMonitor = 0;
+        var trayAvailable = true;
+        var dock = new IceBlueDockWindow(state)
+        {
+            TryOpenTrayForApplication = monitor =>
+            {
+                trayMonitor = monitor;
+                return trayAvailable;
+            }
+        };
         dock.LauncherRequested += () => { };
         show(dock);
         try
         {
             TestTaskbarLayoutRefresh(dock, pump);
             var flags = BindingFlags.Instance | BindingFlags.NonPublic;
+            var reportResult = typeof(IceBlueDockWindow).GetMethod("ReportCommandResult", flags)!;
+            var trayResult = new WindowCommandResult(false, "请从系统托盘打开应用", OpenTrayRecommended: true);
+            string? commandHint = null;
+            dock.CommandFailed += message => commandHint = message;
+            reportResult.Invoke(dock, [trayResult]);
+            Assert(trayMonitor != 0 && commandHint is null, "Dock 应以自身屏幕打开冰蓝托盘并略过提示");
+            trayAvailable = false;
+            reportResult.Invoke(dock, [trayResult]);
+            Assert(commandHint == trayResult.Message, "独立托盘不可用时应保留原提示");
+
             var yieldToMenu = typeof(IceBlueDockWindow).GetMethod("YieldToSystemMenu", flags)!;
             var showDock = typeof(IceBlueDockWindow).GetMethod("ShowDock", flags)!;
+            var updateForeground = typeof(IceBlueDockWindow).GetMethod("UpdateForForegroundWindow", flags)!;
+            var releaseYield = typeof(IceBlueDockWindow).GetMethod("ReleaseSystemMenuYield", flags)!;
+            var autoHideState = typeof(IceBlueDockWindow).GetField("_autoHide", flags)!;
+            autoHideState.SetValue(dock, new DockAutoHideState());
+            showDock.Invoke(dock, null);
             // With animations on the dock fades out first; with them off it steps aside at once.
             var motion = IceBlueDockWindow.Motion;
             IceBlueDockWindow.Motion = BingLan.Core.Models.MotionLevel.Off;
@@ -94,8 +125,39 @@ internal static class ShellSurfaceTests
             }
             showDock.Invoke(dock, null);
             Assert(!dock.IsVisible, "系统菜单打开时其他显示请求不能覆盖菜单");
-            Assert(!(bool)yieldToMenu.Invoke(dock, new object[] { false })! && dock.IsVisible,
-                "系统菜单关闭后应恢复原本显示的 Dock");
+            Assert(!(bool)yieldToMenu.Invoke(dock, new object[] { false })! && !dock.IsVisible,
+                "系统菜单关闭后应先判断当前窗口的遮挡，再决定是否显示 Dock");
+            releaseYield.Invoke(dock, [true]);
+            Assert(!dock.IsVisible, "系统菜单关闭后，遮挡预留区的前台应用应继续阻止 Dock 恢复");
+            releaseYield.Invoke(dock, [false]);
+            Assert(dock.IsVisible, "当前显示规则允许时，应恢复 Dock");
+
+            state.AutoHideAlways = true;
+            try
+            {
+                var autoHide = new DockAutoHideState();
+                autoHide.Update(new DockAutoHideInput { WindowOverlapsDock = true },
+                    DateTimeOffset.UtcNow - DockAutoHideState.HideDelay);
+                autoHideState.SetValue(dock, autoHide);
+                yieldToMenu.Invoke(dock, new object[] { true });
+                var flashed = false;
+                DependencyPropertyChangedEventHandler watchVisibility = (_, _) => flashed |= dock.IsVisible;
+                dock.IsVisibleChanged += watchVisibility;
+                try
+                {
+                    updateForeground.Invoke(dock, [new WindowInteropHelper(dock).Handle]);
+                    Assert(!autoHide.IsShown && !flashed && !dock.IsVisible,
+                        "系统菜单关闭后仍应智能隐藏时，Dock 不能先按旧状态显示一帧");
+                }
+                finally
+                {
+                    dock.IsVisibleChanged -= watchVisibility;
+                }
+            }
+            finally
+            {
+                state.AutoHideAlways = false;
+            }
             var apply = typeof(IceBlueDockWindow).GetMethod("ApplyItems", flags)!;
             var length = typeof(IceBlueDockWindow).GetMethod("ContentLengthDip", flags)!;
             var panel = (StackPanel)dock.FindName("ItemPanel");

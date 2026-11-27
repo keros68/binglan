@@ -10,6 +10,7 @@ using BingLan.App.Services;
 using BingLan.Core.Models;
 using BingLan.App.Taskbar;
 using BingLan.App.Tray;
+using BingLan.Core.Dock;
 
 namespace BingLan.App.Windows;
 
@@ -24,6 +25,7 @@ public partial class TopBarWindow
 
     private static bool _trayPanelWarmupAllowed;
     private TrayPanelWindow? _trayPanel;
+    private nint _trayPreviousForeground;
     private bool HasOpenTrayPanel => _trayPanel is { IsVisible: true };
 
     internal static void EnableTrayPanelWarmup()
@@ -43,6 +45,31 @@ public partial class TopBarWindow
 
     private static bool IsTrayPanelWindow(nint handle) =>
         HwndSource.FromHwnd(handle)?.RootVisual is TrayPanelWindow { Owner: TopBarWindow };
+
+    internal nint ActiveMonitorHandle => (_appBar?.Monitor ?? _monitor)?.MonitorHandle ?? 0;
+
+    internal bool TryOpenTrayForApplication()
+    {
+        if (!CanShowTrayPanel || _closing || !IsVisible
+            || !_modules.TryGetValue(TopBarModuleKind.TrayOverflow, out var element)
+            || element is not Button { IsLoaded: true, IsVisible: true } anchor)
+        {
+            return false;
+        }
+        if (!HasOpenTrayPanel)
+        {
+            OpenTrayPanel(anchor);
+        }
+        return HasOpenTrayPanel;
+    }
+
+    internal nint ResolveTrayPanelForeground(nint current)
+    {
+        if (_trayPanel is not { } panel || current == 0 || current != new WindowInteropHelper(panel).Handle)
+            return current;
+        return DockForegroundRules.EffectiveForeground(current, current,
+            DockNativeMethods.IsWindow(_trayPreviousForeground) ? _trayPreviousForeground : 0);
+    }
 
     private void AddTrayPanelModule(StackPanel modules)
     {
@@ -101,11 +128,14 @@ public partial class TopBarWindow
             return;
         }
 
+        var previous = DockNativeMethods.GetForegroundWindow();
+        if (previous != 0 && HwndSource.FromHwnd(previous)?.RootVisual is TrayPanelWindow { Owner: TopBarWindow owner })
+            previous = owner.ResolveTrayPanelForeground(previous);
         CloseFlyoutsBeforeOpening();
         var highContrast = AccessibilityThemeManager.IsHighContrastEnabled || SystemParameters.HighContrast;
         var look = ResolveSystemFlyoutLook(highContrast);
         var palette = ResolveTopBarPopupPalette();
-        var panel = new TrayPanelWindow(OpenNativeTrayOverflow)
+        var panel = new TrayPanelWindow(OpenNativeTrayOverflow, TrayPanelWindow.ActivateFeishuAsync)
         {
             Owner = this,
             WindowStartupLocation = WindowStartupLocation.Manual
@@ -138,20 +168,30 @@ public partial class TopBarWindow
         var opensUpward = _state.ShowAtBottom;
         var topLimit = workArea.Top + marginY;
         var bottomLimit = Math.Max(topLimit, workArea.Bottom - marginY);
-        var desiredNearEdge = opensUpward
+        double NearEdge(bool upward) => Math.Clamp(upward
             ? anchorOrigin.Y + (shadowMargin.Bottom - TrayPanelGap) * scale.DpiScaleY
-            : anchorEnd.Y + (TrayPanelGap - shadowMargin.Top) * scale.DpiScaleY;
-        var nearEdge = Math.Clamp(desiredNearEdge, topLimit, bottomLimit);
+            : anchorEnd.Y + (TrayPanelGap - shadowMargin.Top) * scale.DpiScaleY, topLimit, bottomLimit);
+        var nearEdge = NearEdge(opensUpward);
         var availableHeight = opensUpward ? nearEdge - topLimit : bottomLimit - nearEdge;
         if (availableHeight < MinimumTrayPanelHeight * scale.DpiScaleY)
         {
-            panel.Close();
-            OpenNativeTrayOverflow();
-            return;
+            var otherEdge = NearEdge(!opensUpward);
+            var otherHeight = opensUpward ? bottomLimit - otherEdge : otherEdge - topLimit;
+            if (otherHeight > availableHeight)
+            {
+                opensUpward = !opensUpward;
+                nearEdge = otherEdge;
+                availableHeight = otherHeight;
+            }
+            if (availableHeight < MinimumTrayPanelHeight * scale.DpiScaleY)
+            {
+                nearEdge = opensUpward ? bottomLimit : topLimit;
+                availableHeight = bottomLimit - topLimit;
+            }
         }
 
         panel.MaxWidth = Math.Max(1, (workArea.Width - 2 * marginX) / scale.DpiScaleX);
-        panel.MaxHeight = availableHeight / scale.DpiScaleY;
+        panel.MaxHeight = Math.Max(1, availableHeight / scale.DpiScaleY);
         panel.Measure(new Size(panel.MaxWidth, panel.MaxHeight));
         var alignRight = ReferenceEquals(anchor.Parent, RightModules);
 
@@ -179,11 +219,9 @@ public partial class TopBarWindow
 
         panel.SourceInitialized += (_, _) =>
         {
-            // The transparent shadow margin may overlap the bar. Mark the panel as a tool
-            // window so the monitor scan treats it as a flyout while it remains activatable.
             var handle = new WindowInteropHelper(panel).Handle;
-            var style = NativeMethods.GetExStyleOf(handle);
-            NativeMethods.SetWindowLongPtr(handle, NativeMethods.GwlExStyle, (nint)(style | NativeMethods.WsExToolWindow));
+            var style = NativeMethods.GetExStyleOf(handle) | NativeMethods.WsExToolWindow;
+            NativeMethods.SetWindowLongPtr(handle, NativeMethods.GwlExStyle, (nint)style);
             Place();
         };
         panel.Loaded += (_, _) => Place();
@@ -220,10 +258,12 @@ public partial class TopBarWindow
             UpdateForegroundTimerInterval();
         };
         _trayPanel = panel;
+        _trayPreviousForeground = previous;
         TopBarNativeMethods.ConsumeMouseButtonDown(TopBarNativeMethods.LeftMouseButton);
         TopBarNativeMethods.ConsumeMouseButtonDown(TopBarNativeMethods.RightMouseButton);
-        TopBarNativeMethods.ConsumeMouseButtonDown(TopBarNativeMethods.EscapeKey);
         panel.Show();
+        if (DockNativeMethods.GetForegroundWindow() != new WindowInteropHelper(panel).Handle && panel.Activate())
+            panel.MoveFocus(new System.Windows.Input.TraversalRequest(System.Windows.Input.FocusNavigationDirection.First));
         UpdateForegroundTimerInterval();
     }
 
@@ -237,11 +277,6 @@ public partial class TopBarWindow
     private void CheckTrayPanelDismissal()
     {
         if (_trayPanel is not { IsVisible: true } panel) return;
-        if (TopBarNativeMethods.IsMouseButtonDown(TopBarNativeMethods.EscapeKey))
-        {
-            CloseTrayPanel();
-            return;
-        }
         // The bar and some other desktop surfaces process clicks without taking focus.
         var leftPressed = TopBarNativeMethods.IsMouseButtonDown(TopBarNativeMethods.LeftMouseButton);
         var rightPressed = TopBarNativeMethods.IsMouseButtonDown(TopBarNativeMethods.RightMouseButton);

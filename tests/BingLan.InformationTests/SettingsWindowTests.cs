@@ -319,7 +319,7 @@ internal static class SettingsWindowTests
 
     public static void TopBarSettingsPage()
     {
-        var topBar = new TopBarState();
+        var topBar = new TopBarState { SurfaceColor = "#FFFFFF", SurfaceOpacity = 0d };
         var applies = 0;
         var useEverything = false;
         var favoriteMode = LauncherFavoriteMode.FollowDock;
@@ -457,17 +457,40 @@ internal static class SettingsWindowTests
 
             var topBarLookSummary = Require<SettingsRow>(window, "TopBarLookSummaryRow");
             Assert(topBarLookSummary.Header == (topBar.FollowCardLook ? "外观：跟随全局" : "外观：已自定义"), $"顶部信息条页应显示与状态一致的外观单行摘要：实际「{topBarLookSummary.Header}」，跟随 {topBar.FollowCardLook}");
+            var appliesBeforeAppearance = applies;
             Click(Require<Button>(window, "TopBarLookJumpButton"));
             Assert(Require<FrameworkElement>(window, "AppearancePage").IsVisible
                 && Require<FrameworkElement>(window, "AppearanceTopBarPartEditor").IsVisible,
                 "点击顶部信息条页去调整应跳到外观样式页并展开顶部信息条行");
 
             var frosted = Require<CheckBox>(window, "TopBarFrostedCheckBox");
+            var opacity = Require<Slider>(window, "TopBarOpacitySlider");
             Assert(frosted.IsVisible, "展开顶部信息条行后应显示磨砂玻璃开关");
+            Assert(opacity.Value == 0d && !frosted.IsEnabled && frosted.IsChecked == false
+                && topBar.FrostedGlass && applies == appliesBeforeAppearance,
+                "打开设置时白色 0% 顶栏应显示清透并保留已有磨砂偏好，且不写入设置");
+            opacity.Value = 0.8d;
+            Pump();
+            Assert(frosted.IsEnabled && frosted.IsChecked == true && topBar.FrostedGlass,
+                "提升浅色顶栏不透明度后应恢复磨砂偏好");
+            opacity.Value = 0d;
+            Pump();
+            Assert(!frosted.IsEnabled && frosted.IsChecked == false && topBar.FrostedGlass,
+                "选择 0% 应取消实际磨砂效果");
+            var customize = Require<Button>(window, "AppearanceTopBarCustomizeButton");
+            var appliesBeforeReopen = applies;
+            Click(customize);
+            Click(customize);
+            Assert(frosted.IsVisible && !frosted.IsEnabled && frosted.IsChecked == false
+                && topBar.FrostedGlass && applies == appliesBeforeReopen,
+                "重新展开外观应显示当前清透状态并保留已有磨砂偏好，且不写入设置");
+            opacity.Value = 0.8d;
             frosted.IsChecked = false;
             Pump();
             Assert(!topBar.FrostedGlass, "磨砂开关应写入状态");
 
+            Require<RadioButton>(window, "TopBarFollowLookRadio").IsChecked = true;
+            Pump();
             Require<RadioButton>(window, "TopBarCustomLookRadio").IsChecked = true;
             Pump();
             Assert(!topBar.FollowCardLook, "自定义外观应写入状态");

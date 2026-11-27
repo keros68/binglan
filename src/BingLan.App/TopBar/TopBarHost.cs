@@ -59,6 +59,24 @@ internal sealed class TopBarHost : IDisposable
 
     internal bool HasWindow => _windows.Count > 0;
 
+    internal bool TryOpenTrayForApplication(nint monitorHandle)
+    {
+        var windows = _windows.Values.ToArray();
+        var preferred = windows.FirstOrDefault(window => window.ActiveMonitorHandle == monitorHandle);
+        return preferred?.TryOpenTrayForApplication() == true
+            || windows.Any(window => window != preferred && window.TryOpenTrayForApplication());
+    }
+
+    internal nint ResolveTrayPanelForeground(nint current)
+    {
+        foreach (var window in _windows.Values)
+        {
+            var resolved = window.ResolveTrayPanelForeground(current);
+            if (resolved != current) return resolved;
+        }
+        return current;
+    }
+
     internal bool IsRunningOnMonitor(string monitorKey) => _windows.ContainsKey(monitorKey);
 
     internal bool IsVisibleOnMonitor(string monitorKey) =>

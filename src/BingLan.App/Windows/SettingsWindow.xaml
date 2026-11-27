@@ -921,13 +921,13 @@
                                 <local:SettingsRow x:Name="TopBarFrostedRow"
                                                    Style="{StaticResource NestedSettingsRowStyle}"
                                                    Header="顶部信息条磨砂玻璃"
-                                                   Description="深色底板可模糊背后的画面，弹层同步使用磨砂。关闭后保留原色和透明度。不透明度为 0% 时完全清透。"
+                                                   Description="模糊底板背后的画面，弹层同步使用磨砂。"
                                                    local:SettingsSearch.Keywords="顶端信息条磨砂玻璃 顶端信息条 顶栏磨砂 顶栏外观">
                                     <CheckBox x:Name="TopBarFrostedCheckBox"
                                               AutomationProperties.Name="磨砂玻璃"
                                               Style="{StaticResource ToggleSwitchStyle}"
-                                              Checked="TopBarSetting_Changed"
-                                              Unchecked="TopBarSetting_Changed"/>
+                                              Checked="TopBarFrosted_Changed"
+                                              Unchecked="TopBarFrosted_Changed"/>
                                 </local:SettingsRow>
                                 <local:SettingsRow x:Name="TopBarLookSettingsRow"
                                                    Style="{StaticResource NestedSettingsRowStyle}"
