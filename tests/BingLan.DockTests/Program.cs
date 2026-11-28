@@ -1945,7 +1945,7 @@ static void TestDockHandleRevealGrace()
         revealedFromHandle: true,
         pointerOverStrip: false,
         clearRequested: false);
-    AssertEqual(t0 + DockAutoHideState.HandleRevealGrace, deadline, "从把手唤出应设置宽限截止时间");
+    AssertEqual(t0 + TimeSpan.FromSeconds(1), deadline, "从把手唤出应保留一秒供指针移入 Dock");
 
     // 鼠标离开把手、正在移向正中 Dock：最大化窗口覆盖期间，宽限期内应保持显示。
     var state = new DockAutoHideState();

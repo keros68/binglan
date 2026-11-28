@@ -24,7 +24,7 @@ public sealed class DockAutoHideState
     /// travel from the corner handle to the centred dock without a maximized foreground
     /// window collapsing the dock mid-way.
     /// </summary>
-    public static readonly TimeSpan HandleRevealGrace = TimeSpan.FromMilliseconds(2200);
+    public static readonly TimeSpan HandleRevealGrace = TimeSpan.FromSeconds(1);
 
     private DateTimeOffset? _hideRequestedAt;
 

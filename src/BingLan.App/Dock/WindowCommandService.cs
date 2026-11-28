@@ -14,7 +14,11 @@ internal sealed record WindowCommandResult(
     bool Succeeded,
     string Message,
     bool NoLiveWindows = false,
-    bool OpenTrayRecommended = false);
+    bool OpenTrayRecommended = false)
+{
+    internal static WindowCommandResult TrayRevealFailed(string displayName) =>
+        new(false, TrayAppRevealRules.FormatTrayHotkeyHint(displayName), OpenTrayRecommended: true);
+}
 
 internal static class WindowCommandService
 {
@@ -322,7 +326,7 @@ internal static class WindowCommandService
     // Apps like WeChat and QQ close to the tray with hidden windows that must not be force-shown
     // from outside, and re-launching their exe spawns a new login panel. Single-instance tray
     // residency uses the app's own reveal hotkey; multi-instance tray residency or hotkey failure
-    // shows a clear hint instead of popping the wrong account or opening an unwanted login window.
+    // opens the tray when available so the user can select the intended account.
     internal static async Task<WindowCommandResult> RevealOrLaunchAsync(
         DockPinnedApp app,
         uint? preferredProcessId = null,
@@ -423,7 +427,7 @@ internal static class WindowCommandService
                     TrayAppRevealRules.FormatMultiInstanceTrayHint(app.DisplayName),
                     OpenTrayRecommended: true);
             case TrayRevealAction.NotifyHotkeyUnavailable:
-                return new WindowCommandResult(false, TrayAppRevealRules.FormatTrayHotkeyHint(app.DisplayName));
+                return WindowCommandResult.TrayRevealFailed(app.DisplayName);
             case TrayRevealAction.NotifyTargetUnavailable:
                 return new WindowCommandResult(false, $"{app.DisplayName} 的提醒窗口已关闭", NoLiveWindows: true);
             case TrayRevealAction.LaunchNewProcess:
@@ -436,7 +440,7 @@ internal static class WindowCommandService
 
         if (hotkey is null || !ShellSurfaceNativeMethods.SendChord(ModifierKeysOf(hotkey), (ushort)hotkey.VirtualKey))
         {
-            return new WindowCommandResult(false, TrayAppRevealRules.FormatTrayHotkeyHint(app.DisplayName));
+            return WindowCommandResult.TrayRevealFailed(app.DisplayName);
         }
 
         var deadline = Environment.TickCount64 + (long)TrayAppRevealRules.RevealTimeout.TotalMilliseconds;
@@ -449,7 +453,7 @@ internal static class WindowCommandService
             }
         }
 
-        return new WindowCommandResult(false, TrayAppRevealRules.FormatTrayHotkeyHint(app.DisplayName));
+        return WindowCommandResult.TrayRevealFailed(app.DisplayName);
     }
 
     private static Task<WindowCommandResult> FocusRevealedHandleAsync(

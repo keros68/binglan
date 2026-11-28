@@ -95,7 +95,7 @@ internal static class ShellSurfaceTests
             TestTaskbarLayoutRefresh(dock, pump);
             var flags = BindingFlags.Instance | BindingFlags.NonPublic;
             var reportResult = typeof(IceBlueDockWindow).GetMethod("ReportCommandResult", flags)!;
-            var trayResult = new WindowCommandResult(false, "请从系统托盘打开应用", OpenTrayRecommended: true);
+            var trayResult = WindowCommandResult.TrayRevealFailed("微信");
             string? commandHint = null;
             dock.CommandFailed += message => commandHint = message;
             reportResult.Invoke(dock, [trayResult]);
