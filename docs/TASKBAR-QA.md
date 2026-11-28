@@ -212,6 +212,8 @@ Windows 11 Build 26300，主屏 3840×2160、175%，副屏 2560×1440、150%。�
 
 主屏 175%，Windows 原生任务栏开启自动隐藏。在修复前的预览中，从冰蓝托盘单击 Clash Verge 后，原生任务栏的可见高度从 2 px 变为 84 px，Dock 从 185 px 收起后重新出现。修复预览分别在 Clash 窗口原本可见和已隐藏时单击同一图标，两次均将其主窗口带到前台。两段采样分别为 303 次和 293 次，任务栏可见高度保持 2 px，Dock 保持 185 px。两次对照均使用 Windows 正常的自动隐藏设置。
 
+从冰蓝托盘打开 Clash，实点主窗口右上角 ×，并核对原进程仍在运行。Windows 正常自动隐藏时连续 3 轮、预览完全隐藏任务栏时连续 2 轮，主窗口每次均能收回托盘。5 轮唤起期间 Dock 高度均保持 185 px。日后可将使用默认托盘动作的 Clash Verge 2.5.10 收回托盘，再运行 `dotnet run --project tests/BingLan.UiSmokeTests -c Release -- --clash-close-to-tray` 复测原窗口的显示、关闭和再次显示。
+
 ### 任务栏收起时的常显图标
 
 在 Windows 11 Build 26300、主屏 3840×2160、175% 缩放下，Windows 任务栏收起至 2 px 时，Explorer 的 UI Automation 枚举只返回折叠区。用实时注册的图标位置查询同一 Explorer 的 MSAA 按钮后，冷启动读到 5 个常显图标和 7 个折叠图标。常显区包含微信、Clash Verge 和 OneDrive。

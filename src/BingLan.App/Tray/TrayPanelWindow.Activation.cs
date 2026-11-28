@@ -15,7 +15,6 @@ internal sealed partial class TrayPanelWindow
 {
     private const string ClashVergeAppId = "io.github.clash-verge-rev.clash-verge-rev";
     private const int MaximumClashConfigBytes = 256 * 1024;
-    private const int SwShowNa = 8;
 
     internal static bool IsClashVergeMainWindow(string title, string windowClass) =>
         title == TrayIconArtwork.ClashVergeName && windowClass == "Tauri Window";
@@ -28,48 +27,40 @@ internal sealed partial class TrayPanelWindow
     private static async Task<bool?> ActivateClashVergeAsync(TrayActivationOwner owner, CancellationToken cancellation)
     {
         cancellation.ThrowIfCancellationRequested();
-        // The default tray action in this release only shows/focuses the existing window.
-        // Lightweight mode destroys that window and needs the application's own tray action.
         if (!UsesClashVergeMainWindowAction(owner.ExecutablePath)
-            || FindClashVergeMainWindow(owner.ProcessId) is not { } target
-            || Application.Current?.Dispatcher is not { } dispatcher)
+            || FindClashVergeMainWindow(owner.ProcessId) is null
+            || Native.GetWindowThreadProcessId(owner.Window, out var iconProcessId) == 0
+            || iconProcessId != owner.ProcessId)
         {
             return null;
         }
 
-        return await dispatcher.InvokeAsync(async Task<bool?> () =>
-        {
-            cancellation.ThrowIfCancellationRequested();
-            if (!IsClashVergeWindow(target, owner.ProcessId)
-                || Native.GetWindowThreadProcessId(owner.Window, out var iconProcessId) == 0
-                || iconProcessId != owner.ProcessId)
-            {
-                return null;
-            }
-
-            if (!DockNativeMethods.IsWindowVisible(target))
-            {
-                if (!DockNativeMethods.ShowWindowAsync(target, SwShowNa)) return null;
-                // Only the target thread can complete an asynchronous show.
-                var deadline = Environment.TickCount64 + 250;
-                while (!DockNativeMethods.IsWindowVisible(target) && Environment.TickCount64 < deadline)
-                {
-                    await Task.Delay(15, cancellation);
-                }
-                if (!DockNativeMethods.IsWindowVisible(target) || !IsClashVergeWindow(target, owner.ProcessId))
-                    return false;
-            }
-
-            var minimized = DockNativeMethods.IsIconic(target);
-            var window = new TrackedWindow(target, owner.ProcessId, TrayIconArtwork.ClashVergeName, null, owner.ExecutablePath,
-                DockNativeMethods.GetForegroundWindow() == target, minimized);
-            cancellation.ThrowIfCancellationRequested();
-            var result = await WindowCommandService.FocusAsync(window, minimized, flashOnFailure: false);
-            return result.Succeeded;
-        }, DispatcherPriority.Input, cancellation).Task.Unwrap();
+        // Clash's single-instance entry shows the window through Tauri, which also handles close-to-tray.
+        cancellation.ThrowIfCancellationRequested();
+        using var instance = StartClashVerge(owner);
+        if (instance is null) return null;
+        await instance.WaitForExitAsync(cancellation);
+        return instance.ExitCode == 0;
     }
 
-    private static nint? FindClashVergeMainWindow(uint processId)
+    private static Process? StartClashVerge(TrayActivationOwner owner)
+    {
+        try
+        {
+            _ = DockNativeMethods.AllowSetForegroundWindow(owner.ProcessId);
+            return Process.Start(new ProcessStartInfo(owner.ExecutablePath)
+            {
+                UseShellExecute = false,
+                WorkingDirectory = Path.GetDirectoryName(owner.ExecutablePath)!
+            });
+        }
+        catch (Exception exception) when (exception is Win32Exception or InvalidOperationException)
+        {
+            return null;
+        }
+    }
+
+    internal static nint? FindClashVergeMainWindow(uint processId)
     {
         nint? match = null;
         Native.EnumWindows((window, _) =>
@@ -99,7 +90,7 @@ internal sealed partial class TrayPanelWindow
         return IsClashVergeMainWindow(title.ToString(), Native.ClassName(window));
     }
 
-    private static bool UsesClashVergeMainWindowAction(string path)
+    internal static bool UsesClashVergeMainWindowAction(string path)
     {
         try
         {

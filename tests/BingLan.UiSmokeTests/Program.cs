@@ -96,6 +96,9 @@ internal static class Program
     [STAThread]
     private static int Main()
     {
+        if (Environment.GetCommandLineArgs().Contains("--clash-close-to-tray"))
+            return TrayOverflowExperimentTests.ClashCloseToTray();
+
         if (Environment.GetCommandLineArgs().Contains("--tray-read-probe"))
             return TrayOverflowExperimentTests.ReadLiveSnapshot();
 

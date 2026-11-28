@@ -1,4 +1,5 @@
 using BingLan.App.Taskbar;
+using BingLan.App.Interop;
 using BingLan.App;
 using BingLan.App.Tray;
 using BingLan.App.Services;
@@ -23,6 +24,40 @@ internal static class TrayOverflowExperimentTests
         var weixin = taskbar.Any(entry => entry.Name.Trim().StartsWith("微信", StringComparison.Ordinal));
         Console.WriteLine($"Taskbar={taskbar.Length}; Overflow={snapshot.Length - taskbar.Length}; "
             + $"MSAA={msaa}; Clash={clash is not null}; ClashDirect={clash?.ActivationOwner is not null}; Weixin={weixin}");
+        return 0;
+    }
+
+    // Opt-in integration test against the user's running Clash Verge with its default tray action.
+    internal static int ClashCloseToTray()
+    {
+        const uint wmClose = 0x0010;
+        var entries = TrayReader.RefreshSnapshotAsync().GetAwaiter().GetResult();
+        var entry = entries?.SingleOrDefault(item => TrayIconArtwork.IsClashVergeTooltip(item.Name));
+        if (entry?.ActivationOwner is not { } owner
+            || !TrayPanelWindow.UsesClashVergeMainWindowAction(owner.ExecutablePath)
+            || TrayPanelWindow.FindClashVergeMainWindow(owner.ProcessId) is not { } window
+            || DockNativeMethods.IsWindowVisible(window))
+        {
+            Console.Error.WriteLine("请先将使用默认托盘动作的 Clash Verge 2.5.10 主窗口收回托盘。");
+            return 1;
+        }
+
+        using var app = System.Diagnostics.Process.GetProcessById((int)owner.ProcessId);
+        for (var round = 1; round <= 3; round++)
+        {
+            var result = TrayReader.InvokeAsync(entry.Identity, activateApp: TrayPanelWindow.ActivateTrayAppAsync,
+                displayedEntry: entry).GetAwaiter().GetResult();
+            Assert(result == "invoked" && SpinWait.SpinUntil(() => DockNativeMethods.IsWindowVisible(window),
+                TimeSpan.FromSeconds(3)), "托盘点击应显示同一 Clash 窗口");
+            Assert(TrayPanelWindow.FindClashVergeMainWindow(owner.ProcessId) == window
+                && DockNativeMethods.PostMessageW(window, wmClose, 0, 0), "向该窗口请求关闭");
+            Assert(SpinWait.SpinUntil(() => !DockNativeMethods.IsWindowVisible(window),
+                TimeSpan.FromSeconds(3)) && !app.HasExited, "关闭后主窗口应隐藏，原进程应继续运行");
+            // Clash 2.5.10 coalesces show requests within 625 ms. Observe the hidden window through that interval.
+            Assert(!SpinWait.SpinUntil(() => DockNativeMethods.IsWindowVisible(window), TimeSpan.FromMilliseconds(750)),
+                "收回托盘后主窗口应保持隐藏");
+            Console.WriteLine($"通过：第 {round} 次打开 Clash 并收回托盘");
+        }
         return 0;
     }
 
