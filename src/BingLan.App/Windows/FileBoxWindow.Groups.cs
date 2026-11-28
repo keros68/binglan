@@ -38,6 +38,8 @@ public partial class FileBoxWindow
 
     internal FileBoxState? FindTab(Guid boxId) => _tabs.FirstOrDefault(tab => tab.Id == boxId);
 
+    internal event Action<FileBoxWindow>? ActiveTabSwitching;
+
     internal event Action<FileBoxWindow>? ActiveTabChanged;
 
     internal event Action<FileBoxWindow, FileBoxWindow>? MergeRequested;
@@ -183,6 +185,7 @@ public partial class FileBoxWindow
             EndTitleEdit(commit: true);
         }
 
+        ActiveTabSwitching?.Invoke(this);
         CaptureState();
         CacheCurrentTabIcons();
         ClearSelection();

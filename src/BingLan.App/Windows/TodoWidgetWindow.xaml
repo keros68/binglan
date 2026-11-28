@@ -457,6 +457,7 @@
                                      Grid.Column="1"
                                      AutomationProperties.Name="待办组件标题"
                                      Style="{StaticResource DesktopContentTitleStyle}"
+                                     FontSize="{DynamicResource TodoFont.CardTitle}"
                                      Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
                                      FontFamily="{Binding WidgetTitleFontFamily, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
                                      FontWeight="{Binding WidgetTitleFontWeight, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
@@ -469,7 +470,7 @@
                                VerticalAlignment="Center"
                                IsHitTestVisible="False"
                                Visibility="Collapsed"
-                               FontSize="{StaticResource CardFont.Meta}"
+                               FontSize="{DynamicResource TodoFont.CardMeta}"
                                Foreground="{Binding WidgetSecondaryTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"/>
                     <Button x:Name="SettingsButton"
                             Grid.Column="2"
@@ -1176,7 +1177,7 @@
                                 IsHitTestVisible="False"
                                 Visibility="Collapsed">
                         <TextBlock x:Name="TodoEmptyTitleText"
-                                   FontSize="{StaticResource CardFont.Subhead}"
+                                   FontSize="{DynamicResource TodoFont.EmptyTitle}"
                                    FontWeight="SemiBold"
                                    Foreground="{Binding WidgetTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
                                    Text="还没有待办事项"
@@ -1184,7 +1185,7 @@
                                    TextWrapping="Wrap"/>
                         <TextBlock x:Name="TodoEmptyGuideText"
                                    Margin="{StaticResource CardSpace.TightGap}"
-                                   FontSize="{StaticResource CardFont.Meta}"
+                                   FontSize="{DynamicResource TodoFont.CardMeta}"
                                    Foreground="{Binding WidgetSecondaryTextBrush, RelativeSource={RelativeSource AncestorType={x:Type local:WidgetWindowBase}}}"
                                    Text="点击右上角 + 添加第一条待办"
                                    TextAlignment="Center"

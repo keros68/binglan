@@ -1,6 +1,6 @@
 # Builds the self-contained installer and portable archive, or the framework-dependent archive.
 param(
-    [string]$Version = "0.7.3",
+    [string]$Version = "0.7.4",
     [switch]$FrameworkDependentPortable
 )
 $ErrorActionPreference = "Stop"

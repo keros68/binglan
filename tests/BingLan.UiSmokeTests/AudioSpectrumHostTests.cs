@@ -3,6 +3,7 @@ using System.Reflection;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using BingLan.App.Services;
 using BingLan.App.Windows;
@@ -13,6 +14,7 @@ internal static class AudioSpectrumHostTests
 {
     internal static void Run(Action<Window> show, Action pump)
     {
+        CheckRestingSpectrum();
         var experience = DesktopExperienceRules.CreateDefault();
         var component = experience.GetComponent(DesktopComponentKind.AudioVisualizer);
         Check(!component.IsVisible, "频谱应默认关闭");
@@ -79,6 +81,39 @@ internal static class AudioSpectrumHostTests
             window.Close();
             pump();
         }
+    }
+
+    private static void CheckRestingSpectrum()
+    {
+        const int width = 480, height = 100;
+        var view = new AudioSpectrumView { SpectrumBrush = Brushes.White };
+        view.Measure(new Size(width, height));
+        view.Arrange(new Rect(0, 0, width, height));
+
+        byte[] Render()
+        {
+            view.UpdateLayout();
+            var image = new RenderTargetBitmap(width, height, 96, 96, PixelFormats.Pbgra32);
+            image.Render(view);
+            var pixels = new byte[width * height * 4];
+            image.CopyPixels(pixels, width * 4, 0);
+            return pixels;
+        }
+
+        var resting = Render();
+        // At 480 DIP each of the 48 bands occupies a ten-pixel cell.
+        for (var x = 0; x < width; x += 10)
+        {
+            Check(resting[((height - 1) * width + x + 5) * 4 + 3] > 0
+                && resting[((height - 1) * width + x) * 4 + 3] == 0,
+                "安静时每个频段都应显示独立短线");
+        }
+        Check(resting.AsSpan(0, (height - 2) * width * 4).IndexOfAnyExcept((byte)0) < 0,
+            "静止短线上方应保持透明");
+        view.SetSuspended(true);
+        Check(Render().All(value => value == 0), "全屏暂停时频谱应完全透明");
+        view.SetSuspended(false);
+        Check(resting.SequenceEqual(Render()), "退出暂停后应立即恢复静止短线");
     }
 
     private static T Require<T>(Window window, string name) where T : class =>

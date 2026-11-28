@@ -213,6 +213,17 @@ internal static class CleanDesktopTests
             negFirst.NextPendingClick, x: -1203, y: -397, timestampMs: 2250, maxIntervalMs: 500, doubleClickWidth: 6, doubleClickHeight: 6);
         Check(negSecond.IsDoubleClick, "负坐标副屏应正确计算双击距离");
 
+        // A busy message loop may receive both messages on the far side of the Win32 timer wrap.
+        const long timerWrap = (long)uint.MaxValue + 1;
+        var beforeWrap = DesktopDoubleClickRules.ExpandMessageTimestamp(uint.MaxValue - 99, timerWrap + 600);
+        var afterWrap = DesktopDoubleClickRules.ExpandMessageTimestamp(150, timerWrap + 1200);
+        Check(beforeWrap == timerWrap - 100 && afterWrap == timerWrap + 150,
+            "双击应使用消息入队时间，即使两次消息在 32 位时钟回绕后才被处理");
+        var wrappedClick = DesktopDoubleClickRules.EvaluateLeftButtonDown(
+            new DesktopClickStamp(500, 300, beforeWrap), x: 500, y: 300, timestampMs: afterWrap,
+            maxIntervalMs: 500, doubleClickWidth: 4, doubleClickHeight: 4);
+        Check(wrappedClick.IsDoubleClick, "实际相隔 250 毫秒的双击不会被消息处理延迟拉长");
+
         // Backwards clock or non-positive interval must never trigger.
         var rollback = DesktopDoubleClickRules.EvaluateLeftButtonDown(
             first.NextPendingClick, x: 500, y: 300, timestampMs: 999, maxIntervalMs: 500, doubleClickWidth: 4, doubleClickHeight: 4);
@@ -249,6 +260,19 @@ internal static class CleanDesktopTests
             "普通应用窗口不得判定为桌面");
         Check(!DesktopDoubleClickRules.IsDesktopAncestorChain([]),
             "空窗口链不得判定为桌面");
+
+        Check(DesktopDoubleClickRules.IsDesktopBlankWithHiddenIconList("SHELLDLL_DefView", false),
+            "已确认桌面图标列表隐藏时，桌面视图空白点应直接通过");
+        Check(DesktopDoubleClickRules.IsDesktopBlankWithHiddenIconList("Progman", false)
+            && DesktopDoubleClickRules.IsDesktopBlankWithHiddenIconList("WorkerW", false),
+            "桌面壁纸宿主命中同样可凭已确认隐藏的图标列表判断空白");
+        Check(!DesktopDoubleClickRules.IsDesktopBlankWithHiddenIconList("SHELLDLL_DefView", true)
+            && !DesktopDoubleClickRules.IsDesktopBlankWithHiddenIconList("SHELLDLL_DefView", null),
+            "图标列表可见或状态未知时应继续进行逐点命中检测");
+        Check(!DesktopDoubleClickRules.IsDesktopBlankWithHiddenIconList("SysListView32", false)
+            && !DesktopDoubleClickRules.IsDesktopBlankWithHiddenIconList("Edit", false)
+            && !DesktopDoubleClickRules.IsDesktopBlankWithHiddenIconList("CabinetWClass", false),
+            "隐藏图标快速判定仅适用于经过验证的桌面背景窗口");
 
         Check(DesktopDoubleClickRules.IsDesktopBlankAccessibleHit(0, DesktopDoubleClickRules.RoleSystemList),
             "childId=0 且角色为 LIST 应判定为桌面空白区");

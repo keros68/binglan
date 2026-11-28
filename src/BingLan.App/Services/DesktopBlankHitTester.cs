@@ -8,10 +8,9 @@ namespace BingLan.App.Services;
 /// <summary>
 /// Multi-gate verifier deciding whether a physical screen point lies on an unobstructed,
 /// empty area of the Windows desktop (not a desktop icon, not a BingLan window, not
-/// covered by another app or full-screen app). Runs the read-only MSAA
-/// <c>AccessibleObjectFromPoint</c> check on a short-lived STA worker thread with a
-/// tight timeout so a slow Explorer never blocks the UI thread; any failure or timeout
-/// is treated conservatively as uncertain and ignored.
+/// covered by another app or full-screen app). If the desktop icon list can contain a
+/// visible icon at the point, runs <c>AccessibleObjectFromPoint</c> on a short-lived
+/// STA worker thread with a tight timeout so a slow Explorer never blocks the UI thread.
 /// </summary>
 internal sealed class DesktopBlankHitTester
 {
@@ -75,9 +74,42 @@ internal sealed class DesktopBlankHitTester
             return false;
         }
 
-        // Gate 5: Read-only MSAA probe off the UI thread with a strict timeout.
-        // Failure, timeout or unexpected role/childId is treated as uncertain -> false.
+        // A verified hidden icon list cannot intercept the click at a desktop background point.
+        // Querying MSAA while Explorer activates that background is unnecessary.
+        var hitClass = ClassNameOf(hitWindow);
+        var desktopView = hitClass switch
+        {
+            "SHELLDLL_DefView" => hitWindow,
+            "Progman" or "WorkerW" => NativeMethods.FindWindowExW(desktopRoot, 0, "SHELLDLL_DefView", null),
+            _ => 0
+        };
+        if (DesktopDoubleClickRules.IsDesktopBlankWithHiddenIconList(
+                hitClass, ReadIconListVisibility(desktopView, shellProcessId)))
+        {
+            return true;
+        }
+
+        // Visible or undetermined icon lists require an affirmative MSAA blank hit.
         return await ProbeBlankDesktopViaMsaaAsync(point, shellProcessId);
+    }
+
+    private static bool? ReadIconListVisibility(nint desktopView, uint shellProcessId)
+    {
+        if (desktopView == 0)
+        {
+            return null;
+        }
+
+        var iconList = NativeMethods.FindWindowExW(desktopView, 0, "SysListView32", null);
+        if (iconList == 0
+            || NativeMethods.GetWindowThreadProcessId(iconList, out var processId) == 0
+            || processId != shellProcessId)
+        {
+            return null;
+        }
+
+        var visible = NativeMethods.IsWindowVisible(iconList);
+        return DockNativeMethods.IsWindow(iconList) ? visible : null;
     }
 
     private async Task<bool> ProbeBlankDesktopViaMsaaAsync(

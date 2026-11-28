@@ -38,8 +38,13 @@ public sealed class AudioSpectrumView : FrameworkElement
 
     public void SetSuspended(bool suspended)
     {
+        if (_suspended == suspended)
+        {
+            return;
+        }
         _suspended = suspended;
         UpdateSubscription();
+        InvalidateVisual();
     }
 
     private void UpdateSubscription()
@@ -88,7 +93,7 @@ public sealed class AudioSpectrumView : FrameworkElement
     protected override void OnRender(DrawingContext drawingContext)
     {
         base.OnRender(drawingContext);
-        if (ActualWidth <= 0 || ActualHeight <= 0)
+        if (_suspended || ActualWidth <= 0 || ActualHeight <= 0)
         {
             return;
         }
@@ -96,13 +101,10 @@ public sealed class AudioSpectrumView : FrameworkElement
         var step = ActualWidth / _levels.Length;
         var barWidth = step * 0.68;
         var radius = Math.Min(2.5, barWidth * 0.5);
+        var restingHeight = Math.Min(2d, ActualHeight);
         for (var i = 0; i < _levels.Length; i++)
         {
-            var height = _levels[i] * ActualHeight;
-            if (height < 0.5)
-            {
-                continue;
-            }
+            var height = Math.Max(restingHeight, _levels[i] * ActualHeight);
             drawingContext.DrawRoundedRectangle(brush, null,
                 new Rect(i * step + (step - barWidth) * 0.5, ActualHeight - height, barWidth, height),
                 radius, radius);

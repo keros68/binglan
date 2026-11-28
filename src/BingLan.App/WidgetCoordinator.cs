@@ -3734,12 +3734,12 @@ public sealed partial class WidgetCoordinator : IDisposable
         }
         _isExiting = true;
         _saveTimer.Stop();
+        _settingsWindow?.Close();
+        _settingsWindow = null;
         var canCaptureSecondaryPlacement = !WindowScreenRecovery.IsLayoutTransitioning()
             && MonitorIdentityResolver.HasMultipleMonitors();
         DisposeMultiScreenHost(capturePlacement: canCaptureSecondaryPlacement);
         SaveNow();
-        _settingsWindow?.Close();
-        _settingsWindow = null;
         _launcherPanel?.Close();
         _peek.Dispose();
         StopDesktopDoubleClickWatcher();

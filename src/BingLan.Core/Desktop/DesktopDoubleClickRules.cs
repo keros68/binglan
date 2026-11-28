@@ -30,6 +30,10 @@ public static class DesktopDoubleClickRules
     public const int RoleSystemList = 0x21;
     public const int RoleSystemListItem = 0x22;
 
+    /// <summary>Expands the 32-bit Win32 message time into the current 64-bit uptime.</summary>
+    public static long ExpandMessageTimestamp(uint messageTime, long receivedAtMs) =>
+        receivedAtMs - unchecked((uint)receivedAtMs - messageTime);
+
     /// <summary>
     /// Evaluates one left-button-down event against the previous unmatched press.
     /// After a matched double-click the pending press is cleared so a third rapid press
@@ -124,6 +128,11 @@ public static class DesktopDoubleClickRules
     public static bool IsDesktopHostClass(string? className) =>
         string.Equals(className, "Progman", StringComparison.Ordinal)
         || string.Equals(className, "WorkerW", StringComparison.Ordinal);
+
+    /// <summary>Whether a validated desktop background hit has a known hidden icon list.</summary>
+    public static bool IsDesktopBlankWithHiddenIconList(string windowClass, bool? iconListVisible) =>
+        iconListVisible == false
+        && (windowClass == "SHELLDLL_DefView" || IsDesktopHostClass(windowClass));
 
     /// <summary>
     /// Whether an <c>AccessibleObjectFromPoint</c> result positively confirms an empty

@@ -1325,6 +1325,9 @@ public partial class TodoWidgetWindow : WidgetWindowBase
     // fixed line box scales with it, or wrapped lines would overlap.
     private static readonly (string Key, double Size)[] ScaledFontSizes =
     [
+        ("TodoFont.CardTitle", 19),
+        ("TodoFont.CardMeta", 12),
+        ("TodoFont.EmptyTitle", 15),
         ("TodoFont.ListItem", 14),
         ("TodoFont.CellItem", 12),
         ("TodoFont.CellLineHeight", 16),

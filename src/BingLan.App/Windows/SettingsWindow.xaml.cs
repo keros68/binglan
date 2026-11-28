@@ -536,8 +536,7 @@ public partial class SettingsWindow : Window
         object sender,
         SelectionChangedEventArgs e)
     {
-        if (_suppressComponentSelectionReload
-            || DesktopComponentList?.SelectedItem is not DesktopComponentSettingsEntry entry
+        if (DesktopComponentList?.SelectedItem is not DesktopComponentSettingsEntry entry
             || SelectedComponentVisibleCheckBox is null)
         {
             return;
@@ -4963,12 +4962,36 @@ public partial class SettingsWindow : Window
         _searchCancellation = null;
     }
 
-    public sealed record DesktopComponentSettingsEntry(
-        string Name,
-        string TypeName,
-        string Status,
-        DesktopComponentKind? Kind,
-        WidgetWindowBase? Window);
+    public sealed class DesktopComponentSettingsEntry(
+        string name,
+        string typeName,
+        string status,
+        DesktopComponentKind? kind,
+        WidgetWindowBase? window) : INotifyPropertyChanged
+    {
+        private string _name = name;
+
+        public string Name
+        {
+            get => _name;
+            internal set
+            {
+                if (string.Equals(_name, value, StringComparison.Ordinal))
+                {
+                    return;
+                }
+                _name = value;
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Name)));
+            }
+        }
+
+        public string TypeName { get; } = typeName;
+        public string Status { get; } = status;
+        public DesktopComponentKind? Kind { get; } = kind;
+        public WidgetWindowBase? Window { get; } = window;
+
+        public event PropertyChangedEventHandler? PropertyChanged;
+    }
 }
 
 internal sealed class DockPinnedEntry(DockPinnedApp app)

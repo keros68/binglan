@@ -347,6 +347,7 @@ internal static class Program
         Run("设置搜索索引、键盘选择与跳转展开", TestSettingsSearchJump, failures);
         Run("设置首页「我想…」任务入口跳转与回退", TestSettingsHomeQuickActions, failures);
         Run("桌面组件页选中态、顶部固定操作栏、双向改名与列表溢出提示", TestDesktopComponentsPageUsabilityD1, failures);
+        Run("收纳盒悬停切标签保留原标签的设置名称", TestFileBoxTabSwitchCommitsSettingsTitle, failures);
         Run("Dock 悬停放大运行中切换与归位后不再被动画时钟锁死", TestDockHoverMagnificationRuntimeToggle, failures);
         Run("独立外观折叠与未跟随全局的部分", TestComponentOwnLookAndOverrides, failures);
         Run("设置中心深色配色只作用于设置窗口", TestSettingsDarkPalette, failures);
@@ -4904,6 +4905,7 @@ internal static class Program
         var temp = Path.Combine(Path.GetTempPath(), $"BingLan-todo-scale-{Guid.NewGuid():N}");
         Directory.CreateDirectory(temp);
         var coordinator = new WidgetCoordinator(interactiveQa: true, dataDirectory: temp);
+        SettingsWindow? settings = null;
         const System.Reflection.BindingFlags Private =
             System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
         try
@@ -4925,25 +4927,79 @@ internal static class Program
             var chosen = InstalledFontCatalog.BundledNames.First();
             var expected = InstalledFontCatalog.Create(InstalledFontCatalog.Resolve(chosen)).Source;
             todoComponent.FontFamily = chosen;
+            var existingTitle = appState.TodoWidgets[0].Title;
+            var extraTodo = new TodoWidgetState { Title = existingTitle, FontScale = 1.1 };
+            appState.TodoWidgets.Add(extraTodo);
 
             coordinator.Start();
-            PumpUntil(() => Application.Current.Windows.OfType<TodoWidgetWindow>().Any(x => x.IsLoaded),
-                "今日待办卡片应随启动打开");
-            var todo = Application.Current.Windows.OfType<TodoWidgetWindow>().Single();
+            PumpUntil(() => Application.Current.Windows.OfType<TodoWidgetWindow>().Count(x => x.IsLoaded) == 2,
+                "两张待办卡片应随启动打开");
+            var todos = Application.Current.Windows.OfType<TodoWidgetWindow>().ToList();
+            var todo = todos.Single(window => window.State.Id != extraTodo.Id);
+            var extraWindow = todos.Single(window => window.State.Id == extraTodo.Id);
             Assert(Math.Abs(todo.ContentFontScale - 1.3) < 1e-9, "启动时卡片应读取已保存的字号缩放");
             Assert(todo.ContentFontFamily.Source == expected, "启动时卡片应读取已保存的字体");
 
-            todoComponent.FontScale = 0.8;
-            todoComponent.FontFamily = null;
-            typeof(WidgetCoordinator).GetMethod("ApplyDesktopExperience", Private)!
-                .Invoke(coordinator, [appState.DesktopExperience]);
+            typeof(WidgetCoordinator).GetMethod("OpenSettings", Private, [typeof(WidgetWindowBase)])!
+                .Invoke(coordinator, [todo]);
+            settings = Application.Current.Windows.OfType<SettingsWindow>().Single();
             Pump();
-            Assert(Math.Abs(todo.ContentFontScale - 0.8) < 1e-9, "设置页修改字号缩放后卡片应立即跟随");
+            var title = Require<TextBox>(settings, "SelectedComponentTitleEditor");
+            title.SetCurrentValue(TextBox.TextProperty, " ");
+            title.RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(title)!, 0, Key.Escape)
+                { RoutedEvent = UIElement.KeyDownEvent });
+            Assert(todo.State.Title == existingTitle && extraWindow.State.Title == existingTitle
+                && title.Text == existingTitle, "取消空白编辑应保留旧数据中已有的同名卡片");
+            title.SetCurrentValue(TextBox.TextProperty, "本周清单");
+            Assert(todo.State.Title == "本周清单", "修改名称后应直接写入待办状态");
+
+            Require<Expander>(settings, "ComponentOwnLookFold").IsExpanded = true;
+            var slider = Require<Slider>(settings, "SelectedComponentFontScaleSlider");
+            Require<ComboBox>(settings, "SelectedComponentFontPicker").SelectedIndex = 0;
+            slider.Value = 0.8;
+            PumpUntil(() => Math.Abs(todo.ContentFontScale - 0.8) < 1e-9,
+                "滑块改动后，跟随全局配色的待办应应用新字号");
+            Assert(Math.Abs(Require<TextBox>(todo, "TitleEditor").FontSize - 19 * 0.8) < 1e-9
+                    && Math.Abs(Require<TextBlock>(todo, "TodoEmptyTitleText").FontSize - 15 * 0.8) < 1e-9
+                    && Math.Abs(Require<TextBlock>(todo, "TodoEmptyGuideText").FontSize - 12 * 0.8) < 1e-9,
+                "空列表的卡片标题和提示应响应字号滑块");
             Assert(todo.ContentFontFamily.Source == ((FontFamily)todo.FindResource("UiFont")).Source,
                 "设置页把字体改回默认后卡片应恢复界面字体");
+
+            settings.ShowWidgetSettings(extraWindow);
+            title.SetCurrentValue(TextBox.TextProperty, "本周清单");
+            Assert(extraWindow.State.Title == "本周清单 2" && title.Text == "本周清单",
+                "重名应保留唯一的卡片标题，待办名称输入框仍可继续编辑");
+            todo.ApplyWidgetTitle("临时改名");
+            settings.CommitPendingChanges();
+            Assert(extraWindow.State.Title == "本周清单 2" && title.Text == "本周清单 2",
+                "结束编辑应显示已经去重的名称，即使原来的重名已腾出");
+            todo.ApplyWidgetTitle("本周清单");
+            Require<Expander>(settings, "ComponentOwnLookFold").IsExpanded = true;
+            Require<TextBox>(settings, "SelectedComponentTextColorEditor").Text = "#6080A0";
+            slider.Value = 1.5;
+            PumpUntil(() => Math.Abs(extraWindow.ContentFontScale - 1.5) < 1e-9,
+                "独立配色的第二张待办应应用自己的字号");
+            Assert(Math.Abs(Require<TextBlock>(extraWindow, "CollapsedSummaryText").FontSize - 18) < 1e-9
+                    && Math.Abs(todo.ContentFontScale - 0.8) < 1e-9,
+                "折叠摘要应随各自卡片字号变化，第二张卡片设置不改变第一张");
+
+            settings.Close();
+            Pump();
+            typeof(WidgetCoordinator).GetMethod("SaveNow", Private)!.Invoke(coordinator, null);
+            var saved = new LocalStateStore(temp).Load();
+            Assert(saved.TodoWidgets.Single(item => item.Id == todo.State.Id).Title == "本周清单"
+                    && saved.TodoWidgets.Single(item => item.Id == extraTodo.Id).Title == "本周清单 2"
+                    && Math.Abs(saved.DesktopExperience.GetComponent(DesktopComponentKind.Todo).FontScale - 0.8) < 1e-9
+                    && Math.Abs(saved.TodoWidgets.Single(item => item.Id == extraTodo.Id).FontScale - 1.5) < 1e-9,
+                "重新读取本地状态后应保留名称和每张卡片的字号");
         }
         finally
         {
+            if (settings?.IsVisible == true)
+            {
+                settings.Close();
+            }
             coordinator.Dispose();
             foreach (var window in Application.Current.Windows.OfType<WidgetWindowBase>().ToList())
             {
@@ -8238,6 +8294,7 @@ internal static class Program
     {
         var experience = DesktopExperienceRules.CreateDefault();
         var todo = new TodoWidgetWindow(new TodoWidgetState());
+        var otherTodo = new TodoWidgetWindow(new TodoWidgetState { Title = "第二张待办" });
         var note = new NoteWidgetWindow(new NoteWidgetState());
         var boxes = new List<FileBoxWindow>();
         var legacyBox = new FileBoxWindow(new FileBoxState { Title = WidgetTitleRules.LegacyDefaultFileBoxTitle });
@@ -8249,10 +8306,11 @@ internal static class Program
             generatedTitles.Add(nextTitle);
             boxes.Add(new FileBoxWindow(new FileBoxState { Title = nextTitle }));
         }
-        var allWidgets = new List<WidgetWindowBase> { todo, note };
+        var allWidgets = new List<WidgetWindowBase> { todo, otherTodo, note };
         allWidgets.AddRange(boxes);
 
         ShowAndPump(todo);
+        ShowAndPump(otherTodo);
         ShowAndPump(note);
         foreach (var box in boxes)
         {
@@ -8303,13 +8361,63 @@ internal static class Program
                     && Equals(Require<Button>(window, "DeleteComponentButton").Content, "删除此卡片"),
                 "待办卡应显示名称输入框与“删除此卡片”");
             var todoTitleBox = Require<TextBox>(window, "SelectedComponentTitleEditor");
-            todoTitleBox.Text = "本周重点";
-            todoTitleBox.RaiseEvent(new RoutedEventArgs(UIElement.LostFocusEvent));
+            void CancelTodoTitleEdit() => todoTitleBox.RaiseEvent(new KeyEventArgs(
+                Keyboard.PrimaryDevice, PresentationSource.FromVisual(todoTitleBox)!, 0, Key.Escape)
+            {
+                RoutedEvent = UIElement.KeyDownEvent
+            });
+
+            var originalTodoTitle = todo.State.Title;
+            Assert(window.FocusSelectedTitleEditor(), "选中待办时应可聚焦名称输入框");
             Pump();
-            Assert(todo.State.Title == "本周重点"
-                    && Require<TextBox>(todo, "TitleEditor").Text == "本周重点"
-                    && Require<TextBlock>(window, "SelectedComponentHeadingText").Text == "本周重点",
-                "待办卡在设置里改名应立即同步到桌面卡片与标题");
+            todoTitleBox.SetCurrentValue(TextBox.TextProperty, "本周重点");
+            Assert(todo.State.Title == "本周重点", $"输入应立即更新待办状态，实际名称为“{todo.State.Title}”");
+            var desktopTitle = Require<TextBox>(todo, "TitleEditor").Text;
+            Assert(desktopTitle == "本周重点", $"输入应立即更新桌面标题，实际标题为“{desktopTitle}”");
+            var settingsHeading = Require<TextBlock>(window, "SelectedComponentHeadingText").Text;
+            Assert(settingsHeading == "本周重点", $"输入应立即更新设置标题，实际标题为“{settingsHeading}”");
+            Assert(todoEntry.Name == "本周重点", $"输入应立即更新设置列表项，实际名称为“{todoEntry.Name}”");
+            Assert(todoTitleBox.IsKeyboardFocusWithin, $"输入后应保持名称框焦点，实际焦点为 {Keyboard.FocusedElement}");
+            Pump();
+            Assert(list.ItemContainerGenerator.ContainerFromItem(todoEntry) is ListBoxItem,
+                "选中的待办应生成对应的列表项控件");
+            var todoListItem = (ListBoxItem)list.ItemContainerGenerator.ContainerFromItem(todoEntry)!;
+            var accessibleName = System.Windows.Automation.AutomationProperties.GetName(todoListItem);
+            Assert(accessibleName == "本周重点", $"输入应更新列表项的辅助功能名称，实际名称为“{accessibleName}”");
+            CancelTodoTitleEdit();
+            Assert(todo.State.Title == originalTodoTitle && todoTitleBox.Text == originalTodoTitle,
+                "按 Esc 应恢复本次编辑开始前的名称");
+            todoTitleBox.SetCurrentValue(TextBox.TextProperty, "   ");
+            Assert(todoTitleBox.Text == "   " && todo.State.Title == originalTodoTitle,
+                "编辑时允许清空输入框");
+            todo.ApplyWidgetTitle("桌面新名称");
+            todoTitleBox.RaiseEvent(new RoutedEventArgs(UIElement.LostFocusEvent));
+            Assert(todo.State.Title == "桌面新名称" && todoTitleBox.Text == "桌面新名称" && todoEntry.Name == "桌面新名称",
+                "桌面改名应同步清除过期的空白草稿，离开名称输入框后保留桌面名称");
+
+            todoTitleBox.SetCurrentValue(TextBox.TextProperty, "设置里的草稿");
+            todo.ApplyWidgetTitle("桌面最近名称");
+            CancelTodoTitleEdit();
+            Assert(todo.State.Title == "桌面最近名称" && todoTitleBox.Text == "桌面最近名称",
+                "桌面改名后按 Esc 应保留已经同步的新名称");
+
+            todoTitleBox.SetCurrentValue(TextBox.TextProperty, "   ");
+            list.SelectedItem = list.Items.OfType<SettingsWindow.DesktopComponentSettingsEntry>()
+                .Single(entry => ReferenceEquals(entry.Window, otherTodo));
+            Pump();
+            Assert(todo.State.Title == WidgetTitleRules.TodoEmptyTitleFallback
+                    && otherTodo.State.Title == "第二张待办" && todoTitleBox.Text == "第二张待办",
+                "留空切卡时只有前一张卡采用默认名称");
+
+            todoTitleBox.SetCurrentValue(TextBox.TextProperty, "第二张草稿");
+            CancelTodoTitleEdit();
+            Assert(otherTodo.State.Title == "第二张待办" && todoTitleBox.Text == "第二张待办",
+                "切换后按 Esc 应恢复当前待办卡的编辑前名称");
+            todoTitleBox.SetCurrentValue(TextBox.TextProperty, string.Empty);
+            todoTitleBox.RaiseEvent(new RoutedEventArgs(UIElement.LostFocusEvent));
+            Assert(otherTodo.State.Title == $"{WidgetTitleRules.TodoEmptyTitleFallback} 2"
+                    && todoTitleBox.Text == otherTodo.State.Title,
+                "失焦提交空白名称应按现有规则去重，并把结果写回输入框");
 
             // 3. 普通便签：有名称框、显示开关、隐藏空的「更多选项」。
             var noteEntry = list.Items.OfType<SettingsWindow.DesktopComponentSettingsEntry>()
@@ -8403,11 +8511,51 @@ internal static class Program
         {
             window.Close();
             Close(todo);
+            Close(otherTodo);
             Close(note);
             foreach (var box in boxes)
             {
                 Close(box);
             }
+        }
+    }
+
+    private static void TestFileBoxTabSwitchCommitsSettingsTitle()
+    {
+        var groupId = Guid.NewGuid();
+        var originalTab = new FileBoxState { Title = "原标签", GroupId = groupId, IsActiveTab = true, HoverSwitchTabs = true };
+        var nextTab = new FileBoxState { Title = "另一标签", GroupId = groupId, TabOrder = 1 };
+        var box = new FileBoxWindow([originalTab, nextTab]);
+        ShowAndPump(box);
+        var settings = CreateLinkedSettings(new DockState(), new TaskbarState(), new TopBarState(), () => [box]);
+        ShowAndPump(settings);
+        try
+        {
+            settings.ShowWidgetSettings(box);
+            Pump();
+            var title = Require<TextBox>(settings, "SelectedWidgetTitleEditor");
+            var tabs = Require<ItemsControl>(box, "TabStripList");
+            var nextTabButton = FindVisualChildren<Button>(tabs).Single(button =>
+                System.Windows.Automation.AutomationProperties.GetName(button) == nextTab.Title);
+            Assert(settings.FocusSelectedTitleEditor(), "新名称应在设置名称框保持编辑状态");
+            title.Text = "原标签的新名称";
+            Assert(originalTab.Title == "原标签" && title.IsKeyboardFocusWithin,
+                "悬停切换前应仍处于设置名称的编辑状态");
+
+            nextTabButton.RaiseEvent(new MouseEventArgs(Mouse.PrimaryDevice, Environment.TickCount)
+            {
+                RoutedEvent = UIElement.MouseEnterEvent
+            });
+            PumpUntil(() => ReferenceEquals(box.State, nextTab), "收纳盒悬停计时器应切换到另一标签");
+
+            Assert(originalTab.Title == "原标签的新名称", $"原标签应保留编辑名称，实际为“{originalTab.Title}”");
+            Assert(nextTab.Title == "另一标签" && title.Text == nextTab.Title,
+                $"新标签应保留原名并显示在设置里，实际为“{nextTab.Title}”和“{title.Text}”");
+        }
+        finally
+        {
+            settings.Close();
+            Close(box);
         }
     }
 

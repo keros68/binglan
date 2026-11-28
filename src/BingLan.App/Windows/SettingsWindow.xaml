@@ -26,6 +26,7 @@
             </ContextMenu>
 
             <Style x:Key="ComponentListItemStyle" TargetType="ListBoxItem">
+                <Setter Property="AutomationProperties.Name" Value="{Binding Name, Mode=OneWay}"/>
                 <Setter Property="Padding" Value="0"/>
                 <Setter Property="Margin" Value="0,1"/>
                 <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
@@ -1432,8 +1433,9 @@
                                              MaxWidth="280"
                                              HorizontalAlignment="Left"
                                              MaxLength="60"
+                                             Text="{Binding TodoTitleDraft, RelativeSource={RelativeSource AncestorType={x:Type local:SettingsWindow}}, Mode=OneWayToSource, UpdateSourceTrigger=PropertyChanged}"
                                              AutomationProperties.Name="待办卡片名称"
-                                             ToolTip="按回车或离开输入框保存，留空恢复默认名称"
+                                             ToolTip="名称随输入同步，留空后离开输入框恢复默认名称"
                                              local:SettingsSearch.EntryName="卡片名称"
                                              local:SettingsSearch.Keywords="名称 标题 重命名 改名 待办"
                                              KeyDown="ComponentTitleEditor_KeyDown"

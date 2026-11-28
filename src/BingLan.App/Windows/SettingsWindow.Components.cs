@@ -5,6 +5,7 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
 using BingLan.Core.Models;
+using BingLan.Core.Services;
 using KeyEventArgs = System.Windows.Input.KeyEventArgs;
 using ListBoxItem = System.Windows.Controls.ListBoxItem;
 using TextBox = System.Windows.Controls.TextBox;
@@ -17,7 +18,37 @@ public partial class SettingsWindow
     private ScrollViewer? _componentListScrollViewer;
     private bool _loadingTitleEditor;
     private bool _committingTitleEditor;
-    private bool _suppressComponentSelectionReload;
+    private (TodoWidgetWindow Window, string OriginalTitle, string Draft)? _todoTitleEdit;
+
+    // The WPF TextBox binding defers source updates during IME composition.
+    public string TodoTitleDraft
+    {
+        get => _todoTitleEdit?.Draft ?? string.Empty;
+        set
+        {
+            if (_loadingTitleEditor || _committingTitleEditor || _isClosed
+                || _selectedComponentEntry is not { Kind: DesktopComponentKind.Todo, Window: TodoWidgetWindow todo })
+            {
+                return;
+            }
+
+            var originalTitle = todo.State.Title;
+            if (_todoTitleEdit is { } edit && edit.Window == todo)
+            {
+                originalTitle = edit.OriginalTitle;
+            }
+            else if (string.Equals(value, originalTitle, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            _todoTitleEdit = (todo, originalTitle, value);
+            if (WidgetTitleRules.CommitTitle(value, string.Empty).Length > 0)
+            {
+                ApplyTitleEditorForWindow(todo, SelectedComponentTitleEditor, value, normalizeEditor: false);
+            }
+        }
+    }
 
     private void InitializeComponentsPageEnhancements()
     {
@@ -66,6 +97,15 @@ public partial class SettingsWindow
         }
     }
 
+    private void OnObservedFileBoxActiveTabSwitching(FileBoxWindow box)
+    {
+        if (!_isClosed && ReferenceEquals(_selectedComponentEntry?.Window, box)
+            && !string.Equals(SelectedWidgetTitleEditor.Text, box.State.Title, StringComparison.Ordinal))
+        {
+            CommitPendingTitleEdits();
+        }
+    }
+
     private void OnObservedFileBoxActiveTabChanged(FileBoxWindow box)
     {
         if (_isClosed || _loadingViewMode)
@@ -95,6 +135,7 @@ public partial class SettingsWindow
             window.TitleChanged -= OnObservedWidgetTitleChanged;
             if (window is FileBoxWindow box)
             {
+                box.ActiveTabSwitching -= OnObservedFileBoxActiveTabSwitching;
                 box.ActiveTabChanged -= OnObservedFileBoxActiveTabChanged;
                 box.WidgetChanged -= OnObservedFileBoxStateChanged;
                 box.EdgeDockStateChanged -= OnObservedFileBoxEdgeDockToggled;
@@ -146,6 +187,7 @@ public partial class SettingsWindow
             stale.TitleChanged -= OnObservedWidgetTitleChanged;
             if (stale is FileBoxWindow staleBox)
             {
+                staleBox.ActiveTabSwitching -= OnObservedFileBoxActiveTabSwitching;
                 staleBox.ActiveTabChanged -= OnObservedFileBoxActiveTabChanged;
                 staleBox.WidgetChanged -= OnObservedFileBoxStateChanged;
                 staleBox.EdgeDockStateChanged -= OnObservedFileBoxEdgeDockToggled;
@@ -160,6 +202,7 @@ public partial class SettingsWindow
                 added.TitleChanged += OnObservedWidgetTitleChanged;
                 if (added is FileBoxWindow addedBox)
                 {
+                    addedBox.ActiveTabSwitching += OnObservedFileBoxActiveTabSwitching;
                     addedBox.ActiveTabChanged += OnObservedFileBoxActiveTabChanged;
                     addedBox.WidgetChanged += OnObservedFileBoxStateChanged;
                     addedBox.EdgeDockStateChanged += OnObservedFileBoxEdgeDockToggled;
@@ -186,29 +229,25 @@ public partial class SettingsWindow
 
         if (ReferenceEquals(_selectedComponentEntry?.Window, window))
         {
-            _loadingTitleEditor = true;
-            try
+            if (window is TodoWidgetWindow)
             {
-                if (_selectedComponentEntry.Kind is not null)
-                {
-                    SelectedComponentHeadingText.Text = updatedName;
-                    if (!SelectedComponentTitleEditor.IsKeyboardFocusWithin)
-                    {
-                        SelectedComponentTitleEditor.Text = updatedName;
-                    }
-                }
-                else
-                {
-                    SelectedWidgetHeadingText.Text = updatedName;
-                    if (!SelectedWidgetTitleEditor.IsKeyboardFocusWithin)
-                    {
-                        SelectedWidgetTitleEditor.Text = updatedName;
-                    }
-                }
+                SelectedComponentHeadingText.Text = updatedName;
+                ResetTodoTitleEditor(updatedName);
+                return;
             }
-            finally
+
+            SelectedWidgetHeadingText.Text = updatedName;
+            if (!SelectedWidgetTitleEditor.IsKeyboardFocusWithin)
             {
-                _loadingTitleEditor = false;
+                _loadingTitleEditor = true;
+                try
+                {
+                    SelectedWidgetTitleEditor.Text = updatedName;
+                }
+                finally
+                {
+                    _loadingTitleEditor = false;
+                }
             }
         }
     }
@@ -220,50 +259,9 @@ public partial class SettingsWindow
             return;
         }
 
-        var index = entries.FindIndex(item => ReferenceEquals(item.Window, window));
-        if (index < 0 || string.Equals(entries[index].Name, updatedName, StringComparison.Ordinal))
+        if (entries.Find(item => ReferenceEquals(item.Window, window)) is { } entry)
         {
-            return;
-        }
-
-        var replacement = entries[index] with { Name = updatedName };
-        var wasSelected = ReferenceEquals(_selectedComponentEntry?.Window, window);
-        var updatedList = entries.ToList();
-        updatedList[index] = replacement;
-
-        _suppressComponentSelectionReload = true;
-        try
-        {
-            var selectedWindow = _selectedComponentEntry?.Window;
-            var selectedKind = _selectedComponentEntry?.Kind;
-            DesktopComponentList.ItemsSource = updatedList;
-            if (wasSelected)
-            {
-                _selectedComponentEntry = replacement;
-                DesktopComponentList.SelectedItem = replacement;
-            }
-            else if (selectedWindow is not null)
-            {
-                var preserved = updatedList.FirstOrDefault(item => ReferenceEquals(item.Window, selectedWindow));
-                if (preserved is not null)
-                {
-                    _selectedComponentEntry = preserved;
-                    DesktopComponentList.SelectedItem = preserved;
-                }
-            }
-            else if (selectedKind is { } kind)
-            {
-                var preserved = updatedList.FirstOrDefault(item => item.Kind == kind);
-                if (preserved is not null)
-                {
-                    _selectedComponentEntry = preserved;
-                    DesktopComponentList.SelectedItem = preserved;
-                }
-            }
-        }
-        finally
-        {
-            _suppressComponentSelectionReload = false;
+            entry.Name = updatedName;
         }
     }
 
@@ -306,20 +304,12 @@ public partial class SettingsWindow
         SelectedComponentCaptionText.Text = kind switch
         {
             DesktopComponentKind.Todo when canRename => "待办卡片 · 未锁定时可直接拖动空白区，改名立即同步到桌面卡片。",
-            DesktopComponentKind.AudioVisualizer => "随默认扬声器或耳机的声音跳动，从左到右依次显示低音到高音。",
+            DesktopComponentKind.AudioVisualizer => "安静时显示一排短线。默认扬声器或耳机播放声音时，柱子从左到右显示低音到高音。",
             _ => "未锁定时可直接拖动桌面空白区。"
         };
 
         BuiltInComponentTitleRow.Visibility = canRename ? Visibility.Visible : Visibility.Collapsed;
-        _loadingTitleEditor = true;
-        try
-        {
-            SelectedComponentTitleEditor.Text = canRename ? GetWidgetName(entry.Window!) : string.Empty;
-        }
-        finally
-        {
-            _loadingTitleEditor = false;
-        }
+        ResetTodoTitleEditor(canRename ? GetWidgetName(entry.Window!) : string.Empty);
 
         if (isTodo)
         {
@@ -370,22 +360,59 @@ public partial class SettingsWindow
             return;
         }
 
-        if (_selectedComponentEntry.Kind == DesktopComponentKind.Todo
+        if (window is TodoWidgetWindow todo
             && BuiltInComponentTitleRow.Visibility == Visibility.Visible)
         {
-            CommitTitleEditorForWindow(window, SelectedComponentTitleEditor, isBuiltInBranch: true);
+            FinishTodoTitleEdit(todo);
         }
         else if (_selectedComponentEntry.Kind is null
             && SelectedWidgetHeaderBar.Visibility == Visibility.Visible)
         {
-            CommitTitleEditorForWindow(window, SelectedWidgetTitleEditor, isBuiltInBranch: false);
+            ApplyTitleEditorForWindow(window, SelectedWidgetTitleEditor, SelectedWidgetTitleEditor.Text);
         }
     }
 
-    private void CommitTitleEditorForWindow(
+    private void FinishTodoTitleEdit(TodoWidgetWindow todo, bool cancel = false)
+    {
+        if (_todoTitleEdit is not { } edit || edit.Window != todo)
+        {
+            return;
+        }
+
+        _todoTitleEdit = null;
+        if (cancel && string.Equals(todo.State.Title, edit.OriginalTitle, StringComparison.Ordinal))
+        {
+            ResetTodoTitleEditor(todo.State.Title);
+        }
+        else if (cancel || WidgetTitleRules.CommitTitle(edit.Draft, string.Empty).Length == 0)
+        {
+            ApplyTitleEditorForWindow(todo, SelectedComponentTitleEditor, cancel ? edit.OriginalTitle : string.Empty);
+        }
+        else
+        {
+            ResetTodoTitleEditor(todo.State.Title);
+        }
+    }
+
+    private void ResetTodoTitleEditor(string title)
+    {
+        _todoTitleEdit = null;
+        _loadingTitleEditor = true;
+        try
+        {
+            SelectedComponentTitleEditor.SetCurrentValue(TextBox.TextProperty, title);
+        }
+        finally
+        {
+            _loadingTitleEditor = false;
+        }
+    }
+
+    private void ApplyTitleEditorForWindow(
         WidgetWindowBase window,
         TextBox editor,
-        bool isBuiltInBranch)
+        string title,
+        bool normalizeEditor = true)
     {
         if (_loadingTitleEditor || _committingTitleEditor)
         {
@@ -397,13 +424,16 @@ public partial class SettingsWindow
         _committingTitleEditor = true;
         try
         {
-            var changed = window.ApplyWidgetTitle(editor.Text, otherTitles);
+            var changed = window.ApplyWidgetTitle(title, otherTitles);
             var committed = GetWidgetName(window);
             _loadingTitleEditor = true;
             try
             {
-                editor.Text = committed;
-                if (isBuiltInBranch)
+                if (normalizeEditor)
+                {
+                    editor.SetCurrentValue(TextBox.TextProperty, committed);
+                }
+                if (window is TodoWidgetWindow)
                 {
                     SelectedComponentHeadingText.Text = committed;
                 }
@@ -437,7 +467,7 @@ public partial class SettingsWindow
     {
         if (_selectedComponentEntry is { Kind: DesktopComponentKind.Todo, Window: TodoWidgetWindow todo })
         {
-            CommitTitleEditorForWindow(todo, SelectedComponentTitleEditor, isBuiltInBranch: true);
+            FinishTodoTitleEdit(todo);
         }
     }
 
@@ -450,21 +480,13 @@ public partial class SettingsWindow
 
         if (e.Key == Key.Enter)
         {
-            CommitTitleEditorForWindow(todo, SelectedComponentTitleEditor, isBuiltInBranch: true);
+            FinishTodoTitleEdit(todo);
             Keyboard.ClearFocus();
             e.Handled = true;
         }
         else if (e.Key == Key.Escape)
         {
-            _loadingTitleEditor = true;
-            try
-            {
-                SelectedComponentTitleEditor.Text = GetWidgetName(todo);
-            }
-            finally
-            {
-                _loadingTitleEditor = false;
-            }
+            FinishTodoTitleEdit(todo, cancel: true);
             Keyboard.ClearFocus();
             e.Handled = true;
         }
@@ -474,7 +496,7 @@ public partial class SettingsWindow
     {
         if (_selectedComponentEntry is { Kind: null, Window: { } window })
         {
-            CommitTitleEditorForWindow(window, SelectedWidgetTitleEditor, isBuiltInBranch: false);
+            ApplyTitleEditorForWindow(window, SelectedWidgetTitleEditor, SelectedWidgetTitleEditor.Text);
         }
     }
 
@@ -487,7 +509,7 @@ public partial class SettingsWindow
 
         if (e.Key == Key.Enter)
         {
-            CommitTitleEditorForWindow(window, SelectedWidgetTitleEditor, isBuiltInBranch: false);
+            ApplyTitleEditorForWindow(window, SelectedWidgetTitleEditor, SelectedWidgetTitleEditor.Text);
             Keyboard.ClearFocus();
             e.Handled = true;
         }

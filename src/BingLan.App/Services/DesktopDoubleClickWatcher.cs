@@ -151,6 +151,18 @@ internal sealed class DesktopDoubleClickWatcher : IDisposable
 
             while (DesktopDoubleClickNativeMethods.GetMessageW(out var message, 0, 0, 0) > 0)
             {
+                if (message.Message == DesktopDoubleClickNativeMethods.WmInput)
+                {
+                    try
+                    {
+                        HandleRawInput(message);
+                    }
+                    catch (Exception ex)
+                    {
+                        StartupLog.WriteCrash("DesktopDoubleClickWatcher.HandleRawInput", ex);
+                    }
+                }
+
                 DesktopDoubleClickNativeMethods.DispatchMessageW(ref message);
             }
         }
@@ -215,12 +227,6 @@ internal sealed class DesktopDoubleClickWatcher : IDisposable
     {
         try
         {
-            if (message == DesktopDoubleClickNativeMethods.WmInput)
-            {
-                HandleRawInput(lParam);
-                return NativeMethods.DefWindowProc(hwnd, message, wParam, lParam);
-            }
-
             if (message == DesktopDoubleClickNativeMethods.WmClose)
             {
                 UnregisterRawInput();
@@ -244,11 +250,11 @@ internal sealed class DesktopDoubleClickWatcher : IDisposable
         return NativeMethods.DefWindowProc(hwnd, message, wParam, lParam);
     }
 
-    private void HandleRawInput(nint rawInputHandle)
+    private void HandleRawInput(in DesktopDoubleClickNativeMethods.NativeMessage message)
     {
         var size = RawInputMouseSize;
         if (DesktopDoubleClickNativeMethods.GetRawInputData(
-                rawInputHandle,
+                message.LParam,
                 DesktopDoubleClickNativeMethods.RidInput,
                 out var raw,
                 ref size,
@@ -270,12 +276,9 @@ internal sealed class DesktopDoubleClickWatcher : IDisposable
             return;
         }
 
-        if (!DockNativeMethods.GetCursorPos(out var cursor))
-        {
-            return;
-        }
-
-        var now = Environment.TickCount64;
+        // The cursor may move and the message thread may be delayed after Windows posts the event.
+        var point = message.Point;
+        var timestamp = DesktopDoubleClickRules.ExpandMessageTimestamp(message.Time, Environment.TickCount64);
         var maxInterval = unchecked((int)DesktopDoubleClickNativeMethods.GetDoubleClickTime());
         if (maxInterval <= 0)
         {
@@ -295,9 +298,9 @@ internal sealed class DesktopDoubleClickWatcher : IDisposable
 
         var decision = DesktopDoubleClickRules.EvaluateLeftButtonDown(
             _pendingClick,
-            cursor.X,
-            cursor.Y,
-            now,
+            point.X,
+            point.Y,
+            timestamp,
             maxInterval,
             cx,
             cy);
@@ -308,7 +311,6 @@ internal sealed class DesktopDoubleClickWatcher : IDisposable
             return;
         }
 
-        var point = cursor;
         _ = _dispatcher.BeginInvoke(DispatcherPriority.Input, () =>
         {
             if (Volatile.Read(ref _disposed) == 0)
