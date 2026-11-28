@@ -75,6 +75,7 @@ public sealed class ThemeComponentTokens
     public DesktopComponentKind Kind { get; set; }
     public bool IsVisible { get; set; } = true;
     public double FontScale { get; set; } = 1d;
+    public double SpectrumBarWidth { get; set; } = DesktopExperienceRules.DefaultSpectrumBarWidth;
     public double CornerRadius { get; set; } = WidgetAppearanceRules.DefaultCornerRadius;
     public DesktopInformationDensity Density { get; set; } = DesktopInformationDensity.Standard;
     public WidgetAppearanceState Appearance { get; set; } = new();

@@ -64,6 +64,21 @@ public partial class SettingsWindow
         DesktopComponentList.SizeChanged += (_, _) => ScheduleComponentListOverflowUpdate();
     }
 
+    private void SpectrumBarWidth_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (_loadingComponentEditor || SpectrumBarWidthValueText is null
+            || _selectedComponentEntry?.Kind != DesktopComponentKind.AudioVisualizer)
+        {
+            return;
+        }
+        SpectrumBarWidthValueText.Text = $"{SpectrumBarWidthSlider.Value * 100:0}%";
+        _componentApplyTimer.Stop();
+        ApplySelectedComponent(refreshList: false);
+    }
+
+    private void ResetSpectrumBarWidth_Click(object sender, RoutedEventArgs e) =>
+        SpectrumBarWidthSlider.Value = DesktopExperienceRules.DefaultSpectrumBarWidth;
+
     private FileBoxWindow? _settingsRevealedFileBox;
 
     private void UpdateSettingsRevealedFileBox(FileBoxWindow? target)
@@ -304,7 +319,7 @@ public partial class SettingsWindow
         SelectedComponentCaptionText.Text = kind switch
         {
             DesktopComponentKind.Todo when canRename => "待办卡片 · 未锁定时可直接拖动空白区，改名立即同步到桌面卡片。",
-            DesktopComponentKind.AudioVisualizer => "安静时显示一排短线。默认扬声器或耳机播放声音时，柱子从左到右显示低音到高音。",
+            DesktopComponentKind.AudioVisualizer => "随默认扬声器或耳机的声音跳动，低音在中间，高音在两侧。安静时显示一排短线。",
             _ => "未锁定时可直接拖动桌面空白区。"
         };
 

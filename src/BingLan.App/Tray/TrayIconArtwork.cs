@@ -17,6 +17,8 @@ using Microsoft.Win32.SafeHandles;
 namespace BingLan.App.Tray;
 
 internal sealed record TrayActivationOwner(nint Window, uint ProcessId, uint IconId, string ExecutablePath);
+internal sealed record TrayContextMenuOwner(nint Window, uint ProcessId, bool StandardMenusOnly = false,
+    string? ObservationExecutablePath = null, Guid ObservationIconGuid = default, Rect? ObservationTrayBounds = null);
 internal sealed record TrayRegisteredIcon(nint Owner, uint ProcessId, uint IconId, Guid IconGuid, Rect Bounds)
 {
     internal string Key => IconGuid != Guid.Empty ? $"msaa.guid.{IconGuid:N}" : $"msaa.window.{Owner:X}.{ProcessId}.{IconId}";
@@ -31,6 +33,7 @@ internal static class TrayIconArtwork
     private const int MaximumDimension = 256;
     private const uint ProcessQueryLimitedInformation = 0x1000;
     private const uint TokenQuery = 0x0008;
+    private const string BluetoothTrayOwnerClass = "BluetoothNotificationAreaIconWindowClass";
     private sealed record Snapshot(string Tooltip, string FirstLine, string Application, string Path, byte[] Bytes, string Digest, uint? Uid, Guid IconGuid);
     private sealed record LocatedIcon(Snapshot Icon, Rect Bounds, nint Owner, uint ProcessId);
 
@@ -114,33 +117,173 @@ internal static class TrayIconArtwork
         catch (Exception exception) when (IsReadFailure(exception)) { return []; }
     }
 
-    internal static TrayRegisteredIcon? ResolveContextMenuOwner(TrayEntry entry, TrayPanelEntry? displayed)
+    internal static TrayContextMenuOwner? ResolveContextMenuOwner(TrayEntry entry, TrayPanelEntry? displayed,
+        IReadOnlyList<TrayEntry>? currentEntries = null)
     {
-        if (entry.Registration is { Owner: not 0, ProcessId: not 0 } registered) return registered;
+        if (IsBluetoothContextMenuLabel(entry.Name)) return ResolveBluetoothContextMenuOwner(entry);
+        if (entry.Registration is { Owner: not 0, ProcessId: not 0 } registered)
+            return new TrayContextMenuOwner(registered.Owner, registered.ProcessId);
         if (displayed is not null && VerifyActivationOwner(displayed, entry) is { } activation)
-            return new TrayRegisteredIcon(activation.Window, activation.ProcessId, activation.IconId,
-                Guid.Empty, ReadBounds(entry) ?? Rect.Empty);
+            return new TrayContextMenuOwner(activation.Window, activation.ProcessId);
         var tooltip = Normalize(entry.Name);
         try
         {
-            // Overflow registrations may share the chevron's rectangle. An exact label and
-            // a unique live registration identify the owner without guessing from that rectangle.
+            // Overflow registrations may share the chevron's rectangle.
             var snapshots = ReadSnapshots(includeArtwork: false);
-            var locations = LocateRegisteredIcons(snapshots, ReadRunningProcesses(snapshots));
+            var running = ReadRunningProcesses(snapshots);
+            var locations = LocateRegisteredIcons(snapshots, running);
             var named = tooltip.Length == 0 ? [] : locations.Where(icon => icon.Icon.Tooltip == tooltip).ToArray();
-            // Only a live taskbar tile has a unique registered rectangle. Overflow tiles can
-            // all report the chevron rectangle and must retain exact tooltip identification.
-            var candidates = named.Length > 0 ? named
-                : entry.Source == "taskbar" && ReadBounds(entry) is { } bounds
-                    ? locations.Where(icon => MatchBounds(bounds, icon.Bounds)).ToArray() : [];
-            var matches = candidates
-                .Where(icon => icon.Owner != 0 && icon.ProcessId != 0)
-                .Select(icon => new TrayRegisteredIcon(icon.Owner, icon.ProcessId,
-                    icon.Icon.Uid.GetValueOrDefault(), icon.Icon.IconGuid, icon.Bounds))
-                .DistinctBy(icon => icon.Key).Take(2).ToArray();
-            return matches is [var match] ? match : null;
+            // Only a live taskbar tile has its own registered rectangle.
+            var candidates = named;
+            if (candidates.Length == 0 && entry.Source == "taskbar" && ReadBounds(entry) is { } bounds)
+                candidates = locations.Where(icon => MatchBounds(bounds, icon.Bounds)).ToArray();
+            if (candidates.Length == 0 && entry.Source == "existing-overflow" && tooltip.Length != 0)
+            {
+                // Exact labels and product matches take priority over localized status suffixes.
+                // Dispatch still uses the UIA item; menu placement requires one live registration.
+                var firstLine = Normalize(FirstLine(entry.Name));
+                candidates = locations.Where(icon => Match(tooltip, firstLine, icon.Icon) > 0).ToArray();
+                if (candidates.Length == 0)
+                    candidates = locations.Where(icon => IsContextMenuTooltipPrefix(entry.Name, icon.Icon.Tooltip)).ToArray();
+            }
+            var owner = SelectContextMenuOwner(candidates.Select(icon => new TrayRegisteredIcon(icon.Owner, icon.ProcessId,
+                icon.Icon.Uid.GetValueOrDefault(), icon.Icon.IconGuid, icon.Bounds)));
+            if (owner is not null) return new TrayContextMenuOwner(owner.Owner, owner.ProcessId);
+            if (entry.Source != "taskbar" || entry.Element is null || entry.Registration is not null
+                || currentEntries is null || ReadBounds(entry) is not { } tile) return null;
+            var matchingTiles = currentEntries.Where(candidate => candidate.Source == "taskbar"
+                    && candidate.Element is not null && ReadBounds(candidate) is { } candidateBounds
+                    && MatchBounds(tile, candidateBounds)).Take(2).ToArray();
+            return SelectGuidMenuObservation(tile, matchingTiles is [var matchingTile] && ReferenceEquals(matchingTile, entry),
+                locations.Select(icon => (icon.Icon.IconGuid, icon.Icon.Path, icon.Bounds)), running.Values);
         }
         catch (Exception exception) when (IsReadFailure(exception)) { return null; }
+    }
+
+    internal static bool IsGuidMenuObservationIdentity(string executablePath, Guid iconGuid)
+    {
+        if (iconGuid == Guid.Empty || !Path.IsPathFullyQualified(executablePath)) return false;
+        try
+        {
+            var fullPath = Path.GetFullPath(executablePath);
+            var appDirectory = Path.GetDirectoryName(fullPath);
+            var packageDirectory = appDirectory is null ? null : Path.GetDirectoryName(appDirectory);
+            if (packageDirectory is null || !Path.GetFileName(fullPath).Equals("ChatGPT.exe", StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(Path.GetFileName(appDirectory), "app", StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(Path.GetDirectoryName(packageDirectory),
+                    Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "WindowsApps"),
+                    StringComparison.OrdinalIgnoreCase)) return false;
+            const string prefix = "OpenAI.Codex_";
+            const string suffix = "_x64__2p2nqsd0c76g0";
+            var package = Path.GetFileName(packageDirectory);
+            return package.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
+                && package.EndsWith(suffix, StringComparison.OrdinalIgnoreCase)
+                && package.Length > prefix.Length + suffix.Length
+                && Version.TryParse(package[prefix.Length..^suffix.Length], out var version) && version.Revision >= 0;
+        }
+        catch (Exception exception) when (exception is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return false;
+        }
+    }
+
+    internal static bool IsCurrentGuidMenuObservation(TrayContextMenuOwner owner)
+    {
+        if (owner is not { Window: 0, ProcessId: 0, ObservationExecutablePath: { } path, ObservationTrayBounds: { } tile }
+            || !HasFiniteArea(tile) || !IsGuidMenuObservationIdentity(path, owner.ObservationIconGuid)) return false;
+        var dpi = SetThreadDpiAwarenessContext(-4);
+        try
+        {
+            return ReadRegisteredBounds(0, 0, owner.ObservationIconGuid) is { } current && MatchBounds(tile, current);
+        }
+        finally { if (dpi != 0) SetThreadDpiAwarenessContext(dpi); }
+    }
+
+    private static bool HasFiniteArea(Rect bounds) => !bounds.IsEmpty && bounds.Width > 0 && bounds.Height > 0
+        && double.IsFinite(bounds.Left) && double.IsFinite(bounds.Top)
+        && double.IsFinite(bounds.Right) && double.IsFinite(bounds.Bottom);
+
+    internal static TrayContextMenuOwner? SelectGuidMenuObservation(Rect tile, bool hasExclusiveTaskbarUiaTile,
+        IEnumerable<(Guid IconGuid, string ExecutablePath, Rect Bounds)> candidates, IEnumerable<string> runningPaths)
+    {
+        if (!hasExclusiveTaskbarUiaTile || !HasFiniteArea(tile)) return null;
+        var matching = candidates.Where(candidate => MatchBounds(tile, candidate.Bounds))
+            .Select(candidate => (candidate.IconGuid, candidate.ExecutablePath)).Distinct().Take(2).ToArray();
+        if (matching is not [var identity] || !IsGuidMenuObservationIdentity(identity.ExecutablePath, identity.IconGuid)
+            || !runningPaths.Contains(identity.ExecutablePath, StringComparer.OrdinalIgnoreCase)) return null;
+        // A verified GUID and executable authorize observation only, without a callback HWND or dispatch target.
+        return new TrayContextMenuOwner(0, 0, ObservationExecutablePath: identity.ExecutablePath,
+            ObservationIconGuid: identity.IconGuid, ObservationTrayBounds: tile);
+    }
+
+    internal static bool IsBluetoothContextMenuLabel(string tooltip) =>
+        tooltip.Trim().Equals("蓝牙设备", StringComparison.Ordinal)
+        || tooltip.Trim().Equals("Bluetooth Devices", StringComparison.OrdinalIgnoreCase);
+
+    private static TrayContextMenuOwner? ResolveBluetoothContextMenuOwner(TrayEntry entry)
+    {
+        uint CurrentShellPid()
+        {
+            var shell = Native.FindWindowW("Shell_TrayWnd", null);
+            return shell != 0 && Native.GetWindowThreadProcessId(shell, out var pid) != 0 ? pid : 0;
+        }
+
+        var shellPid = CurrentShellPid();
+        if (shellPid == 0 || shellPid != entry.ExplorerProcessId) return null;
+        var owners = new HashSet<nint>();
+        void CheckOwner(nint window)
+        {
+            if (Native.GetWindowThreadProcessId(window, out var pid) != 0 && pid == shellPid
+                && Native.ClassName(window) == BluetoothTrayOwnerClass) owners.Add(window);
+        }
+
+        if (!Native.EnumWindows((window, _) => { CheckOwner(window); return owners.Count < 2; }, 0)) return null;
+        nint message = 0;
+        for (var count = 0; owners.Count < 2; count++)
+        {
+            // Fail closed if an unexpected number of matching message windows is exposed.
+            if (count == 4096) return null;
+            message = FindWindowExW(-3, message, BluetoothTrayOwnerClass, null);
+            if (message == 0) break;
+            CheckOwner(message);
+        }
+        if (CurrentShellPid() != shellPid) return null;
+        return SelectBluetoothContextMenuOwner(entry.Name, entry.ExplorerProcessId, shellPid,
+            owners.Select(window =>
+            {
+                Native.GetWindowThreadProcessId(window, out var pid);
+                return (window, pid, Native.ClassName(window));
+            }));
+    }
+
+    internal static TrayContextMenuOwner? SelectBluetoothContextMenuOwner(string tooltip, uint explorerPid,
+        uint currentShellPid, IEnumerable<(nint Window, uint ProcessId, string ClassName)> candidates)
+    {
+        if (!IsBluetoothContextMenuLabel(tooltip) || currentShellPid == 0 || explorerPid != currentShellPid) return null;
+        var windows = candidates.Where(candidate => candidate.Window != 0 && candidate.ProcessId == currentShellPid
+                && candidate.ClassName == BluetoothTrayOwnerClass)
+            .Select(candidate => candidate.Window).Distinct().Take(2).ToArray();
+        // This HWND identifies only the standard-menu observer; it is not an icon registration.
+        return windows is [var window] ? new TrayContextMenuOwner(window, currentShellPid, StandardMenusOnly: true) : null;
+    }
+
+    internal static bool IsContextMenuTooltipPrefix(string currentTooltip, string registeredTooltip)
+    {
+        var current = Normalize(FirstLine(currentTooltip));
+        var registered = Normalize(FirstLine(registeredTooltip));
+        // Dynamic status may follow a localized product name. Require a complete label
+        // and a visible separator; never use this fallback for dispatch or artwork.
+        return registered.Length >= 4 && current.Length > registered.Length
+            && current.StartsWith(registered, StringComparison.OrdinalIgnoreCase)
+            && (char.IsWhiteSpace(current[registered.Length])
+                || current[registered.Length] is ':' or '：' or '-' or '–' or '—' or '|' or '·' or '(' or '（');
+    }
+
+    internal static TrayRegisteredIcon? SelectContextMenuOwner(IEnumerable<TrayRegisteredIcon> candidates)
+    {
+        var matches = candidates.Where(icon => icon.Owner != 0 && icon.ProcessId != 0)
+            .DistinctBy(icon => icon.Key).Take(2).ToArray();
+        return matches is [var match] ? match : null;
     }
 
     private static List<Snapshot> ReadSnapshots(bool includeArtwork = true)

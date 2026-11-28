@@ -238,7 +238,8 @@ internal static class TrayReader
             try
             {
                 if (token.IsCancellationRequested || !IsCurrentExplorer(identity.ExplorerProcessId)) return "element-unavailable";
-                var fresh = Read().Entries.SingleOrDefault(entry => entry.Identity == identity);
+                var currentEntries = Read().Entries;
+                var fresh = currentEntries.SingleOrDefault(entry => entry.Identity == identity);
                 if (fresh is null || token.IsCancellationRequested) return "element-unavailable";
                 var element = fresh.Element;
                 int[]? runtimeId = null;
@@ -250,7 +251,7 @@ internal static class TrayReader
                 }
                 if (contextMenu)
                 {
-                    var contextOwner = menuAnchor.HasValue ? TrayIconArtwork.ResolveContextMenuOwner(fresh, displayedEntry) : null;
+                    var contextOwner = menuAnchor.HasValue ? TrayIconArtwork.ResolveContextMenuOwner(fresh, displayedEntry, currentEntries) : null;
                     return await TrayContextMenuPlacement.InvokeAsync(contextOwner, menuAnchor, () =>
                     {
                         if (token.IsCancellationRequested) return "cancelled-before-context";

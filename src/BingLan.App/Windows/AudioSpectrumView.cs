@@ -3,6 +3,7 @@ using System.Windows.Documents;
 using System.Windows.Media;
 using System.Windows.Threading;
 using BingLan.App.Audio;
+using BingLan.Core.Models;
 
 namespace BingLan.App.Windows;
 
@@ -12,6 +13,12 @@ public sealed class AudioSpectrumView : FrameworkElement
     public static readonly DependencyProperty SpectrumBrushProperty = DependencyProperty.Register(
         nameof(SpectrumBrush), typeof(Brush), typeof(AudioSpectrumView),
         new FrameworkPropertyMetadata(null, FrameworkPropertyMetadataOptions.AffectsRender));
+
+    public static readonly DependencyProperty BarWidthProperty = DependencyProperty.Register(
+        nameof(BarWidth), typeof(double), typeof(AudioSpectrumView),
+        new FrameworkPropertyMetadata(DesktopExperienceRules.DefaultSpectrumBarWidth,
+            FrameworkPropertyMetadataOptions.AffectsRender, null,
+            (_, value) => DesktopExperienceRules.CoerceSpectrumBarWidth((double)value)));
 
     private readonly float[] _levels = new float[SharedAudioSpectrumService.BarCount];
     private readonly Action _renderFrame;
@@ -34,6 +41,12 @@ public sealed class AudioSpectrumView : FrameworkElement
     {
         get => (Brush?)GetValue(SpectrumBrushProperty);
         set => SetValue(SpectrumBrushProperty, value);
+    }
+
+    public double BarWidth
+    {
+        get => (double)GetValue(BarWidthProperty);
+        set => SetValue(BarWidthProperty, value);
     }
 
     public void SetSuspended(bool suspended)
@@ -99,14 +112,20 @@ public sealed class AudioSpectrumView : FrameworkElement
         }
         var brush = SpectrumBrush ?? (Brush)GetValue(TextElement.ForegroundProperty);
         var step = ActualWidth / _levels.Length;
-        var barWidth = step * 0.68;
+        var barWidth = step * BarWidth;
         var radius = Math.Min(2.5, barWidth * 0.5);
         var restingHeight = Math.Min(2d, ActualHeight);
+        var center = (_levels.Length - 1) / 2;
         for (var i = 0; i < _levels.Length; i++)
         {
-            var height = Math.Max(restingHeight, _levels[i] * ActualHeight);
+            var level = _levels[i];
+            // Keep quiet overtones visible while emphasizing differences in the midrange.
+            var displayLevel = 0.4 * level + 0.6 * level * level * (3 - 2 * level);
+            var height = Math.Max(restingHeight, displayLevel * ActualHeight);
+            // Place successive low-to-high bands alternately on either side of the center.
+            var column = i % 2 == 0 ? center - i / 2 : center + (i + 1) / 2;
             drawingContext.DrawRoundedRectangle(brush, null,
-                new Rect(i * step + (step - barWidth) * 0.5, ActualHeight - height, barWidth, height),
+                new Rect(column * step + (step - barWidth) * 0.5, ActualHeight - height, barWidth, height),
                 radius, radius);
         }
     }

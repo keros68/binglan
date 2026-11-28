@@ -1588,6 +1588,35 @@
                                     </local:SettingsRow>
                                 </local:SettingsGroup>
 
+                                <local:SettingsGroup x:Name="SpectrumSettingsCard"
+                                                     Visibility="Collapsed"
+                                                     local:SettingsSearch.Scope="Kind:AudioVisualizer"
+                                                     local:SettingsSearch.Title="音频频谱">
+                                    <local:SettingsRow Header="柱宽"
+                                                       Description="数值越小，柱体越细"
+                                                       local:SettingsSearch.Keywords="频谱 音频 柱宽 宽度 粗细">
+                                        <StackPanel Orientation="Horizontal">
+                                            <Slider x:Name="SpectrumBarWidthSlider"
+                                                    Width="160"
+                                                    Minimum="0.25"
+                                                    Maximum="0.8"
+                                                    Value="0.4"
+                                                    SmallChange="0.01"
+                                                    LargeChange="0.05"
+                                                    IsSnapToTickEnabled="True"
+                                                    TickFrequency="0.01"
+                                                    AutomationProperties.Name="频谱柱宽"
+                                                    ValueChanged="SpectrumBarWidth_ValueChanged"/>
+                                            <TextBlock x:Name="SpectrumBarWidthValueText" Style="{StaticResource ValueTextStyle}"/>
+                                            <Button x:Name="ResetSpectrumBarWidthButton"
+                                                    Margin="12,0,0,0"
+                                                    Content="恢复默认"
+                                                    AutomationProperties.Name="恢复默认频谱柱宽"
+                                                    Click="ResetSpectrumBarWidth_Click"/>
+                                        </StackPanel>
+                                    </local:SettingsRow>
+                                </local:SettingsGroup>
+
                                 <StackPanel x:Name="DisplayContentSettingsCard"
                                             Visibility="Collapsed"
                                             local:SettingsSearch.Scope="Kind:TimeDate"

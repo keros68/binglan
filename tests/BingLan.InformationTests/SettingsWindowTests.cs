@@ -180,6 +180,24 @@ internal static class SettingsWindowTests
             AssertEqual("频谱颜色", Require<SettingsRow>(window, "ComponentTextColorRow").Header, "频谱颜色设置");
             AssertEqual(Visibility.Collapsed, Require<SettingsRow>(window, "ComponentMaterialRow").Visibility,
                 "无底板频谱应隐藏材质设置");
+            var barWidth = Require<Slider>(window, "SpectrumBarWidthSlider");
+            AssertEqual(Visibility.Visible, Require<SettingsGroup>(window, "SpectrumSettingsCard").Visibility,
+                "频谱应显示专属柱宽设置");
+            AssertEqual(0.4d, barWidth.Value, "频谱柱宽默认 40%");
+            AssertEqual(0.25d, barWidth.Minimum, "柱宽滑杆下限");
+            AssertEqual(0.8d, barWidth.Maximum, "柱宽滑杆上限");
+            barWidth.Value = 0.63d;
+            AssertEqual(0.63d, spectrum.SpectrumBarWidth, "滑动柱宽应立即写入频谱组件");
+            AssertEqual(0.63d, componentApplied!.GetComponent(DesktopComponentKind.AudioVisualizer).SpectrumBarWidth,
+                "滑动柱宽应立即通知组件宿主");
+            AssertEqual("63%", Require<TextBlock>(window, "SpectrumBarWidthValueText").Text, "柱宽显示百分比");
+            window.ShowComponentSettings(DesktopComponentKind.TimeDate);
+            AssertEqual(Visibility.Collapsed, Require<SettingsGroup>(window, "SpectrumSettingsCard").Visibility,
+                "其他卡片应隐藏频谱专属设置");
+            window.ShowComponentSettings(DesktopComponentKind.AudioVisualizer);
+            AssertEqual(0.63d, barWidth.Value, "切换卡片后柱宽应保持");
+            Click(Require<Button>(window, "ResetSpectrumBarWidthButton"));
+            AssertEqual(0.4d, spectrum.SpectrumBarWidth, "恢复默认应立即还原 40% 柱宽");
             Require<TextBox>(window, "SelectedComponentTextColorEditor").Text = "#5689AB";
             window.CommitPendingChanges();
             AssertEqual("#5689AB", spectrum.Appearance.TextColor, "频谱柱颜色应写入组件");

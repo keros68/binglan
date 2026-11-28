@@ -42,6 +42,7 @@ internal static class AudioSpectrumHostTests
             var spectrum = host.Content as AudioSpectrumView
                 ?? throw new InvalidOperationException("频谱内容未创建");
             Check(host.IsVisible && spectrum.IsVisible, "启用后频谱应可见");
+            Check(spectrum.BarWidth == 0.4d, "频谱默认柱宽应为频段间距的 40%");
             Check(window.IsWidgetLocked, "频谱应复用布局锁定");
             Check(Require<StackPanel>(window, "ClockPanel").Visibility == Visibility.Collapsed
                 && Require<Border>(window, "WeatherCard").Visibility == Visibility.Collapsed
@@ -66,6 +67,7 @@ internal static class AudioSpectrumHostTests
             pump();
             Check(spectrum.IsVisible, "重新显示应恢复频谱");
             component.Appearance.TextColor = "#FFB35C";
+            component.SpectrumBarWidth = 0.68d;
             window.ApplyDesktopExperience(experience);
             window.ApplyPlacement(component.Placement, false);
             Check(Require<Grid>(window, "BodySurface").Background is SolidColorBrush { Color.A: 1 },
@@ -73,6 +75,8 @@ internal static class AudioSpectrumHostTests
             Check(!window.IsWidgetLocked && spectrum.SpectrumBrush is SolidColorBrush updated
                 && updated.Color == (Color)ColorConverter.ConvertFromString("#FFB35C"),
                 "解锁和外观修改应即时应用");
+            Check(ReferenceEquals(host.Content, spectrum) && spectrum.BarWidth == 0.68d,
+                "修改柱宽应实时应用到已有频谱控件");
             Check(!sampler.IsRunning && handler.RequestCount == 0, "重显和修改外观不能启动无关采样");
         }
         finally
@@ -114,6 +118,37 @@ internal static class AudioSpectrumHostTests
         Check(Render().All(value => value == 0), "全屏暂停时频谱应完全透明");
         view.SetSuspended(false);
         Check(resting.SequenceEqual(Render()), "退出暂停后应立即恢复静止短线");
+
+        var levels = (float[])typeof(AudioSpectrumView)
+            .GetField("_levels", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(view)!;
+        Array.Fill(levels, 1f);
+        var renderedWidths = new List<int>();
+        foreach (var barWidth in new[] { 0.25d, 0.4d, 0.8d })
+        {
+            view.BarWidth = barWidth;
+            var pixels = Render();
+            renderedWidths.Add(Enumerable.Range(0, width)
+                .Sum(x => (int)pixels[((height / 2) * width + x) * 4 + 3]));
+        }
+        Check(renderedWidths[0] < renderedWidths[1] && renderedWidths[1] < renderedWidths[2],
+            "柱宽应实际改变渲染的柱体宽度");
+        view.BarWidth = double.NaN;
+        Check(view.BarWidth == 0.4d, "无效柱宽应恢复默认");
+        view.BarWidth = 5d;
+        Check(view.BarWidth == 0.8d, "柱宽不能超过频段间距的 80%");
+        view.BarWidth = 0.4d;
+        foreach (var (band, column) in new[] { (0, 23), (1, 24), (22, 12), (23, 35), (46, 0), (47, 47) })
+        {
+            Array.Clear(levels);
+            levels[band] = 1;
+            view.InvalidateVisual();
+            var pixels = Render();
+            for (var i = 0; i < levels.Length; i++)
+            {
+                var alpha = pixels[((height / 2) * width + i * 10 + 5) * 4 + 3];
+                Check((alpha > 0) == (i == column), $"频段 {band} 应独立显示在第 {column + 1} 柱");
+            }
+        }
     }
 
     private static T Require<T>(Window window, string name) where T : class =>

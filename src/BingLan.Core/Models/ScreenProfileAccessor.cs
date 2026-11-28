@@ -1369,6 +1369,7 @@ public static class ScreenProfileAccessor
             IsLocked = source.IsLocked,
             ShowDivider = source.ShowDivider,
             DividerThickness = source.DividerThickness,
+            SpectrumBarWidth = source.SpectrumBarWidth,
             Density = source.Density,
             Placement = ClonePlacement(source.Placement),
             FontFamily = source.FontFamily,

@@ -11,12 +11,10 @@ namespace BingLan.App.Tray;
 
 internal sealed partial class TrayPanelWindow : Window
 {
-    private const int FirstRowIcons = 5;
     private static readonly TimeSpan LoadingPromptDelay = TimeSpan.FromMilliseconds(300);
     private readonly CancellationTokenSource _lifetime = new();
     private readonly List<Button> _entryButtons = [];
     private TrayPanelEntry[]? _shown;
-    private bool _expanded;
     private bool _refreshing;
     private bool _invoking;
     private bool _requestingContextMenu;
@@ -25,6 +23,9 @@ internal sealed partial class TrayPanelWindow : Window
     private string? _actionMessage;
 
     private readonly bool _anchored;
+    internal bool PreferMenuAbove { get; set; }
+    internal bool IsRequestingContextMenu => _requestingContextMenu;
+    internal Action? OpenWindowsTray { get; init; }
 
     private readonly Func<TrayActivationOwner, CancellationToken, Task<bool?>>? _activateApp;
 
@@ -71,6 +72,7 @@ internal sealed partial class TrayPanelWindow : Window
     }
 
     private void OnClose(object sender, RoutedEventArgs e) => Close();
+    private void OnOpenWindowsTray(object sender, RoutedEventArgs e) => OpenWindowsTray?.Invoke();
 
     internal void ApplyCaptionShadow(Color color)
     {
@@ -81,6 +83,7 @@ internal sealed partial class TrayPanelWindow : Window
     private async void OnRefresh(object sender, RoutedEventArgs e)
     {
         _actionMessage = null;
+        NativeTrayLink.Visibility = Visibility.Collapsed;
         UpdateStatus();
         await RefreshAsync();
     }
@@ -149,7 +152,7 @@ internal sealed partial class TrayPanelWindow : Window
         }
     }
 
-    private void ShowEntries(TrayPanelEntry[] entries)
+    internal void ShowEntries(TrayPanelEntry[] entries)
     {
         if (ReferenceEquals(_shown, entries)) return;
         if (_shown is { } shown && shown.Select(entry => entry.Identity).SequenceEqual(entries.Select(entry => entry.Identity)))
@@ -163,24 +166,11 @@ internal sealed partial class TrayPanelWindow : Window
             var focusedIdentity = focusedIndex >= 0 ? _shown?[focusedIndex].Identity : null;
             Entries.Children.Clear();
             _entryButtons.Clear();
-            foreach (var entry in entries) _entryButtons.Add(CreateEntry(entry));
-            foreach (var button in _entryButtons.Take(FirstRowIcons)) Entries.Children.Add(button);
-
-            if (_entryButtons.Count > FirstRowIcons)
+            foreach (var entry in entries)
             {
-                var more = new Button { FontFamily = new FontFamily("Segoe Fluent Icons, Segoe MDL2 Assets"), FontSize = 13 };
-                Entries.Children.Add(more);
-                var overflow = _entryButtons.Skip(FirstRowIcons).ToArray();
-                foreach (var item in overflow) Entries.Children.Add(item);
-                void SetExpanded()
-                {
-                    more.Content = _expanded ? "\uE70E" : "\uE70D";
-                    more.ToolTip = _expanded ? "收起" : $"展开其余 {overflow.Length} 项";
-                    AutomationProperties.SetName(more, (string)more.ToolTip);
-                    foreach (var item in overflow) item.Visibility = _expanded ? Visibility.Visible : Visibility.Collapsed;
-                }
-                more.Click += (_, _) => { _expanded = !_expanded; SetExpanded(); };
-                SetExpanded();
+                var button = CreateEntry(entry);
+                _entryButtons.Add(button);
+                Entries.Children.Add(button);
             }
             if (focusedIdentity is { } identity)
             {
@@ -271,6 +261,7 @@ internal sealed partial class TrayPanelWindow : Window
         if (_invoking || _closed) return;
         _invoking = true;
         _requestingContextMenu = contextMenu;
+        NativeTrayLink.Visibility = Visibility.Collapsed;
         try
         {
             var displayedEntry = _shown?.FirstOrDefault(entry => entry.Identity == identity);
@@ -280,18 +271,19 @@ internal sealed partial class TrayPanelWindow : Window
                 var topLeft = source.PointToScreen(new Point(0, 0));
                 var bottomRight = source.PointToScreen(new Point(source.ActualWidth, source.ActualHeight));
                 anchor = new TrayMenuAnchor(new Rect(topLeft, bottomRight),
-                    PresentationSource.FromVisual(source)?.CompositionTarget?.TransformToDevice.M22 ?? 1);
+                    PresentationSource.FromVisual(source)?.CompositionTarget?.TransformToDevice.M22 ?? 1, PreferMenuAbove);
             }
             var result = await TrayReader.InvokeAsync(identity, contextMenu, _lifetime.Token, _activateApp, displayedEntry, anchor);
             if (_closed) return;
-            if (_anchored && result is ("invoked" or "context-requested"))
+            if (_anchored && result is ("invoked" or "context-opened"))
             {
                 Close();
                 return;
             }
             _actionMessage = result switch
             {
-                "invoked" or "context-requested" => null,
+                "invoked" or "context-opened" => null,
+                "context-unconfirmed" => "未能确认应用菜单的位置。",
                 "action-in-progress" => "已有托盘操作正在处理。",
                 _ => "未能操作该图标，请刷新后重试。"
             };
@@ -303,15 +295,12 @@ internal sealed partial class TrayPanelWindow : Window
         {
             _invoking = false;
             _requestingContextMenu = false;
-            if (!_closed && !IsVisible) Close();
-            else if (!_closed) UpdateStatus();
+            if (!_closed)
+            {
+                NativeTrayLink.Visibility = contextMenu && _actionMessage is not null && OpenWindowsTray is not null
+                    ? Visibility.Visible : Visibility.Collapsed;
+                UpdateStatus();
+            }
         }
-    }
-
-    internal bool HideForContextMenuHandoff()
-    {
-        if (!_requestingContextMenu || _closed) return false;
-        Hide();
-        return true;
     }
 }

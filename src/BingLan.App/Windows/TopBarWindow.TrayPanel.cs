@@ -138,6 +138,11 @@ public partial class TopBarWindow
         var panel = new TrayPanelWindow(anchored: true, activateApp: TrayPanelWindow.ActivateTrayAppAsync)
         {
             Owner = this,
+            OpenWindowsTray = () =>
+            {
+                CloseTrayPanel();
+                if (!TrayOverflowController.IsVisible) _environment.OpenTrayOverflow();
+            },
             WindowStartupLocation = WindowStartupLocation.Manual
         };
         if (!highContrast)
@@ -190,6 +195,7 @@ public partial class TopBarWindow
             }
         }
 
+        panel.PreferMenuAbove = opensUpward;
         panel.MaxWidth = Math.Max(1, (workArea.Width - 2 * marginX) / scale.DpiScaleX);
         panel.MaxHeight = Math.Max(1, availableHeight / scale.DpiScaleY);
         panel.Measure(new Size(panel.MaxWidth, panel.MaxHeight));
@@ -245,7 +251,7 @@ public partial class TopBarWindow
                 if (ReferenceEquals(_trayPanel, panel) && !panel.IsActive
                     && !pressingAnchor && !(anchor.IsPressed && IsCursorOverTrayPanelAnchor(anchor)))
                 {
-                    if (!panel.HideForContextMenuHandoff()) CloseTrayPanel();
+                    if (!panel.IsRequestingContextMenu) CloseTrayPanel();
                 }
             });
         };

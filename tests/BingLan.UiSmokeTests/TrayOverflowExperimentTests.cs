@@ -6,6 +6,9 @@ using BingLan.App.Services;
 using System.IO;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Windows;
+using System.Windows.Automation;
+using System.Windows.Controls;
 using System.Windows.Threading;
 
 internal static class TrayOverflowExperimentTests
@@ -63,6 +66,7 @@ internal static class TrayOverflowExperimentTests
 
     internal static void Run(Action pump)
     {
+        AllTrayIconsVisible();
         ActionLifetime();
         Assert(TrayPanelWindow.IsFeishuMainWindow("飞书", "Chrome_WidgetWin_1"), "飞书主窗口应匹配实测标题和窗口类");
         Assert(!TrayPanelWindow.IsFeishuMainWindow("飞书会议", "Chrome_WidgetWin_1"), "独立会议窗口应保留 Explorer 默认动作");
@@ -146,6 +150,7 @@ internal static class TrayOverflowExperimentTests
     internal static void ActionLifetime()
     {
         ContextMenuPlacement();
+        TrayContextOwnerMatchingTests.Run();
         VerifyTaskbarCreatedDefersRegistration();
         foreach (var error in new[] { 0x80004005u, 0x80070057u, 0x80004001u, 0x80070005u })
         {
@@ -189,16 +194,129 @@ internal static class TrayOverflowExperimentTests
         Assert(TrayContextMenuPlacement.Place(new System.Windows.Rect(-600, -500, 40, 40), tallMenu,
             new System.Windows.Rect(-1000, -600, 1000, 600), 4) == new System.Windows.Point(-556, -550),
             "侧向避让应保持负坐标显示器工作区");
-        var owner = new TrayRegisteredIcon(0, 0, 1, Guid.Empty, tile);
+        var owner = new TrayContextMenuOwner(0, 0);
         var calls = 0;
         var result = TrayContextMenuPlacement.InvokeAsync(owner, new TrayMenuAnchor(tile, 1.75), () =>
             { calls++; return "context-requested"; }, CancellationToken.None).GetAwaiter().GetResult();
-        Assert(result == "context-requested" && calls == 1, "无法确认来源所有者时保留原生行为且只调用一次");
+        Assert(result == "context-unconfirmed" && calls == 1, "无法确认菜单归属时只发出一次请求，并提供系统托盘入口");
+        Assert(TrayContextMenuPlacement.Place(new System.Windows.Rect(200, 400, 50, 50), menu, screen, 7, preferAbove: true)
+            == new System.Windows.Point(200, 457), "上方空间不足时底栏菜单应能向下避让");
+        Assert(TrayContextMenuPlacement.Place(new System.Windows.Rect(200, 800, 50, 50), menu, screen, 7, preferAbove: true)
+            == new System.Windows.Point(200, 352), "上下均有空间时底栏菜单优先向上");
+        Assert(TrayContextMenuPlacement.IsNativeMenuPosition(tile, new Rect(3000, 250, 350, 400), screen)
+            && TrayContextMenuPlacement.IsNativeMenuPosition(tile, new Rect(3350, 250, 350, 400), screen)
+            && TrayContextMenuPlacement.IsNativeMenuPosition(bottom, new Rect(3000, 1625, 350, 400), screen),
+            "无法移动的应用菜单可保留整体可见且角点落在来源图标内的原生位置");
+        Assert(!TrayContextMenuPlacement.IsNativeMenuPosition(tile, new Rect(3000, 100, 600, 600), screen)
+            && !TrayContextMenuPlacement.IsNativeMenuPosition(tile, new Rect(3400, 250, 350, 400), screen)
+            && !TrayContextMenuPlacement.IsNativeMenuPosition(tile, new Rect(-100, 250, 3450, 400), screen)
+            && !TrayContextMenuPlacement.IsNativeMenuPosition(tile, Rect.Empty, screen),
+            "部分遮住图标、远离图标、超出工作区及空菜单不得当成可用原生位置");
+        Assert(TrayContextMenuPlacement.IsQtPopup("Qt6120QWindowPopupSaveBits")
+            && TrayContextMenuPlacement.IsQtPopup("Qt51514QWindowPopupSaveBits")
+            && !TrayContextMenuPlacement.IsQtPopup("Qt6120QWindowIcon")
+            && !TrayContextMenuPlacement.IsQtPopup("QtQWindowPopupSaveBits")
+            && !TrayContextMenuPlacement.IsQtPopup("Qt51514QWindowToolTipSaveBits"),
+            "Qt 菜单识别应排除主窗口、提示窗口和未知类名");
+        Assert(TrayContextMenuPlacement.IsKnownAppPopup("OneDriveReactNativeWin32WindowClass", @"C:\Apps\OneDrive.exe")
+            && TrayContextMenuPlacement.IsKnownAppPopup("LenovoTrayMenuV2", @"C:\Apps\LENOVOTRAY.EXE")
+            && TrayContextMenuPlacement.IsKnownAppPopup("MenuWnd", @"C:\Apps\cloudmusic.exe"),
+            "已核验专用托盘窗口应匹配精确类名及实际程序文件名");
+        foreach (var (className, path) in new[]
+        {
+            ("OneDriveReactNativeWin32WindowClass", @"C:\Apps\Other.exe"),
+            ("LenovoTrayMenuV2", @"C:\Apps\OneDrive.exe"),
+            ("LenovoTrayMenuV2", @"C:\Apps\LenovoTrayHelper.exe"),
+            ("PerryShadowWnd", @"C:\Apps\LenovoTray.exe"),
+            ("OneDriveReactNativeWin32WindowClassOther", @"C:\Apps\OneDrive.exe"),
+            ("Chrome_WidgetWin_1", @"C:\Apps\OneDrive.exe"),
+            ("MenuWnd", @"C:\Apps\Other.exe"),
+            ("MenuWnd", @"C:\Apps\cloudmusic-helper.exe"),
+            ("MenuWndOther", @"C:\Apps\cloudmusic.exe"),
+            ("LenovoTrayMenuV2", "")
+        })
+            Assert(!TrayContextMenuPlacement.IsKnownAppPopup(className, path),
+                "普通窗口、阴影、不同程序与相似名称均不得被认作已核验托盘菜单");
+        Assert(TrayContextMenuPlacement.MatchesKnownAppPopupOwner("MenuWnd", 101, 101)
+            && !TrayContextMenuPlacement.MatchesKnownAppPopupOwner("MenuWnd", 101, 102)
+            && !TrayContextMenuPlacement.MatchesKnownAppPopupOwner("MenuWnd", 101, 0)
+            && !TrayContextMenuPlacement.MatchesKnownAppPopupOwner("MenuWnd", 0, 0),
+            "云音乐通用菜单类必须具有属于同一已注册进程的窗口所有者");
+        var systemOwner = new TrayContextMenuOwner((nint)100, 101, StandardMenusOnly: true);
+        Assert(TrayContextMenuPlacement.AllowsMenuClass(systemOwner, "#32768")
+            && TrayContextMenuPlacement.MatchesStandardMenuOwner(systemOwner, (nint)100)
+            && !TrayContextMenuPlacement.MatchesStandardMenuOwner(systemOwner, (nint)200)
+            && !TrayContextMenuPlacement.MatchesStandardMenuOwner(systemOwner, 0)
+            && !TrayContextMenuPlacement.MatchesStandardMenuOwner(owner, 0),
+            "系统托盘菜单必须属于已确认的回调窗口，不能仅凭同属 Explorer 进程确认");
+        foreach (var className in new[] { "Qt6120QWindowPopupSaveBits", "OneDriveReactNativeWin32WindowClass",
+            "LenovoTrayMenuV2", "MenuWnd", "PerryShadowWnd", "Unknown" })
+            Assert(!TrayContextMenuPlacement.AllowsMenuClass(systemOwner, className),
+                "系统蓝牙只允许标准菜单，不得沿用同进程的 Qt 或应用专用弹窗");
+        Assert(TrayContextMenuPlacement.AllowsMenuClass(owner, "#32768")
+            && TrayContextMenuPlacement.AllowsMenuClass(owner, "Qt6120QWindowPopupSaveBits")
+            && TrayContextMenuPlacement.AllowsMenuClass(owner, "MenuWnd")
+            && !TrayContextMenuPlacement.AllowsMenuClass(owner, "Unknown"),
+            "正常注册仍保留已核验的标准菜单与应用弹窗路径");
+        Assert(TrayContextMenuPlacement.IsObservationPopup("Chrome_WidgetWin_1", 0x96000000, 0x200088),
+            "只观察路径应匹配已实测 Chrome 前台透明工具弹窗样式");
+        foreach (var (className, style, extendedStyle) in new (string, long, long)[]
+        {
+            ("Chrome_WidgetWin_1", 0x16CF0000, 0x40000),
+            ("Chrome_WidgetWin_1", 0x96CF0000, 0x200088),
+            ("Chrome_WidgetWin_1", 0xD6000000, 0x200088),
+            ("Chrome_WidgetWin_1", 0x96000000, 0x200008),
+            ("Chrome_WidgetWin_1", 0x96000000, 0x88),
+            ("Chrome_WidgetWin_1", 0x96000000, 0x200080),
+            ("Chrome_WidgetWin_1", 0x96000000, 0x240088),
+            ("Chrome_WidgetWin_2", 0x96000000, 0x200088)
+        })
+            Assert(!TrayContextMenuPlacement.IsObservationPopup(className, style, extendedStyle),
+                "普通文档、主窗口、子窗口及缺少已核验透明工具弹窗样式的窗口不得确认");
+        var observedTile = new Rect(2062, 142, 57, 57);
+        var observedPopup = new Rect(1271, 152, 856, 829);
+        var observedWorkArea = new Rect(0, 40, 2560, 1360);
+        Assert(!TrayContextMenuPlacement.IsNativeMenuPosition(observedTile, observedPopup, observedWorkArea)
+            && TrayContextMenuPlacement.IsObservationMenuPosition(observedTile, observedPopup, observedWorkArea, 1.5),
+            "ChatGPT 实测透明阴影可使 HWND 角点离图标 8px，8DIP 上限内仍可确认贴源");
+        Assert(!TrayContextMenuPlacement.IsObservationMenuPosition(observedTile,
+                new Rect(1271, 152, 870, 829), observedWorkArea, 1.5)
+            && !TrayContextMenuPlacement.IsObservationMenuPosition(observedTile,
+                new Rect(1200, 100, 1000, 1000), observedWorkArea, 1.5)
+            && !TrayContextMenuPlacement.IsObservationMenuPosition(observedTile,
+                new Rect(-20, 152, 2147, 829), observedWorkArea, 1.5)
+            && !TrayContextMenuPlacement.IsObservationMenuPosition(Rect.Empty, observedPopup, observedWorkArea, 1.5)
+            && !TrayContextMenuPlacement.IsObservationMenuPosition(observedTile, observedPopup, observedWorkArea, double.NaN),
+            "观察路径必须拒绝超过阴影容差、仅遮挡图标、越屏、空锚点及无效缩放");
+        var unverifiedCalls = 0;
+        var unverifiedObservation = new TrayContextMenuOwner(0, 0,
+            ObservationExecutablePath: @"C:\Apps\ChatGPT.exe", ObservationIconGuid: Guid.NewGuid());
+        Assert(TrayContextMenuPlacement.InvokeAsync(unverifiedObservation, new TrayMenuAnchor(observedTile, 1.5),
+                () => { unverifiedCalls++; return "context-requested"; }, CancellationToken.None).GetAwaiter().GetResult()
+            == "context-unconfirmed" && unverifiedCalls == 1,
+            "没有当前严格观察身份的 GUID 不得被当成回调窗口或已确认菜单");
         using var canceled = new CancellationTokenSource();
         canceled.Cancel();
         var canceledCall = TrayContextMenuPlacement.InvokeAsync(owner, new TrayMenuAnchor(tile, 1.75), () =>
             { calls++; return "context-requested"; }, canceled.Token);
         Assert(canceledCall.IsCanceled && calls == 1, "调用前已取消时，不得继续发出原生菜单请求");
+    }
+
+    private static void AllTrayIconsVisible()
+    {
+        var panel = new TrayPanelWindow(anchored: true);
+        try
+        {
+            var entries = Enumerable.Range(1, 8).Select(i => new TrayPanelEntry(
+                new TrayIdentity(1, i.ToString()), $"应用 {i}", i <= 5 ? "taskbar" : "existing-overflow", null)).ToArray();
+            panel.ShowEntries(entries[..5]);
+            panel.ShowEntries(entries);
+            var buttons = panel.Entries.Children.Cast<Button>().ToArray();
+            Assert(buttons.Length == entries.Length && buttons.All(button => button.Visibility == Visibility.Visible)
+                && buttons.Select(AutomationProperties.GetName).SequenceEqual(entries.Select(entry => entry.Name)),
+                "托盘应按快照顺序直接显示常显区和折叠区的全部图标，每个图标对应一个按钮");
+        }
+        finally { panel.Close(); }
     }
 
     private static void VerifyTaskbarCreatedDefersRegistration()

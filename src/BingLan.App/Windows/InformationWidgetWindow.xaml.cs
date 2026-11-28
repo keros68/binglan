@@ -347,6 +347,7 @@ public partial class InformationWidgetWindow : WidgetWindowBase
         _spectrumView ??= new AudioSpectrumView();
         SpectrumHost.Content = _spectrumView;
         _spectrumView.SpectrumBrush = GetComponentTextBrush(component);
+        _spectrumView.BarWidth = component.SpectrumBarWidth;
         Title = DesktopExperienceRules.GetComponentName(component.Kind);
         MinWidth = 180d;
         MinHeight = 72d;

@@ -610,6 +610,7 @@ public partial class SettingsWindow : Window
             // Quick launch shows only icon glyphs, and only the weather and performance
             // cards lay out by density, so the other components hide options that do nothing.
             var isSpectrum = kind == DesktopComponentKind.AudioVisualizer;
+            SpectrumSettingsCard.Visibility = isSpectrum ? Visibility.Visible : Visibility.Collapsed;
             var materialVisibility = isSpectrum ? Visibility.Collapsed : Visibility.Visible;
             ComponentMaterialRow.Visibility = materialVisibility;
             ComponentFontScaleRow.Visibility = materialVisibility;
@@ -709,6 +710,8 @@ public partial class SettingsWindow : Window
             SelectedComponentLockedCheckBox.IsChecked =
                 targetWindow?.IsWidgetLocked ?? component.IsLocked;
             SelectedComponentFontScaleSlider.Value = fontScale;
+            SpectrumBarWidthSlider.Value = component.SpectrumBarWidth;
+            SpectrumBarWidthValueText.Text = $"{component.SpectrumBarWidth * 100:0}%";
             SelectedComponentFontPicker.SelectedItem = fontFamily is { } font
                 ? InstalledFontCatalog.Resolve(font)
                 : DefaultFontLabel;
@@ -1353,6 +1356,10 @@ public partial class SettingsWindow : Window
         {
             component.IsVisible = SelectedComponentVisibleCheckBox.IsChecked == true;
             component.FontScale = SelectedComponentFontScaleSlider.Value;
+            if (kind == DesktopComponentKind.AudioVisualizer)
+            {
+                component.SpectrumBarWidth = SpectrumBarWidthSlider.Value;
+            }
             component.FontFamily = fontFamily;
             component.Appearance.TextColor = WidgetAppearanceRules.CoerceTextColor(
                 SelectedComponentTextColorEditor.Text);

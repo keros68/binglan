@@ -59,8 +59,14 @@
             <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" MaxHeight="244" HorizontalScrollBarVisibility="Disabled" Focusable="False">
                 <WrapPanel x:Name="Entries" Margin="0,4,0,0"/>
             </ScrollViewer>
-            <TextBlock Grid.Row="2" x:Name="Status" Margin="5,5,5,3" TextWrapping="Wrap" FontSize="12"
-                       Foreground="{DynamicResource SoftInk}" Visibility="Collapsed" AutomationProperties.LiveSetting="Polite"/>
+            <StackPanel Grid.Row="2">
+                <TextBlock x:Name="Status" Margin="5,5,5,3" TextWrapping="Wrap" FontSize="12"
+                           Foreground="{DynamicResource SoftInk}" Visibility="Collapsed" AutomationProperties.LiveSetting="Polite"/>
+                <Button x:Name="NativeTrayLink" Width="Auto" Height="28" Margin="5,0" HorizontalAlignment="Left"
+                        Visibility="Collapsed" AutomationProperties.Name="打开 Windows 托盘" Click="OnOpenWindowsTray">
+                    <TextBlock Text="打开 Windows 托盘" TextDecorations="Underline"/>
+                </Button>
+            </StackPanel>
         </Grid>
     </Border>
 </Window>

@@ -90,6 +90,7 @@ public static class ThemeRules
                 Kind = component.Kind,
                 IsVisible = component.IsVisible,
                 FontScale = component.FontScale,
+                SpectrumBarWidth = component.SpectrumBarWidth,
                 CornerRadius = component.CornerRadius,
                 Density = component.Density,
                 Appearance = CopyAppearance(component.Appearance)
@@ -241,6 +242,7 @@ public static class ThemeRules
         foreach (var component in package.Tokens.Components)
         {
             component.FontScale = DesktopExperienceRules.CoerceFontScale(component.FontScale);
+            component.SpectrumBarWidth = DesktopExperienceRules.CoerceSpectrumBarWidth(component.SpectrumBarWidth);
             component.CornerRadius = WidgetAppearanceRules.CoerceCornerRadius(component.CornerRadius);
             if (!Enum.IsDefined(component.Density))
             {
@@ -510,6 +512,7 @@ public static class ThemeRules
             var component = experience.GetComponent(tokens.Kind);
             component.IsVisible = tokens.IsVisible;
             component.FontScale = tokens.FontScale;
+            component.SpectrumBarWidth = tokens.SpectrumBarWidth;
             component.CornerRadius = tokens.CornerRadius;
             component.Density = tokens.Density;
             component.Appearance = CopyAppearance(tokens.Appearance);

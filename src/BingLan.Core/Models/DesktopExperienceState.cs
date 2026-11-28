@@ -33,6 +33,7 @@ public sealed class DesktopComponentState
 {
     private double _fontScale = 1d;
     private double _cornerRadius = WidgetAppearanceRules.DefaultCornerRadius;
+    private double _spectrumBarWidth = DesktopExperienceRules.DefaultSpectrumBarWidth;
 
     public DesktopComponentKind Kind { get; set; }
     public bool IsVisible { get; set; } = true;
@@ -69,6 +70,13 @@ public sealed class DesktopComponentState
         set => _cornerRadius = WidgetAppearanceRules.CoerceCornerRadius(value);
     }
 
+    /// <summary>Audio spectrum column width as a fraction of its frequency band's slot.</summary>
+    public double SpectrumBarWidth
+    {
+        get => _spectrumBarWidth;
+        set => _spectrumBarWidth = DesktopExperienceRules.CoerceSpectrumBarWidth(value);
+    }
+
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? ExtensionData { get; set; }
 }
@@ -91,6 +99,9 @@ public static class DesktopExperienceRules
 {
     public const double MinimumFontScale = 0.7d;
     public const double MaximumFontScale = 2d;
+    public const double DefaultSpectrumBarWidth = 0.4d;
+    public const double MinimumSpectrumBarWidth = 0.25d;
+    public const double MaximumSpectrumBarWidth = 0.8d;
     public const double PresetColumnGap = 12d;
     public const double DefaultWeatherCardHeight = 137d;
     public const double DefaultPerformanceCardHeight = 86d;
@@ -200,6 +211,10 @@ public static class DesktopExperienceRules
         }
         return Math.Clamp(value, MinimumFontScale, MaximumFontScale);
     }
+
+    public static double CoerceSpectrumBarWidth(double value) => double.IsFinite(value)
+        ? Math.Clamp(value, MinimumSpectrumBarWidth, MaximumSpectrumBarWidth)
+        : DefaultSpectrumBarWidth;
 
     private const double WeatherSymmetricOuterVerticalMargin = 16d;
     private const double WeatherRuleHeight = 8d;
