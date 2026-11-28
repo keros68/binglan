@@ -104,7 +104,7 @@ internal static class TrayIconArtwork
         return result;
     }
 
-    internal static TrayRegisteredIcon[] ReadRegisteredIcons()
+    internal static TrayRegisteredIcon[]? ReadRegisteredIcons()
     {
         try
         {
@@ -114,7 +114,7 @@ internal static class TrayIconArtwork
                 .DistinctBy(icon => icon.Key)
                 .ToArray();
         }
-        catch (Exception exception) when (IsReadFailure(exception)) { return []; }
+        catch (Exception exception) when (IsReadFailure(exception)) { return null; }
     }
 
     internal static TrayContextMenuOwner? ResolveContextMenuOwner(TrayEntry entry, TrayPanelEntry? displayed,

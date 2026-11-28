@@ -1592,7 +1592,21 @@
                                                      Visibility="Collapsed"
                                                      local:SettingsSearch.Scope="Kind:AudioVisualizer"
                                                      local:SettingsSearch.Title="音频频谱">
-                                    <local:SettingsRow Header="柱宽"
+                                    <local:SettingsRow x:Name="SpectrumStyleRow"
+                                                       Header="频谱样式"
+                                                       Description="静音时显示一条细线，播放时音柱向上伸展"
+                                                       local:SettingsSearch.Keywords="频谱 音频 样式 细线 音柱 镜像 曲线">
+                                        <ComboBox x:Name="SpectrumStyleSelector"
+                                                  Width="160"
+                                                  AutomationProperties.Name="频谱样式"
+                                                  SelectionChanged="SpectrumStyle_SelectionChanged">
+                                            <ComboBoxItem Content="细线音柱"/>
+                                            <ComboBoxItem Content="镜像音柱"/>
+                                            <ComboBoxItem Content="连续曲线"/>
+                                        </ComboBox>
+                                    </local:SettingsRow>
+                                    <local:SettingsRow x:Name="SpectrumBarWidthRow"
+                                                       Header="柱宽"
                                                        Description="数值越小，柱体越细"
                                                        local:SettingsSearch.Keywords="频谱 音频 柱宽 宽度 粗细">
                                         <StackPanel Orientation="Horizontal">

@@ -68,6 +68,7 @@ internal static class AudioSpectrumHostTests
             Check(spectrum.IsVisible, "重新显示应恢复频谱");
             component.Appearance.TextColor = "#FFB35C";
             component.SpectrumBarWidth = 0.68d;
+            component.SpectrumStyle = AudioSpectrumStyle.Mirror;
             window.ApplyDesktopExperience(experience);
             window.ApplyPlacement(component.Placement, false);
             Check(Require<Grid>(window, "BodySurface").Background is SolidColorBrush { Color.A: 1 },
@@ -77,6 +78,8 @@ internal static class AudioSpectrumHostTests
                 "解锁和外观修改应即时应用");
             Check(ReferenceEquals(host.Content, spectrum) && spectrum.BarWidth == 0.68d,
                 "修改柱宽应实时应用到已有频谱控件");
+            Check(spectrum.SpectrumStyle == AudioSpectrumStyle.Mirror,
+                "修改样式应实时应用到已有频谱控件");
             Check(!sampler.IsRunning && handler.RequestCount == 0, "重显和修改外观不能启动无关采样");
         }
         finally
@@ -104,16 +107,12 @@ internal static class AudioSpectrumHostTests
             return pixels;
         }
 
+        static byte Alpha(byte[] pixels, int x, int y) => pixels[(y * width + x) * 4 + 3];
         var resting = Render();
-        // At 480 DIP each of the 48 bands occupies a ten-pixel cell.
-        for (var x = 0; x < width; x += 10)
-        {
-            Check(resting[((height - 1) * width + x + 5) * 4 + 3] > 0
-                && resting[((height - 1) * width + x) * 4 + 3] == 0,
-                "安静时每个频段都应显示独立短线");
-        }
+        Check(Enumerable.Range(1, width - 2).All(x => Alpha(resting, x, height - 1) > 0),
+            "默认静音时应是一条连续细线，柱子之间不能出现断点");
         Check(resting.AsSpan(0, (height - 2) * width * 4).IndexOfAnyExcept((byte)0) < 0,
-            "静止短线上方应保持透明");
+            "静音细线上方应保持透明");
         view.SetSuspended(true);
         Check(Render().All(value => value == 0), "全屏暂停时频谱应完全透明");
         view.SetSuspended(false);
@@ -149,6 +148,28 @@ internal static class AudioSpectrumHostTests
                 Check((alpha > 0) == (i == column), $"频段 {band} 应独立显示在第 {column + 1} 柱");
             }
         }
+
+        Array.Clear(levels);
+        view.SpectrumStyle = AudioSpectrumStyle.Mirror;
+        var mirrorRest = Render();
+        Check(Alpha(mirrorRest, width / 2, height / 2) > 0
+            && Alpha(mirrorRest, width / 6, height / 2) == 0 && Alpha(mirrorRest, width / 2, height - 1) == 0,
+            "镜像音柱静音时只显示居中的短横线");
+        levels[0] = 0.8f;
+        view.InvalidateVisual();
+        var mirror = Render();
+        Check(Alpha(mirror, 235, 25) > 0 && Alpha(mirror, 235, 74) > 0 && Alpha(mirror, 245, 25) == 0,
+            "镜像音柱应由同一频段围绕中线上下对称展开");
+
+        view.SpectrumStyle = AudioSpectrumStyle.Curve;
+        var curve = Render();
+        Check(Enumerable.Range(0, height / 2).Any(y => Alpha(curve, 235, y) > 0)
+            && Alpha(curve, 235, height - 1) == 0, "曲线应跟随频段绘出峰值，线下保持透明");
+        view.BarWidth = 0.8;
+        Check(curve.SequenceEqual(Render()), "曲线的线宽应独立于音柱宽度");
+        Array.Clear(levels);
+        view.InvalidateVisual();
+        Check(Render().All(value => value == 0), "连续曲线静音时应完全消隐");
     }
 
     private static T Require<T>(Window window, string name) where T : class =>

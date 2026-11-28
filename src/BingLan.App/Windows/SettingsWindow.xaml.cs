@@ -712,6 +712,8 @@ public partial class SettingsWindow : Window
             SelectedComponentFontScaleSlider.Value = fontScale;
             SpectrumBarWidthSlider.Value = component.SpectrumBarWidth;
             SpectrumBarWidthValueText.Text = $"{component.SpectrumBarWidth * 100:0}%";
+            SpectrumStyleSelector.SelectedIndex = (int)component.SpectrumStyle;
+            UpdateSpectrumStyleEditor();
             SelectedComponentFontPicker.SelectedItem = fontFamily is { } font
                 ? InstalledFontCatalog.Resolve(font)
                 : DefaultFontLabel;
@@ -1359,6 +1361,7 @@ public partial class SettingsWindow : Window
             if (kind == DesktopComponentKind.AudioVisualizer)
             {
                 component.SpectrumBarWidth = SpectrumBarWidthSlider.Value;
+                component.SpectrumStyle = (AudioSpectrumStyle)SpectrumStyleSelector.SelectedIndex;
             }
             component.FontFamily = fontFamily;
             component.Appearance.TextColor = WidgetAppearanceRules.CoerceTextColor(

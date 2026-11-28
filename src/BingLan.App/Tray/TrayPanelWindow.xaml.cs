@@ -18,6 +18,7 @@ internal sealed partial class TrayPanelWindow : Window
     private bool _refreshing;
     private bool _invoking;
     private bool _requestingContextMenu;
+    private bool _offerNativeTrayAfterAction;
     private bool _closed;
     private string? _readMessage;
     private string? _actionMessage;
@@ -83,8 +84,7 @@ internal sealed partial class TrayPanelWindow : Window
     private async void OnRefresh(object sender, RoutedEventArgs e)
     {
         _actionMessage = null;
-        NativeTrayLink.Visibility = Visibility.Collapsed;
-        UpdateStatus();
+        _offerNativeTrayAfterAction = false;
         await RefreshAsync();
     }
     private void OnHeaderDrag(object sender, MouseButtonEventArgs e)
@@ -103,11 +103,14 @@ internal sealed partial class TrayPanelWindow : Window
         var text = _actionMessage ?? _readMessage ?? (_shown is { Length: 0 } ? "暂无可用托盘图标" : null);
         Status.Text = text ?? "";
         Status.Visibility = string.IsNullOrEmpty(text) ? Visibility.Collapsed : Visibility.Visible;
+        var readNeedsHelp = !_refreshing && (_readMessage is not null || _shown is { Length: 0 });
+        NativeTrayLink.Visibility = OpenWindowsTray is not null && (readNeedsHelp || _offerNativeTrayAfterAction)
+            ? Visibility.Visible : Visibility.Collapsed;
     }
 
-    private async Task RefreshAsync()
+    private async Task<bool> RefreshAsync()
     {
-        if (_refreshing || _closed) return;
+        if (_refreshing || _closed) return false;
         _refreshing = true;
         try
         {
@@ -125,13 +128,9 @@ internal sealed partial class TrayPanelWindow : Window
             }
 
             var snapshot = await refresh;
-            if (_closed) return;
-            if (snapshot is null) _readMessage = "无法读取托盘，可再次刷新。";
-            else
-            {
-                ShowEntries(snapshot);
-                _readMessage = null;
-            }
+            if (_closed) return false;
+            ShowEntries(snapshot);
+            return snapshot is not null;
         }
         catch (OperationCanceledException) when (_closed) { }
         catch (TimeoutException) { _readMessage = "读取超时，可再次刷新。"; }
@@ -141,6 +140,7 @@ internal sealed partial class TrayPanelWindow : Window
             _refreshing = false;
             if (!_closed) UpdateStatus();
         }
+        return false;
     }
 
     private void ShowCachedEntries()
@@ -148,13 +148,17 @@ internal sealed partial class TrayPanelWindow : Window
         if (_shown is null && TrayReader.CachedSnapshot is { } snapshot)
         {
             ShowEntries(snapshot);
-            _readMessage = null;
         }
     }
 
-    internal void ShowEntries(TrayPanelEntry[] entries)
+    internal void ShowEntries(TrayPanelEntry[]? entries)
     {
-        if (ReferenceEquals(_shown, entries)) return;
+        _readMessage = entries is null ? "无法读取托盘，可再次刷新。" : null;
+        if (entries is null || ReferenceEquals(_shown, entries))
+        {
+            UpdateStatus();
+            return;
+        }
         if (_shown is { } shown && shown.Select(entry => entry.Identity).SequenceEqual(entries.Select(entry => entry.Identity)))
         {
             for (var i = 0; i < entries.Length; i++)
@@ -179,6 +183,7 @@ internal sealed partial class TrayPanelWindow : Window
             }
         }
         _shown = entries;
+        UpdateStatus();
     }
 
     private Button CreateEntry(TrayPanelEntry entry)
@@ -261,7 +266,10 @@ internal sealed partial class TrayPanelWindow : Window
         if (_invoking || _closed) return;
         _invoking = true;
         _requestingContextMenu = contextMenu;
-        NativeTrayLink.Visibility = Visibility.Collapsed;
+        _offerNativeTrayAfterAction = false;
+        _actionMessage = null;
+        UpdateStatus();
+        string? result = null;
         try
         {
             var displayedEntry = _shown?.FirstOrDefault(entry => entry.Identity == identity);
@@ -273,11 +281,17 @@ internal sealed partial class TrayPanelWindow : Window
                 anchor = new TrayMenuAnchor(new Rect(topLeft, bottomRight),
                     PresentationSource.FromVisual(source)?.CompositionTarget?.TransformToDevice.M22 ?? 1, PreferMenuAbove);
             }
-            var result = await TrayReader.InvokeAsync(identity, contextMenu, _lifetime.Token, _activateApp, displayedEntry, anchor);
+            result = await TrayReader.InvokeAsync(identity, contextMenu, _lifetime.Token, _activateApp, displayedEntry, anchor);
             if (_closed) return;
             if (_anchored && result is ("invoked" or "context-opened"))
             {
                 Close();
+                return;
+            }
+            if (result == "element-unavailable")
+            {
+                if (await RefreshAsync() && !_closed && _shown is { Length: > 0 })
+                    _actionMessage = "图标已变更，请重新选择。";
                 return;
             }
             _actionMessage = result switch
@@ -297,8 +311,7 @@ internal sealed partial class TrayPanelWindow : Window
             _requestingContextMenu = false;
             if (!_closed)
             {
-                NativeTrayLink.Visibility = contextMenu && _actionMessage is not null && OpenWindowsTray is not null
-                    ? Visibility.Visible : Visibility.Collapsed;
+                _offerNativeTrayAfterAction = contextMenu && result != "element-unavailable" && _actionMessage is not null;
                 UpdateStatus();
             }
         }

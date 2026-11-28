@@ -1370,6 +1370,7 @@ public static class ScreenProfileAccessor
             ShowDivider = source.ShowDivider,
             DividerThickness = source.DividerThickness,
             SpectrumBarWidth = source.SpectrumBarWidth,
+            SpectrumStyle = source.SpectrumStyle,
             Density = source.Density,
             Placement = ClonePlacement(source.Placement),
             FontFamily = source.FontFamily,

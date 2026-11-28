@@ -3,6 +3,7 @@ using BingLan.Core.Dock;
 using BingLan.Core.Models;
 using BingLan.Core.Services;
 using BingLan.Core.Themes;
+using System.IO.Compression;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
@@ -13,6 +14,7 @@ internal static class AudioSpectrumTests
     internal static void Run()
     {
         CheckBarWidthSettings();
+        CheckStyleSettings();
         var bass = AnalyzeTone(120, 48000);
         var treble = AnalyzeTone(4000, 48000);
         var treble44 = AnalyzeTone(4000, 44100);
@@ -163,6 +165,127 @@ internal static class AudioSpectrumTests
         Check(token.SpectrumBarWidth == 0.8d, "主题中的柱宽应限制在有效范围");
         var legacyToken = JsonSerializer.Deserialize<ThemeComponentTokens>("{}")!;
         Check(legacyToken.SpectrumBarWidth == 0.4d, "旧主题缺少柱宽应使用 40% 默认值");
+    }
+
+    private static void CheckStyleSettings()
+    {
+        static void Check(bool condition, string message)
+        {
+            if (!condition) throw new InvalidOperationException(message);
+        }
+
+        var state = LocalStateStore.CreateDefault();
+        var spectrum = state.DesktopExperience.GetComponent(DesktopComponentKind.AudioVisualizer);
+        Check(spectrum.SpectrumStyle == AudioSpectrumStyle.Bars, "频谱默认样式应为细线音柱");
+        foreach (var style in Enum.GetValues<AudioSpectrumStyle>())
+        {
+            spectrum.SpectrumStyle = style;
+            Check(spectrum.SpectrumStyle == style, "三种频谱样式应可选择");
+        }
+        foreach (var value in new[] { -1, 3, int.MaxValue })
+        {
+            spectrum.SpectrumStyle = (AudioSpectrumStyle)value;
+            Check(spectrum.SpectrumStyle == AudioSpectrumStyle.Bars, "非法频谱样式应恢复细线音柱");
+        }
+        spectrum.SpectrumStyle = AudioSpectrumStyle.Mirror;
+        spectrum.SpectrumBarWidth = 0.63d;
+        const string screenKey = "DISPLAY#SPECTRUM#STYLE";
+        var secondary = ScreenProfileAccessor.CopyPrimaryProfileToScreen(
+            state, screenKey, new PixelRect(1920, 0, 3840, 1080), 96).Profile.Experience
+            .GetComponent(DesktopComponentKind.AudioVisualizer);
+        Check(secondary.SpectrumStyle == AudioSpectrumStyle.Mirror, "复制主屏设置应保留频谱样式");
+        secondary.SpectrumStyle = AudioSpectrumStyle.Curve;
+        Check(spectrum.SpectrumStyle == AudioSpectrumStyle.Mirror && secondary.SpectrumBarWidth == 0.63d,
+            "副屏应可独立切换曲线并保留音柱柱宽");
+
+        var directory = Path.Combine(Path.GetTempPath(), $"BingLanSpectrumStyle-{Guid.NewGuid():N}");
+        try
+        {
+            var store = new LocalStateStore(directory);
+            store.Save(state);
+            var savedJson = File.ReadAllText(store.StatePath);
+            var reloaded = store.Load();
+            Check(reloaded.DesktopExperience.GetComponent(DesktopComponentKind.AudioVisualizer).SpectrumStyle
+                    == AudioSpectrumStyle.Mirror
+                && reloaded.MultiScreen!.Screens[screenKey].Experience
+                    .GetComponent(DesktopComponentKind.AudioVisualizer).SpectrumStyle == AudioSpectrumStyle.Curve,
+                "主副屏频谱样式应分别保存重载");
+
+            foreach (var schema in new[] { 69, AppState.CurrentSchemaVersion })
+            {
+                var json = JsonNode.Parse(savedJson)!;
+                json["SchemaVersion"] = schema;
+                foreach (var experience in new[] { json["DesktopExperience"]!, json["MultiScreen"]!["Screens"]![screenKey]!["Experience"]! })
+                {
+                    foreach (var component in experience["Components"]!.AsArray())
+                    {
+                        component!.AsObject().Remove("SpectrumStyle");
+                    }
+                }
+                File.WriteAllText(store.StatePath, json.ToJsonString());
+                var legacy = store.Load();
+                Check(legacy.SchemaVersion == AppState.CurrentSchemaVersion
+                    && legacy.DesktopExperience.GetComponent(DesktopComponentKind.AudioVisualizer).SpectrumStyle
+                        == AudioSpectrumStyle.Bars
+                    && legacy.MultiScreen!.Screens[screenKey].Experience
+                        .GetComponent(DesktopComponentKind.AudioVisualizer).SpectrumStyle == AudioSpectrumStyle.Bars
+                    && legacy.DesktopExperience.GetComponent(DesktopComponentKind.AudioVisualizer).SpectrumBarWidth == 0.63d,
+                    "旧配置缺少样式应为主副屏恢复细线音柱并保留柱宽");
+            }
+
+            var invalidJson = JsonNode.Parse(savedJson)!;
+            foreach (var experience in new[] { invalidJson["DesktopExperience"]!, invalidJson["MultiScreen"]!["Screens"]![screenKey]!["Experience"]! })
+            {
+                foreach (var component in experience["Components"]!.AsArray())
+                {
+                    component!["SpectrumStyle"] = 99;
+                }
+            }
+            File.WriteAllText(store.StatePath, invalidJson.ToJsonString());
+            var normalized = store.Load();
+            Check(normalized.DesktopExperience.GetComponent(DesktopComponentKind.AudioVisualizer).SpectrumStyle
+                    == AudioSpectrumStyle.Bars
+                && normalized.MultiScreen!.Screens[screenKey].Experience
+                    .GetComponent(DesktopComponentKind.AudioVisualizer).SpectrumStyle == AudioSpectrumStyle.Bars
+                && normalized.DesktopExperience.GetComponent(DesktopComponentKind.AudioVisualizer).SpectrumBarWidth == 0.63d,
+                "非法样式配置应恢复默认样式且保留其他设置");
+        }
+        finally
+        {
+            if (Directory.Exists(directory)) Directory.Delete(directory, true);
+        }
+
+        var area = new ThemeArea(0, 0, 1920, 1080);
+        var version = new Version(0, 1, 0);
+        foreach (var style in Enum.GetValues<AudioSpectrumStyle>())
+        {
+            spectrum.SpectrumStyle = style;
+            var theme = ThemeRules.Export(state, "频谱样式测试", area, version);
+            using var archive = new MemoryStream();
+            ThemeArchive.Write(archive, theme);
+            archive.Position = 0;
+            using (var zip = new ZipArchive(archive, ZipArchiveMode.Read, leaveOpen: true))
+            using (var reader = new StreamReader(zip.GetEntry("tokens.json")!.Open()))
+            {
+                var tokens = JsonNode.Parse(reader.ReadToEnd())!;
+                Check(tokens["Components"]!.AsArray().Single(component => component!["Kind"]!.GetValue<string>() == "AudioVisualizer")!
+                        ["SpectrumStyle"]!.GetValue<string>() == style.ToString(),
+                    "主题中的频谱样式应放在组件视觉令牌中并使用枚举名称");
+            }
+            archive.Position = 0;
+            var read = ThemeArchive.Read(archive, version);
+            Check(read.Succeeded, "三种频谱样式的主题应可重读");
+            var imported = DesktopExperienceRules.CreateDefault();
+            ThemeRules.ApplyVisuals(read.Package!, imported, area);
+            Check(imported.GetComponent(DesktopComponentKind.AudioVisualizer).SpectrumStyle == style,
+                "频谱样式应随主题导入导出");
+            var token = theme.Tokens.Components.Single(component => component.Kind == DesktopComponentKind.AudioVisualizer);
+            token.SpectrumStyle = (AudioSpectrumStyle)99;
+            ThemeRules.Normalize(theme);
+            Check(token.SpectrumStyle == AudioSpectrumStyle.Bars, "主题非法频谱样式应恢复默认值");
+        }
+        Check(JsonSerializer.Deserialize<ThemeComponentTokens>("{}")!.SpectrumStyle == AudioSpectrumStyle.Bars,
+            "旧主题缺少样式应使用细线音柱");
     }
 
     private static float[] AnalyzeChannels(params float[][] channels)

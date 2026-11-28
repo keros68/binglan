@@ -17,47 +17,77 @@ internal sealed record ProbeNode(string Name, string Id, string Class, string Ty
 internal sealed record ChildReport(string Handle, string Class, bool Visible, string[] RawFirstChildren, int? AccessibleChildren, string? Error);
 internal sealed record SurfaceReport(string Source, int ProcessId, string Class, ProbeNode[] Nodes, ChildReport[] Windows, string? Error);
 internal sealed record TrayReport(string Windows, int SessionId, bool Interactive, SurfaceReport[] Surfaces, int Actionable, string Limitation);
-internal sealed record TrayRead(TrayReport Report, TrayEntry[] Entries);
+internal sealed record TrayRead(TrayReport Report, TrayEntry[] Entries, uint ExplorerProcessId);
+internal sealed record TraySnapshot(uint ExplorerProcessId, TrayPanelEntry[] Entries);
+
+internal sealed class TraySnapshotCache(Func<uint> readExplorerProcessId, Func<TraySnapshot?> readSnapshot)
+{
+    private readonly object _gate = new();
+    private Task<TrayPanelEntry[]?>? _read;
+    private TraySnapshot? _cached;
+
+    internal TrayPanelEntry[]? CachedSnapshot
+    {
+        get
+        {
+            lock (_gate) return ReadCurrentCache();
+        }
+    }
+
+    internal Task<TrayPanelEntry[]?> ReadAsync(bool refresh)
+    {
+        lock (_gate)
+        {
+            // Provider calls cannot be interrupted. A canceled waiter must keep joining
+            // the same worker until it returns, including across an Explorer restart.
+            if (_read is { IsCompleted: false }) return _read;
+            var cached = ReadCurrentCache();
+            if (!refresh && cached is not null && _read is { IsCompletedSuccessfully: true }
+                && _read.Result is not null) return _read;
+            return _read = Task.Run<TrayPanelEntry[]?>(() =>
+            {
+                var snapshot = readSnapshot();
+                lock (_gate)
+                {
+                    ReadCurrentCache();
+                    if (snapshot is null || snapshot.ExplorerProcessId == 0
+                        || snapshot.ExplorerProcessId != readExplorerProcessId()) return null;
+                    _cached = snapshot;
+                    return snapshot.Entries;
+                }
+            });
+        }
+    }
+
+    private TrayPanelEntry[]? ReadCurrentCache()
+    {
+        if (_cached is not null && _cached.ExplorerProcessId != readExplorerProcessId()) _cached = null;
+        return _cached?.Entries;
+    }
+}
 
 internal static class TrayReader
 {
     internal static readonly TimeSpan OperationTimeout = TimeSpan.FromSeconds(8);
     private const int MaximumSnapshotEntries = 128;
     private const int MaximumThumbnailDimension = 64;
-    private static readonly object SnapshotGate = new();
-    private static Task<TrayPanelEntry[]?>? _snapshotRead;
-    private static TrayPanelEntry[]? _cachedSnapshot;
+    private static readonly TraySnapshotCache SnapshotCache = new(ReadExplorerProcessId, ReadSnapshot);
     private static int _invoking;
 
-    internal static TrayPanelEntry[]? CachedSnapshot => Volatile.Read(ref _cachedSnapshot);
+    internal static TrayPanelEntry[]? CachedSnapshot => SnapshotCache.CachedSnapshot;
 
-    internal static Task<TrayPanelEntry[]?> WarmSnapshotAsync()
-    {
-        lock (SnapshotGate) return _snapshotRead ??= Task.Run(ReadSnapshot);
-    }
+    internal static Task<TrayPanelEntry[]?> WarmSnapshotAsync() => SnapshotCache.ReadAsync(refresh: false);
 
-    internal static Task<TrayPanelEntry[]?> RefreshSnapshotAsync()
-    {
-        // UIA calls inside the provider cannot be interrupted. Waiters can time out
-        // independently, and a retry joins the current read until it actually returns.
-        lock (SnapshotGate)
-        {
-            if (_snapshotRead is null || _snapshotRead.IsCompleted) _snapshotRead = Task.Run(ReadSnapshot);
-            return _snapshotRead;
-        }
-    }
+    internal static Task<TrayPanelEntry[]?> RefreshSnapshotAsync() => SnapshotCache.ReadAsync(refresh: true);
 
-    private static TrayPanelEntry[]? ReadSnapshot()
+    private static TraySnapshot? ReadSnapshot()
     {
         try
         {
             var read = Read();
-            var taskbar = read.Report.Surfaces.FirstOrDefault(surface => surface.Source == "taskbar" && surface.Error is null);
-            if (taskbar is null) return null;
+            var entries = SelectSnapshotEntries(read);
+            if (entries is null) return null;
             var previous = CachedSnapshot?.ToDictionary(entry => entry.Identity);
-            // Bound the retained data even if Explorer exposes an unusually large tree.
-            var entries = read.Entries.OrderBy(entry => entry.Source == "taskbar" ? 0 : 1)
-                .Take(MaximumSnapshotEntries).ToArray();
             var pictures = TrayIconArtwork.Load(entries);
             var snapshot = new TrayPanelEntry[entries.Length];
             for (var i = 0; i < entries.Length; i++)
@@ -72,15 +102,27 @@ internal static class TrayReader
                 }
                 snapshot[i] = new TrayPanelEntry(entry.Identity, artwork?.Name ?? entry.Name, entry.Source, thumbnail, artwork?.ActivationOwner);
             }
-            if (!IsCurrentExplorer((uint)taskbar.ProcessId)) return null;
-            Volatile.Write(ref _cachedSnapshot, snapshot);
-            return snapshot;
+            return new TraySnapshot(read.ExplorerProcessId, snapshot);
         }
         catch (Exception exception) when (exception is ElementNotAvailableException or InvalidOperationException
             or COMException or ArgumentException or NotSupportedException or System.IO.IOException)
         {
             return null;
         }
+    }
+
+    internal static TrayEntry[]? SelectSnapshotEntries(TrayRead read)
+    {
+        if (read.ExplorerProcessId == 0 || read.Entries.Any(entry => entry.ExplorerProcessId != read.ExplorerProcessId)) return null;
+        // Every published identity must come from this read. A partial provider
+        // failure must not revive entries whose identities are no longer present.
+        var entries = read.Entries.OrderBy(entry => entry.Source == "taskbar" ? 0 : 1).Take(MaximumSnapshotEntries).ToArray();
+        if (entries.Length > 0) return entries;
+        var surfaces = read.Report.Surfaces.Where(surface => surface.ProcessId == read.ExplorerProcessId).ToArray();
+        // Empty is authoritative only after the primary taskbar and all discovered
+        // sources were read successfully. A failed MSAA fallback cannot prove empty.
+        return surfaces.Any(surface => surface.Class == "Shell_TrayWnd" && surface.Error is null)
+            && surfaces.All(surface => surface.Error is null) ? [] : null;
     }
 
     private static BitmapSource CreateThumbnail(BitmapSource image, BitmapSource? previous)
@@ -145,11 +187,13 @@ internal static class TrayReader
                     if (Native.ClassName(child) == "Windows.UI.Input.InputSite.WindowClass") roots.Add(child);
                 }
             }
-            try
+            var nodes = new List<ProbeNode>();
+            var seen = new HashSet<string>();
+            var reported = diagnostics ? new HashSet<string>() : null;
+            string? error = null;
+            foreach (var rootHandle in roots)
             {
-                var nodes = new List<ProbeNode>();
-                var seen = new HashSet<string>();
-                foreach (var rootHandle in roots)
+                try
                 {
                     // Hidden XAML providers can be disconnected from their parent's UIA tree.
                     // Read their existing child HWND directly; never show or focus it.
@@ -158,39 +202,46 @@ internal static class TrayReader
                     // The provider controls FindAll; these limits bound only local traversal.
                     for (var i = 0; i < Math.Min(descendants.Count, 512); i++)
                     {
-                        var element = descendants[i];
-                        var runtimeId = element.GetRuntimeId();
-                        if (runtimeId.Length is < 1 or > 64) continue;
-                        var key = string.Join(".", runtimeId);
-                        if (!seen.Add(key)) continue;
-                        var current = element.Current;
-                        if (diagnostics)
+                        try
                         {
-                            var patterns = element.GetSupportedPatterns().Select(p => p.ProgrammaticName).ToArray();
-                            nodes.Add(new ProbeNode(current.Name, current.AutomationId, current.ClassName, current.ControlType.ProgrammaticName,
-                                current.IsOffscreen, current.IsEnabled, patterns));
+                            var element = descendants[i];
+                            var runtimeId = element.GetRuntimeId();
+                            if (runtimeId.Length is < 1 or > 64) continue;
+                            var key = string.Join(".", runtimeId);
+                            if (seen.Contains(key)) continue;
+                            var current = element.Current;
+                            if (reported is not null && !reported.Contains(key))
+                            {
+                                var patterns = element.GetSupportedPatterns().Select(p => p.ProgrammaticName).ToArray();
+                                nodes.Add(new ProbeNode(current.Name, current.AutomationId, current.ClassName, current.ControlType.ProgrammaticName,
+                                    current.IsOffscreen, current.IsEnabled, patterns));
+                                reported.Add(key);
+                            }
+                            if (current.ProcessId != shellPid || current.AutomationId != "NotifyItemIcon"
+                                || current.ClassName is not ("SystemTray.NotifyIconView" or "SystemTray.NormalButton")) continue;
+                            var canInvoke = element.TryGetCurrentPattern(InvokePattern.Pattern, out _);
+                            if (!canInvoke || !current.IsEnabled) continue;
+                            if (entries.Any(e => e.Key == key)) continue;
+                            var name = current.Name;
+                            if (name.Length > 4096) name = name[..4096];
+                            entries.Add(new TrayEntry(key, name, source, shellPid, element));
+                            seen.Add(key);
                         }
-                        if (current.ProcessId != shellPid || current.AutomationId != "NotifyItemIcon"
-                            || current.ClassName is not ("SystemTray.NotifyIconView" or "SystemTray.NormalButton")) continue;
-                        var canInvoke = element.TryGetCurrentPattern(InvokePattern.Pattern, out _);
-                        if (!canInvoke || !current.IsEnabled) continue;
-                        if (entries.Any(e => e.Key == key)) continue;
-                        var name = current.Name;
-                        if (name.Length > 4096) name = name[..4096];
-                        entries.Add(new TrayEntry(key, name, source, shellPid, element));
+                        catch (Exception exception) when (IsAccessibilityFailure(exception)) { error = exception.Message; }
                     }
                 }
-                reports.Add(new SurfaceReport(source, (int)pid, className, nodes.ToArray(), windows.ToArray(), null));
+                catch (Exception exception) when (IsAccessibilityFailure(exception)) { error = exception.Message; }
             }
-            catch (Exception exception) when (exception is ElementNotAvailableException or InvalidOperationException or COMException)
-            {
-                reports.Add(new SurfaceReport(source, (int)pid, className, [], windows.ToArray(), exception.Message));
-            }
+            reports.Add(new SurfaceReport(source, (int)pid, className, nodes.ToArray(), windows.ToArray(), error));
         }
         if (tray != 0 && !entries.Any(entry => entry.Source == "taskbar"))
-            entries.AddRange(TrayAccessibleIcons.Read(tray, shellPid));
+        {
+            entries.AddRange(TrayAccessibleIcons.Read(tray, shellPid, out var accessibleFailed));
+            if (accessibleFailed)
+                reports.Add(new SurfaceReport("taskbar", (int)shellPid, "MSAA", [], [], "Registered tray buttons could not be read."));
+        }
         return new TrayRead(new TrayReport(Environment.OSVersion.Version.ToString(), System.Diagnostics.Process.GetCurrentProcess().SessionId, Environment.UserInteractive, reports.ToArray(), entries.Count,
-            "Actions require live buttons from the current Explorer process. Overflow icons require an existing accessibility surface."), entries.ToArray());
+            "Actions require live buttons from the current Explorer process. Overflow icons require an existing accessibility surface."), entries.ToArray(), shellPid);
     }
 
     private static ChildReport ReadWindow(nint window)
@@ -311,11 +362,16 @@ internal static class TrayReader
         return wait;
     }
 
-    private static bool IsCurrentExplorer(uint expectedProcessId)
+    private static bool IsAccessibilityFailure(Exception exception) =>
+        exception is ElementNotAvailableException || TrayAccessibleIcons.IsRecoverableAccessibilityFailure(exception);
+
+    private static bool IsCurrentExplorer(uint expectedProcessId) =>
+        expectedProcessId != 0 && ReadExplorerProcessId() == expectedProcessId;
+
+    private static uint ReadExplorerProcessId()
     {
         var tray = Native.FindWindowW("Shell_TrayWnd", null);
-        return tray != 0 && Native.GetWindowThreadProcessId(tray, out var processId) != 0
-            && processId == expectedProcessId;
+        return tray != 0 && Native.GetWindowThreadProcessId(tray, out var processId) != 0 ? processId : 0;
     }
 }
 

@@ -599,6 +599,7 @@ internal static class MultiScreenUiTests
         state.DesktopExperience.GetComponent(DesktopComponentKind.Todo).IsVisible = true;
         state.DesktopExperience.GetComponent(DesktopComponentKind.AudioVisualizer).IsVisible = true;
         state.DesktopExperience.GetComponent(DesktopComponentKind.AudioVisualizer).SpectrumBarWidth = 0.67d;
+        state.DesktopExperience.GetComponent(DesktopComponentKind.AudioVisualizer).SpectrumStyle = AudioSpectrumStyle.Mirror;
 
         var windows = new List<WidgetWindowBase>();
         var hiddenFromTray = new List<WidgetWindowBase>();
@@ -701,8 +702,9 @@ internal static class MultiScreenUiTests
             var secondarySpectrum = secondaryLive.OfType<InformationWidgetWindow>()
                 .Single(window => window.ComponentKind == DesktopComponentKind.AudioVisualizer);
             Check(secondarySpectrum.IsVisible, "复制启用频谱的档案后副屏应显示频谱");
-            Check(secondarySpectrum.FindName("SpectrumHost") is ContentControl { Content: AudioSpectrumView { BarWidth: 0.67d } },
-                "复制到副屏的频谱窗口应使用自定义柱宽");
+            Check(secondarySpectrum.FindName("SpectrumHost") is ContentControl
+                { Content: AudioSpectrumView { BarWidth: 0.67d, SpectrumStyle: AudioSpectrumStyle.Mirror } },
+                "复制到副屏的频谱窗口应使用自定义柱宽和样式");
             Check(host.ResetPlacementForScreen(SecondaryHardwareKey, secondarySpectrum, DesktopComponentKind.AudioVisualizer),
                 "副屏频谱应可恢复默认位置");
 

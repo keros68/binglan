@@ -15,36 +15,72 @@ internal static class TrayAccessibleIcons
     private const string InputSiteClass = "Windows.UI.Input.InputSite.WindowClass";
     private static readonly Guid AccessibleInterface = new("618736E0-3C3D-11CF-810C-00AA00389B71");
 
-    internal static TrayEntry[] Read(nint tray, uint explorerPid)
+    internal static TrayEntry[] Read(nint tray, uint explorerPid, out bool failed)
     {
+        failed = false;
         var dpi = TrayIconArtwork.SetThreadDpiAwarenessContext(-4);
         try
         {
-            if (!GetWindowRect(tray, out var frame) || !TryOpenClient(tray, explorerPid, out var client, out _))
+            var registered = TrayIconArtwork.ReadRegisteredIcons();
+            if (registered is null)
+            {
+                failed = true;
                 return [];
+            }
+            if (registered.Length == 0) return [];
+            if (!GetWindowRect(tray, out var frame))
+            {
+                failed = true;
+                return [];
+            }
+            var candidates = registered.Where(icon => frame.Contains(Center(icon.Bounds)))
+                .OrderBy(icon => icon.Bounds.Top).ThenBy(icon => icon.Bounds.Left).Take(128).ToArray();
+            // No registered taskbar tiles means this fallback has no applicable source.
+            if (candidates.Length == 0) return [];
+            if (!TryOpenClient(tray, explorerPid, out var client, out _))
+            {
+                failed = true;
+                return [];
+            }
             try
             {
-                var entries = new List<TrayEntry>();
-                foreach (var icon in TrayIconArtwork.ReadRegisteredIcons()
-                    .Where(icon => frame.Contains(Center(icon.Bounds)))
-                    .OrderBy(icon => icon.Bounds.Top).ThenBy(icon => icon.Bounds.Left).Take(128))
+                return ReadCandidates(candidates, icon =>
                 {
-                    if (HitButton(client, icon.Bounds) is not { } button) continue;
+                    if (HitButton(client, icon.Bounds) is not { } button) return null;
                     try
                     {
                         var name = button.get_accName(Self) ?? "";
                         if (name.Length > 4096) name = name[..4096];
-                        entries.Add(new TrayEntry(icon.Key, name, "taskbar", explorerPid, null, icon));
+                        return new TrayEntry(icon.Key, name, "taskbar", explorerPid, null, icon);
                     }
-                    catch (Exception exception) when (IsRecoverableAccessibilityFailure(exception)) { }
                     finally { Marshal.ReleaseComObject(button); }
-                }
-                return entries.ToArray();
+                }, out failed);
             }
             finally { Marshal.ReleaseComObject(client); }
         }
-        catch (Exception exception) when (IsRecoverableAccessibilityFailure(exception)) { return []; }
+        catch (Exception exception) when (IsRecoverableAccessibilityFailure(exception))
+        {
+            failed = true;
+            return [];
+        }
         finally { if (dpi != 0) TrayIconArtwork.SetThreadDpiAwarenessContext(dpi); }
+    }
+
+    internal static TrayEntry[] ReadCandidates(IReadOnlyList<TrayRegisteredIcon> candidates,
+        Func<TrayRegisteredIcon, TrayEntry?> read, out bool failed)
+    {
+        failed = false;
+        var entries = new List<TrayEntry>();
+        foreach (var icon in candidates)
+        {
+            try
+            {
+                if (read(icon) is { } entry) entries.Add(entry);
+                else failed = true;
+            }
+            catch (Exception exception) when (IsRecoverableAccessibilityFailure(exception)) { failed = true; }
+        }
+        return entries.ToArray();
     }
 
     internal static string Invoke(TrayRegisteredIcon registration, uint explorerPid, bool contextMenu, CancellationToken cancellation)

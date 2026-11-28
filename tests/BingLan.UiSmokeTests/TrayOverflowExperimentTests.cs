@@ -66,7 +66,6 @@ internal static class TrayOverflowExperimentTests
 
     internal static void Run(Action pump)
     {
-        AllTrayIconsVisible();
         ActionLifetime();
         Assert(TrayPanelWindow.IsFeishuMainWindow("飞书", "Chrome_WidgetWin_1"), "飞书主窗口应匹配实测标题和窗口类");
         Assert(!TrayPanelWindow.IsFeishuMainWindow("飞书会议", "Chrome_WidgetWin_1"), "独立会议窗口应保留 Explorer 默认动作");
@@ -149,8 +148,10 @@ internal static class TrayOverflowExperimentTests
 
     internal static void ActionLifetime()
     {
+        AllTrayIconsVisible();
         ContextMenuPlacement();
         TrayContextOwnerMatchingTests.Run();
+        TraySnapshotRecoveryTests.Run();
         VerifyTaskbarCreatedDefersRegistration();
         foreach (var error in new[] { 0x80004005u, 0x80070057u, 0x80004001u, 0x80070005u })
         {
@@ -304,13 +305,30 @@ internal static class TrayOverflowExperimentTests
 
     private static void AllTrayIconsVisible()
     {
-        var panel = new TrayPanelWindow(anchored: true);
+        var nativeOpens = 0;
+        var panel = new TrayPanelWindow(anchored: true) { OpenWindowsTray = () => nativeOpens++ };
         try
         {
             var entries = Enumerable.Range(1, 8).Select(i => new TrayPanelEntry(
                 new TrayIdentity(1, i.ToString()), $"应用 {i}", i <= 5 ? "taskbar" : "existing-overflow", null)).ToArray();
+            panel.ShowEntries(null);
+            Assert(panel.NativeTrayLink.Visibility == Visibility.Visible && panel.Status.Text.Contains("无法读取")
+                && nativeOpens == 0, "首次读取失败时应显示恢复入口，等待用户操作");
+            panel.ShowEntries([]);
+            Assert(panel.NativeTrayLink.Visibility == Visibility.Visible && panel.Status.Visibility == Visibility.Visible
+                && nativeOpens == 0, "空列表应提供手动打开 Windows 托盘的入口");
+            panel.NativeTrayLink.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Assert(nativeOpens == 1, "手动点击应只打开一次 Windows 托盘");
             panel.ShowEntries(entries[..5]);
             panel.ShowEntries(entries);
+            Assert(panel.NativeTrayLink.Visibility == Visibility.Collapsed && panel.Status.Visibility == Visibility.Collapsed,
+                "读到图标后应收起空状态提示和系统入口");
+            panel.ShowEntries(null);
+            Assert(panel.NativeTrayLink.Visibility == Visibility.Visible && panel.Entries.Children.Count == entries.Length,
+                "刷新暂时失败时应保留已显示的图标并提供恢复入口");
+            panel.ShowEntries(entries);
+            Assert(panel.NativeTrayLink.Visibility == Visibility.Collapsed && panel.Status.Visibility == Visibility.Collapsed,
+                "重新读到相同图标也应收起错误提示");
             var buttons = panel.Entries.Children.Cast<Button>().ToArray();
             Assert(buttons.Length == entries.Length && buttons.All(button => button.Visibility == Visibility.Visible)
                 && buttons.Select(AutomationProperties.GetName).SequenceEqual(entries.Select(entry => entry.Name)),

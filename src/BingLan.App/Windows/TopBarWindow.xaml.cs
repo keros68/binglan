@@ -4028,6 +4028,7 @@ public sealed partial class TopBarWindow : Window
 
     private void OnExplorerRestarted()
     {
+        CloseTrayPanel();
         ReapplyAcrylicAfterEnvironmentChange();
         RenderModules();
     }

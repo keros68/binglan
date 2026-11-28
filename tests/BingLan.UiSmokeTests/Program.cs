@@ -105,7 +105,7 @@ internal static class Program
         if (Environment.GetCommandLineArgs().Contains("--tray-action-tests"))
         {
             TrayOverflowExperimentTests.ActionLifetime();
-            Console.WriteLine("通过：托盘操作取消、超时和句柄生命周期");
+            Console.WriteLine("通过：托盘图标读取与恢复、菜单定位及操作生命周期");
             return 0;
         }
 

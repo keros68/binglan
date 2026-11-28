@@ -191,11 +191,38 @@ internal static class SettingsWindowTests
             AssertEqual(0.63d, componentApplied!.GetComponent(DesktopComponentKind.AudioVisualizer).SpectrumBarWidth,
                 "滑动柱宽应立即通知组件宿主");
             AssertEqual("63%", Require<TextBlock>(window, "SpectrumBarWidthValueText").Text, "柱宽显示百分比");
+            var spectrumStyle = Require<ComboBox>(window, "SpectrumStyleSelector");
+            var barWidthRow = Require<SettingsRow>(window, "SpectrumBarWidthRow");
+            AssertEqual(3, spectrumStyle.Items.Count, "频谱提供三种样式");
+            AssertEqual((int)AudioSpectrumStyle.Bars, spectrumStyle.SelectedIndex, "频谱默认细线音柱");
+            AssertEqual("静音时显示一条细线，播放时音柱向上伸展",
+                Require<SettingsRow>(window, "SpectrumStyleRow").Description, "细线音柱说明");
+            spectrumStyle.SelectedIndex = (int)AudioSpectrumStyle.Mirror;
+            AssertEqual(AudioSpectrumStyle.Mirror, spectrum.SpectrumStyle, "镜像样式应立即写入组件");
+            AssertEqual(AudioSpectrumStyle.Mirror,
+                componentApplied!.GetComponent(DesktopComponentKind.AudioVisualizer).SpectrumStyle,
+                "样式切换应立即通知组件宿主");
+            AssertEqual(Visibility.Visible, barWidthRow.Visibility, "镜像音柱应可调整柱宽");
+            AssertEqual("静音时显示居中短线，播放时音柱上下展开",
+                Require<SettingsRow>(window, "SpectrumStyleRow").Description, "镜像音柱说明");
+            barWidth.Value = 0.52d;
+            AssertEqual(0.52d, spectrum.SpectrumBarWidth, "镜像音柱应立即应用柱宽");
+            spectrumStyle.SelectedIndex = (int)AudioSpectrumStyle.Curve;
+            AssertEqual(AudioSpectrumStyle.Curve, spectrum.SpectrumStyle, "曲线样式应立即应用");
+            AssertEqual(Visibility.Collapsed, barWidthRow.Visibility, "连续曲线应隐藏柱宽设置");
+            AssertEqual("播放时显示连续曲线，静音时淡出",
+                Require<SettingsRow>(window, "SpectrumStyleRow").Description, "连续曲线说明");
+            AssertEqual(0.52d, spectrum.SpectrumBarWidth, "切换曲线应保留音柱柱宽");
             window.ShowComponentSettings(DesktopComponentKind.TimeDate);
             AssertEqual(Visibility.Collapsed, Require<SettingsGroup>(window, "SpectrumSettingsCard").Visibility,
                 "其他卡片应隐藏频谱专属设置");
             window.ShowComponentSettings(DesktopComponentKind.AudioVisualizer);
-            AssertEqual(0.63d, barWidth.Value, "切换卡片后柱宽应保持");
+            AssertEqual(0.52d, barWidth.Value, "切换卡片后柱宽应保持");
+            AssertEqual((int)AudioSpectrumStyle.Curve, spectrumStyle.SelectedIndex, "切换卡片后样式应保持");
+            AssertEqual(Visibility.Collapsed, barWidthRow.Visibility, "重新选择曲线组件应隐藏柱宽设置");
+            spectrumStyle.SelectedIndex = (int)AudioSpectrumStyle.Bars;
+            AssertEqual(Visibility.Visible, barWidthRow.Visibility, "切回音柱应显示柱宽设置");
+            AssertEqual(0.52d, barWidth.Value, "切回音柱应恢复保存的柱宽");
             Click(Require<Button>(window, "ResetSpectrumBarWidthButton"));
             AssertEqual(0.4d, spectrum.SpectrumBarWidth, "恢复默认应立即还原 40% 柱宽");
             Require<TextBox>(window, "SelectedComponentTextColorEditor").Text = "#5689AB";

@@ -76,6 +76,31 @@ public partial class SettingsWindow
         ApplySelectedComponent(refreshList: false);
     }
 
+    private void SpectrumStyle_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_loadingComponentEditor || SpectrumBarWidthRow is null
+            || _selectedComponentEntry?.Kind != DesktopComponentKind.AudioVisualizer)
+        {
+            return;
+        }
+        UpdateSpectrumStyleEditor();
+        _componentApplyTimer.Stop();
+        ApplySelectedComponent(refreshList: false);
+    }
+
+    private void UpdateSpectrumStyleEditor()
+    {
+        SpectrumBarWidthRow.Visibility = SpectrumStyleSelector.SelectedIndex == (int)AudioSpectrumStyle.Curve
+            ? Visibility.Collapsed
+            : Visibility.Visible;
+        SpectrumStyleRow.Description = (AudioSpectrumStyle)SpectrumStyleSelector.SelectedIndex switch
+        {
+            AudioSpectrumStyle.Mirror => "静音时显示居中短线，播放时音柱上下展开",
+            AudioSpectrumStyle.Curve => "播放时显示连续曲线，静音时淡出",
+            _ => "静音时显示一条细线，播放时音柱向上伸展"
+        };
+    }
+
     private void ResetSpectrumBarWidth_Click(object sender, RoutedEventArgs e) =>
         SpectrumBarWidthSlider.Value = DesktopExperienceRules.DefaultSpectrumBarWidth;
 

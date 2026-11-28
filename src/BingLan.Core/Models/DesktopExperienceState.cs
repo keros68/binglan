@@ -29,11 +29,19 @@ public enum DesktopInformationDensity
     Compact
 }
 
+public enum AudioSpectrumStyle
+{
+    Bars = 0,
+    Mirror = 1,
+    Curve = 2
+}
+
 public sealed class DesktopComponentState
 {
     private double _fontScale = 1d;
     private double _cornerRadius = WidgetAppearanceRules.DefaultCornerRadius;
     private double _spectrumBarWidth = DesktopExperienceRules.DefaultSpectrumBarWidth;
+    private AudioSpectrumStyle _spectrumStyle = AudioSpectrumStyle.Bars;
 
     public DesktopComponentKind Kind { get; set; }
     public bool IsVisible { get; set; } = true;
@@ -75,6 +83,12 @@ public sealed class DesktopComponentState
     {
         get => _spectrumBarWidth;
         set => _spectrumBarWidth = DesktopExperienceRules.CoerceSpectrumBarWidth(value);
+    }
+
+    public AudioSpectrumStyle SpectrumStyle
+    {
+        get => _spectrumStyle;
+        set => _spectrumStyle = DesktopExperienceRules.CoerceSpectrumStyle(value);
     }
 
     [JsonExtensionData]
@@ -215,6 +229,9 @@ public static class DesktopExperienceRules
     public static double CoerceSpectrumBarWidth(double value) => double.IsFinite(value)
         ? Math.Clamp(value, MinimumSpectrumBarWidth, MaximumSpectrumBarWidth)
         : DefaultSpectrumBarWidth;
+
+    public static AudioSpectrumStyle CoerceSpectrumStyle(AudioSpectrumStyle value) =>
+        Enum.IsDefined(value) ? value : AudioSpectrumStyle.Bars;
 
     private const double WeatherSymmetricOuterVerticalMargin = 16d;
     private const double WeatherRuleHeight = 8d;

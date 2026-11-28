@@ -1958,6 +1958,7 @@ internal sealed class MultiScreenHost : IDisposable
         target.ShowDivider = source.ShowDivider;
         target.DividerThickness = source.DividerThickness;
         target.SpectrumBarWidth = source.SpectrumBarWidth;
+        target.SpectrumStyle = source.SpectrumStyle;
         target.Density = source.Density;
         target.FontFamily = source.FontFamily;
         target.FontScale = source.FontScale;
