@@ -195,12 +195,11 @@ public partial class TopBarWindow
     private TopBarSearchPalette? _appliedPopupAppearance;
 
     private TopBarSearchPalette ResolveTopBarPopupPalette() =>
-        TopBarSearchLookRules.ResolveForTopBar(_style, _state, _palette.UseDarkInk);
+        TopBarSearchLookRules.ResolveForTopBar(_style, _state);
 
     private void RefreshPopupAppearance()
     {
-        // Adaptive ink can change on every backdrop sample. Only settings changes
-        // invalidate the look captured by an open module flyout.
+        // Only settings changes invalidate the look captured by an open module flyout.
         var appearance = TopBarSearchLookRules.ResolveForTopBar(_style, _state);
         if (_appliedPopupAppearance is { } previous && previous != appearance)
         {

@@ -230,9 +230,11 @@ internal static class TrayReader
         bool contextMenu = false,
         CancellationToken cancellation = default,
         Func<TrayActivationOwner, CancellationToken, Task<bool?>>? activateApp = null,
-        TrayPanelEntry? displayedEntry = null)
+        TrayPanelEntry? displayedEntry = null,
+        TrayMenuAnchor? menuAnchor = null)
         => RunActionAsync(async token =>
         {
+            TrayContextMenuPlacement.CancelPending();
             try
             {
                 if (token.IsCancellationRequested || !IsCurrentExplorer(identity.ExplorerProcessId)) return "element-unavailable";
@@ -248,13 +250,18 @@ internal static class TrayReader
                 }
                 if (contextMenu)
                 {
-                    if (fresh.Registration is { } accessibleRegistration)
-                        return TrayAccessibleIcons.Invoke(accessibleRegistration, identity.ExplorerProcessId, contextMenu: true, token);
-                    if (runtimeId is null) return "element-unavailable";
-                    var cancellationHandle = token.WaitHandle.SafeWaitHandle;
-                    if (token.IsCancellationRequested) return "cancelled-before-context";
-                    var result = Native.BingLanTrayShowContextMenu(runtimeId, runtimeId.Length, identity.ExplorerProcessId, cancellationHandle);
-                    return result >= 0 ? "context-requested" : $"context-error-0x{result:X8}";
+                    var contextOwner = menuAnchor.HasValue ? TrayIconArtwork.ResolveContextMenuOwner(fresh, displayedEntry) : null;
+                    return await TrayContextMenuPlacement.InvokeAsync(contextOwner, menuAnchor, () =>
+                    {
+                        if (token.IsCancellationRequested) return "cancelled-before-context";
+                        if (fresh.Registration is { } accessibleRegistration)
+                            return TrayAccessibleIcons.Invoke(accessibleRegistration, identity.ExplorerProcessId, contextMenu: true, token);
+                        if (runtimeId is null) return "element-unavailable";
+                        var cancellationHandle = token.WaitHandle.SafeWaitHandle;
+                        if (token.IsCancellationRequested) return "cancelled-before-context";
+                        var result = Native.BingLanTrayShowContextMenu(runtimeId, runtimeId.Length, identity.ExplorerProcessId, cancellationHandle);
+                        return result >= 0 ? "context-requested" : $"context-error-0x{result:X8}";
+                    }, token);
                 }
                 if (activateApp is not null && displayedEntry is not null
                     && TrayIconArtwork.VerifyActivationOwner(displayedEntry, fresh) is { } owner)

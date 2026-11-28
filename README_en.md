@@ -20,7 +20,7 @@ BingLan Desktop (冰蓝桌面) is a Windows 11 desktop companion built with .NET
 
 ## Features
 
-- **System tray**: Open the tray from the top bar to see app icons, hover for names, or right-click an icon for its menu. The panel also opens the Windows tray.
+- **System tray**: Open the tray from the top bar to see app icons, hover for names, or right-click an icon for its menu. The panel uses the top bar colors with a readable tinted background.
 - **Audio spectrum**: Enable the spectrum in Desktop Cards to show audio playing on the default speaker or headphones. The spectrum is calculated locally.
 - **Desktop info**: time and date, greeting, weather, and CPU / RAM / network are separate cards, each with its own font, size, colour, and position; the clock card offers four layout presets (classic, minimal digits, date poster, and vertical digits) with settings for horizontal alignment, 12/24-hour time, and date visibility. The greeting card can show just your name. Cards sit on the desktop layer, never cover other app windows, and stay visible after Win+D.
 - **To-dos and notes**: the to-do card switches between today's list and a 1–5-week calendar with lunar dates; both share the same tasks, and the card folds to a title bar showing the open count (or all-done status once finished). Supports deadlines with optional times, events, countdowns, linked files, per-task cross-day persistence, optional card-level incomplete carry-over, and deadline highlights. Notes support multiline text.
@@ -50,7 +50,7 @@ The interface is in Simplified Chinese.
 
 ## Get started
 
-Stable version: [v0.7.1](https://github.com/keros68/binglan/releases/tag/v0.7.1) · [Installer](https://github.com/keros68/binglan/releases/download/v0.7.1/BingLan-Setup-0.7.1.exe) · [Portable](https://github.com/keros68/binglan/releases/download/v0.7.1/BingLan-0.7.1-portable.zip). A standalone [compatibility tool](https://github.com/keros68/binglan/releases/download/v0.2.52/BingLan-0.2.52-tray-preview.zip) is also available; see the [guide (Chinese)](docs/TRAY-PREVIEW.md).
+Stable version: [v0.7.2](https://github.com/keros68/binglan/releases/tag/v0.7.2) · [Installer](https://github.com/keros68/binglan/releases/download/v0.7.2/BingLan-Setup-0.7.2.exe) · [Portable](https://github.com/keros68/binglan/releases/download/v0.7.2/BingLan-0.7.2-portable.zip). A standalone [compatibility tool](https://github.com/keros68/binglan/releases/download/v0.2.52/BingLan-0.2.52-tray-preview.zip) is also available; see the [guide (Chinese)](docs/TRAY-PREVIEW.md).
 
 1. Open [Releases](https://github.com/keros68/binglan/releases/latest) and download `BingLan-Setup-*.exe` (installer) or `BingLan-*-portable.zip` (portable).
 2. Installer: run it — it installs for the current user and needs no administrator rights. Portable: unzip anywhere and run `BingLan.exe` inside. Both include the .NET runtime and are not code-signed yet, so Windows asks for confirmation on first run.

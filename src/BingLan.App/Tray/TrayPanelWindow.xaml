@@ -49,7 +49,6 @@
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="*"/>
                 <RowDefinition Height="Auto"/>
-                <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
             <DockPanel LastChildFill="True">
                 <Button DockPanel.Dock="Right" Style="{StaticResource HeaderTool}" Content="&#xE8BB;" ToolTip="关闭" AutomationProperties.Name="关闭" Click="OnClose"/>
@@ -62,9 +61,6 @@
             </ScrollViewer>
             <TextBlock Grid.Row="2" x:Name="Status" Margin="5,5,5,3" TextWrapping="Wrap" FontSize="12"
                        Foreground="{DynamicResource SoftInk}" Visibility="Collapsed" AutomationProperties.LiveSetting="Polite"/>
-            <Button Grid.Row="3" x:Name="NativeTrayButton" HorizontalAlignment="Left" Margin="0,2,0,0"
-                    Width="126" Height="28" FontSize="12" Content="打开 Windows 托盘"
-                    Foreground="{DynamicResource SoftInk}" Click="OnOpenNativeTray"/>
         </Grid>
     </Border>
 </Window>

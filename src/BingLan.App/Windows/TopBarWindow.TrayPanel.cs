@@ -135,7 +135,7 @@ public partial class TopBarWindow
         var highContrast = AccessibilityThemeManager.IsHighContrastEnabled || SystemParameters.HighContrast;
         var look = ResolveSystemFlyoutLook(highContrast);
         var palette = ResolveTopBarPopupPalette();
-        var panel = new TrayPanelWindow(OpenNativeTrayOverflow, TrayPanelWindow.ActivateTrayAppAsync)
+        var panel = new TrayPanelWindow(anchored: true, activateApp: TrayPanelWindow.ActivateTrayAppAsync)
         {
             Owner = this,
             WindowStartupLocation = WindowStartupLocation.Manual
@@ -245,7 +245,7 @@ public partial class TopBarWindow
                 if (ReferenceEquals(_trayPanel, panel) && !panel.IsActive
                     && !pressingAnchor && !(anchor.IsPressed && IsCursorOverTrayPanelAnchor(anchor)))
                 {
-                    CloseTrayPanel();
+                    if (!panel.HideForContextMenuHandoff()) CloseTrayPanel();
                 }
             });
         };

@@ -10,7 +10,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Resource Include="../../src/BingLan.App/Assets/Brand/binglan-icon.png" Link="Assets/Brand/binglan-icon.png"/>
-    <Compile Include="$(TraySource)/TrayReader.cs;$(TraySource)/TrayIconArtwork.cs;$(TraySource)/TrayAccessibleIcons.cs;$(TraySource)/TrayPanelWindow.xaml.cs"
+    <Compile Include="$(TraySource)/TrayReader.cs;$(TraySource)/TrayIconArtwork.cs;$(TraySource)/TrayAccessibleIcons.cs;$(TraySource)/TrayContextMenuPlacement.cs;$(TraySource)/TrayPanelWindow.xaml.cs"
              Link="Tray/%(Filename)%(Extension)" />
     <Page Include="$(TraySource)/TrayPanelWindow.xaml" Link="Tray/TrayPanelWindow.xaml" />
   </ItemGroup>

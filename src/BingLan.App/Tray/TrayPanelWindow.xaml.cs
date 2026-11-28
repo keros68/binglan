@@ -19,23 +19,21 @@ internal sealed partial class TrayPanelWindow : Window
     private bool _expanded;
     private bool _refreshing;
     private bool _invoking;
+    private bool _requestingContextMenu;
     private bool _closed;
     private string? _readMessage;
     private string? _actionMessage;
 
     private readonly bool _anchored;
 
-    private readonly Action? _openNativeTray;
     private readonly Func<TrayActivationOwner, CancellationToken, Task<bool?>>? _activateApp;
 
-    internal TrayPanelWindow(Action? openNativeTray = null,
+    internal TrayPanelWindow(bool anchored = false,
         Func<TrayActivationOwner, CancellationToken, Task<bool?>>? activateApp = null)
     {
         InitializeComponent();
-        _openNativeTray = openNativeTray;
         _activateApp = activateApp;
-        _anchored = openNativeTray is not null;
-        NativeTrayButton.Visibility = _anchored ? Visibility.Visible : Visibility.Collapsed;
+        _anchored = anchored;
         if (!_anchored)
         {
             var area = SystemParameters.WorkArea;
@@ -73,8 +71,6 @@ internal sealed partial class TrayPanelWindow : Window
     }
 
     private void OnClose(object sender, RoutedEventArgs e) => Close();
-
-    private void OnOpenNativeTray(object sender, RoutedEventArgs e) => _openNativeTray?.Invoke();
 
     internal void ApplyCaptionShadow(Color color)
     {
@@ -204,13 +200,13 @@ internal sealed partial class TrayPanelWindow : Window
         button.PreviewMouseRightButtonUp += async (_, e) =>
         {
             e.Handled = true;
-            await InvokeAsync(identity, contextMenu: true);
+            await InvokeAsync(identity, contextMenu: true, button);
         };
         button.PreviewKeyDown += async (_, e) =>
         {
             if (e.Key != Key.Apps && !(e.Key == Key.F10 && Keyboard.Modifiers == ModifierKeys.Shift)) return;
             e.Handled = true;
-            await InvokeAsync(identity, contextMenu: true);
+            await InvokeAsync(identity, contextMenu: true, button);
         };
         return button;
     }
@@ -270,14 +266,23 @@ internal sealed partial class TrayPanelWindow : Window
         return darkSurface ? Brushes.WhiteSmoke : Brushes.DarkSlateGray;
     }
 
-    private async Task InvokeAsync(TrayIdentity identity, bool contextMenu = false)
+    private async Task InvokeAsync(TrayIdentity identity, bool contextMenu = false, Button? source = null)
     {
         if (_invoking || _closed) return;
         _invoking = true;
+        _requestingContextMenu = contextMenu;
         try
         {
             var displayedEntry = _shown?.FirstOrDefault(entry => entry.Identity == identity);
-            var result = await TrayReader.InvokeAsync(identity, contextMenu, _lifetime.Token, _activateApp, displayedEntry);
+            TrayMenuAnchor? anchor = null;
+            if (contextMenu && source is { IsVisible: true })
+            {
+                var topLeft = source.PointToScreen(new Point(0, 0));
+                var bottomRight = source.PointToScreen(new Point(source.ActualWidth, source.ActualHeight));
+                anchor = new TrayMenuAnchor(new Rect(topLeft, bottomRight),
+                    PresentationSource.FromVisual(source)?.CompositionTarget?.TransformToDevice.M22 ?? 1);
+            }
+            var result = await TrayReader.InvokeAsync(identity, contextMenu, _lifetime.Token, _activateApp, displayedEntry, anchor);
             if (_closed) return;
             if (_anchored && result is ("invoked" or "context-requested"))
             {
@@ -297,7 +302,16 @@ internal sealed partial class TrayPanelWindow : Window
         finally
         {
             _invoking = false;
-            if (!_closed) UpdateStatus();
+            _requestingContextMenu = false;
+            if (!_closed && !IsVisible) Close();
+            else if (!_closed) UpdateStatus();
         }
+    }
+
+    internal bool HideForContextMenuHandoff()
+    {
+        if (!_requestingContextMenu || _closed) return false;
+        Hide();
+        return true;
     }
 }

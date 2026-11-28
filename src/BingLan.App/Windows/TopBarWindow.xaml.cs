@@ -4839,7 +4839,6 @@ public sealed partial class TopBarWindow : Window
                 });
                 break;
             case TopBarModuleKind.TrayOverflow:
-                menu.AddItem("打开 Windows 托盘", OpenNativeTrayOverflow);
                 var trayIconOnly = TopBarRules.EffectiveTrayIconOnly(_state);
                 menu.AddItem(trayIconOnly ? "托盘：显示文字" : "托盘：仅显示图标", () =>
                 {

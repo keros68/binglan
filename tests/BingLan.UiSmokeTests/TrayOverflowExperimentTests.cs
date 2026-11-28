@@ -145,6 +145,7 @@ internal static class TrayOverflowExperimentTests
 
     internal static void ActionLifetime()
     {
+        ContextMenuPlacement();
         VerifyTaskbarCreatedDefersRegistration();
         foreach (var error in new[] { 0x80004005u, 0x80070057u, 0x80004001u, 0x80070005u })
         {
@@ -156,6 +157,48 @@ internal static class TrayOverflowExperimentTests
             "取消仍应按操作取消路径处理");
         Task.Run(() => AssertActionRetainsWaitHandleAsync(cancel: true)).GetAwaiter().GetResult();
         Task.Run(() => AssertActionRetainsWaitHandleAsync(cancel: false)).GetAwaiter().GetResult();
+    }
+
+    private static void ContextMenuPlacement()
+    {
+        var screen = new System.Windows.Rect(0, 55, 3840, 2105);
+        var tile = new System.Windows.Rect(3310, 232, 67, 67);
+        var menu = new System.Windows.Size(369, 441);
+        var below = TrayContextMenuPlacement.Place(tile, menu, screen, 7);
+        Assert(below == new System.Windows.Point(3310, 306), "175% 下菜单应紧邻来源图标下沿，且不覆盖图标");
+        var bottom = new System.Windows.Rect(3310, 2000, 67, 67);
+        Assert(TrayContextMenuPlacement.Place(bottom, menu, screen, 7) == new System.Windows.Point(3310, 1552),
+            "下方空间不足时应紧邻图标上沿");
+        var leftMonitor = new System.Windows.Rect(-1920, -1200, 1920, 1160);
+        Assert(TrayContextMenuPlacement.Place(new System.Windows.Rect(-30, -1150, 28, 28),
+            new System.Windows.Size(300, 400), leftMonitor, 4) == new System.Windows.Point(-300, -1118),
+            "负坐标显示器应按同屏工作区钳制，不移到主屏");
+        Assert(TrayContextMenuPlacement.Place(tile, new System.Windows.Size(5000, 3000), screen, 7)
+            == new System.Windows.Point(0, 55), "菜单超出工作区时应保留可见的左上角");
+        var shortScreen = new System.Windows.Rect(0, 0, 1000, 600);
+        var tallMenu = new System.Windows.Size(200, 550);
+        var upperTile = new System.Windows.Rect(400, 100, 40, 40);
+        var beside = TrayContextMenuPlacement.Place(upperTile, tallMenu, shortScreen, 4);
+        Assert(beside == new System.Windows.Point(444, 50),
+            $"上下均不足时应选择相邻侧面而非覆盖图标，实际 {beside}");
+        Assert(TrayContextMenuPlacement.Place(new System.Windows.Rect(850, 100, 40, 40), tallMenu, shortScreen, 4)
+            == new System.Windows.Point(646, 50), "右侧不足时应在左侧避开图标");
+        Assert(TrayContextMenuPlacement.Place(new System.Windows.Rect(400, 300, 40, 40),
+            new System.Windows.Size(950, 300), shortScreen, 4) == new System.Windows.Point(50, 0),
+            "四面均不足时应选覆盖图标最少的可见位置");
+        Assert(TrayContextMenuPlacement.Place(new System.Windows.Rect(-600, -500, 40, 40), tallMenu,
+            new System.Windows.Rect(-1000, -600, 1000, 600), 4) == new System.Windows.Point(-556, -550),
+            "侧向避让应保持负坐标显示器工作区");
+        var owner = new TrayRegisteredIcon(0, 0, 1, Guid.Empty, tile);
+        var calls = 0;
+        var result = TrayContextMenuPlacement.InvokeAsync(owner, new TrayMenuAnchor(tile, 1.75), () =>
+            { calls++; return "context-requested"; }, CancellationToken.None).GetAwaiter().GetResult();
+        Assert(result == "context-requested" && calls == 1, "无法确认来源所有者时保留原生行为且只调用一次");
+        using var canceled = new CancellationTokenSource();
+        canceled.Cancel();
+        var canceledCall = TrayContextMenuPlacement.InvokeAsync(owner, new TrayMenuAnchor(tile, 1.75), () =>
+            { calls++; return "context-requested"; }, canceled.Token);
+        Assert(canceledCall.IsCanceled && calls == 1, "调用前已取消时，不得继续发出原生菜单请求");
     }
 
     private static void VerifyTaskbarCreatedDefersRegistration()

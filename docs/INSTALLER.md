@@ -5,19 +5,19 @@
 推送版本标签后由 GitHub Actions（`.github/workflows/release.yml`）在 Windows 云端机器上构建、运行全部五套测试（含会创建真实窗口的三套）、打包，并建立带三个文件的草稿 Release：
 
 ```powershell
-git tag v0.7.1
-git push origin v0.7.1
+git tag v0.7.2
+git push origin v0.7.2
 ```
 
-标签构建的附件保留 30 天。重试发布作业会核对同标签草稿的附件并补齐缺失文件。补写发布说明后可运行 `gh release edit v0.7.1 --notes-file <说明文件> --draft=false` 正式发布。在 Actions 页面手动运行“发布”并填写版本号，可运行测试并生成试用包，构建附件保留 3 天。
+标签构建的附件保留 30 天。重试发布作业会核对同标签草稿的附件并补齐缺失文件。补写发布说明后可运行 `gh release edit v0.7.2 --notes-file <说明文件> --draft=false` 正式发布。在 Actions 页面手动运行“发布”并填写版本号，可运行测试并生成试用包，构建附件保留 3 天。
 
 ## 构建
 
 ```powershell
-pwsh -NoProfile -File .\installer\build.ps1 -Version 0.7.1
+pwsh -NoProfile -File .\installer\build.ps1 -Version 0.7.2
 ```
 
-输出 `installer\bin\BingLan-Setup-0.7.1.exe`和免安装包 `installer\bin\BingLan-0.7.1-portable.zip`。脚本先把应用发布为 win-x64 自包含程序（附带 .NET 运行时，只保留中文和英文资源），再用 Inno Setup 打包为按用户安装的安装程序，并把同一份发布输出压成免安装 zip。构建还需要 .NET 10 SDK、PowerShell 7、Visual Studio 2022 C++ x64 工具链和 Windows SDK；自有任务栏与 Dock 玻璃原生 DLL 随发布输出进入安装包，细节见 [任务栏 XAML 适配](TASKBAR-XAML.md)。需要 Inno Setup 6：`winget install JRSoftware.InnoSetup --scope user`。注意 winget 安装的 Inno Setup 不带简体中文语言文件（非官方翻译），脚本引用的 `Languages\ChineseSimplified.isl` 需从 [istrans 页面](https://jrsoftware.org/files/istrans/) 下载后放入 Inno Setup 安装目录的 `Languages\` 下。
+输出 `installer\bin\BingLan-Setup-0.7.2.exe`和免安装包 `installer\bin\BingLan-0.7.2-portable.zip`。脚本先把应用发布为 win-x64 自包含程序（附带 .NET 运行时，只保留中文和英文资源），再用 Inno Setup 打包为按用户安装的安装程序，并把同一份发布输出压成免安装 zip。构建还需要 .NET 10 SDK、PowerShell 7、Visual Studio 2022 C++ x64 工具链和 Windows SDK；自有任务栏与 Dock 玻璃原生 DLL 随发布输出进入安装包，细节见 [任务栏 XAML 适配](TASKBAR-XAML.md)。需要 Inno Setup 6：`winget install JRSoftware.InnoSetup --scope user`。注意 winget 安装的 Inno Setup 不带简体中文语言文件（非官方翻译），脚本引用的 `Languages\ChineseSimplified.isl` 需从 [istrans 页面](https://jrsoftware.org/files/istrans/) 下载后放入 Inno Setup 安装目录的 `Languages\` 下。
 
 ## 免安装包
 
@@ -26,10 +26,10 @@ zip 版内容与安装后的程序目录一致（程序文件、`使用说明.md
 ### 轻量便携包
 
 ```powershell
-pwsh -NoProfile -File .\installer\build.ps1 -Version 0.7.1 -FrameworkDependentPortable
+pwsh -NoProfile -File .\installer\build.ps1 -Version 0.7.2 -FrameworkDependentPortable
 ```
 
-生成 `installer\bin\BingLan-0.7.1-portable-framework-dependent.zip`。此构建使用 .NET 10 SDK 和原生组件的构建工具。安装 [.NET 10 Windows Desktop Runtime x64](https://dotnet.microsoft.com/download/dotnet/10.0) 后，可解压并运行 `BingLan.exe`。
+生成 `installer\bin\BingLan-0.7.2-portable-framework-dependent.zip`。此构建使用 .NET 10 SDK 和原生组件的构建工具。安装 [.NET 10 Windows Desktop Runtime x64](https://dotnet.microsoft.com/download/dotnet/10.0) 后，可解压并运行 `BingLan.exe`。
 
 ## 安装程序行为
 

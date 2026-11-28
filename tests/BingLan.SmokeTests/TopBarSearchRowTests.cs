@@ -33,9 +33,12 @@ public static class TopBarSearchRowTests
         TestSearchLookFollowsDefaultDarkTopBar();
         TestSearchLookFollowsTransparentTopBar();
         TestSearchLookFollowsCustomTopBar();
-        TestLowOpacityFrostedLookAdaptsToBackdrop();
+        TestLowOpacityFrostedLookUsesReadablePlate();
         TestSearchLookFollowsCardPalettesAndDarkGlass();
         TestSearchLookFrostedContrastAndAccent();
+        TestPopupContrastAcrossMaterials();
+        TestClearPopupSuppressesBackdropContent();
+        TestCustomPopupContrastAcrossInteractionStates();
     }
 
     private static TopBarSearchCandidate File(string name, string path) =>
@@ -261,18 +264,15 @@ public static class TopBarSearchRowTests
         {
             state.SurfaceColor = color;
             state.FrostedGlass = frosted;
-            var overDark = TopBarSearchLookRules.ResolveForTopBar(style, state, adaptiveUseDarkInk: false);
-            var overLight = TopBarSearchLookRules.ResolveForTopBar(style, state, adaptiveUseDarkInk: true);
-
-            var clearSurface = $"#01{color[1..]}";
-            Assert(overDark.GlassTint == clearSurface && overDark.FallbackSurface == clearSurface
-                && overLight.GlassTint == clearSurface && overLight.FallbackSurface == clearSurface,
-                $"0% 不透明度的顶栏应打开同样透明的弹层，底色 {color}，磨砂偏好 {frosted}");
-            Assert(!overDark.AllowBackdropBlur && !overLight.AllowBackdropBlur,
-                "浅色顶栏的常驻表面和弹层均应采用透明画刷");
-            Assert(overDark.UseTextShadow && overLight.UseTextShadow
-                && !overDark.UseDarkInk && overLight.UseDarkInk && overDark.Foreground != overLight.Foreground,
-                "全透明弹层应跟随顶栏的壁纸明暗判定切换字色，并保留文字对比阴影");
+            var palette = TopBarSearchLookRules.ResolveForTopBar(style, state);
+            Assert(palette.GlassTint[3..] == color[1..] && palette.GlassTint == palette.FallbackSurface
+                && ColorContrastRules.ParseHex(palette.GlassTint).A >= TopBarSearchLookRules.MinimumFallbackOpacity,
+                $"0% 不透明度顶栏的弹层应保留底色并提供可辨识底板，底色 {color}，磨砂偏好 {frosted}");
+            Assert(!palette.AllowBackdropBlur && palette.UseDarkInk && !palette.UseTextShadow,
+                "全透明浅色顶栏的弹层应使用独立浅色底板和深色字，关闭磨砂");
+            AssertReadablePopup(palette, $"清透 {color}");
+            Assert(DesktopStyleRules.TopBar(style, state).Surface == $"#01{color[1..]}",
+                "弹层可读底板不能改变常驻顶栏的全透明外观");
         }
     }
 
@@ -294,29 +294,31 @@ public static class TopBarSearchRowTests
                 Assert(palette.AllowBackdropBlur == frosted,
                     $"独立顶栏弹层应与常驻顶栏使用相同的磨砂条件，底色 {color}，磨砂 {frosted}");
                 var barSurface = DesktopStyleRules.TopBar(style, topBar).Surface;
-                Assert(palette.GlassTint == barSurface && palette.FallbackSurface == barSurface,
-                    $"顶栏弹层应采用与顶栏相同的颜色和不透明度，底色 {color}，磨砂 {frosted}");
+                Assert((frosted ? palette.GlassTint == barSurface : palette.GlassTint == palette.FallbackSurface)
+                    && ColorContrastRules.ParseHex(palette.FallbackSurface).A >= TopBarSearchLookRules.MinimumFallbackOpacity,
+                    $"原生磨砂可沿用顶栏浓度，未模糊及回退底板应遮住背景内容，底色 {color}，磨砂 {frosted}");
             }
         }
 
         topBar.SurfaceOpacity = 0d;
         topBar.FrostedGlass = false;
-        var clearDark = TopBarSearchLookRules.ResolveForTopBar(style, topBar, adaptiveUseDarkInk: false);
-        Assert(!clearDark.AllowBackdropBlur && clearDark.FallbackSurface == "#01213A57" && clearDark.UseTextShadow,
-            "0% 不透明度的深色顶栏在关闭磨砂时，应使用通透的深色弹层画刷与文字阴影");
+        var clearDark = TopBarSearchLookRules.ResolveForTopBar(style, topBar);
+        Assert(!clearDark.AllowBackdropBlur && clearDark.FallbackSurface == "#F0213A57" && !clearDark.UseDarkInk,
+            "0% 不透明度的深色顶栏弹层应使用可读深色底板与浅色字");
+        AssertReadablePopup(clearDark, "清透深色");
 
         topBar.FrostedGlass = true;
-        var clearWithFrostedEnabled = TopBarSearchLookRules.ResolveForTopBar(style, topBar, adaptiveUseDarkInk: false);
+        var clearWithFrostedEnabled = TopBarSearchLookRules.ResolveForTopBar(style, topBar);
         Assert(clearWithFrostedEnabled == clearDark,
-            "0% 不透明度应保持全透明的深色弹层，开启磨砂后也不铺设磨砂底");
+            "0% 不透明度顶栏的弹层应保留相同可读底板，开启磨砂后也不启用原生磨砂");
 
         topBar.SurfaceOpacity = 2d / 255d;
-        var frostedDark = TopBarSearchLookRules.ResolveForTopBar(style, topBar, adaptiveUseDarkInk: true);
-        Assert(frostedDark.AllowBackdropBlur && frostedDark.UseDarkInk,
-            "深色顶栏在可使用原生磨砂的最小不透明度应开启磨砂弹层，在浅色壁纸上保留深色文字");
+        var frostedDark = TopBarSearchLookRules.ResolveForTopBar(style, topBar);
+        Assert(frostedDark.AllowBackdropBlur && !frostedDark.UseDarkInk,
+            "低不透明度深色磨砂顶栏的弹层应使用独立深色底板和浅色文字");
     }
 
-    private static void TestLowOpacityFrostedLookAdaptsToBackdrop()
+    private static void TestLowOpacityFrostedLookUsesReadablePlate()
     {
         var style = new DesktopStyleState();
         var state = new TopBarState { SurfaceOpacity = 0.1d };
@@ -330,13 +332,10 @@ public static class TopBarSearchRowTests
             {
                 var bar = BarAdaptiveInkRules.ResolveTopBarPalette(glass, hasAcrylicBackdrop: true,
                     ColorContrastRules.ParseHex(wallpaper), previousUseDarkInk: null);
-                var popup = TopBarSearchLookRules.ResolveForTopBar(style, state, bar.UseDarkInk);
-                Assert(bar.UseDarkInk == useDarkInk && popup.UseDarkInk == useDarkInk && popup.AllowBackdropBlur,
-                    $"低不透明度时磨砂顶栏和弹层应按壁纸切换字色，底色 {tint}，壁纸 {wallpaper}");
-                var backdrop = ColorContrastRules.CompositeLayers(wallpaper, ColorContrastRules.ParseHex(popup.FallbackSurface));
-                Assert(ColorContrastRules.ContrastRatio(ColorContrastRules.ParseHex(popup.Foreground), backdrop)
-                    >= ColorContrastRules.MinimumNormalTextContrast,
-                    $"低不透明度的磨砂弹层在回退时也应有可读字色，底色 {tint}，壁纸 {wallpaper}");
+                var popup = TopBarSearchLookRules.ResolveForTopBar(style, state);
+                Assert(bar.UseDarkInk == useDarkInk && popup.UseDarkInk == (tint == "#FFFFFF") && popup.AllowBackdropBlur,
+                    $"低不透明度磨砂弹层应按自身底板选择字色，底色 {tint}，顶栏壁纸 {wallpaper}");
+                AssertReadablePopup(popup, $"磨砂 {tint} / 顶栏壁纸 {wallpaper}");
             }
         }
     }
@@ -358,7 +357,7 @@ public static class TopBarSearchRowTests
         })
         {
             var barSurface = DesktopStyleRules.TopBar(style, topBar).Surface;
-            var palette = TopBarSearchLookRules.ResolveForTopBar(style, topBar, adaptiveUseDarkInk: true);
+            var palette = TopBarSearchLookRules.ResolveForTopBar(style, topBar);
             var useBlur = DesktopStyleRules.TopBarFrostedScrim(topBar, barSurface);
             Assert(palette.GlassTint[3..] == barSurface[3..] && palette.FallbackSurface[3..] == barSurface[3..],
                 $"跟随全局的顶栏弹层应与顶栏同色，材质 {style.Glass}，配色 {style.Palette}");
@@ -366,9 +365,10 @@ public static class TopBarSearchRowTests
                 $"跟随全局的顶栏弹层应与顶栏采用相同的磨砂条件与明暗文字，材质 {style.Glass}");
             if (style.Glass == GlassMode.Clear)
             {
-                Assert(palette.FallbackSurface == "#01FFFFFF" && palette.UseTextShadow,
-                    "全局无底板外观应让跟随它的顶栏弹层保持通透，并保留文字阴影");
+                Assert(palette.FallbackSurface == "#F0FFFFFF" && !palette.UseTextShadow,
+                    "全局无底板外观的顶栏弹层应使用可读浅色底板");
             }
+            AssertReadablePopup(palette, $"全局 {style.Glass}");
         }
     }
 
@@ -395,6 +395,87 @@ public static class TopBarSearchRowTests
                 Assert(ColorContrastRules.ContrastRatio(foreground, selected) >= ColorContrastRules.MinimumNormalTextContrast,
                     $"强调色 {accent} 的搜索选中行在 {wallpaper} 背景上应保持 4.5:1 的对比度");
             }
+        }
+    }
+
+    private static void AssertReadablePopup(TopBarSearchPalette palette, string scenario)
+    {
+        foreach (var surface in new[] { palette.GlassTint, palette.FallbackSurface })
+        foreach (var backdrop in new[] { "#000000", "#FFFFFF" })
+        foreach (var ink in new[] { palette.Foreground, palette.MutedForeground })
+        foreach (var (state, overlay) in new[] { ("普通", "#00000000"), ("悬停", palette.HoverRowBackground),
+            ("选中", palette.ActiveRowBackground) })
+        foreach (var badge in new[] { "#00000000", palette.BadgeBackground, palette.ActiveRowBackground })
+        {
+            var background = ColorContrastRules.CompositeLayers(backdrop, ColorContrastRules.ParseHex(surface),
+                ColorContrastRules.ParseHex(overlay), ColorContrastRules.ParseHex(badge));
+            var contrast = ColorContrastRules.ContrastRatio(ColorContrastRules.ParseHex(ink), background);
+            Assert(contrast >= ColorContrastRules.MinimumNormalTextContrast,
+                $"{scenario} 的{state}文字 {ink} 在 {backdrop} / {surface} / {overlay} / 徽标 {badge} 上应达到 4.5:1，实际 {contrast:F2}");
+        }
+        foreach (var surface in new[] { palette.GlassTint, palette.FallbackSurface })
+        foreach (var backdrop in new[] { "#000000", "#FFFFFF" })
+        {
+            var background = ColorContrastRules.CompositeLayers(backdrop, ColorContrastRules.ParseHex(surface));
+            Assert(ColorContrastRules.ContrastRatio(ColorContrastRules.ParseHex(palette.PlaceholderForeground), background)
+                >= ColorContrastRules.MinimumNormalTextContrast, $"{scenario} 的搜索占位文字应达到 4.5:1");
+        }
+    }
+
+    private static void TestPopupContrastAcrossMaterials()
+    {
+        foreach (var color in new[] { "#FFFFFF", "#00FFFF", "#D8CFF0", "#213A57", "#1E1F24", "#777777", "#969696" })
+        foreach (var opacity in new[] { 0d, 0.1d, 0.5d, 0.82d, 1d })
+        foreach (var frosted in new[] { false, true })
+        {
+            var topBar = new TopBarState { FollowCardLook = false, SurfaceColor = color,
+                SurfaceOpacity = opacity, FrostedGlass = frosted };
+            var palette = TopBarSearchLookRules.ResolveForTopBar(new DesktopStyleState(), topBar);
+            AssertReadablePopup(palette, $"{color} / {opacity} / 磨砂 {frosted}");
+            Assert(ColorContrastRules.ParseHex(palette.FallbackSurface).A
+                >= ColorContrastRules.ParseHex(DesktopStyleRules.TopBar(new DesktopStyleState(), topBar).Surface).A,
+                "弹层可读底板不应降低已有的不透明度");
+            Assert(palette.GlassTint[3..] == color[1..] && palette.FallbackSurface[3..] == color[1..],
+                "原生磨砂及回退底板应保持相同配色");
+            Assert(ColorContrastRules.ParseHex(palette.FallbackSurface).A >= TopBarSearchLookRules.MinimumFallbackOpacity,
+                "原生磨砂不可用时的底板应至少保留 94% 不透明度");
+            Assert(palette.AllowBackdropBlur || palette.GlassTint == palette.FallbackSurface,
+                "未模糊的表面应直接使用高不透明度底板");
+        }
+    }
+
+    private static void TestClearPopupSuppressesBackdropContent()
+    {
+        foreach (var frosted in new[] { false, true })
+        foreach (var opacity in new[] { 0d, 0.1d, 0.82d })
+        {
+            var topBar = new TopBarState { FollowCardLook = false, SurfaceColor = "#FFFFFF",
+                SurfaceOpacity = opacity, FrostedGlass = frosted };
+            var palette = TopBarSearchLookRules.ResolveForTopBar(new DesktopStyleState(), topBar);
+            var surface = ColorContrastRules.ParseHex(palette.FallbackSurface);
+            var overBlack = ColorContrastRules.CompositeLayers("#000000", surface);
+            var overWhite = ColorContrastRules.CompositeLayers("#FFFFFF", surface);
+            Assert(surface.A * 255d >= 235d && (overWhite.R - overBlack.R) * 255d <= 20d,
+                $"清透及磨砂回退的白色浮层应将底部黑白内容差异限制在 20/255 内，磨砂 {frosted}，浓度 {opacity}");
+        }
+    }
+
+    private static void TestCustomPopupContrastAcrossInteractionStates()
+    {
+        var channels = new[] { 0, 51, 102, 153, 204, 255 };
+        var colors = (from r in channels from g in channels from b in channels select $"#{r:X2}{g:X2}{b:X2}")
+            .Concat(Enumerable.Range(0, 17).Select(step => Math.Min(255, step * 16))
+                .Select(value => $"#{value:X2}{value:X2}{value:X2}"))
+            .Distinct();
+        foreach (var color in colors)
+        foreach (var opacity in new[] { 0.1d, 1d })
+        foreach (var frosted in new[] { false, true })
+        foreach (var accent in new[] { DesktopStyleRules.DefaultAccentColor, "#000000", "#FFFFFF", "#FFFF00" })
+        {
+            var topBar = new TopBarState { FollowCardLook = false, SurfaceColor = color,
+                SurfaceOpacity = opacity, FrostedGlass = frosted };
+            var palette = TopBarSearchLookRules.ResolveForTopBar(new DesktopStyleState { AccentColor = accent }, topBar);
+            AssertReadablePopup(palette, $"自定义 {color} / {opacity} / 磨砂 {frosted} / 强调色 {accent}");
         }
     }
 }

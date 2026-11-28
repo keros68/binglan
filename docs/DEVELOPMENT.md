@@ -100,7 +100,7 @@ dotnet run --project .\src\BingLan.App\BingLan.App.csproj
 pwsh -NoProfile -File .\installer\build.ps1 -Version 0.6.0
 ```
 
-生成按用户安装的 `installer\bin\BingLan-Setup-0.7.1.exe`（Inno Setup，自包含 .NET 运行时，不需要管理员权限）。安装位置、卸载行为、依赖许可证和验证状态见 [安装包](INSTALLER.md)。独立托盘支持鼠标和键盘操作。Explorer 未在 UI Automation 枚举中返回常显区时，冰蓝按当前注册图标的位置查找同一 Explorer 的 MSAA 按钮。点击前重新核对注册信息与按钮边界，再执行默认动作或打开应用菜单。使用面板时 Dock 按先前应用的遮挡状态决定是否显示，操作成功后收起面板。驻留应用需要选择账号时优先打开冰蓝托盘。兼容性验收包由 `installer/build-tray-preview.ps1` 生成；操作步骤与限制见[托盘验收说明](TRAY-PREVIEW.md)。
+生成按用户安装的 `installer\bin\BingLan-Setup-0.7.2.exe`（Inno Setup，自包含 .NET 运行时，不需要管理员权限）。安装位置、卸载行为、依赖许可证和验证状态见 [安装包](INSTALLER.md)。独立托盘支持鼠标和键盘操作。Explorer 未在 UI Automation 枚举中返回常显区时，冰蓝按当前注册图标的位置查找同一 Explorer 的 MSAA 按钮。点击前重新核对注册信息与按钮边界，再执行默认动作或打开应用菜单。使用面板时 Dock 按先前应用的遮挡状态决定是否显示，操作成功后收起面板。驻留应用需要选择账号时优先打开冰蓝托盘。兼容性验收包由 `installer/build-tray-preview.ps1` 生成；操作步骤与限制见[托盘验收说明](TRAY-PREVIEW.md)。
 
 使用 `-FrameworkDependentPortable` 可单独生成轻量便携包，运行环境和文件名见 [轻量便携包](INSTALLER.md#轻量便携包)。
 
@@ -149,7 +149,9 @@ Schema v68 保存信息条位置、收纳盒展开方向和逐盒自动收纳排
 
 Schema v69 可保存外设电量模块和本机 BatteryHub 程序路径。旧配置默认关闭外设电量；主题只携带模块外观、开关与顺序。
 
-Windows 11 顶栏默认显示“托盘”按钮，模块可关闭。x64 默认打开冰蓝托盘面板，面板内可切换到 Windows 原生隐藏图标面板。Windows 11 的其他架构通过 `TrayOverflowController` 直接打开或收起 Windows 面板，Windows 10 隐藏该入口。控制器不挂常驻 Explorer 钩子，仅在面板打开期间（含唤出后 2 秒窗口识别期）以 200 ms 间隔检查面板状态，面板关闭后停止计时器；处理中的重复请求直接忽略；关闭模块与应用退出共用限时清理，不弹出模态对话框。按钮不改变自动隐藏设置，行为与 Win+B 一致：原生面板在系统任务栏上打开，位置由 Windows 管理。面板或任务栏遮挡 Dock 时，Dock 暂时让位。个人配置 Schema v33 将已有顶栏的托盘模块初始化为开启，保留顶栏总开关及其他模块设置；模块开关随顶栏主题字段导入导出。
+顶栏托盘、模块浮层和内联搜索共用 `TopBarSearchLookRules` 的配色与磨砂条件。弹层使用独立底板，清透表面和未应用模糊时的回退底板不透明度至少为 94%，降低背后文字的干扰；成功应用原生磨砂后可保留较低浓度。必要时由 `LauncherReadabilityRules` 提高浓度，保证主要、次要文字在纯黑和纯白背景上达到 4.5:1 对比度。原生磨砂和回退使用相同配色，字色由弹层自身底色决定；常驻顶栏保留所选透明度，高对比度使用系统颜色。
+
+Windows 11 顶栏默认显示“托盘”按钮，模块可关闭。x64 默认打开冰蓝托盘面板。Windows 11 的其他架构通过 `TrayOverflowController` 直接打开或收起 Windows 面板，Windows 10 隐藏该入口。控制器不挂常驻 Explorer 钩子，仅在面板打开期间（含唤出后 2 秒窗口识别期）以 200 ms 间隔检查面板状态，面板关闭后停止计时器；处理中的重复请求直接忽略；关闭模块与应用退出共用限时清理，不弹出模态对话框。按钮不改变自动隐藏设置，行为与 Win+B 一致：原生面板在系统任务栏上打开，位置由 Windows 管理。面板或任务栏遮挡 Dock 时，Dock 暂时让位。个人配置 Schema v33 将已有顶栏的托盘模块初始化为开启，保留顶栏总开关及其他模块设置；模块开关随顶栏主题字段导入导出。
 
 隔离验收入口 `--shell-surfaces-preview` 与正式入口复用控制器，附加 `--tray-corners` 检查两角唤出；`--tray-slow-uia=<毫秒>` 仅在验收时模拟调用前延迟。v0.2.52 安装版和免安装版包含顶栏托盘入口，独立工具用于兼容性验收。兼容范围、观察结果与未覆盖场景见 [顶栏与系统入口验证](TOPBAR-QA.md)。
 

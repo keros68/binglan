@@ -1283,17 +1283,23 @@ internal static class TopBarWindowTests
                     Assert(trayPanel.ShowActivated
                         && (NativeMethods.GetExStyleOf(new WindowInteropHelper(trayPanel).Handle) & NativeMethods.WsExNoActivate) == 0,
                         "鼠标打开托盘后应能在面板内使用 Tab 和 Escape");
-                    Invoke((Button)trayPanel.FindName("NativeTrayButton"));
+                    Assert(!AllButtons(trayPanel).Any(button => Equals(button.Content, "打开 Windows 托盘")),
+                        "独立托盘不应重复提供 Windows 托盘入口");
+                    Invoke(ButtonByName(trayPanel, "关闭"));
                     pump();
-                    Assert(!trayPanel.IsVisible, "切换到 Windows 托盘时应关闭冰蓝托盘");
+                    Assert(!trayPanel.IsVisible && environment.TrayOverflowRequested == 0, "关闭按钮应只收起冰蓝托盘");
                 }
-                Assert(environment.TrayOverflowRequested == 1, "Windows 托盘入口应调用原生面板");
+                else
+                {
+                    Assert(environment.TrayOverflowRequested == 1, "使用系统托盘的架构应打开原生面板");
+                }
+                var nativeRequests = environment.TrayOverflowRequested;
                 state.Modules.TrayOverflow = false;
                 bar.ApplyState();
                 pump();
                 Assert(!AllButtons(bar).Any(button => AutomationProperties.GetName(button) == "托盘模块"),
                     "关闭托盘模块应移除入口");
-                Assert(!bar.TryOpenTrayForApplication() && environment.TrayOverflowRequested == 1,
+                Assert(!bar.TryOpenTrayForApplication() && environment.TrayOverflowRequested == nativeRequests,
                     "独立托盘入口关闭时，驻留应用应回退到提示");
                 Assert(environment.TrayOverflowClosed > 0, "关闭托盘模块应清理本次面板会话");
             }
@@ -1438,7 +1444,7 @@ internal static class TopBarWindowTests
         state.SurfaceOpacity = 0d;
         var expectedSurface = AccessibilityThemeManager.IsHighContrastEnabled || SystemParameters.HighContrast
             ? SystemColors.WindowColor
-            : Color.FromArgb(1, 0, 255, 255);
+            : Color.FromArgb(0xF0, 0, 255, 255);
         using var sampler = new WindowsPerformanceSamplingService();
         var bar = new TopBarWindow(state, new DesktopStyleState(), new FakeEnvironment(), sampler);
         show(bar);
@@ -1462,7 +1468,7 @@ internal static class TopBarWindowTests
                 search.UpdateLayout();
                 var searchColor = ((search.Content as Border)?.Background as SolidColorBrush)?.Color;
                 Assert(searchColor == expectedSurface,
-                    $"内联搜索的底色和不透明度应跟随顶栏（实际：{searchColor}，预期：{expectedSurface}）");
+                    $"清透顶栏的内联搜索应使用可读底板（实际：{searchColor}，预期：{expectedSurface}）");
                 var input = DescendantElements(search).OfType<TextBox>().Single();
                 input.Text = "报告";
                 Assert(search.HasUserInput && search.IsVisible, "搜索浮层应保留已输入的查询");
@@ -1495,6 +1501,24 @@ internal static class TopBarWindowTests
                 Assert(bar.SearchPopup is null && !reopenedSearch.IsVisible,
                     $"按 Esc 应关闭当前搜索浮层（搜索引用已清除：{bar.SearchPopup is null}，原搜索可见：{reopenedSearch.IsVisible}）");
                 pump();
+            }
+            if (OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000)
+                && System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture == System.Runtime.InteropServices.Architecture.X64)
+            {
+                Invoke(ButtonByName(bar, "托盘模块"));
+                pump();
+                var tray = Application.Current.Windows.OfType<BingLan.App.Tray.TrayPanelWindow>()
+                    .Single(window => window.Owner == bar && window.IsVisible);
+                Assert((tray.Resources["Surface"] as SolidColorBrush)?.Color == expectedSurface,
+                    "清透顶栏的托盘应与搜索、模块浮层共用可读底板");
+                Assert((tray.SurfaceCard.Background as SolidColorBrush)?.Color == expectedSurface,
+                    "托盘实际表面应绘制可读底板");
+                if (!AccessibilityThemeManager.IsHighContrastEnabled && !SystemParameters.HighContrast)
+                {
+                    Assert((tray.Resources["Ink"] as SolidColorBrush)?.Color == Color.FromRgb(0x12, 0x2C, 0x44),
+                        "清透浅色顶栏的托盘应按自身浅色底板使用深色文字");
+                }
+                tray.Close();
             }
         }
         finally
@@ -1543,6 +1567,19 @@ internal static class TopBarWindowTests
             Assert(volumeBackground == SystemColors.WindowColor && volumeBorder == SystemColors.WindowTextColor,
                 $"高对比度音量浮层应使用系统背景和边框颜色（实际：{volumeBackground}、{volumeBorder}，" +
                 $"预期：{SystemColors.WindowColor}、{SystemColors.WindowTextColor}）");
+            if (OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000)
+                && System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture == System.Runtime.InteropServices.Architecture.X64)
+            {
+                Invoke(ButtonByName(bar, "托盘模块"));
+                pump();
+                var tray = Application.Current.Windows.OfType<BingLan.App.Tray.TrayPanelWindow>()
+                    .Single(window => window.Owner == bar && window.IsVisible);
+                Assert((tray.Resources["Surface"] as SolidColorBrush)?.Color == SystemColors.WindowColor
+                    && (tray.Resources["Ink"] as SolidColorBrush)?.Color == SystemColors.WindowTextColor
+                    && (tray.Resources["SoftInk"] as SolidColorBrush)?.Color == SystemColors.WindowTextColor,
+                    "高对比度托盘应使用系统背景和主次文字颜色");
+                tray.Close();
+            }
         }
         finally
         {

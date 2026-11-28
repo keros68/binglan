@@ -114,6 +114,35 @@ internal static class TrayIconArtwork
         catch (Exception exception) when (IsReadFailure(exception)) { return []; }
     }
 
+    internal static TrayRegisteredIcon? ResolveContextMenuOwner(TrayEntry entry, TrayPanelEntry? displayed)
+    {
+        if (entry.Registration is { Owner: not 0, ProcessId: not 0 } registered) return registered;
+        if (displayed is not null && VerifyActivationOwner(displayed, entry) is { } activation)
+            return new TrayRegisteredIcon(activation.Window, activation.ProcessId, activation.IconId,
+                Guid.Empty, ReadBounds(entry) ?? Rect.Empty);
+        var tooltip = Normalize(entry.Name);
+        try
+        {
+            // Overflow registrations may share the chevron's rectangle. An exact label and
+            // a unique live registration identify the owner without guessing from that rectangle.
+            var snapshots = ReadSnapshots(includeArtwork: false);
+            var locations = LocateRegisteredIcons(snapshots, ReadRunningProcesses(snapshots));
+            var named = tooltip.Length == 0 ? [] : locations.Where(icon => icon.Icon.Tooltip == tooltip).ToArray();
+            // Only a live taskbar tile has a unique registered rectangle. Overflow tiles can
+            // all report the chevron rectangle and must retain exact tooltip identification.
+            var candidates = named.Length > 0 ? named
+                : entry.Source == "taskbar" && ReadBounds(entry) is { } bounds
+                    ? locations.Where(icon => MatchBounds(bounds, icon.Bounds)).ToArray() : [];
+            var matches = candidates
+                .Where(icon => icon.Owner != 0 && icon.ProcessId != 0)
+                .Select(icon => new TrayRegisteredIcon(icon.Owner, icon.ProcessId,
+                    icon.Icon.Uid.GetValueOrDefault(), icon.Icon.IconGuid, icon.Bounds))
+                .DistinctBy(icon => icon.Key).Take(2).ToArray();
+            return matches is [var match] ? match : null;
+        }
+        catch (Exception exception) when (IsReadFailure(exception)) { return null; }
+    }
+
     private static List<Snapshot> ReadSnapshots(bool includeArtwork = true)
     {
         var result = new List<Snapshot>();
