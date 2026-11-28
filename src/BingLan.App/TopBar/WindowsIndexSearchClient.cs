@@ -21,7 +21,11 @@ internal static class WindowsIndexSearchClient
     private static readonly Lazy<Type?> ConnectionType = new(() => Type.GetTypeFromProgID("ADODB.Connection"));
     private static readonly Lazy<Type?> RecordsetType = new(() => Type.GetTypeFromProgID("ADODB.Recordset"));
 
-    internal static async Task<WindowsIndexSearchResult> SearchAsync(string query, CancellationToken cancellationToken)
+    internal static Task<WindowsIndexSearchResult> SearchAsync(string query, CancellationToken cancellationToken) =>
+        SearchAsync(query, cancellationToken, ReadIndex);
+
+    internal static async Task<WindowsIndexSearchResult> SearchAsync(
+        string query, CancellationToken cancellationToken, Func<string, CancellationToken, WindowsIndexSearchResult> readIndex)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (string.IsNullOrWhiteSpace(query) || query.Length > 256)
@@ -32,11 +36,13 @@ internal static class WindowsIndexSearchClient
         {
             return WindowsIndexSearchResult.Unavailable;
         }
-        var work = Task.Run(() =>
+        var work = Task.Run(() => readIndex(query, cancellationToken), cancellationToken);
+        _ = work.ContinueWith(static completed =>
         {
-            try { return ReadIndex(query, cancellationToken); }
-            finally { QueryGate.Release(); }
-        });
+            // The caller can stop waiting before the provider returns.
+            _ = completed.Exception;
+            QueryGate.Release();
+        }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
         try
         {
             return await work.WaitAsync(TimeSpan.FromMilliseconds(900), cancellationToken);

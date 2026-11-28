@@ -10,6 +10,7 @@ internal static class DockNativeMethods
     internal const uint ProcessQueryLimitedInformation = 0x1000;
     internal const uint DwmwaExtendedFrameBounds = 9;
     internal const uint DwmwaCloaked = 14;
+    internal const uint GaRoot = 2;
     internal const uint GaRootOwner = 3;
 
     internal const int SwMinimize = 6;

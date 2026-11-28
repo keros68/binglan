@@ -143,8 +143,14 @@ internal static class ShellSurfaceNativeMethods
         surfaceKind = BingLan.Core.Dock.SystemSurfaceKind.None;
         bounds = default;
         var name = ClassNameOf(window);
-        if (name is not ("Shell_TrayWnd" or "Shell_SecondaryTrayWnd" or "Xaml_WindowedPopupClass"
-            or "Windows.UI.Core.CoreWindow" or "ControlCenterWindow" or "TopLevelWindowForOverflowXamlIsland")) return false;
+        // Keyboard focus can sit in a XAML child of the native taskbar or tray panel.
+        if (name is "Windows.UI.Composition.DesktopWindowContentBridge" or "Windows.UI.Input.InputSite.WindowClass")
+        {
+            window = DockNativeMethods.GetAncestor(window, DockNativeMethods.GaRoot);
+            name = ClassNameOf(window);
+        }
+        if (name is not ("Shell_TrayWnd" or "Shell_SecondaryTrayWnd"
+            or "Windows.UI.Core.CoreWindow" or "ControlCenterWindow") && !IsTaskbarPopupClass(name)) return false;
         if (ProcessNameOf(window) is not { } processName)
         {
             return false;
@@ -156,7 +162,17 @@ internal static class ShellSurfaceNativeMethods
             return false;
         }
 
-        if (DockNativeMethods.GetWindowRect(window, out var rect))
+        if ((surfaceKind is BingLan.Core.Dock.SystemSurfaceKind.Taskbar or BingLan.Core.Dock.SystemSurfaceKind.TaskbarPopup)
+            && (!DockNativeMethods.IsWindowVisible(window) || NativeMethods.IsWindowCloaked(window)))
+        {
+            return true;
+        }
+
+        if ((surfaceKind == BingLan.Core.Dock.SystemSurfaceKind.TaskbarPopup
+            && DockNativeMethods.DwmGetWindowAttribute(
+                window, DockNativeMethods.DwmwaExtendedFrameBounds, out DockNativeMethods.NativeRect rect,
+                Marshal.SizeOf<DockNativeMethods.NativeRect>()) == 0)
+            || DockNativeMethods.GetWindowRect(window, out rect))
         {
             bounds = new BingLan.Core.Dock.PixelRect(rect.Left, rect.Top, rect.Right, rect.Bottom);
         }
@@ -284,7 +300,7 @@ internal static class ShellSurfaceNativeMethods
             {
                 return BingLan.Core.Dock.SystemSurfaceKind.Taskbar;
             }
-            if (className is "Xaml_WindowedPopupClass" or "TopLevelWindowForOverflowXamlIsland")
+            if (IsTaskbarPopupClass(className))
             {
                 return BingLan.Core.Dock.SystemSurfaceKind.TaskbarPopup;
             }
@@ -301,6 +317,12 @@ internal static class ShellSurfaceNativeMethods
 
     internal static bool IsSystemMenu(string className, string processName) =>
         ClassifySystemMenu(className, processName) != BingLan.Core.Dock.SystemSurfaceKind.None;
+
+    internal static bool IsExplorerTaskbarPopup(nint window, string className) =>
+        IsTaskbarPopupClass(className) && ProcessNameOf(window) == "explorer";
+
+    private static bool IsTaskbarPopupClass(string className) =>
+        className is "Xaml_WindowedPopupClass" or "TopLevelWindowForOverflowXamlIsland" or "NotifyIconOverflowWindow";
 
     internal static bool SendChord(ushort modifier, ushort key) => SendChord([modifier], key);
 

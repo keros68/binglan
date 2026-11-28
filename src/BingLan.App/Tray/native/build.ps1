@@ -29,7 +29,7 @@ try {
     $object = Join-Path $intermediate 'TrayContextNative.obj'
     $dll = Join-Path $OutputDirectory 'BingLan.TrayContextNative.dll'
     $importLibrary = Join-Path $intermediate 'BingLan.TrayContextNative.lib'
-    & $compiler /nologo /EHsc /std:c++17 /W4 /O2 /MT /LD /DUNICODE /D_UNICODE $source "/Fo$object" /link "/OUT:$dll" "/IMPLIB:$importLibrary" ole32.lib oleaut32.lib user32.lib uiautomationcore.lib
+    & $compiler /nologo /EHsc /std:c++17 /W4 /O2 /MT /LD /DUNICODE /D_UNICODE $source "/Fo$object" /link "/OUT:$dll" "/IMPLIB:$importLibrary" ole32.lib oleaut32.lib oleacc.lib user32.lib uiautomationcore.lib
     if ($LASTEXITCODE -ne 0) { throw "Native UIA bridge compilation failed ($LASTEXITCODE)." }
     Write-Output "Built x64 UI Automation tray bridge: $dll"
 }

@@ -6,7 +6,7 @@
     FontFamily="Segoe UI Variable Text, Microsoft YaHei UI" UseLayoutRounding="True"
     PreviewKeyDown="OnWindowKeyDown">
     <Window.Resources>
-        <BitmapImage x:Key="BingLanMark" UriSource="pack://application:,,,/Assets/Brand/binglan-icon.png" DecodePixelWidth="48"/>
+        <BitmapImage x:Key="BingLanMark" UriSource="pack://application:,,,/BingLan;component/Assets/Brand/binglan-icon.png" DecodePixelWidth="48"/>
         <SolidColorBrush x:Key="Surface" Color="#F0ECF6FF"/>
         <SolidColorBrush x:Key="Edge" Color="#36122C44"/>
         <SolidColorBrush x:Key="Ink" Color="#122C44"/>

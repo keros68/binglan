@@ -55,7 +55,7 @@ internal static class TransientForegroundResolver
         }
 
         var fgClass = ClassNameOf(foregroundWindow);
-        if (ShellSurfaceWindows.IsShellSurface(fgClass))
+        if (IsShellSurface(foregroundWindow, fgClass))
         {
             return false;
         }
@@ -139,7 +139,7 @@ internal static class TransientForegroundResolver
             }
 
             var candidateClass = ClassNameOf(cursor);
-            if (ShellSurfaceWindows.IsShellSurface(candidateClass))
+            if (IsShellSurface(cursor, candidateClass))
             {
                 cursor = NativeMethods.GetWindow(cursor, NativeMethods.GwHwndNext);
                 continue;
@@ -171,6 +171,7 @@ internal static class TransientForegroundResolver
     /// at the desktop surface) to detect any visible maximized or bar-overlapping window even
     /// when focus temporarily moved to the taskbar, another monitor, or a small floating dialog.
     /// Skips tool/click-through overlays (including BingLan desktop cards, Dock, handle, and bars).
+    /// Callers can require a visible intersection when maximization alone does not cover their strip.
     /// </summary>
     internal static bool TryFindCoveringWindowOnMonitor(
         nint monitorHandle,
@@ -178,7 +179,8 @@ internal static class TransientForegroundResolver
         nint ownWindowToIgnore,
         out bool anyOverlapsBar,
         out bool anyMaximizedOnMonitor,
-        out PixelRect coveringBounds)
+        out PixelRect coveringBounds,
+        bool requireBarIntersection = false)
     {
         anyOverlapsBar = false;
         anyMaximizedOnMonitor = false;
@@ -211,7 +213,7 @@ internal static class TransientForegroundResolver
             {
                 return false;
             }
-            if (ShellSurfaceWindows.IsShellSurface(className))
+            if (IsShellSurface(window, className))
             {
                 return true;
             }
@@ -251,20 +253,14 @@ internal static class TransientForegroundResolver
 
             var zoomed = DockNativeMethods.IsZoomed(window);
             var intersects = rect.Intersects(barBounds);
-            if (zoomed || intersects)
+            if (intersects || (zoomed && !requireBarIntersection))
             {
                 if (!localBounds.HasArea)
                 {
                     localBounds = rect;
                 }
-                if (intersects || zoomed)
-                {
-                    localOverlaps = true;
-                }
-                if (zoomed)
-                {
-                    localMaximized = true;
-                }
+                localOverlaps = true;
+                localMaximized |= zoomed;
             }
 
             return !(localOverlaps && localMaximized);
@@ -323,7 +319,7 @@ internal static class TransientForegroundResolver
         }
 
         var className = ClassNameOf(window);
-        if (ShellSurfaceWindows.IsShellSurface(className))
+        if (IsShellSurface(window, className))
         {
             return false;
         }
@@ -373,6 +369,9 @@ internal static class TransientForegroundResolver
             ? buffer.ToString()
             : string.Empty;
     }
+
+    private static bool IsShellSurface(nint window, string className) =>
+        ShellSurfaceWindows.IsShellSurface(className) || ShellSurfaceNativeMethods.IsExplorerTaskbarPopup(window, className);
 
     private static uint ReadExplorerProcessId()
     {

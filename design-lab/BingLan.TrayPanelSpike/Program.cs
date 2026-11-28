@@ -101,7 +101,7 @@ internal static class Program
             var snapshot = TrayReader.WarmSnapshotAsync().WaitAsync(TrayReader.OperationTimeout).GetAwaiter().GetResult();
             if (snapshot is null || !ReferenceEquals(snapshot, TrayReader.CachedSnapshot))
                 throw new InvalidOperationException("The tray snapshot was unavailable in the shared cache.");
-            var candidates = snapshot.Where(item => item.Name == "飞书" && item.FeishuOwner is not null).Take(2).ToArray();
+            var candidates = snapshot.Where(item => item.Name == "飞书" && item.ActivationOwner is not null).Take(2).ToArray();
             if (candidates is not [var entry] || entry.Thumbnail is not { IsFrozen: true } thumbnail)
                 throw new InvalidOperationException("No unique unnamed UI Automation entry became 飞书 with a verified owner and frozen thumbnail.");
 
@@ -138,9 +138,9 @@ internal static class Program
                     var current = TrayReader.Read().Entries.Where(item => item.Identity == entry.Identity).Take(2).ToArray();
                     var outsideTray = new TrayEntry(entry.Identity.RuntimeId, "", entry.Source,
                         entry.Identity.ExplorerProcessId, AutomationElement.RootElement);
-                    var feishu = current is [var live] ? TrayIconArtwork.VerifyFeishuOwner(entry, live) : null;
+                    var feishu = current is [var live] ? TrayIconArtwork.VerifyActivationOwner(entry, live) : null;
                     var unmatched = !TrayIconArtwork.Load([outsideTray]).ContainsKey(outsideTray.Key)
-                        && TrayIconArtwork.VerifyFeishuOwner(entry, outsideTray) is null;
+                        && TrayIconArtwork.VerifyActivationOwner(entry, outsideTray) is null;
                     return (feishu, unmatched);
                 }).WaitAsync(TrayReader.OperationTimeout).GetAwaiter().GetResult();
                 if (!missing) throw new InvalidOperationException("An unrelated element reused the tray identity and inherited its owner.");

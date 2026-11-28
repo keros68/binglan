@@ -89,6 +89,7 @@ public partial class IceBlueDockWindow : Window
     private readonly DockMorphAnimator _morph;
     private readonly DockGlassSurface _glass;
     private bool _trueFullScreenForeground;
+    private nint _lastApplicationForeground;
     private NonActivatingPopupMenu? _openMenu;
     private DateTimeOffset _lastReservationAttempt;
     private readonly DockAttention _attention = new();
@@ -722,11 +723,29 @@ public partial class IceBlueDockWindow : Window
         _bounceRequested = true;
         var title = new StringBuilder(256);
         DockNativeMethods.GetWindowTextW(window, title, title.Capacity);
-        return _attention.Flashed(
+        var processId = AttentionFlashRules.EffectiveProcessId(rawProcessId, executablePath);
+        var isNewProfileHelper = processId != 0 && TrayAppRevealRules.IsWeChatProfileHelper(executablePath)
+            && !_attention.MarkedWindows.Contains(window);
+        var changed = _attention.Flashed(
             window,
-            AttentionFlashRules.EffectiveProcessId(rawProcessId, executablePath),
+            processId,
             UnreadBadgeRules.ParseCount(title.ToString()),
             executablePath);
+        if (isNewProfileHelper)
+        {
+            _ = ResolveProfileHelperAttentionAsync(window, processId);
+        }
+        return changed;
+    }
+
+    private async Task ResolveProfileHelperAttentionAsync(nint window, uint processId)
+    {
+        var (_, rootExecutable) = await Task.Run(() => WindowCommandService.ResolveInstanceInfo(processId));
+        if (!_closing && rootExecutable is not null && TrayAppRevealRules.HotkeyFor(rootExecutable) is not null
+            && _attention.UpdateExecutablePath(window, processId, rootExecutable))
+        {
+            RefreshAttentionBadges();
+        }
     }
 
     private bool ClearActivatedAttention(nint window)
@@ -1830,14 +1849,29 @@ public partial class IceBlueDockWindow : Window
         var displayName = DisplayNameOf(item);
         var launchTarget = item.LaunchTarget;
         var attentionEntries = _attention.EntriesFor(item);
+        var discardedExpiredAttention = false;
+        foreach (var entry in attentionEntries)
+        {
+            if (!IsAttentionWindowAlive(entry))
+            {
+                discardedExpiredAttention |= _attention.Discard(entry);
+            }
+        }
+        if (discardedExpiredAttention)
+        {
+            RefreshAttentionBadges();
+            attentionEntries = _attention.EntriesFor(item);
+        }
         if (attentionEntries.Count > 0)
         {
             var latest = attentionEntries[0];
+            bool MatchesAttentionWindow(TrackedWindow window) => window.Handle == latest.Window
+                && (latest.ProcessId == 0 || window.ProcessId == latest.ProcessId);
             HashSet<uint> latestInstancePids;
             if (latest.ProcessId != 0
                 && (item.Group is null
                     || item.Group.Windows.Count > 1
-                    || !item.Group.Windows.Any(w => w.Handle == latest.Window || w.ProcessId == latest.ProcessId)))
+                    || !item.Group.Windows.Any(w => MatchesAttentionWindow(w) || w.ProcessId == latest.ProcessId)))
             {
                 latestInstancePids = await Task.Run(() =>
                     WindowCommandService.ResolveInstanceProcessIds(latest.ProcessId, latest.ExecutablePath));
@@ -1849,46 +1883,36 @@ public partial class IceBlueDockWindow : Window
                     : [];
             }
 
-            if (item.Group is not null)
+            var instanceWindows = item.Group?.Windows.Where(window =>
+                MatchesAttentionWindow(window)
+                || (window.ProcessId != 0 && latestInstancePids.Contains(window.ProcessId)))
+                .ToArray() ?? [];
+            if (instanceWindows.Length > 0)
             {
-                var latestInGroup = item.Group.Windows.Any(window =>
-                    window.Handle == latest.Window
-                    || (window.ProcessId != 0 && latestInstancePids.Contains(window.ProcessId)));
-
-                if (latestInGroup)
+                var exactWindow = instanceWindows.Any(MatchesAttentionWindow) ? latest.Window : 0;
+                var result = await WindowCommandService.FocusAttentionAsync(instanceWindows, exactWindow, displayName);
+                if (!result.NoLiveWindows)
                 {
-                    var result = await WindowCommandService.ToggleAsync(
-                        item.Group,
-                        _toggleCooldown,
-                        displayName,
-                        window => ScoreAttentionCandidate(window, latest, latestInstancePids));
-                    if (!result.NoLiveWindows)
-                    {
-                        Report(result);
-                        return;
-                    }
-
-                    RefreshWindows();
+                    Report(result);
+                    return;
                 }
-                else
-                {
-                    // The most recent alert belongs to another instance hidden in the tray
-                    // (e.g. a 2nd WeChat account while the 1st is open). Do not activate the
-                    // wrong visible instance; route through instance-scoped tray reveal instead.
-                    var targetPin = launchTarget ?? CreateTransientRevealPin(item, latest.ExecutablePath, displayName);
-                    if (targetPin is not null)
-                    {
-                        await RevealOrLaunchWithAttentionAsync(targetPin, latest, latestInstancePids);
-                        return;
-                    }
-                }
+                RefreshWindows();
             }
 
-            if (launchTarget is not null)
+            var targetPin = launchTarget ?? CreateTransientRevealPin(item, latest.ExecutablePath, displayName);
+            if (targetPin is not null)
             {
-                await RevealOrLaunchWithAttentionAsync(launchTarget, latest, latestInstancePids);
-                return;
+                await RevealOrLaunchWithAttentionAsync(targetPin, latest);
             }
+            else
+            {
+                if (!IsAttentionWindowAlive(latest) && _attention.Discard(latest))
+                {
+                    RefreshAttentionBadges();
+                }
+                Report(new WindowCommandResult(false, $"未找到 {displayName} 提醒对应的窗口"));
+            }
+            return;
         }
 
         if (item.Group is not null)
@@ -1896,8 +1920,7 @@ public partial class IceBlueDockWindow : Window
             var result = await WindowCommandService.ToggleAsync(
                 item.Group,
                 _toggleCooldown,
-                displayName,
-                _attention.AttentionPriority);
+                displayName);
             if (!result.NoLiveWindows)
             {
                 Report(result);
@@ -1907,6 +1930,11 @@ public partial class IceBlueDockWindow : Window
             RefreshWindows();
         }
 
+        if (discardedExpiredAttention)
+        {
+            Report(new WindowCommandResult(false, $"未找到 {displayName} 提醒对应的窗口"));
+            return;
+        }
         if (launchTarget is null)
         {
             return;
@@ -1932,26 +1960,19 @@ public partial class IceBlueDockWindow : Window
         }
     }
 
-    private int ScoreAttentionCandidate(
-        TrackedWindow window,
-        AttentionEntry latest,
-        HashSet<uint> latestInstancePids)
+    private static bool IsAttentionWindowAlive(AttentionEntry entry)
     {
-        if (window.Handle != 0 && window.Handle == latest.Window)
+        if (!DockNativeMethods.IsWindow(entry.Window))
         {
-            return 4;
+            return false;
         }
-        if (window.ProcessId != 0 && latestInstancePids.Contains(window.ProcessId))
-        {
-            return 3;
-        }
-        return _attention.AttentionPriority(window);
+        DockNativeMethods.GetWindowThreadProcessId(entry.Window, out var livePid);
+        return livePid != 0 && (entry.ProcessId == 0 || entry.ProcessId == livePid);
     }
 
     private async Task RevealOrLaunchWithAttentionAsync(
         DockPinnedApp targetPin,
-        AttentionEntry latest,
-        HashSet<uint> latestInstancePids)
+        AttentionEntry latest)
     {
         if (_revealPending)
         {
@@ -1965,14 +1986,9 @@ public partial class IceBlueDockWindow : Window
                 targetPin,
                 preferredProcessId: latest.ProcessId != 0 ? latest.ProcessId : null,
                 launchCooldown: _launchCooldown);
-            if (!result.Succeeded)
+            if (result.NoLiveWindows && _attention.Discard(latest))
             {
-                // Clear the notified tray-hidden alert so subsequent clicks are not permanently
-                // trapped on the hint; a new flash will re-mark it immediately.
-                if (_attention.Cleared(latest.Window, latestInstancePids))
-                {
-                    RefreshAttentionBadges();
-                }
+                RefreshAttentionBadges();
             }
             ReportCommandResult(result);
         }
@@ -3344,11 +3360,22 @@ public partial class IceBlueDockWindow : Window
 
         var edge = CurrentEdge;
         var bounds = _appBar.Bounds;
-        // Native menus own this interaction, except a collapsed auto-hidden taskbar or a
-        // taskbar / taskbar-anchored popup on a different edge that does not touch the dock.
-        var shouldYield = ShouldYieldToSystemSurface(activeWindow, monitor.Bounds, edge, bounds);
+        // Explorer can briefly take focus while invoking a tray icon. For local
+        // shell surfaces, only yield for a real overlap with this dock.
+        var isSystemSurface = ShellSurfaceNativeMethods.TryGetSystemMenu(activeWindow, out var surfaceKind, out var surfaceBounds);
+        var shouldYield = isSystemSurface
+            && DockVacateRules.ShouldYieldToSystemSurface(surfaceKind, surfaceBounds, monitor.Bounds, bounds)
+            && (surfaceKind != SystemSurfaceKind.Taskbar || TaskbarCoversDock());
         if (YieldToSystemMenu(shouldYield)) return;
-        var foreground = ForegroundWindowRect(activeWindow, out var foregroundBounds, out var foregroundWindow);
+        var useLastApplication = isSystemSurface && surfaceKind is SystemSurfaceKind.Taskbar or SystemSurfaceKind.TaskbarPopup;
+        var candidateForeground = useLastApplication && DockNativeMethods.IsWindowVisible(_lastApplicationForeground)
+            && !NativeMethods.IsWindowCloaked(_lastApplicationForeground) ? _lastApplicationForeground
+            : isSystemSurface ? 0 : activeWindow;
+        var foreground = ForegroundWindowRect(candidateForeground, out var foregroundBounds, out var foregroundWindow);
+        if (!isSystemSurface && activeWindow != 0)
+        {
+            _lastApplicationForeground = foreground ? foregroundWindow : 0;
+        }
         var hasBacking = TransientForegroundResolver.TryResolveBackingWindow(foregroundWindow, _handle, out var backing);
         var fullScreen = foreground && DockVacateRules.CoversMonitor(foregroundBounds, monitor.Bounds);
         var foregroundZoomed = foreground && foregroundWindow != 0 && DockNativeMethods.IsZoomed(foregroundWindow);
@@ -3609,35 +3636,6 @@ public partial class IceBlueDockWindow : Window
             _yieldReleaseTimer.Start();
         }
         return true;
-    }
-
-    private static bool ShouldYieldToSystemSurface(
-        nint foregroundWindow,
-        PixelRect monitorBounds,
-        DockEdge dockEdge,
-        PixelRect dockBounds)
-    {
-        if (!ShellSurfaceNativeMethods.TryGetSystemMenu(foregroundWindow, out var surfaceKind, out var systemMenuBounds))
-        {
-            return false;
-        }
-
-        var nativeTaskbarEdge = surfaceKind is SystemSurfaceKind.Taskbar or SystemSurfaceKind.TaskbarPopup
-            ? TaskbarEdgeGuard.InferNativeTaskbarEdge(
-                monitorBounds,
-                surfaceKind == SystemSurfaceKind.Taskbar ? systemMenuBounds : null)
-            : null;
-        var isTaskbarCollapsed = surfaceKind == SystemSurfaceKind.Taskbar
-            && TaskbarEdgeGuard.IsAutoHideTaskbarCollapsed(
-                systemMenuBounds,
-                monitorBounds,
-                nativeTaskbarEdge ?? dockEdge);
-        return DockVacateRules.ShouldYieldToSystemSurface(
-            surfaceKind,
-            dockEdge,
-            nativeTaskbarEdge,
-            systemMenuBounds.HasArea && systemMenuBounds.Intersects(dockBounds),
-            isTaskbarCollapsed);
     }
 
     private void CheckYieldRelease()

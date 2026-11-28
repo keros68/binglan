@@ -136,10 +136,6 @@ internal static class TaskbarEdgeGuard
         && DockNativeMethods.GetWindowRect(window, out var rect)
         && new CoreRect(rect.Left, rect.Top, rect.Right, rect.Bottom).Intersects(bounds);
 
-    internal static bool IsAutoHideTaskbarCollapsed(CoreRect taskbarBounds, CoreRect monitor, DockEdge edge) =>
-        TaskbarAdapter.IsWindowsAutoHideOn()
-        && TaskbarLayoutRules.IsCollapsedAutoHideTaskbar(taskbarBounds, monitor, edge);
-
     internal static CoreRect AvoidNativeTaskbar(CoreRect workArea, CoreRect monitor)
     {
         if (!workArea.HasArea || !monitor.HasArea || GetNativeTaskbarLayout(monitor) is not { } layout)

@@ -12,6 +12,19 @@ public sealed record WindowCandidateInfo(
 
 public static class WindowActivationRules
 {
+    public static bool IsWindowOrOwnedPopup(nint window, nint candidate, Func<nint, nint> readOwner)
+    {
+        for (var depth = 0; depth < 8 && candidate != 0; depth++)
+        {
+            if (candidate == window)
+            {
+                return true;
+            }
+            candidate = readOwner(candidate);
+        }
+        return false;
+    }
+
     public static bool CanRetryForegroundRequest(
         nint originalForegroundRoot,
         nint currentForegroundRoot,

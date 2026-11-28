@@ -5,6 +5,7 @@ using System.Windows.Threading;
 using BingLan.App.Dock;
 using BingLan.App.Interop;
 using BingLan.App.Services;
+using BingLan.App.Taskbar;
 using BingLan.Core.Dock;
 using BingLan.Core.TopBar;
 
@@ -49,6 +50,7 @@ internal sealed class TopBarAppBarController : IDisposable
     private bool _disposed;
     private bool _setPositionApplied;
     private int _recoveryGeneration;
+    private bool _shellProbePending;
 
     internal TopBarAppBarController(Window window, double heightDip)
     {
@@ -165,6 +167,10 @@ internal sealed class TopBarAppBarController : IDisposable
             _reservedStrip = default;
             _setPositionApplied = false;
         }
+        if (_shellProbePending)
+        {
+            return;
+        }
 
         Dispatch(_reservation.Apply(reserveWorkArea && !NativeTopTaskbarBlocksReservation(monitor)
             && !_reserveFallbackLatched, targetChanged));
@@ -232,7 +238,7 @@ internal sealed class TopBarAppBarController : IDisposable
 
     private void Position()
     {
-        if (_monitor is null || _positioning)
+        if (_monitor is null || _positioning || _shellProbePending)
         {
             return;
         }
@@ -444,10 +450,12 @@ internal sealed class TopBarAppBarController : IDisposable
         if ((uint)message == _taskbarCreatedMessage)
         {
             InvalidateNativeTaskbarLayout();
+            _shellProbePending = true;
             _transientRecovering = false;
             _reserveFallbackLatched = false;
             _consecutiveReserveFailures = 0;
             _reserveRetryTimer.Stop();
+            _deferredPosition.Stop();
             _reservedStrip = default;
             _setPositionApplied = false;
             _reservation.ResetRegistration();
@@ -473,7 +481,7 @@ internal sealed class TopBarAppBarController : IDisposable
                     }
                     else if (_positionGuard.TryHandleNow(Environment.TickCount64))
                     {
-                        Position();
+                        DeferShellCallback(Position);
                     }
                     else if (!_deferredPosition.IsEnabled)
                     {
@@ -488,9 +496,9 @@ internal sealed class TopBarAppBarController : IDisposable
         {
             case DockNativeMethods.WmActivate when _reservation.IsRegistered:
                 var activationState = (ushort)(wParam.ToInt64() & 0xFFFF);
-                NotifyAppBar(
+                DeferShellCallback(() => NotifyAppBar(
                     DockNativeMethods.AbmActivate,
-                    activationState != DockNativeMethods.WaInactive ? 1 : 0);
+                    activationState != DockNativeMethods.WaInactive ? 1 : 0));
                 break;
             case DockNativeMethods.WmWindowPosChanged
                 when AppBarPositionGuard.ShouldNotifyWindowPosChanged(
@@ -498,7 +506,7 @@ internal sealed class TopBarAppBarController : IDisposable
                     _positioning,
                     _updatingLayer,
                     IsZOrderOnlyWindowPosChanged(lParam)):
-                NotifyAppBar(DockNativeMethods.AbmWindowPosChanged, 0);
+                DeferShellCallback(() => NotifyAppBar(DockNativeMethods.AbmWindowPosChanged, 0));
                 break;
             // A work-area change can leave Explorer holding a stale strip for the bar,
             // for example after moving to a monitor with another scale.
@@ -547,6 +555,7 @@ internal sealed class TopBarAppBarController : IDisposable
 
     private async Task RecoverAfterExplorerRestartAsync(int recoveryGeneration)
     {
+        var shellResponsive = false;
         for (var attempt = 1; attempt <= ExplorerRecoveryAttemptCount; attempt++)
         {
             if (_disposed || recoveryGeneration != _recoveryGeneration)
@@ -554,15 +563,22 @@ internal sealed class TopBarAppBarController : IDisposable
                 return;
             }
 
-            if (!_reserveWorkArea || (_monitor is { } monitor && NativeTopTaskbarBlocksReservation(monitor)))
+            shellResponsive = await Task.Run(TaskbarAdapter.IsTaskbarResponsive);
+            if (_disposed || recoveryGeneration != _recoveryGeneration)
             {
-                break;
+                return;
             }
-
-            Dispatch(_reservation.Apply(true));
-            if (_reservation.IsRegistered)
+            if (shellResponsive)
             {
-                break;
+                if (!_reserveWorkArea || (_monitor is { } monitor && NativeTopTaskbarBlocksReservation(monitor)))
+                {
+                    break;
+                }
+                Dispatch(_reservation.Apply(true));
+                if (_reservation.IsRegistered)
+                {
+                    break;
+                }
             }
 
             if (attempt < ExplorerRecoveryAttemptCount)
@@ -571,11 +587,16 @@ internal sealed class TopBarAppBarController : IDisposable
             }
         }
 
-        if (_disposed || recoveryGeneration != _recoveryGeneration)
+        if (_disposed || recoveryGeneration != _recoveryGeneration || !shellResponsive)
         {
+            if (recoveryGeneration == _recoveryGeneration)
+            {
+                _shellProbePending = false;
+            }
             return;
         }
 
+        _shellProbePending = false;
         InvalidateNativeTaskbarLayout();
         Position();
         ExplorerRestarted?.Invoke();
@@ -605,6 +626,18 @@ internal sealed class TopBarAppBarController : IDisposable
         data.Parameter = parameter;
         DockNativeMethods.SHAppBarMessage(message, ref data);
         ExplorerNotified?.Invoke();
+    }
+
+    private void DeferShellCallback(Action action)
+    {
+        var generation = _recoveryGeneration;
+        _window.Dispatcher.BeginInvoke(DispatcherPriority.Background, () =>
+        {
+            if (!_disposed && generation == _recoveryGeneration && _reservation.IsRegistered)
+            {
+                action();
+            }
+        });
     }
 
     private static bool IsZOrderOnlyWindowPosChanged(nint lParam)

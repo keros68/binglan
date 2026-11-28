@@ -4,6 +4,7 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Security;
 using System.Security.Cryptography;
+using System.Security.Principal;
 using System.Text;
 using System.Windows;
 using System.Windows.Media;
@@ -15,17 +16,25 @@ using Microsoft.Win32.SafeHandles;
 
 namespace BingLan.App.Tray;
 
-internal sealed record TrayFeishuOwner(nint Window, uint ProcessId, uint IconId, string ExecutablePath);
+internal sealed record TrayActivationOwner(nint Window, uint ProcessId, uint IconId, string ExecutablePath);
+internal sealed record TrayRegisteredIcon(nint Owner, uint ProcessId, uint IconId, Guid IconGuid, Rect Bounds)
+{
+    internal string Key => IconGuid != Guid.Empty ? $"msaa.guid.{IconGuid:N}" : $"msaa.window.{Owner:X}.{ProcessId}.{IconId}";
+}
 
 internal static class TrayIconArtwork
 {
+    internal const string ClashVergeName = "Clash Verge";
+    internal const string ClashVergeVersion = "2.5.10";
     private const int MaximumSnapshotBytes = 128 * 1024;
     private const int MaximumTotalBytes = 8 * 1024 * 1024;
     private const int MaximumDimension = 256;
+    private const uint ProcessQueryLimitedInformation = 0x1000;
+    private const uint TokenQuery = 0x0008;
     private sealed record Snapshot(string Tooltip, string FirstLine, string Application, string Path, byte[] Bytes, string Digest, uint? Uid, Guid IconGuid);
     private sealed record LocatedIcon(Snapshot Icon, Rect Bounds, nint Owner, uint ProcessId);
 
-    internal sealed record Artwork(string Name, BitmapSource? Image, TrayFeishuOwner? FeishuOwner = null);
+    internal sealed record Artwork(string Name, BitmapSource? Image, TrayActivationOwner? ActivationOwner = null);
 
     internal static IReadOnlyDictionary<string, Artwork> Load(IReadOnlyList<TrayEntry> entries)
     {
@@ -37,7 +46,10 @@ internal static class TrayIconArtwork
             var running = ReadRunningProcesses(snapshots);
             var runningPaths = running.Values.ToHashSet(StringComparer.OrdinalIgnoreCase);
             var located = entries.Any(entry => string.IsNullOrWhiteSpace(entry.Name))
-                ? LocateRegisteredIcons(snapshots, running) : [];
+                ? LocateRegisteredIcons(snapshots, running)
+                : entries.Any(entry => IsClashVergeTooltip(entry.Name))
+                    ? LocateRegisteredIcons(snapshots.Where(snapshot => IsClashVergeExecutable(snapshot.Path)).ToArray(), running)
+                    : [];
             foreach (var entry in entries)
             {
                 if (entry.Name.Length > 4096) continue;
@@ -47,6 +59,8 @@ internal static class TrayIconArtwork
                     if (ResolveUnnamed(entry, located) is { } resolved) result[entry.Key] = resolved;
                     continue;
                 }
+                var owner = IsClashVergeTooltip(entry.Name) ? ResolveClashVergeOwner(entry, located) : null;
+                if (owner is not null) result[entry.Key] = new Artwork(entry.Name, null, owner);
                 var firstLine = Normalize(FirstLine(entry.Name));
                 if (IsOneDriveAccountName(firstLine))
                 {
@@ -80,14 +94,27 @@ internal static class TrayIconArtwork
                     image = paths.Length == 1 ? ExtractApplicationIcon(paths[0]) : null;
                 }
                 else image = null;
-                if (image is not null) result[entry.Key] = new Artwork(entry.Name, image);
+                if (image is not null) result[entry.Key] = new Artwork(entry.Name, image, owner);
             }
         }
         catch (Exception exception) when (IsReadFailure(exception)) { }
         return result;
     }
 
-    private static List<Snapshot> ReadSnapshots()
+    internal static TrayRegisteredIcon[] ReadRegisteredIcons()
+    {
+        try
+        {
+            var snapshots = ReadSnapshots(includeArtwork: false);
+            return LocateRegisteredIcons(snapshots, ReadRunningProcesses(snapshots))
+                .Select(icon => new TrayRegisteredIcon(icon.Owner, icon.ProcessId, icon.Icon.Uid.GetValueOrDefault(), icon.Icon.IconGuid, icon.Bounds))
+                .DistinctBy(icon => icon.Key)
+                .ToArray();
+        }
+        catch (Exception exception) when (IsReadFailure(exception)) { return []; }
+    }
+
+    private static List<Snapshot> ReadSnapshots(bool includeArtwork = true)
     {
         var result = new List<Snapshot>();
         using var root = Registry.CurrentUser.OpenSubKey(@"Control Panel\NotifyIconSettings", writable: false);
@@ -100,7 +127,7 @@ internal static class TrayIconArtwork
             {
                 using var key = root.OpenSubKey(name, writable: false);
                 if (key is null) continue;
-                var bytes = totalBytes < MaximumTotalBytes ? ReadSnapshot(key) ?? [] : [];
+                var bytes = includeArtwork && totalBytes < MaximumTotalBytes ? ReadSnapshot(key) ?? [] : [];
                 if (totalBytes + bytes.Length > MaximumTotalBytes) bytes = [];
                 totalBytes += bytes.Length;
                 var tooltip = key.GetValue("InitialTooltip", null, RegistryValueOptions.DoNotExpandEnvironmentNames) as string ?? "";
@@ -120,7 +147,7 @@ internal static class TrayIconArtwork
     }
 
     private static List<LocatedIcon> LocateRegisteredIcons(
-        List<Snapshot> snapshots, Dictionary<uint, string> running)
+        IReadOnlyList<Snapshot> snapshots, Dictionary<uint, string> running)
     {
         var locations = new List<LocatedIcon>();
         var byPath = snapshots.ToLookup(icon => icon.Path, StringComparer.OrdinalIgnoreCase);
@@ -157,12 +184,22 @@ internal static class TrayIconArtwork
         return locations;
     }
 
-    internal static TrayFeishuOwner? VerifyFeishuOwner(TrayPanelEntry displayed, TrayEntry current)
+    internal static TrayActivationOwner? VerifyActivationOwner(TrayPanelEntry displayed, TrayEntry current)
     {
-        if (displayed.FeishuOwner is not { } owner || displayed.Identity != current.Identity
-            || displayed.Source != current.Source || !string.IsNullOrWhiteSpace(current.Name)
+        if (displayed.ActivationOwner is not { } owner || displayed.Identity != current.Identity
+            || displayed.Source != current.Source
             || ReadBounds(current) is not { } bounds
             || Native.GetWindowThreadProcessId(owner.Window, out var processId) == 0 || processId != owner.ProcessId)
+        {
+            return null;
+        }
+
+        if (IsClashVergeExecutable(owner.ExecutablePath))
+        {
+            if (!IsClashVergeTooltip(current.Name) || !IsClashVergeOwner(owner.Window, owner.IconId)
+                || !IsCurrentUserProcess(owner)) return null;
+        }
+        else if (!string.IsNullOrWhiteSpace(current.Name))
         {
             return null;
         }
@@ -178,25 +215,64 @@ internal static class TrayIconArtwork
         finally { if (dpi != 0) SetThreadDpiAwarenessContext(dpi); }
     }
 
-    private static Rect? ReadRegisteredBounds(nint owner, uint iconId, Guid iconGuid)
+    private static TrayActivationOwner? ResolveClashVergeOwner(TrayEntry entry, List<LocatedIcon> locations)
+    {
+        if (ReadBounds(entry) is not { } bounds) return null;
+        var matches = locations.Where(icon => MatchBounds(bounds, icon.Bounds)).Distinct().Take(2).ToArray();
+        return matches is [var match] && match.ProcessId != 0 && match.Icon.Uid is { } uid
+            && IsClashVergeExecutable(match.Icon.Path) && IsClashVergeOwner(match.Owner, uid)
+            ? new TrayActivationOwner(match.Owner, match.ProcessId, uid, match.Icon.Path) : null;
+    }
+
+    private static bool IsClashVergeOwner(nint window, uint id) =>
+        window != 0 && id == 2 && Native.ClassName(window) == "tray_icon_app";
+
+    internal static bool IsClashVergeExecutable(string path) =>
+        Path.GetFileName(path).Equals("clash-verge.exe", StringComparison.OrdinalIgnoreCase);
+
+    internal static bool IsClashVergeTooltip(string tooltip) =>
+        FirstLine(tooltip).Trim() == $"{ClashVergeName} {ClashVergeVersion}";
+
+    private static bool IsCurrentUserProcess(TrayActivationOwner owner)
+    {
+        try
+        {
+            using var process = OpenProcess(ProcessQueryLimitedInformation, false, owner.ProcessId);
+            var path = new StringBuilder(32768);
+            var length = (uint)path.Capacity;
+            if (process.IsInvalid || !QueryFullProcessImageNameW(process, 0, path, ref length)
+                || !string.Equals(path.ToString(), owner.ExecutablePath, StringComparison.OrdinalIgnoreCase)
+                || !OpenProcessToken(process, TokenQuery, out var token)) return false;
+            using (token)
+            using (var caller = WindowsIdentity.GetCurrent())
+            using (var target = new WindowsIdentity(token.DangerousGetHandle()))
+                return caller.User is { } user && target.User is { } targetUser && user.Equals(targetUser);
+        }
+        catch (Exception exception) when (IsReadFailure(exception) || exception is System.ComponentModel.Win32Exception)
+        {
+            return false;
+        }
+    }
+
+    internal static Rect? ReadRegisteredBounds(nint owner, uint iconId, Guid iconGuid)
     {
         var id = new IconIdentifier { Size = (uint)Marshal.SizeOf<IconIdentifier>(), Owner = owner, Uid = iconId, Guid = iconGuid };
         return Shell_NotifyIconGetRect(ref id, out var rect) == 0 && rect.Right > rect.Left && rect.Bottom > rect.Top
             ? new Rect(rect.Left, rect.Top, rect.Right - rect.Left, rect.Bottom - rect.Top) : null;
     }
 
-    private static Rect? ReadBounds(TrayEntry entry)
+    internal static Rect? ReadBounds(TrayEntry entry)
     {
         try
         {
-            var bounds = entry.Element.Current.BoundingRectangle;
+            var bounds = entry.Element?.Current.BoundingRectangle ?? entry.Registration?.Bounds ?? Rect.Empty;
             return bounds.IsEmpty || bounds.Width <= 0 || bounds.Height <= 0 ? null : bounds;
         }
         catch (Exception ex) when (ex is ElementNotAvailableException or COMException) { return null; }
     }
 
     // Explorer's accessibility and shell rectangles can differ by a physical pixel at mixed DPI.
-    private static bool MatchBounds(Rect bounds, Rect registered) => Math.Abs(registered.Left - bounds.Left) <= 2
+    internal static bool MatchBounds(Rect bounds, Rect registered) => Math.Abs(registered.Left - bounds.Left) <= 2
         && Math.Abs(registered.Top - bounds.Top) <= 2 && Math.Abs(registered.Right - bounds.Right) <= 2
         && Math.Abs(registered.Bottom - bounds.Bottom) <= 2;
 
@@ -217,7 +293,7 @@ internal static class TrayIconArtwork
         var owner = matchingLocations is [var match] && match.Owner != 0 && match.ProcessId != 0
             && icon.Uid is { } uid && icon.Tooltip.Length == 0
             && icon.Application.Equals("Feishu", StringComparison.OrdinalIgnoreCase)
-            ? new TrayFeishuOwner(match.Owner, match.ProcessId, uid, icon.Path) : null;
+            ? new TrayActivationOwner(match.Owner, match.ProcessId, uid, icon.Path) : null;
         return new Artwork(displayName, image, owner);
     }
 
@@ -230,9 +306,12 @@ internal static class TrayIconArtwork
     [DllImport("user32.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
     private static extern nint FindWindowExW(nint parent, nint after, string? className, string? title);
     [DllImport("user32.dll")]
-    private static extern nint SetThreadDpiAwarenessContext(nint context);
+    internal static extern nint SetThreadDpiAwarenessContext(nint context);
     [DllImport("kernel32.dll", ExactSpelling = true)]
     private static extern SafeProcessHandle OpenProcess(uint access, [MarshalAs(UnmanagedType.Bool)] bool inherit, uint processId);
+    [DllImport("advapi32.dll", ExactSpelling = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool OpenProcessToken(SafeProcessHandle process, uint access, out SafeAccessTokenHandle token);
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool QueryFullProcessImageNameW(SafeProcessHandle process, uint flags, StringBuilder path, ref uint length);
@@ -317,7 +396,6 @@ internal static class TrayIconArtwork
 
     private static Dictionary<uint, string> ReadRunningProcesses(IReadOnlyList<Snapshot> snapshots)
     {
-        const uint processQueryLimitedInformation = 0x1000;
         var result = new Dictionary<uint, string>();
         var applications = snapshots.Select(snapshot => snapshot.Application).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var path = new StringBuilder(32768);
@@ -329,7 +407,7 @@ internal static class TrayIconArtwork
                 {
                     if (!applications.Contains(process.ProcessName)) continue;
                     var processId = (uint)process.Id;
-                    using var handle = OpenProcess(processQueryLimitedInformation, false, processId);
+                    using var handle = OpenProcess(ProcessQueryLimitedInformation, false, processId);
                     var length = (uint)path.Capacity;
                     if (!handle.IsInvalid && QueryFullProcessImageNameW(handle, 0, path, ref length))
                         result[processId] = Path.GetFullPath(path.ToString());

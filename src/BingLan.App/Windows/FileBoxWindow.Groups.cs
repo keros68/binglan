@@ -331,19 +331,15 @@ public partial class FileBoxWindow
         return (await PrepareAndAddMappingsForTabAsync(targetTab, paths, countInvalid: false, iconLoader)).Added;
     }
 
-    internal async Task<int> AddAutomaticMappingsToBoxAsync(
-        Guid boxId,
-        IEnumerable<string> paths,
-        Func<IReadOnlyList<FileBoxState>?> currentBoxes)
+    internal int AddPreparedAutomaticMappingsToBox(Guid boxId, IReadOnlyList<string> paths)
     {
         var targetTab = FindTab(boxId);
-        if (targetTab is null)
+        if (targetTab is null || _closeCts.IsCancellationRequested)
         {
             return 0;
         }
 
-        return (await PrepareAndAddMappingsForTabAsync(targetTab, paths, countInvalid: false,
-            automaticBoxes: currentBoxes)).Added;
+        return CommitPreparedMappingsForTab(targetTab, paths, preparedIcons: null, explicitImport: false);
     }
 
     internal async Task<string> AddMappingsWithStatusToBoxAsync(

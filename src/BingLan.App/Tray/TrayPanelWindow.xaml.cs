@@ -26,14 +26,14 @@ internal sealed partial class TrayPanelWindow : Window
     private readonly bool _anchored;
 
     private readonly Action? _openNativeTray;
-    private readonly Func<uint, string, CancellationToken, Task<bool?>>? _activateFeishu;
+    private readonly Func<TrayActivationOwner, CancellationToken, Task<bool?>>? _activateApp;
 
     internal TrayPanelWindow(Action? openNativeTray = null,
-        Func<uint, string, CancellationToken, Task<bool?>>? activateFeishu = null)
+        Func<TrayActivationOwner, CancellationToken, Task<bool?>>? activateApp = null)
     {
         InitializeComponent();
         _openNativeTray = openNativeTray;
-        _activateFeishu = activateFeishu;
+        _activateApp = activateApp;
         _anchored = openNativeTray is not null;
         NativeTrayButton.Visibility = _anchored ? Visibility.Visible : Visibility.Collapsed;
         if (!_anchored)
@@ -277,7 +277,7 @@ internal sealed partial class TrayPanelWindow : Window
         try
         {
             var displayedEntry = _shown?.FirstOrDefault(entry => entry.Identity == identity);
-            var result = await TrayReader.InvokeAsync(identity, contextMenu, _lifetime.Token, _activateFeishu, displayedEntry);
+            var result = await TrayReader.InvokeAsync(identity, contextMenu, _lifetime.Token, _activateApp, displayedEntry);
             if (_closed) return;
             if (_anchored && result is ("invoked" or "context-requested"))
             {

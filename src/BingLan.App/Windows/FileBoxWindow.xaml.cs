@@ -3,6 +3,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
@@ -131,6 +132,7 @@ public partial class FileBoxWindow : WidgetWindowBase
         };
         DragLeave += (_, _) =>
         {
+            FileReorderIndicator.Visibility = Visibility.Collapsed;
             _externalDragOver = false;
             _dragExpandTimer.Stop();
             if (_expandedForExternalDrag && !IsCursorInsideWindow())
@@ -881,10 +883,29 @@ public partial class FileBoxWindow : WidgetWindowBase
 
     private void Window_DragOver(object sender, System.Windows.DragEventArgs e)
     {
-        if (e.Data.GetDataPresent(InternalBoxDragFormat)
-            && e.Data.GetData(InternalBoxDragFormat) is InternalBoxDragPayload payload)
+        var payload = e.Data.GetDataPresent(InternalBoxDragFormat)
+            ? e.Data.GetData(InternalBoxDragFormat) as InternalBoxDragPayload
+            : null;
+        if (payload?.SourceBoxId == State.Id)
         {
-            if (payload.SourceBoxId == State.Id || payload.MappingIds.Length == 0)
+            e.Effects = System.Windows.DragDropEffects.None;
+            if (GetFileReorderTarget(e, payload) is { } destination)
+            {
+                ShowFileReorderIndicator(destination.Container, destination.After);
+                e.Effects = System.Windows.DragDropEffects.Link;
+            }
+            else
+            {
+                FileReorderIndicator.Visibility = Visibility.Collapsed;
+            }
+            e.Handled = true;
+            return;
+        }
+
+        FileReorderIndicator.Visibility = Visibility.Collapsed;
+        if (payload is not null)
+        {
+            if (payload.MappingIds.Length == 0)
             {
                 e.Effects = System.Windows.DragDropEffects.None;
                 e.Handled = true;
@@ -917,12 +938,20 @@ public partial class FileBoxWindow : WidgetWindowBase
 
     private async void Window_Drop(object sender, System.Windows.DragEventArgs e)
     {
+        FileReorderIndicator.Visibility = Visibility.Collapsed;
         var restoreCollapse = BeginExternalDropCleanup();
         if (e.Data.GetDataPresent(InternalBoxDragFormat)
-            && e.Data.GetData(InternalBoxDragFormat) is InternalBoxDragPayload payload
-            && payload.SourceBoxId != State.Id)
+            && e.Data.GetData(InternalBoxDragFormat) is InternalBoxDragPayload payload)
         {
-            if (ResolveBoxAndTab(payload.SourceBoxId) is { } resolved)
+            e.Handled = true;
+            if (payload.SourceBoxId == State.Id)
+            {
+                if (GetFileReorderTarget(e, payload) is { } destination)
+                {
+                    ReorderMappings(payload.MappingIds, destination.ItemId, destination.After);
+                }
+            }
+            else if (ResolveBoxAndTab(payload.SourceBoxId) is { } resolved)
             {
                 var copyOnly = (e.KeyStates & System.Windows.DragDropKeyStates.ControlKey) != 0;
                 TransferMappingIdsBetweenTabs(
@@ -939,6 +968,49 @@ public partial class FileBoxWindow : WidgetWindowBase
             await AddMappingsWithStatusAsync(paths);
         }
         EndExternalDropCleanup(restoreCollapse);
+    }
+
+    private (FrameworkElement Container, Guid ItemId, bool After)? GetFileReorderTarget(
+        System.Windows.DragEventArgs e, InternalBoxDragPayload payload)
+    {
+        if (State.IsCollapsed || payload.MappingIds.Length == 0
+            || (e.KeyStates & System.Windows.DragDropKeyStates.ControlKey) != 0
+            || e.OriginalSource is not DependencyObject source
+            || ItemsControl.ContainerFromElement(FileList, source) is not FrameworkElement container
+            || FileList.ItemContainerGenerator.ItemFromContainer(container) is not FileTile tile
+            || payload.MappingIds.Contains(tile.Mapping.Id))
+        {
+            return null;
+        }
+
+        var position = e.GetPosition(container);
+        var after = State.ViewMode == FileBoxViewMode.List
+            ? position.Y >= container.ActualHeight / 2
+            : position.X >= container.ActualWidth / 2;
+        return (container, tile.Mapping.Id, after);
+    }
+
+    private void ShowFileReorderIndicator(FrameworkElement container, bool after)
+    {
+        const double thickness = 2;
+        var position = container.TranslatePoint(new System.Windows.Point(), FileReorderOverlay);
+        var listMode = State.ViewMode == FileBoxViewMode.List;
+        FileReorderIndicator.Width = listMode ? container.ActualWidth : thickness;
+        FileReorderIndicator.Height = listMode ? thickness : container.ActualHeight;
+        Canvas.SetLeft(FileReorderIndicator, position.X + (!listMode && after ? container.ActualWidth - thickness : 0));
+        Canvas.SetTop(FileReorderIndicator, position.Y + (listMode && after ? container.ActualHeight - thickness : 0));
+        FileReorderIndicator.Visibility = Visibility.Visible;
+    }
+
+    private void ReorderMappings(Guid[] mappingIds, Guid targetId, bool after)
+    {
+        CaptureState();
+        if (FileMappingService.Reorder(State, mappingIds, targetId, after))
+        {
+            _pendingSorts.Remove(State.Id);
+            ReloadItems();
+            NotifyStateChanged();
+        }
     }
 
     private System.Windows.Point? _tileDragStart;
@@ -1001,6 +1073,7 @@ public partial class FileBoxWindow : WidgetWindowBase
         }
         finally
         {
+            FileReorderIndicator.Visibility = Visibility.Collapsed;
             _isTileOrFileDragActive = false;
             RefreshAutoCollapseTimer();
             RefreshHoverRevealState();
@@ -2133,8 +2206,7 @@ public partial class FileBoxWindow : WidgetWindowBase
         FileBoxState targetTab,
         IEnumerable<string> paths,
         bool countInvalid,
-        Func<string, ImageSource?>? iconLoader = null,
-        Func<IReadOnlyList<FileBoxState>?>? automaticBoxes = null)
+        Func<string, ImageSource?>? iconLoader = null)
     {
         var knownPaths = (targetTab.Id == State.Id
                 ? _items.Select(tile => tile.Path)
@@ -2166,16 +2238,19 @@ public partial class FileBoxWindow : WidgetWindowBase
             return (0, invalid, normalized.Length);
         }
 
+        var added = CommitPreparedMappingsForTab(targetTab, existingCandidates, preparedIcons, explicitImport: true);
+        return (added, invalid, normalized.Length);
+    }
+
+    private int CommitPreparedMappingsForTab(FileBoxState targetTab, IReadOnlyList<string> paths,
+        IReadOnlyDictionary<string, ImageSource?>? preparedIcons, bool explicitImport)
+    {
         CaptureState();
         var existingIds = targetTab.Items.Select(item => item.Id).ToHashSet();
-        var added = automaticBoxes is null
-            ? FileMappingService.AddPrepared(targetTab, existingCandidates)
-            : automaticBoxes() is { } boxes
-                ? FileMappingService.AddPreparedAutomatically(targetTab, existingCandidates, boxes)
-                : 0;
+        var added = FileMappingService.AddPrepared(targetTab, paths, explicitImport);
         if (added == 0)
         {
-            return (0, invalid, normalized.Length);
+            return 0;
         }
 
         var newMappings = targetTab.Items
@@ -2187,7 +2262,7 @@ public partial class FileBoxWindow : WidgetWindowBase
             var addedTiles = new List<FileTile>(newMappings.Count);
             foreach (var mapping in newMappings)
             {
-                preparedIcons.TryGetValue(mapping.Path, out var icon);
+                var icon = preparedIcons?.GetValueOrDefault(mapping.Path);
                 var tile = new FileTile(mapping, icon);
                 _items.Add(tile);
                 addedTiles.Add(tile);
@@ -2198,12 +2273,16 @@ public partial class FileBoxWindow : WidgetWindowBase
             {
                 AnimateTileEnter(addedTiles);
             }
+            if (preparedIcons is null)
+            {
+                _ = ProbeTilesAsync(addedTiles, loadMissingIcons: true);
+            }
         }
         else
         {
             foreach (var mapping in newMappings)
             {
-                if (preparedIcons.TryGetValue(mapping.Path, out var icon) && icon is not null)
+                if (preparedIcons?.GetValueOrDefault(mapping.Path) is { } icon)
                 {
                     _tabIconCache.Store(mapping, icon, false);
                 }
@@ -2211,7 +2290,7 @@ public partial class FileBoxWindow : WidgetWindowBase
             RefreshTabStripItems();
             NotifyStateChanged();
         }
-        return (added, invalid, normalized.Length);
+        return added;
     }
 
     internal int RemoveGoneMappings(IReadOnlyDictionary<Guid, string> gonePaths)

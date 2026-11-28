@@ -135,7 +135,7 @@ public partial class TopBarWindow
         var highContrast = AccessibilityThemeManager.IsHighContrastEnabled || SystemParameters.HighContrast;
         var look = ResolveSystemFlyoutLook(highContrast);
         var palette = ResolveTopBarPopupPalette();
-        var panel = new TrayPanelWindow(OpenNativeTrayOverflow, TrayPanelWindow.ActivateFeishuAsync)
+        var panel = new TrayPanelWindow(OpenNativeTrayOverflow, TrayPanelWindow.ActivateTrayAppAsync)
         {
             Owner = this,
             WindowStartupLocation = WindowStartupLocation.Manual

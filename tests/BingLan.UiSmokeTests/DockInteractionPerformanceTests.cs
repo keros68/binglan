@@ -33,12 +33,35 @@ internal static class DockInteractionPerformanceTests
             TestLayoutAndBadgeUpdates(dock, attention, first, second);
             TestLatestPointerSample(dock);
             TestCurrentLaunchTarget(dock);
+            TestMissingAttentionTarget(dock, attention);
             TestRunningPinDrag();
         }
         finally
         {
             IceBlueDockWindow.Motion = originalMotion;
             dock.Close();
+        }
+    }
+
+    private static void TestMissingAttentionTarget(IceBlueDockWindow dock, DockAttention attention)
+    {
+        var closedWindow = new TrackedWindow(-1, 0, "Closed window", null, null, false, false);
+        var group = new WindowGroup("pid:0", closedWindow.Title, [closedWindow]);
+        var item = new DockItem(group.Key, group.DisplayName, null, group);
+        attention.Flashed(closedWindow.Handle, closedWindow.ProcessId);
+        string? feedback = null;
+        void Report(string message) => feedback = message;
+        dock.CommandFailed += Report;
+        try
+        {
+            typeof(IceBlueDockWindow).GetMethod("Invoke", PrivateInstance)!.Invoke(dock, [item]);
+            Check(feedback?.Contains("提醒对应的窗口", StringComparison.Ordinal) == true,
+                "已关闭且无法定位可执行程序的提醒应反馈给用户");
+            Check(attention.EntriesFor(item).Count == 0, "无法定位的提醒应清除");
+        }
+        finally
+        {
+            dock.CommandFailed -= Report;
         }
     }
 

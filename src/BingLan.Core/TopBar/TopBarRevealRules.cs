@@ -77,36 +77,16 @@ public static class TopBarRevealRules
     }
 
     /// <summary>
-    /// Whether the pointer sits over a visible smart-hidden top bar and should keep it shown.
-    /// Excludes an overlapping window's top-right caption-button span so clicking Minimize /
-    /// Maximize / Restore / Close does not pin the top bar <c>HWND_TOPMOST</c> above those buttons.
+    /// Whether the pointer is on a visible bar. Once revealed, its entire width is interactive.
     /// </summary>
     public static bool IsPointerOverBar(
         int cursorX,
         int cursorY,
         bool isVisible,
-        PixelRect barBounds,
-        (int Left, int Right)? excludedHorizontalSpan = null)
-    {
-        if (!isVisible
-            || !barBounds.HasArea
-            || cursorX < barBounds.Left
-            || cursorX >= barBounds.Right
-            || cursorY < barBounds.Top
-            || cursorY >= barBounds.Bottom)
-        {
-            return false;
-        }
-
-        if (excludedHorizontalSpan is { } excluded
-            && cursorX >= excluded.Left
-            && cursorX < excluded.Right)
-        {
-            return false;
-        }
-
-        return true;
-    }
+        PixelRect barBounds) =>
+        isVisible && barBounds.HasArea
+        && cursorX >= barBounds.Left && cursorX < barBounds.Right
+        && cursorY >= barBounds.Top && cursorY < barBounds.Bottom;
 
     /// <summary>
     /// Computes the horizontal span covering an overlapping foreground window's top-right

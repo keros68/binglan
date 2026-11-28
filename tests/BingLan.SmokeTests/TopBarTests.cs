@@ -621,11 +621,11 @@ public static class TopBarTests
         var excluded100 = TopBarRevealRules.ComputeCaptionButtonExclusion(maximizedBrowser, fullBar, 160);
         Assert(excluded100 == (1760, 1920), "100% 缩放满屏最大化窗口排除最右 160 像素");
         Assert(!TopBarRevealRules.IsInRevealZone(1910, 0, fullBar, 2, excluded100), "右上角关闭按钮处不触发顶栏唤出");
-        Assert(!TopBarRevealRules.IsPointerOverBar(1910, 12, isVisible: true, fullBar, excluded100),
-            "顶栏已显示时指针在最大化窗口右上角按钮区不得钉住顶栏");
-        Assert(TopBarRevealRules.IsPointerOverBar(960, 12, isVisible: true, fullBar, excluded100),
+        Assert(TopBarRevealRules.IsPointerOverBar(1910, 12, isVisible: true, fullBar),
+            "顶栏已唤出时最右侧的模块应保持可点击");
+        Assert(TopBarRevealRules.IsPointerOverBar(960, 12, isVisible: true, fullBar),
             "指针在顶栏中间正常区域时应保持顶栏显示");
-        Assert(!TopBarRevealRules.IsPointerOverBar(960, 12, isVisible: false, fullBar, excluded100),
+        Assert(!TopBarRevealRules.IsPointerOverBar(960, 12, isVisible: false, fullBar),
             "顶栏已隐藏时 IsPointerOverBar 应返回 false");
         Assert(!TopBarRevealRules.IsInRevealZone(1760, 1, fullBar, 2, excluded100), "避让区左边界不触发唤出");
         Assert(TopBarRevealRules.IsInRevealZone(1759, 0, fullBar, 2, excluded100), "避让区左侧仍正常触顶唤出");

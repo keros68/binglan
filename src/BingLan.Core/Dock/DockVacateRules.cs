@@ -254,68 +254,20 @@ public static class DockVacateRules
             foregroundMaximizedOnDockMonitor || backingMaximizedOnDockMonitor);
 
     /// <summary>
-    /// Decides whether the dock should step aside for a foreground Windows shell surface
-    /// (taskbar, Start menu, Quick Settings, tray overflow). When the foreground is the
-    /// taskbar itself on a different screen edge and does not overlap the dock (for example
-    /// a bottom Windows taskbar paired with a left/right dock), the dock stays visible.
+    /// The taskbar and its local popups only need the space they actually occupy.
+    /// A screen-sized popup host provides no usable popup bounds. Global menus
+    /// (Start, Search, Quick Settings) keep their dedicated yield behavior.
     /// </summary>
     public static bool ShouldYieldToSystemSurface(
-        bool isSystemMenuForeground,
-        bool isTaskbarWindow,
-        DockEdge dockEdge,
-        DockEdge? nativeTaskbarEdge,
-        bool surfaceIntersectsDock) =>
-        ShouldYieldToSystemSurface(
-            !isSystemMenuForeground
-                ? SystemSurfaceKind.None
-                : isTaskbarWindow
-                    ? SystemSurfaceKind.Taskbar
-                    : SystemSurfaceKind.GlobalSystemMenu,
-            dockEdge,
-            nativeTaskbarEdge,
-            surfaceIntersectsDock,
-            isTaskbarCollapsed: false);
-
-    /// <summary>
-    /// Fine-grained system-surface yield rule:
-    /// - Start menu / Search / Quick Settings (<see cref="SystemSurfaceKind.GlobalSystemMenu"/>)
-    ///   keep yielding globally so native system panels remain unobstructed.
-    /// - Collapsed auto-hidden taskbar windows that passively received focus without
-    ///   intersecting the dock do not hide the dock.
-    /// - Taskbar windows and taskbar-anchored popups (tray overflow, taskbar context menus)
-    ///   on a different monitor edge that do not intersect the dock do not hide the dock.
-    /// </summary>
-    public static bool ShouldYieldToSystemSurface(
-        SystemSurfaceKind surfaceKind,
-        DockEdge dockEdge,
-        DockEdge? nativeTaskbarEdge,
-        bool surfaceIntersectsDock,
-        bool isTaskbarCollapsed = false)
-    {
-        if (surfaceKind == SystemSurfaceKind.None)
+        SystemSurfaceKind surfaceKind, PixelRect surfaceBounds, PixelRect monitorBounds, PixelRect dockBounds) =>
+        surfaceKind switch
         {
-            return false;
-        }
-
-        if (surfaceKind == SystemSurfaceKind.GlobalSystemMenu)
-        {
-            return true;
-        }
-
-        if (surfaceKind == SystemSurfaceKind.Taskbar && isTaskbarCollapsed && !surfaceIntersectsDock)
-        {
-            return false;
-        }
-
-        if (nativeTaskbarEdge is { } taskbarEdge
-            && taskbarEdge != DockEdgeRules.Normalize(dockEdge)
-            && !surfaceIntersectsDock)
-        {
-            return false;
-        }
-
-        return true;
-    }
+            SystemSurfaceKind.GlobalSystemMenu => true,
+            SystemSurfaceKind.Taskbar => surfaceBounds.Intersects(dockBounds),
+            SystemSurfaceKind.TaskbarPopup => surfaceBounds.Intersects(dockBounds)
+                && !CoversMonitor(surfaceBounds, monitorBounds),
+            _ => false
+        };
 }
 
 public enum SystemSurfaceKind

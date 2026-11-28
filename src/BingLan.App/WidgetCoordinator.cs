@@ -91,8 +91,7 @@ public sealed partial class WidgetCoordinator : IDisposable
     private bool _isApplyingTaskbar;
     private bool _isSweepingGoneMappings;
     private bool _sweepGoneAgain;
-    private bool _isImportingDesktopEntries;
-    private bool _importDesktopAgain;
+    private int _fileBoxAutomationRevision;
 
     public WidgetCoordinator(
         bool interactiveQa = false,
@@ -3255,6 +3254,7 @@ public sealed partial class WidgetCoordinator : IDisposable
             do
             {
                 _sweepGoneAgain = false;
+                var revision = _fileBoxAutomationRevision;
                 var items = _state.FileBoxes.SelectMany(box => box.Items).Select(item => (item.Id, item.Path)).ToArray();
                 var (gonePaths, parents) = await Task.Run(() => (
                     FileMappingService.CollectGonePaths(items),
@@ -3263,13 +3263,20 @@ public sealed partial class WidgetCoordinator : IDisposable
                 {
                     return;
                 }
-
-                foreach (var box in _windows.OfType<FileBoxWindow>())
+                if (revision != _fileBoxAutomationRevision)
                 {
-                    var clearedHere = box.RemoveGoneMappings(gonePaths);
-                    if (clearedHere > 0)
+                    continue;
+                }
+
+                if (gonePaths.Count > 0)
+                {
+                    foreach (var box in _windows.OfType<FileBoxWindow>())
                     {
-                        box.SetOperationStatus($"已自动移除 {clearedHere} 项已失效映射");
+                        var clearedHere = box.RemoveGoneMappings(gonePaths);
+                        if (clearedHere > 0)
+                        {
+                            box.SetOperationStatus($"已自动移除 {clearedHere} 项已失效映射");
+                        }
                     }
                 }
                 _mappingWatcher.UpdateWatchedDirectories(parents);
@@ -3288,7 +3295,7 @@ public sealed partial class WidgetCoordinator : IDisposable
         Environment.GetFolderPath(Environment.SpecialFolder.CommonDesktopDirectory)
     ];
 
-    // 手动整理与自动收纳共用：桌面直接子项里跳过下载中的临时文件，改名完成后才可入盒。
+    // 手动整理读取桌面现有项目，跳过下载中的临时文件。
     private static List<string> CollectImportableDesktopEntries() =>
         FileMappingService.EnumerateDirectChildren(DesktopDirectories())
             .Where(path => !FileMappingService.IsPartialDownload(path))
@@ -3300,6 +3307,12 @@ public sealed partial class WidgetCoordinator : IDisposable
     /// </summary>
     private void SetFileBoxAutomation(bool enabled)
     {
+        if (_state.FileBoxAutomationEnabled == enabled)
+        {
+            return;
+        }
+
+        _fileBoxAutomationRevision++;
         _state.FileBoxAutomationEnabled = enabled;
         ApplyFileBoxAutomation();
         ScheduleSave();
@@ -3326,61 +3339,38 @@ public sealed partial class WidgetCoordinator : IDisposable
     /// created and partial downloads are skipped; they arrive when renamed to the final
     /// name. Runs off the watcher; the scan stays off the UI thread.
     /// </summary>
-    private async Task ImportNewDesktopEntries()
+    private async Task<IReadOnlySet<string>> ImportNewDesktopEntries(IReadOnlyList<string> paths)
     {
         if (_isExiting || !_state.FileBoxAutomationEnabled)
         {
-            return;
+            return System.Collections.Frozen.FrozenSet<string>.Empty;
         }
-        if (_isImportingDesktopEntries)
+        var revision = _fileBoxAutomationRevision;
+        var prepared = await Task.Run(() => FileMappingService.PrepareAutomaticDesktopEntries(paths));
+        if (_isExiting || !_state.FileBoxAutomationEnabled || revision != _fileBoxAutomationRevision)
         {
-            _importDesktopAgain = true;
-            return;
+            return System.Collections.Frozen.FrozenSet<string>.Empty;
         }
-        _isImportingDesktopEntries = true;
-        try
+        if (prepared.Entries.Count == 0)
         {
-            do
-            {
-                _importDesktopAgain = false;
-                var boxes = ScreenProfileAccessor.FilterPrimaryFileBoxes(_state.FileBoxes)
-                    .Select(box => new FileBoxState
-                    {
-                        Id = box.Id,
-                        DesktopCategory = box.DesktopCategory,
-                        CollectFolders = box.CollectFolders,
-                        CollectExtensions = box.CollectExtensions.ToList(),
-                        AutoCollectExcludedPaths = box.AutoCollectExcludedPaths.ToList(),
-                        Items = box.Items.Select(item => new FileMappingState { Path = item.Path }).ToList()
-                    }).ToArray();
-                var distribution = await Task.Run(() =>
-                    FileMappingService.DistributeAutomatically(CollectImportableDesktopEntries(), boxes));
-                if (_isExiting || !_state.FileBoxAutomationEnabled)
-                {
-                    return;
-                }
+            return prepared.TemporarilyHiddenPaths;
+        }
 
-                foreach (var (boxId, paths) in distribution.ByBox)
+        // Route and commit together on the UI thread after the filesystem checks finish.
+        var boxes = ScreenProfileAccessor.FilterPrimaryFileBoxes(_state.FileBoxes);
+        var distribution = FileMappingService.DistributePreparedAutomatically(prepared, boxes, _state.FileBoxes);
+        foreach (var (boxId, candidates) in distribution.ByBox)
+        {
+            if (FindPrimaryFileBoxWindow(boxId) is { } boxWindow)
+            {
+                var added = boxWindow.AddPreparedAutomaticMappingsToBox(boxId, candidates);
+                if (added > 0)
                 {
-                    if (FindPrimaryFileBoxWindow(boxId) is { } boxWindow)
-                    {
-                        var added = await boxWindow.AddAutomaticMappingsToBoxAsync(boxId, paths,
-                            () => _isExiting || !_state.FileBoxAutomationEnabled
-                                ? null
-                                : ScreenProfileAccessor.FilterPrimaryFileBoxes(_state.FileBoxes));
-                        if (added > 0)
-                        {
-                            boxWindow.SetOperationStatus($"已自动收纳 {added} 项新桌面项目");
-                        }
-                    }
+                    boxWindow.SetOperationStatus($"已自动收纳 {added} 项新桌面项目");
                 }
             }
-            while (_importDesktopAgain && !_isExiting);
         }
-        finally
-        {
-            _isImportingDesktopEntries = false;
-        }
+        return prepared.TemporarilyHiddenPaths;
     }
 
     private async Task OrganizeDesktopAsync()
@@ -3799,7 +3789,7 @@ public sealed partial class WidgetCoordinator : IDisposable
         trayIcon.AddSeparator();
         trayIcon.AddItem("退出", Exit);
 
-        trayIcon.DoubleClick += (_, _) => OpenSettings();
+        trayIcon.Activated += (_, _) => OpenSettings();
         trayIcon.SessionEndingResolved += OnSessionEndingResolved;
         // Only the update notice acts on a click; other notices are plain information.
         trayIcon.BalloonTipClicked += (_, _) => _balloonClicked?.Invoke();
@@ -4398,7 +4388,7 @@ public sealed partial class WidgetCoordinator : IDisposable
                 return false;
             }
 
-            _ = ActivateProcessAttentionAsync(processId, monitorHandle);
+            _ = ActivateProcessAttentionAsync(handle, processId, monitorHandle);
             return true;
         }
 
@@ -4415,7 +4405,7 @@ public sealed partial class WidgetCoordinator : IDisposable
 
             if (result.NoLiveWindows && processId != 0)
             {
-                await ActivateProcessAttentionAsync(processId, monitorHandle);
+                await ActivateProcessAttentionAsync(handle, processId, monitorHandle);
                 return;
             }
 
@@ -4425,7 +4415,7 @@ public sealed partial class WidgetCoordinator : IDisposable
             }
         }
 
-        private async Task ActivateProcessAttentionAsync(uint processId, nint monitorHandle)
+        private async Task ActivateProcessAttentionAsync(nint attentionWindow, uint processId, nint monitorHandle)
         {
             var (running, instancePids, rootExecutablePath) = await Task.Run(() =>
             {
@@ -4440,16 +4430,17 @@ public sealed partial class WidgetCoordinator : IDisposable
             if (instanceWindows.Length > 0)
             {
                 var group = WindowGrouping.Group(instanceWindows)[0];
-                var target = WindowCommandService.SelectBestWindow(instanceWindows);
-                var focusResult = await WindowCommandService.FocusAsync(
-                    target,
-                    DockNativeMethods.IsIconic(target.Handle),
-                    group.DisplayName);
-                if (!focusResult.Succeeded && !owner._isExiting && !string.IsNullOrWhiteSpace(focusResult.Message))
+                var exactWindow = instanceWindows.Any(window =>
+                    window.Handle == attentionWindow && window.ProcessId == processId) ? attentionWindow : 0;
+                var focusResult = await WindowCommandService.FocusAttentionAsync(instanceWindows, exactWindow, group.DisplayName);
+                if (!focusResult.NoLiveWindows)
                 {
-                    owner._trayIcon.ShowBalloonTip(3000, group.DisplayName, focusResult.Message, TrayTipKind.Info);
+                    if (!focusResult.Succeeded && !owner._isExiting && !string.IsNullOrWhiteSpace(focusResult.Message))
+                    {
+                        owner._trayIcon.ShowBalloonTip(3000, group.DisplayName, focusResult.Message, TrayTipKind.Info);
+                    }
+                    return;
                 }
-                return;
             }
 
             var executablePath = rootExecutablePath;

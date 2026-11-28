@@ -23,7 +23,7 @@ internal static class FileBoxTransferTests
                 File.WriteAllText(path, $"原文件：{Path.GetFileName(path)}");
             }
             var sourceState = new FileBoxState { Title = "来源" };
-            var targetState = new FileBoxState { Title = "目标" };
+            var targetState = new FileBoxState { Title = "目标", IsLocked = true };
             FileMappingService.AddExisting(sourceState, paths);
             FileMappingService.AddExisting(targetState, paths.Take(2));
             var first = sourceState.Items[0];
@@ -97,9 +97,40 @@ internal static class FileBoxTransferTests
             Assert(sourceState.Items.Select(item => item.Order).SequenceEqual(Enumerable.Range(0, 3))
                 && targetState.Items.Select(item => item.Order).SequenceEqual(Enumerable.Range(0, 4)),
                 "转移与复制后的映射顺序应连续");
+
+            var sort = typeof(FileBoxWindow).GetMethod("ApplySort", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            ((Task)sort.Invoke(target, [FileMappingSortMode.Name])!).GetAwaiter().GetResult();
+            pump();
+            var fileList = (ItemsControl)target.FindName("FileList");
+            var tileTarget = (FrameworkElement)fileList.ItemContainerGenerator.ContainerFromIndex(0);
+            var originalOrder = Tiles(target).Select(tile => tile.Mapping.Id).ToArray();
+            var orderChanges = 0;
+            target.WidgetChanged += _ => orderChanges++;
+            RaiseDrop(target, tileTarget, [originalOrder[1]], new Point(tileTarget.ActualWidth * 3 / 4, tileTarget.ActualHeight / 2));
+            Assert(orderChanges == 0, "拖到原位置不应提交多余的排序变更");
+            RaiseDrop(target, tileTarget, [originalOrder[3]], new Point(tileTarget.ActualWidth / 4, tileTarget.ActualHeight / 2));
+            pump();
+            var tiledOrder = Tiles(target).Select(tile => tile.Mapping.Id).ToArray();
+            Assert(tiledOrder.SequenceEqual([originalOrder[3], originalOrder[0], originalOrder[1], originalOrder[2]])
+                && targetState.Items.Select(item => item.Id).SequenceEqual(tiledOrder),
+                "锁定盒位置后仍可在图标视图拖动条目到目标左侧，顺序应同步保存");
+
+            target.SetViewMode(FileBoxViewMode.List);
+            pump();
+            var rowTarget = (FrameworkElement)fileList.ItemContainerGenerator.ContainerFromIndex(2);
+            var rowPoint = new Point(rowTarget.ActualWidth / 2, rowTarget.ActualHeight * 3 / 4);
+            RaiseDrop(target, rowTarget, [tiledOrder[0]], rowPoint, DragDropKeyStates.ControlKey);
+            Assert(Tiles(target).Select(tile => tile.Mapping.Id).SequenceEqual(tiledOrder),
+                "同盒 Ctrl 拖动不应复制或重排映射");
+            RaiseDrop(target, rowTarget, [tiledOrder[0]], rowPoint);
+            pump();
+            Assert(Tiles(target).Select(tile => tile.Mapping.Id)
+                    .SequenceEqual([tiledOrder[1], tiledOrder[2], tiledOrder[0], tiledOrder[3]]),
+                "列表视图应按目标行的下半部分将条目插到目标行之后");
+
             Assert(Directory.GetFiles(directory).Order().SequenceEqual(paths.Order())
                 && paths.All(path => File.ReadAllText(path) == $"原文件：{Path.GetFileName(path)}"),
-                "转移和 Ctrl 复制映射不应移动、复制或修改磁盘原文件");
+                "转移、复制和排序映射不应移动、复制或修改磁盘原文件");
         }
         finally
         {
@@ -119,6 +150,10 @@ internal static class FileBoxTransferTests
     }
 
     private static void DropWithControl(FileBoxWindow source, FileBoxWindow target, Guid[] ids)
+        => RaiseDrop(source, target, ids, new Point(), DragDropKeyStates.ControlKey);
+
+    private static void RaiseDrop(FileBoxWindow source, FrameworkElement target, Guid[] ids, Point position,
+        DragDropKeyStates keys = DragDropKeyStates.None)
     {
         // WPF does not expose a DragEventArgs constructor; raise the real routed event
         // with its internal constructor so the modifier branch is checked as well.
@@ -130,7 +165,7 @@ internal static class FileBoxTransferTests
         data.SetData("BingLan.FileBoxMappings", payload);
         var args = (DragEventArgs?)Activator.CreateInstance(typeof(DragEventArgs),
             BindingFlags.Instance | BindingFlags.NonPublic, binder: null,
-            args: [data, DragDropKeyStates.ControlKey, DragDropEffects.Copy | DragDropEffects.Link, target, new Point()],
+            args: [data, keys, DragDropEffects.Copy | DragDropEffects.Link, target, position],
             culture: null) ?? throw new InvalidOperationException("无法创建 WPF 拖放事件");
         args.RoutedEvent = DragDrop.DropEvent;
         target.RaiseEvent(args);

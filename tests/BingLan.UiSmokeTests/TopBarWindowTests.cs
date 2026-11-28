@@ -20,7 +20,6 @@ using BingLan.Core.Models;
 using BingLan.Core.Services;
 using BingLan.Core.TopBar;
 using BingLan.App.TopBar;
-using BingLan.App.Dock;
 using BingLan.Core.Dock;
 using System.Buffers.Binary;
 using System.Text;
@@ -267,16 +266,62 @@ internal static class TopBarWindowTests
                 try
                 {
                     var handle = ShowBarAndGetHandle(smart, pump);
-                    Assert(WaitUntil(pump, () => !smart.IsVisible) && DockNativeMethods.IsWindow(handle),
-                        "最大化时智能隐藏应收起已创建的顶栏窗口");
-                    RevealSmartBar(smart, handle, pump);
-                    Assert(new WindowInteropHelper(smart).Handle == handle, "边缘唤出应复用已创建的顶栏窗口");
-                    Console.WriteLine($"通过：{monitor.Label}，智能隐藏保留窗口，停留屏幕边缘可唤出");
+                    Assert(GetWindowRect(handle, out var smartRect) && WaitUntil(pump, () => ReadAppFrame().Top >= smartRect.Bottom),
+                        "顶部预留应让最大化窗口完全位于较矮的信息条下方");
+                    Hold(TimeSpan.FromMilliseconds(850));
+                    Assert(smart.IsVisible, "未覆盖顶边的最大化窗口应保留智能隐藏信息条");
                 }
                 finally
                 {
                     smart.Close();
                     pump();
+                }
+
+                state.VisibilityMode = TopBarVisibilityMode.SmartHide;
+                try
+                {
+                    bar.ApplyState();
+                    Assert(WaitUntil(pump, () => ReadAppFrame().Top < barRect.Bottom && !bar.IsVisible)
+                        && DockNativeMethods.IsWindow(barHandle), "最大化窗口覆盖顶边时，信息条应收起并保留窗口");
+                    MoveMouseTo(monitor.Bounds.Right - 8, barRect.Top);
+                    Hold(TimeSpan.FromMilliseconds(850));
+                    Assert(!bar.IsVisible, "从窗口右上角标题按钮区域接近时不应唤出信息条");
+
+                    RevealSmartBar(bar, barHandle, pump);
+                    var clock = ButtonByName(bar, "时间日期模块");
+                    var clockPoint = clock.PointToScreen(new Point(clock.ActualWidth / 2, clock.ActualHeight / 2));
+                    Assert(clockPoint.X >= monitor.Bounds.Right - TopBarRevealRules.CaptionButtonsExclusionDip * monitor.Dpi / 96d,
+                        "测试的时间日期按钮应处于窗口右上角标题按钮范围");
+                    MoveMouseTo((int)clockPoint.X, (int)clockPoint.Y);
+                    Hold(TimeSpan.FromMilliseconds(850));
+                    Assert(bar.IsVisible, "唤出信息条后移动到右端时，信息条应保持显示");
+                    ClickModule("时间日期模块");
+                    Assert(WaitUntil(pump, () => bar.ClockFlyout is
+                        { IsOpen: true, Child: FrameworkElement { IsLoaded: true, ActualWidth: > 0, ActualHeight: > 0 } }),
+                        "智能隐藏模式下应能打开日历");
+                    var calendar = (FrameworkElement)bar.ClockFlyout!.Child;
+                    var calendarPoint = calendar.PointToScreen(new Point(calendar.ActualWidth / 2, calendar.ActualHeight / 2));
+                    MoveMouseTo((int)calendarPoint.X, (int)calendarPoint.Y);
+                    Hold(TimeSpan.FromMilliseconds(850));
+                    Assert(bar.IsVisible && bar.ClockFlyout?.IsOpen == true, "移入日历后浮层和信息条应保持显示");
+                    ClickModule("时间日期模块");
+                    Assert(WaitUntil(pump, () => bar.ClockFlyout?.IsOpen != true), "再次点击应关闭日历浮层");
+                    Console.WriteLine($"通过：{monitor.Label}，智能隐藏可从边缘唤出并操作右端模块和日历");
+                }
+                finally
+                {
+                    state.VisibilityMode = TopBarVisibilityMode.ReserveTopEdge;
+                    bar.ApplyState();
+                }
+                Assert(WaitUntil(pump, () => bar.GetReservedBottomForMonitor(monitor) is not null && bar.IsVisible),
+                    "应恢复顶边预留以继续测试");
+
+                DockNativeMethods.NativeRect ReadAppFrame()
+                {
+                    Assert(DockNativeMethods.DwmGetWindowAttribute(window, DockNativeMethods.DwmwaExtendedFrameBounds,
+                        out DockNativeMethods.NativeRect frame, Marshal.SizeOf<DockNativeMethods.NativeRect>()) == 0,
+                        "无法读取测试应用的可见边界");
+                    return frame;
                 }
             }
 
@@ -358,8 +403,15 @@ internal static class TopBarWindowTests
         var monitorHandle = DockNativeMethods.MonitorFromWindow(handle, DockNativeMethods.MonitorDefaultToNearest);
         var screen = MonitorCatalog.GetAll().Single(monitor => monitor.MonitorHandle == monitorHandle).Bounds;
         var isTopBar = bounds.Top + (bounds.Bottom - bounds.Top) / 2 < screen.Top + screen.Height / 2;
-        MoveMouseTo(bounds.Left + (bounds.Right - bounds.Left) / 2, isTopBar ? bounds.Top : bounds.Bottom - 2);
-        Assert(WaitUntil(pump, () => bar.IsVisible), "顶栏窗口已创建，但在屏幕边缘停留后仍未显示");
+        var x = bounds.Left + (bounds.Right - bounds.Left) / 2;
+        var y = isTopBar ? bounds.Top : bounds.Bottom - 2;
+        MoveMouseTo(x, y);
+        if (!WaitUntil(pump, () => bar.IsVisible))
+        {
+            DockNativeMethods.GetCursorPos(out var cursor);
+            Assert(false, $"信息条在唤醒区停留后仍未显示，目标指针 ({x},{y})，实际 ({cursor.X},{cursor.Y})，"
+                + $"窗口边界 ({bounds.Left},{bounds.Top})-({bounds.Right},{bounds.Bottom})");
+        }
     }
 
     internal static void Run(Action pump)
@@ -375,6 +427,7 @@ internal static class TopBarWindowTests
             PowerDialogAvailableWithoutBattery(ShowForInteraction, pump);
             SurfacePaintsGlass(ShowForInteraction, pump);
             ReservedModeClearsSmartHideAppearance();
+            ForegroundTickClosesBarOnLostMonitor(pump);
             TodoFlyoutShowsItemsAndCloses(ShowForInteraction, pump);
             CapsuleExpandsWithinItsSurface(ShowForInteraction, pump);
             WeatherHoverOpensTooltip(ShowForInteraction, pump);
@@ -420,29 +473,61 @@ internal static class TopBarWindowTests
 
     private static void BottomBarAvoidsDockAndOpensCalendarInward(Action<Window> show, Action pump)
     {
-        var state = BarState();
-        state.ShowAtBottom = true;
-        state.VisibilityMode = TopBarVisibilityMode.SmartHide;
-        using var sampler = new WindowsPerformanceSamplingService();
-        int? dockTop = null;
-        var bar = new TopBarWindow(state, new DesktopStyleState(), new FakeEnvironment(), sampler)
+        var previousForeground = GetForegroundWindow();
+        var foreground = new Window
         {
-            ResolveBottomDockTop = monitor => dockTop =
-                TaskbarEdgeGuard.AvoidNativeTaskbar(monitor.Bounds, monitor.Bounds).Bottom - 100
+            Width = 320,
+            Height = 180,
+            WindowStartupLocation = WindowStartupLocation.CenterScreen,
+            ShowInTaskbar = false
         };
-        show(bar);
         try
         {
-            Assert(GetWindowRect(new WindowInteropHelper(bar).Handle, out var rect) && rect.Bottom == dockTop,
-                "底部信息条应贴齐同屏底部 Dock 上沿");
-            Invoke(ButtonByName(bar, "时间日期模块"));
+            foreground.Show();
             pump();
-            Assert(bar.ClockFlyout is { IsOpen: true, Placement: PlacementMode.Top },
-                "底部信息条从条上方向工作区展开日历");
+            var foregroundHandle = new WindowInteropHelper(foreground).Handle;
+            ForceForeground(foregroundHandle);
+            Assert(WaitUntil(pump, () => GetForegroundWindow() == foregroundHandle), "底部信息条测试窗口应取得前台");
+            var monitorHandle = DockNativeMethods.MonitorFromWindow(foregroundHandle, DockNativeMethods.MonitorDefaultToNearest);
+            var screen = MonitorCatalog.GetAll().Single(monitor => monitor.MonitorHandle == monitorHandle).Bounds;
+            Assert(GetWindowRect(foregroundHandle, out var frame)
+                && !DockVacateRules.CoversMonitor(new PixelRect(frame.Left, frame.Top, frame.Right, frame.Bottom), screen),
+                "底部信息条测试需要非全屏前台窗口");
+
+            var state = BarState();
+            state.ShowAtBottom = true;
+            state.VisibilityMode = TopBarVisibilityMode.SmartHide;
+            using var sampler = new WindowsPerformanceSamplingService();
+            int? dockTop = null;
+            var bar = new TopBarWindow(state, new DesktopStyleState(), new FakeEnvironment(), sampler)
+            {
+                ResolveBottomDockTop = monitor => dockTop =
+                    TaskbarEdgeGuard.AvoidNativeTaskbar(monitor.Bounds, monitor.Bounds).Bottom - 100
+            };
+            show(bar);
+            try
+            {
+                Assert(GetForegroundWindow() == foregroundHandle, "底部信息条显示时普通测试窗口应保持前台");
+                Assert(GetWindowRect(new WindowInteropHelper(bar).Handle, out var rect) && rect.Bottom == dockTop,
+                    "底部信息条应贴齐同屏底部 Dock 上沿");
+                Invoke(ButtonByName(bar, "时间日期模块"));
+                pump();
+                Assert(bar.ClockFlyout is { IsOpen: true, Placement: PlacementMode.Top },
+                    "底部信息条从条上方向工作区展开日历");
+            }
+            finally
+            {
+                bar.Close();
+                pump();
+            }
         }
         finally
         {
-            bar.Close();
+            foreground.Close();
+            if (previousForeground != 0 && DockNativeMethods.IsWindow(previousForeground))
+            {
+                ForceForeground(previousForeground);
+            }
             pump();
         }
     }
@@ -737,6 +822,35 @@ internal static class TopBarWindowTests
         {
             bar.Close();
             pump();
+        }
+    }
+
+    private static void ForegroundTickClosesBarOnLostMonitor(Action pump)
+    {
+        var monitor = MonitorCatalog.GetAll().First();
+        var target = new SurfaceMonitorSelection(monitor.DeviceName, monitor, null);
+        var state = BarState();
+        state.VisibilityMode = TopBarVisibilityMode.SmartHide;
+        using var sampler = new WindowsPerformanceSamplingService();
+        var bar = new TopBarWindow(state, new DesktopStyleState(), new FakeEnvironment(), sampler,
+            screenTarget: target, ownsGlobalEvents: false);
+        var closed = false;
+        bar.Closed += (_, _) => closed = true;
+        try
+        {
+            ShowBarAndGetHandle(bar, pump);
+            const BindingFlags fields = BindingFlags.Instance | BindingFlags.NonPublic;
+            var live = TaskbarEdgeGuard.GetNativeTaskbarLayout(monitor.Bounds);
+            var changed = new TaskbarEdgeGuard.NativeTaskbarLayout(DockEdge.Bottom, monitor.Bounds, !(live?.AutoHidden ?? false));
+            typeof(TopBarWindow).GetField("_nativeTaskbar", fields)!.SetValue(bar, changed);
+            typeof(TopBarWindow).GetField("_screenTarget", fields)!.SetValue(bar,
+                target with { Monitor = monitor with { MonitorHandle = 0 } });
+            typeof(TopBarWindow).GetMethod("UpdateForForeground", fields)!.Invoke(bar, null);
+            Assert(closed, "任务栏布局刷新时，已断开屏幕上的顶栏应能安全关闭");
+        }
+        finally
+        {
+            if (!closed) bar.Close();
         }
     }
 
@@ -1685,7 +1799,7 @@ internal static class TopBarWindowTests
             "无回复应在有限等待后回退");
     }
 
-    private static void WindowsIndexQueryRules()
+    internal static void WindowsIndexQueryRules()
     {
         var sql = WindowsIndexSearchClient.CreateQuery("年度 报告'_%[");
         Assert(sql.StartsWith("SELECT TOP 128 ", StringComparison.Ordinal)
@@ -1720,6 +1834,83 @@ internal static class TopBarWindowTests
             throw new InvalidOperationException("取消的查询不应访问系统索引");
         }
         catch (OperationCanceledException) { }
+
+        Task.Run(() => VerifyAbandonedWindowsIndexQueryAsync(cancel: true)).GetAwaiter().GetResult();
+        Task.Run(() => VerifyAbandonedWindowsIndexQueryAsync(cancel: false)).GetAwaiter().GetResult();
+    }
+
+    private static async Task VerifyAbandonedWindowsIndexQueryAsync(bool cancel)
+    {
+        using var cancellation = new CancellationTokenSource();
+        var lateFailure = new InvalidOperationException("Windows index test provider failed after timeout.");
+        var unobserved = 0;
+        void OnUnobserved(object? sender, UnobservedTaskExceptionEventArgs args)
+        {
+            if (args.Exception.InnerExceptions.Any(exception => ReferenceEquals(exception, lateFailure)
+                || exception is OperationCanceledException canceled && canceled.CancellationToken == cancellation.Token))
+            {
+                Interlocked.Increment(ref unobserved);
+                args.SetObserved();
+            }
+        }
+
+        TaskScheduler.UnobservedTaskException += OnUnobserved;
+        try
+        {
+            await AbandonWindowsIndexQueryAsync(cancellation, cancel, lateFailure);
+            for (var attempt = 0; attempt < 3; attempt++)
+            {
+                GC.Collect();
+                GC.WaitForPendingFinalizers();
+            }
+            Assert(Volatile.Read(ref unobserved) == 0, "查询取消或超时后，后台任务的异常应被观察");
+        }
+        finally
+        {
+            TaskScheduler.UnobservedTaskException -= OnUnobserved;
+        }
+    }
+
+    private static async Task AbandonWindowsIndexQueryAsync(
+        CancellationTokenSource cancellation, bool cancel, Exception lateFailure)
+    {
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseProvider = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var search = WindowsIndexSearchClient.SearchAsync("报告", cancellation.Token, (_, token) =>
+        {
+            started.SetResult();
+            releaseProvider.Task.WaitAsync(TimeSpan.FromSeconds(10)).GetAwaiter().GetResult();
+            token.ThrowIfCancellationRequested();
+            throw lateFailure;
+        });
+        try
+        {
+            await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            if (cancel)
+            {
+                cancellation.Cancel();
+                try
+                {
+                    await search;
+                    throw new InvalidOperationException("取消时应立即结束外层等待");
+                }
+                catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { }
+            }
+            else
+            {
+                Assert(!(await search).Available, "超时应回退到索引暂不可用");
+            }
+            var busy = await WindowsIndexSearchClient.SearchAsync("报告", CancellationToken.None,
+                (_, _) => throw new InvalidOperationException("旧查询退出前不能开始另一轮原生查询"));
+            Assert(!busy.Available, "仍在后台工作的查询应保留查询槽");
+        }
+        finally
+        {
+            releaseProvider.TrySetResult();
+        }
+        var next = await WindowsIndexSearchClient.SearchAsync("报告", CancellationToken.None,
+            (_, _) => new WindowsIndexSearchResult(true, []));
+        Assert(next.Available, "后台查询完成后应释放查询槽");
     }
 
     private static byte[] EverythingResponse(params (string Name, string Directory, uint Flags)[] entries)

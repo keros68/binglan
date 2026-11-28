@@ -4,6 +4,7 @@ using System.Windows.Interop;
 using System.Windows.Threading;
 using BingLan.App.Interop;
 using BingLan.App.Services;
+using BingLan.App.Taskbar;
 using BingLan.Core.Dock;
 
 namespace BingLan.App.Dock;
@@ -48,6 +49,7 @@ internal sealed class DockAppBarController : IDisposable
     private bool _transientRecovering;
     private int _consecutiveReserveFailures;
     private bool _disposed;
+    private bool _shellProbePending;
     private int _recoveryGeneration;
 
     internal DockAppBarController(Window window)
@@ -204,6 +206,10 @@ internal sealed class DockAppBarController : IDisposable
         {
             _explorerRecovering = false;
         }
+        if (_shellProbePending)
+        {
+            return;
+        }
 
         _applying = true;
         try
@@ -264,7 +270,7 @@ internal sealed class DockAppBarController : IDisposable
 
     private void Position()
     {
-        if (_monitor is null || _positioning)
+        if (_monitor is null || _positioning || _shellProbePending)
         {
             return;
         }
@@ -466,10 +472,12 @@ internal sealed class DockAppBarController : IDisposable
         if ((uint)message == _taskbarCreatedMessage)
         {
             InvalidateNativeTaskbarLayout();
+            _shellProbePending = true;
             _explorerRecovering = _reserveWorkArea;
             _transientRecovering = false;
             _consecutiveReserveFailures = 0;
             _reserveRetryTimer.Stop();
+            _deferredPosition.Stop();
             _reservation.ResetRegistration();
             _positionGuard.Reset();
             _workAreaCheck.Reset();
@@ -494,7 +502,7 @@ internal sealed class DockAppBarController : IDisposable
                     }
                     else if (_positionGuard.TryHandleNow(Environment.TickCount64))
                     {
-                        Position();
+                        DeferShellCallback(Position);
                     }
                     else if (!_deferredPosition.IsEnabled)
                     {
@@ -520,9 +528,9 @@ internal sealed class DockAppBarController : IDisposable
         {
             case DockNativeMethods.WmActivate when _reservation.IsRegistered:
                 var activationState = (ushort)(wParam.ToInt64() & 0xFFFF);
-                NotifyAppBar(
+                DeferShellCallback(() => NotifyAppBar(
                     DockNativeMethods.AbmActivate,
-                    activationState != DockNativeMethods.WaInactive ? 1 : 0);
+                    activationState != DockNativeMethods.WaInactive ? 1 : 0));
                 break;
             case DockNativeMethods.WmWindowPosChanged
                 when AppBarPositionGuard.ShouldNotifyWindowPosChanged(
@@ -530,7 +538,7 @@ internal sealed class DockAppBarController : IDisposable
                     _positioning,
                     _updatingLayer,
                     IsZOrderOnlyWindowPosChanged(lParam)):
-                NotifyAppBar(DockNativeMethods.AbmWindowPosChanged, 0);
+                DeferShellCallback(() => NotifyAppBar(DockNativeMethods.AbmWindowPosChanged, 0));
                 break;
             // A work-area change can leave Explorer holding a stale strip for the dock;
             // Position compares the two once things settle.
@@ -579,6 +587,7 @@ internal sealed class DockAppBarController : IDisposable
 
     private async Task RecoverAfterExplorerRestartAsync(int recoveryGeneration)
     {
+        var shellResponsive = false;
         try
         {
             for (var attempt = 1; attempt <= ExplorerRecoveryAttemptCount; attempt++)
@@ -588,15 +597,22 @@ internal sealed class DockAppBarController : IDisposable
                     return;
                 }
 
-                if (!_reserveWorkArea)
+                shellResponsive = await Task.Run(TaskbarAdapter.IsTaskbarResponsive);
+                if (_disposed || recoveryGeneration != _recoveryGeneration)
                 {
-                    break;
+                    return;
                 }
-
-                Dispatch(_reservation.Apply(true));
-                if (_reservation.IsRegistered)
+                if (shellResponsive)
                 {
-                    break;
+                    if (!_reserveWorkArea)
+                    {
+                        break;
+                    }
+                    Dispatch(_reservation.Apply(true));
+                    if (_reservation.IsRegistered)
+                    {
+                        break;
+                    }
                 }
 
                 if (attempt < ExplorerRecoveryAttemptCount)
@@ -609,11 +625,12 @@ internal sealed class DockAppBarController : IDisposable
         {
             if (recoveryGeneration == _recoveryGeneration)
             {
+                _shellProbePending = false;
                 _explorerRecovering = false;
             }
         }
 
-        if (_disposed || recoveryGeneration != _recoveryGeneration)
+        if (_disposed || recoveryGeneration != _recoveryGeneration || !shellResponsive)
         {
             return;
         }
@@ -655,6 +672,18 @@ internal sealed class DockAppBarController : IDisposable
         data.Parameter = parameter;
         DockNativeMethods.SHAppBarMessage(message, ref data);
         ExplorerNotified?.Invoke();
+    }
+
+    private void DeferShellCallback(Action action)
+    {
+        var generation = _recoveryGeneration;
+        _window.Dispatcher.BeginInvoke(DispatcherPriority.Background, () =>
+        {
+            if (!_disposed && generation == _recoveryGeneration && _reservation.IsRegistered)
+            {
+                action();
+            }
+        });
     }
 
     private static bool IsZOrderOnlyWindowPosChanged(nint lParam)

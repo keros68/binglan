@@ -31,6 +31,7 @@ Run("Dock 距底部高度默认等于原固定间距并被钳制", TestDockBotto
 Run("Dock 隐藏把手几何：默认角位、钳制与左右展开锚定", TestDockHandleGeometry);
 Run("Dock 隐藏把手位置状态规范化", TestDockHandleState);
 Run("应用闪烁提醒在激活或关闭窗口后清除", TestDockAttention);
+Run("异步处理 Dock 提醒时保留新收到的提醒", TestDiscardAttentionSnapshot);
 Run("底部与顶部水平居中几何", TestHorizontalCentering);
 Run("左右垂直几何", TestVerticalGeometry);
 Run("固定/运行/活动/分组状态映射", TestDockItemStateMapping);
@@ -85,9 +86,11 @@ Run("Dock 只在没有新输入或前台切换时重试激活", TestForegroundRe
 Run("Dock 权限隔离提示文案：区分目标提权、前台提权与常规拦截", TestActivationBlockedMessages);
 Run("免激活右键菜单防闪退与外部点击收起状态机", TestMenuDismissState);
 Run("智能隐藏瞬态右键菜单/弹窗宿主重叠与最大化合并规则", TestTransientPopupSmartHideRules);
-Run("系统表面礼让细化与异边/折叠任务栏推断规则", TestSystemSurfaceYieldAndEdgeInference);
+Run("Dock 按任务栏和托盘的实际遮挡让位", TestSystemSurfaceYieldAndEdgeInference);
 Run("最小化后被动聚焦自动隐藏任务栏的恢复守卫规则", TestTaskbarPassiveFocusRules);
 Run("微信双开提醒：跨实例托盘闪烁、辅助进程归属、最近闪烁优先与共享热键识别", TestDualWeChatAttentionAndReveal);
+Run("微信辅助进程按父进程创建时间和最近的主程序归属", TestWeChatHelperProcessIdentity);
+Run("微信共享热键区分已退出进程与未能读取身份的运行进程", TestRunningHotkeyCandidateSnapshot);
 Run("Dock 结束应用：同目录托盘宿主/子进程/启动器联动清理与系统/多应用安全边界", TestDockQuitProcessTreeAndSafety);
 
 if (failures.Count > 0)
@@ -980,6 +983,17 @@ static void TestTrayAppRevealRules()
 
     // 托盘隐藏态决策：0 实例启动新进程，1 实例发热键或提示（不误开登录窗），多实例提示从托盘选号。
     AssertEqual(TrayRevealAction.LaunchNewProcess, TrayAppRevealRules.DecideWhenHidden(0, hotkeyRegistered: false), "未运行时应启动新进程");
+    AssertEqual(TrayRevealAction.NotifyTargetUnavailable,
+        TrayAppRevealRules.DecideWhenHidden(0, hotkeyRegistered: false, hasPreferredInstance: true),
+        "消息对应的实例已退出时不应另开登录窗口");
+    AssertEqual(TrayRevealAction.NotifyTargetUnavailable,
+        TrayAppRevealRules.DecideWhenHidden(2, hotkeyRegistered: true, hasPreferredInstance: true,
+            preferredInstanceExited: true, ambiguousHotkeyOwner: true),
+        "原实例确认退出后应提示提醒已关闭，其他两个账号不应改变结果");
+    AssertEqual(TrayRevealAction.NotifyTrayInstanceChoiceRequired,
+        TrayAppRevealRules.DecideWhenHidden(1, hotkeyRegistered: true, hasPreferredInstance: true,
+            ambiguousHotkeyOwner: true),
+        "目标身份不明且有其他进程存活时仍需由用户选择");
     AssertEqual(TrayRevealAction.SendGlobalHotkey, TrayAppRevealRules.DecideWhenHidden(1, hotkeyRegistered: true), "单实例且热键已注册应发送热键");
     AssertEqual(TrayRevealAction.NotifyHotkeyUnavailable, TrayAppRevealRules.DecideWhenHidden(1, hotkeyRegistered: false), "单实例但热键失效不应回退弹新登录窗");
     AssertEqual(TrayRevealAction.NotifyMultiInstanceInTray, TrayAppRevealRules.DecideWhenHidden(2, hotkeyRegistered: true), "多实例驻留托盘不得盲发全局热键");
@@ -2930,6 +2944,10 @@ static void TestTopLevelWindowFilterRules()
 
 static void TestSelectActivationTarget()
 {
+    nint ReadOwner(nint window) => window switch { 21 or 31 => 11, 22 => 21, _ => 0 };
+    Assert(WindowActivationRules.IsWindowOrOwnedPopup(21, 22, ReadOwner), "禁用窗口的模态子窗口应视为有效激活目标");
+    Assert(!WindowActivationRules.IsWindowOrOwnedPopup(21, 31, ReadOwner), "同根所有者下的另一个窗口不能视为目标窗口已经激活");
+
     Assert(WindowActivationRules.SelectActivationTarget([]) is null, "空候选列表应返回 null");
     AssertThrows<ArgumentNullException>(() => WindowActivationRules.SelectActivationTarget(null!), "null 候选列表应抛异常");
 
@@ -2966,8 +2984,8 @@ static void TestSelectActivationTarget()
     var secondFlashing = new WindowCandidateInfo(602, IsMinimized: true, IsEnabled: true, HasEnabledPopup: false, HasTitle: true);
     AssertEqual(
         (nint)602,
-        WindowActivationRules.SelectActivationTarget([firstAccount, secondFlashing], handle => handle == 602 ? 2 : 1)?.Handle ?? 0,
-        "同进程两窗口仅第二个句柄精确闪烁时应优先激活精确闪烁句柄，而非按顺序选第一个");
+        WindowActivationRules.SelectActivationTarget([firstAccount, secondFlashing], handle => handle == 602 ? 2 : 0)?.Handle ?? 0,
+        "进程回退找到精确提醒句柄时应优先还原它");
     AssertEqual(
         (nint)602,
         WindowActivationRules.SelectActivationTarget([firstAccount, secondFlashing], handle => handle == 602 ? 1 : 0)?.Handle ?? 0,
@@ -2979,6 +2997,28 @@ static void TestSelectActivationTarget()
         (nint)601,
         WindowActivationRules.SelectActivationTarget([disabledFlashing, firstAccount], handle => handle == 603 ? 2 : 0)?.Handle ?? 0,
         "不可直接激活的闪烁窗口不应压过同组内可激活窗口");
+}
+
+static void TestDiscardAttentionSnapshot()
+{
+    const string path = @"C:\Apps\Chat\Chat.exe";
+    var pin = DockPinRules.CreateFromExecutable(path)!;
+    var item = new DockItem(DockPinRules.IdentityKey(pin), pin.DisplayName, pin, null);
+    var attention = new DockAttention();
+    attention.Flashed(100, 12, 1, path);
+    var old = attention.EntriesFor(item).Single();
+    attention.Flashed(100, 12, 1, path);
+    Assert(!attention.Discard(old), "异步结果不能清除同窗口刚收到的提醒");
+
+    var refreshed = attention.EntriesFor(item).Single();
+    attention.Flashed(100, 24, 2, path);
+    Assert(!attention.Discard(refreshed), "句柄被另一进程重用后，旧处理结果不能清除新进程的提醒");
+    var reused = attention.EntriesFor(item).Single();
+    AssertEqual(24u, reused.ProcessId, "重用的窗口句柄应关联到发出提醒的进程");
+
+    attention.Flashed(200, 24, 3, path);
+    Assert(attention.Discard(reused), "身份和序号仍一致时应移除本次处理的提醒");
+    AssertEqual((nint)200, attention.EntriesFor(item).Single().Window, "同实例中的其他提醒应保留");
 }
 
 static void TestForegroundRequestRetry()
@@ -3357,15 +3397,6 @@ static void TestDockSideDocking()
     Assert(DockRevealRules.IsInRevealZone(1910, 500, rightPlacement, monitor, 2, DockEdge.Right), "指针穿越右缘与悬空 Dock 间空隙时应保持在唤出区");
     Assert(!DockRevealRules.IsInRevealZone(1860, 500, rightPlacement, monitor, 2, DockEdge.Right), "深入屏幕内部不在右侧唤出区");
 
-    Assert(!DockVacateRules.ShouldYieldToSystemSurface(true, isTaskbarWindow: true, DockEdge.Left, DockEdge.Bottom, surfaceIntersectsDock: false),
-        "底部任务栏 + 左侧 Dock 时点击底部任务栏不应无故让位");
-    Assert(!DockVacateRules.ShouldYieldToSystemSurface(true, isTaskbarWindow: true, DockEdge.Right, DockEdge.Bottom, surfaceIntersectsDock: false),
-        "底部任务栏 + 右侧 Dock 时点击底部任务栏不应无故让位");
-    Assert(DockVacateRules.ShouldYieldToSystemSurface(true, isTaskbarWindow: true, DockEdge.Bottom, DockEdge.Bottom, surfaceIntersectsDock: false),
-        "底部任务栏 + 底部 Dock 时仍应让位");
-    Assert(DockVacateRules.ShouldYieldToSystemSurface(true, isTaskbarWindow: false, DockEdge.Left, DockEdge.Bottom, surfaceIntersectsDock: false),
-        "系统开始菜单或快速设置弹出时左右 Dock 仍应礼让");
-
     // 6. 隐藏把手默认角位与纵向展开、重现锚点、Y 轴拖拽排序索引。
     var leftHandle = DockHandleGeometry.Default(bottomTaskbarWorkArea, 44, 16, 28, DockEdge.Left);
     AssertEqual(new PixelRect(28, 972, 72, 1016), leftHandle, "左侧 Dock 默认把手应贴近左下工作区");
@@ -3586,46 +3617,36 @@ static void TestTransientPopupSmartHideRules()
 
 static void TestSystemSurfaceYieldAndEdgeInference()
 {
-    Assert(!DockVacateRules.ShouldYieldToSystemSurface(
-            SystemSurfaceKind.TaskbarPopup,
-            DockEdge.Bottom,
-            DockEdge.Right,
-            surfaceIntersectsDock: false),
-        "右侧任务栏打开托盘溢出浮窗且不与底部 Dock 相交时，底部 Dock 不应隐藏");
-    Assert(DockVacateRules.ShouldYieldToSystemSurface(
-            SystemSurfaceKind.TaskbarPopup,
-            DockEdge.Bottom,
-            DockEdge.Bottom,
-            surfaceIntersectsDock: false),
-        "同在底部的任务栏浮窗弹出时，底部 Dock 仍应让位");
-    Assert(DockVacateRules.ShouldYieldToSystemSurface(
-            SystemSurfaceKind.TaskbarPopup,
-            DockEdge.Bottom,
-            DockEdge.Right,
-            surfaceIntersectsDock: true),
-        "异边任务栏浮窗若几何上压到 Dock 时仍应让位");
-    Assert(DockVacateRules.ShouldYieldToSystemSurface(
-            SystemSurfaceKind.GlobalSystemMenu,
-            DockEdge.Bottom,
-            DockEdge.Right,
-            surfaceIntersectsDock: false),
-        "开始菜单或快速设置作为全局系统面板仍保持礼让");
-    Assert(!DockVacateRules.ShouldYieldToSystemSurface(
-            SystemSurfaceKind.Taskbar,
-            DockEdge.Bottom,
-            DockEdge.Bottom,
-            surfaceIntersectsDock: false,
-            isTaskbarCollapsed: true),
-        "已折叠成细边的自动隐藏任务栏被动获焦时不应隐藏底部 Dock");
-    Assert(DockVacateRules.ShouldYieldToSystemSurface(
-            SystemSurfaceKind.Taskbar,
-            DockEdge.Bottom,
-            DockEdge.Bottom,
-            surfaceIntersectsDock: false,
-            isTaskbarCollapsed: false),
-        "已展开的同边任务栏仍应让底部 Dock 让位");
-
     var monitor = new PixelRect(0, 0, 1920, 1080);
+    var dock = new PixelRect(650, 960, 1270, 1032);
+    var dockAtScreenEdge = dock with { Top = 992, Bottom = 1064 };
+    var taskbar = new PixelRect(0, 1032, 1920, 1080);
+    var collapsedTaskbar = new PixelRect(0, 1078, 1920, 1126);
+    var overflow = new PixelRect(1550, 880, 1850, 1032);
+    var sameScreenOverlap = overflow with { Left = 1200 };
+    var otherScreenPopup = new PixelRect(-450, 880, -150, 1032);
+
+    Assert(!DockVacateRules.ShouldYieldToSystemSurface(SystemSurfaceKind.Taskbar, taskbar, monitor, dock),
+        "获焦的同边任务栏与 Dock 并排时，Dock 保持显示");
+    Assert(!DockVacateRules.ShouldYieldToSystemSurface(SystemSurfaceKind.Taskbar, collapsedTaskbar, monitor, dockAtScreenEdge),
+        "自动隐藏任务栏只剩 2 像素时，获焦也不应收起 Dock");
+    Assert(DockVacateRules.ShouldYieldToSystemSurface(SystemSurfaceKind.Taskbar, taskbar, monitor, dockAtScreenEdge),
+        "原生任务栏滑入 Dock 区域时应获让位");
+    Assert(!DockVacateRules.ShouldYieldToSystemSurface(SystemSurfaceKind.TaskbarPopup, overflow, monitor, dock),
+        "同边的托盘弹窗在 Dock 旁边时应保持 Dock 显示");
+    Assert(!DockVacateRules.ShouldYieldToSystemSurface(SystemSurfaceKind.TaskbarPopup, otherScreenPopup, monitor, dock),
+        "左侧副屏的托盘弹窗不应收起主屏 Dock");
+    Assert(DockVacateRules.ShouldYieldToSystemSurface(SystemSurfaceKind.TaskbarPopup, sameScreenOverlap, monitor, dock),
+        "原生托盘弹窗实际遮挡 Dock 时应让位");
+    Assert(!DockVacateRules.ShouldYieldToSystemSurface(SystemSurfaceKind.TaskbarPopup, monitor, monitor, dock),
+        "全屏大小的托盘宿主矩形不能当作弹窗实际范围");
+    Assert(!DockVacateRules.ShouldYieldToSystemSurface(SystemSurfaceKind.TaskbarPopup, default, monitor, dock),
+        "未显示的托盘弹窗没有可见范围");
+    Assert(!DockVacateRules.ShouldYieldToSystemSurface(SystemSurfaceKind.None, monitor, monitor, dock),
+        "新取得前台的应用应按窗口遮挡规则评估");
+    Assert(DockVacateRules.ShouldYieldToSystemSurface(SystemSurfaceKind.GlobalSystemMenu, default, monitor, dock),
+        "开始菜单或快速设置继续触发系统面板让位");
+
     AssertEqual(
         DockEdge.Right,
         TaskbarLayoutRules.InferDockedEdge(new PixelRect(1856, 60, 1920, 1020), monitor),
@@ -3712,6 +3733,7 @@ static void TestDualWeChatAttentionAndReveal()
 {
     const string weixinExe = @"C:\Program Files\Tencent\Weixin\Weixin.exe";
     const string weixinVersionedExe = @"C:\Program Files\Tencent\Weixin\4.1.15\Weixin.exe";
+    const string weixinHelperExe = @"C:\Program Files\Tencent\Weixin\4.1.15\WeChatAppEx.exe";
     const string wechat3Exe = @"C:\Program Files\Tencent\WeChat\WeChat.exe";
 
     var firstWindow = Window(1001, 14600, "微信", null, weixinExe);
@@ -3772,6 +3794,21 @@ static void TestDualWeChatAttentionAndReveal()
     AssertEqual(0, helperAttention.AttentionPriority(secondWindow, instance2Pids), "清除后第二实例不再带提醒");
     AssertEqual(1, helperAttention.AttentionPriority(firstWindow, instance1Pids), "清除第二实例不得误清第一实例的提醒");
 
+    var separateHelper = new DockAttention();
+    separateHelper.Flashed(9204, 20633, 2, weixinHelperExe);
+    AssertEqual(20633u, separateHelper.EntriesFor(pinnedWithFirstOpen).Single().ProcessId,
+        "同安装目录下名称不同的微信辅助进程应保留其提醒 PID");
+    AssertEqual(20633u, separateHelper.EntriesFor(unpinnedWithFirstOpen).Single().ProcessId,
+        "未固定的微信也应关联辅助进程的提醒");
+    AssertEqual(weixinVersionedExe, TrayAppRevealRules.ResolveRevealExecutable(weixinHelperExe, weixinVersionedExe),
+        "点击辅助进程提醒时应使用对应实例的主程序");
+    AssertEqual(weixinVersionedExe, TrayAppRevealRules.ResolveRevealExecutable(wechat3Exe, weixinVersionedExe),
+        "点击不同安装版本的提醒时应优先使用消息所属实例的主程序");
+    var unrelatedHelper = new DockAttention();
+    unrelatedHelper.Flashed(9205, 30633, 1, @"D:\Other\WeChatAppEx.exe");
+    AssertEqual(0, unrelatedHelper.EntriesFor(unpinnedWithFirstOpen).Count,
+        "不同安装目录里同名的进程不应点亮此微信项");
+
     // 场景 4：跨版本/跨目录共享全局热键（WeChat 3.x + Weixin 4.x 均占用 Ctrl+Alt+W）。
     Assert(TrayAppRevealRules.SharesHotkey(wechat3Exe, weixinExe), "微信 3.x 与 4.x 共享全局唤回热键");
     Assert(!TrayAppRevealRules.SharesHotkey(weixinExe, @"D:\App\QQ\QQ.exe"), "不同热键应用不应视为共享");
@@ -3792,6 +3829,103 @@ static void TestDualWeChatAttentionAndReveal()
     var pwaAttention = new DockAttention();
     pwaAttention.Flashed(7001, 7777, 1, @"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe");
     Assert(!pwaAttention.Wants(pwaItem), "普通浏览器闪烁不得误匹配带独立 AUMID 的 PWA 固定项");
+}
+
+static void TestWeChatHelperProcessIdentity()
+{
+    const string main = @"C:\Program Files\Tencent\Weixin\4.1.15\Weixin.exe";
+    const string helper = @"C:\Program Files\Tencent\Weixin\4.1.15\WeChatAppEx.exe";
+    var parents = new Dictionary<uint, uint>
+    {
+        [500] = 4, [501] = 500, [502] = 500, [600] = 500, [601] = 600, [602] = 601
+    };
+    var identities = new Dictionary<uint, TrayProcessIdentity>
+    {
+        [500] = new(main, 100), [501] = new(main, 110), [502] = new(helper, 120),
+        [600] = new(main, 200), [601] = new(helper, 210), [602] = new(helper, 220)
+    };
+    TrayProcessIdentity? ReadIdentity(uint pid) => identities.TryGetValue(pid, out var identity) ? identity : null;
+
+    var secondAccount = TrayAppRevealRules.ResolveAppInstance(602, parents, ReadIdentity);
+    AssertEqual(main, secondAccount.RootExecutablePath, "微信辅助进程应追溯至最近的微信主程序");
+    Assert(secondAccount.ProcessIds.SetEquals([600u, 601u, 602u]), "最近主程序由另一个主程序拉起时应只选择第二个实例");
+    Assert(TrayAppRevealRules.IsSharedHotkeyOwnerAmbiguous([new(500, 0), new(600, 500)], secondAccount.ProcessIds),
+        "最近主程序与其祖先共享同一唤回热键时必须由用户选择");
+
+    var firstAccount = TrayAppRevealRules.ResolveAppInstance(502, parents, ReadIdentity);
+    Assert(firstAccount.ProcessIds.SetEquals([500u, 501u, 502u]), "首个实例的辅助提醒保留普通同名子进程，排除自己的辅助链足以标识的独立账号");
+    Assert(!TrayAppRevealRules.IsSharedHotkeyOwnerAmbiguous([new(500, 0), new(501, 500)], firstAccount.ProcessIds),
+        "单实例下存在同名子进程不会阻止已确认的主程序唤回");
+    Assert(TrayAppRevealRules.IsSharedHotkeyOwnerAmbiguous([new(500, 0), new(501, 500), new(600, 500)], firstAccount.ProcessIds),
+        "首个实例也不能用全局热键唤回另一个可能注册了热键的账号");
+    var singleAccount = TrayAppRevealRules.ResolveAppInstance(501,
+        new Dictionary<uint, uint> { [500] = 4, [501] = 500, [502] = 500 }, ReadIdentity);
+    Assert(singleAccount.ProcessIds.SetEquals([500u, 501u, 502u]), "同名子进程仍可按已验证的父子链归并");
+
+    identities[601] = new(helper, 300);
+    var staleParent = TrayAppRevealRules.ResolveAppInstance(602, parents, ReadIdentity);
+    Assert(staleParent.ProcessIds.SetEquals([602u]) && staleParent.RootExecutablePath == helper,
+        "创建时间晚于辅助进程的复用父 PID 不能用于选择账号");
+
+    var profileHelper = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+        "Tencent", "xwechat", "xplugin", "plugins", "RadiumWMPF", "WeChatAppEx.exe");
+    identities[601] = new(profileHelper, 210);
+    identities[602] = new(profileHelper, 220);
+    const string installedHelper = @"C:\Program Files\Tencent\Weixin\4.1.15\WeChatUtility.exe";
+    identities[603] = new(installedHelper, 230);
+    parents[603] = 600;
+    var externalHelper = TrayAppRevealRules.ResolveAppInstance(602, parents, ReadIdentity);
+    AssertEqual(main, externalHelper.RootExecutablePath, "位于用户插件目录的微信辅助进程应追溯到安装目录的微信主程序");
+    Assert(externalHelper.ProcessIds.SetEquals([600u, 601u, 602u, 603u]),
+        "共享插件首次向下遍历应按已核验的安装目录归并其它可执行程序");
+    var firstActivated = TrayAppRevealRules.ResolveAppInstance(500, parents, ReadIdentity);
+    Assert(!firstActivated.ProcessIds.Contains(602), "激活第一账号时不能清除第二账号的辅助进程提醒");
+
+    var secondBeforePluginStarts = new Dictionary<uint, uint> { [500] = 4, [501] = 500, [502] = 500, [600] = 500 };
+    var firstWithVisibleSecond = TrayAppRevealRules.ResolveAppInstance(502,
+        secondBeforePluginStarts, ReadIdentity, pid => pid == 600);
+    Assert(firstWithVisibleSecond.ProcessIds.SetEquals([500u, 501u, 502u]),
+        "第二个进程即便尚未启动辅助进程，其独立窗口也应将它与第一个实例分开");
+
+    var marked = new DockAttention();
+    var app = DockPinRules.CreateFromExecutable(main)!;
+    var item = new DockItem(DockPinRules.IdentityKey(app), "微信", app, null);
+    marked.Flashed(6002, 602, 2, profileHelper);
+    AssertEqual(0, marked.EntriesFor(item).Count, "解析父进程前，不能用共享插件路径猜测 Dock 项");
+    Assert(!marked.UpdateExecutablePath(6002, 501, main), "迟到的归属结果不能更改其他进程的提醒");
+    Assert(marked.UpdateExecutablePath(6002, 602, main), "解析父链后应把提醒关联到归属的应用");
+    var entry = marked.EntriesFor(item).Single();
+    AssertEqual(602u, entry.ProcessId, "更新应用路径后应保留原辅助进程 PID，用于账号定向激活");
+    AssertEqual(2, entry.Unread, "更新应用路径后应保留未读数");
+}
+
+static void TestRunningHotkeyCandidateSnapshot()
+{
+    const string main = @"C:\Apps\Weixin\Weixin.exe";
+    var readIdentities = new Dictionary<uint, TrayProcessIdentity?>
+    {
+        [51] = new(main, 100),
+        [52] = new(main, 110),
+        [53] = null
+    };
+    var stillRunning = new Dictionary<uint, uint> { [51] = 0, [52] = 51 };
+    var afterExit = TrayAppRevealRules.ConfirmRunningHierarchy(stillRunning, readIdentities);
+    AssertEqual(1, TrayAppRevealRules.CountRootInstances(afterExit), "已从完整快照消失的进程不应被当成第二个实例");
+    Assert(!TrayAppRevealRules.IsSharedHotkeyOwnerAmbiguous(afterExit, new HashSet<uint> { 51, 52 }),
+        "同账号子进程退出时应保留对单账号的热键唤回");
+
+    stillRunning[53] = 51;
+    var unreadableStillRunning = TrayAppRevealRules.ConfirmRunningHierarchy(stillRunning, readIdentities);
+    Assert(unreadableStillRunning.Any(entry => entry.ProcessId == 53 && !entry.IsIdentityVerified),
+        "仍在完整快照中但无法读取的进程应保留为未核验候选");
+    Assert(TrayAppRevealRules.IsSharedHotkeyOwnerAmbiguous(unreadableStillRunning, new HashSet<uint> { 51, 52, 53 }),
+        "无法读取进程身份时应保守拒绝共享热键");
+    Assert(TrayAppRevealRules.IsSharedHotkeyOwnerAmbiguous(unreadableStillRunning, new HashSet<uint>()),
+        "普通固定项点击也不能向未核验的进程发送共享热键");
+
+    var incompleteSnapshot = TrayAppRevealRules.ConfirmRunningHierarchy(null, readIdentities);
+    Assert(incompleteSnapshot.Any(entry => entry.ProcessId == 53 && !entry.IsIdentityVerified),
+        "快照失败时不能把无法读取的进程当作已退出");
 }
 
 static void TestDockQuitProcessTreeAndSafety()

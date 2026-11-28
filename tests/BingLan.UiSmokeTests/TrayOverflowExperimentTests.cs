@@ -1,17 +1,53 @@
 using BingLan.App.Taskbar;
 using BingLan.App;
 using BingLan.App.Tray;
+using BingLan.App.Services;
 using System.IO;
 using System.Reflection;
+using System.Runtime.InteropServices;
+using System.Windows.Threading;
 
 internal static class TrayOverflowExperimentTests
 {
+    internal static int ReadLiveSnapshot()
+    {
+        var snapshot = TrayReader.RefreshSnapshotAsync().WaitAsync(TrayReader.OperationTimeout).GetAwaiter().GetResult();
+        if (snapshot is null)
+        {
+            Console.Error.WriteLine("Tray snapshot unavailable.");
+            return 1;
+        }
+        var taskbar = snapshot.Where(entry => entry.Source == "taskbar").ToArray();
+        var msaa = taskbar.Count(entry => entry.Identity.RuntimeId.StartsWith("msaa.", StringComparison.Ordinal));
+        var clash = taskbar.FirstOrDefault(entry => TrayIconArtwork.IsClashVergeTooltip(entry.Name));
+        var weixin = taskbar.Any(entry => entry.Name.Trim().StartsWith("微信", StringComparison.Ordinal));
+        Console.WriteLine($"Taskbar={taskbar.Length}; Overflow={snapshot.Length - taskbar.Length}; "
+            + $"MSAA={msaa}; Clash={clash is not null}; ClashDirect={clash?.ActivationOwner is not null}; Weixin={weixin}");
+        return 0;
+    }
+
     internal static void Run(Action pump)
     {
+        ActionLifetime();
         Assert(TrayPanelWindow.IsFeishuMainWindow("飞书", "Chrome_WidgetWin_1"), "飞书主窗口应匹配实测标题和窗口类");
         Assert(!TrayPanelWindow.IsFeishuMainWindow("飞书会议", "Chrome_WidgetWin_1"), "独立会议窗口应保留 Explorer 默认动作");
         Assert(!TrayPanelWindow.IsFeishuMainWindow("文档 - 飞书", "Chrome_WidgetWin_1"), "文档窗口应保留 Explorer 默认动作");
         Assert(!TrayPanelWindow.IsFeishuMainWindow("飞书", "未知窗口类"), "未知窗口类应保留 Explorer 默认动作");
+        Assert(TrayIconArtwork.IsClashVergeTooltip("Clash Verge 2.5.10\n系统代理: 开启"), "Clash Verge 托盘提示应按首行确认版本");
+        Assert(!TrayIconArtwork.IsClashVergeTooltip("Clash Verge 2.5.100"), "未核验的 Clash Verge 构建应保留 Explorer 默认动作");
+        Assert(TrayPanelWindow.IsClashVergeMainWindow("Clash Verge", "Tauri Window"), "Clash Verge 应匹配已核验的主窗口");
+        Assert(!TrayPanelWindow.IsClashVergeMainWindow("Clash Verge", "tray_icon_app"), "托盘回调窗口不能当成主窗口");
+        foreach (var setting in new[] { "tray_event: null", "tray_event: main_window" })
+        {
+            using var config = new StringReader($"# Clash Verge Config\n{setting}\n");
+            Assert(TrayPanelWindow.ReadsClashVergeMainWindowAction(config), "主窗口设置应允许直接切换");
+        }
+        foreach (var setting in new[] { "tray_event: tray_menu", "tray_event: system_proxy", "tray_event: tun_mode",
+            "tray_event: disable", "tray_event: ~", "config:\n  tray_event: null", "", "tray_event: null\ntray_event: tray_menu" })
+        {
+            using var config = new StringReader(setting);
+            Assert(!TrayPanelWindow.ReadsClashVergeMainWindowAction(config), "自定义或未知点击行为应交给原生托盘");
+        }
 
         // Controlled pending work verifies the single-flight gates without issuing a native
         // toggle. Actual Explorer behavior is checked in the opt-in preview.
@@ -70,6 +106,93 @@ internal static class TrayOverflowExperimentTests
             if (directory.StartsWith(Path.GetFullPath(Path.GetTempPath()), StringComparison.OrdinalIgnoreCase)
                 && Directory.Exists(directory)) Directory.Delete(directory, true);
         }
+    }
+
+    internal static void ActionLifetime()
+    {
+        VerifyTaskbarCreatedDefersRegistration();
+        foreach (var error in new[] { 0x80004005u, 0x80070057u, 0x80004001u, 0x80070005u })
+        {
+            var exception = Marshal.GetExceptionForHR(unchecked((int)error));
+            Assert(exception is not null && TrayAccessibleIcons.IsRecoverableAccessibilityFailure(exception),
+                $"托盘辅助功能提供程序错误 0x{error:X8} 应安静降级");
+        }
+        Assert(!TrayAccessibleIcons.IsRecoverableAccessibilityFailure(new OperationCanceledException()),
+            "取消仍应按操作取消路径处理");
+        Task.Run(() => AssertActionRetainsWaitHandleAsync(cancel: true)).GetAwaiter().GetResult();
+        Task.Run(() => AssertActionRetainsWaitHandleAsync(cancel: false)).GetAwaiter().GetResult();
+    }
+
+    private static void VerifyTaskbarCreatedDefersRegistration()
+    {
+        var dispatcher = Dispatcher.CurrentDispatcher;
+        var calls = 0;
+        var pending = TrayIconHost.QueueTaskbarRestore(dispatcher, null, () => calls++);
+        var duplicate = TrayIconHost.QueueTaskbarRestore(dispatcher, pending, () => calls++);
+        Assert(calls == 0 && pending.Status == DispatcherOperationStatus.Pending && ReferenceEquals(pending, duplicate),
+            "TaskbarCreated 回调应先返回，同轮广播只排一次托盘恢复");
+        dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+        Assert(calls == 1, "调度器继续处理消息后应执行一次托盘恢复");
+
+        var canceled = TrayIconHost.QueueTaskbarRestore(dispatcher, pending, () => calls++);
+        Assert(!ReferenceEquals(canceled, pending) && canceled.Abort(), "已完成的恢复不应阻止后续恢复，待执行的恢复可取消");
+        dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+        Assert(calls == 1, "取消之后不能再次进入托盘恢复");
+    }
+
+    private static async Task AssertActionRetainsWaitHandleAsync(bool cancel)
+    {
+        using var cancellation = new CancellationTokenSource();
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var checkedHandle = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var testTimeout = TimeSpan.FromSeconds(5);
+        var wait = TrayReader.RunActionAsync(async token =>
+        {
+            started.SetResult();
+            await release.Task.WaitAsync(testTimeout);
+            try
+            {
+                var handle = token.WaitHandle;
+                checkedHandle.SetResult(!handle.SafeWaitHandle.IsClosed && handle.WaitOne(0));
+            }
+            catch (Exception exception)
+            {
+                checkedHandle.SetException(exception);
+            }
+            return "invoked";
+        }, cancellation.Token, cancel ? testTimeout : TimeSpan.FromMilliseconds(150));
+
+        try
+        {
+            await started.Task.WaitAsync(testTimeout);
+            if (cancel) cancellation.Cancel();
+            try
+            {
+                await wait;
+                throw new InvalidOperationException("关闭面板或超时应结束外层等待");
+            }
+            catch (OperationCanceledException) { }
+
+            var busy = await TrayReader.RunActionAsync(_ => Task.FromResult("unexpected-action"),
+                CancellationToken.None, testTimeout);
+            Assert(busy == "action-in-progress", "后台托盘操作结束前应拒绝新动作");
+        }
+        finally
+        {
+            release.TrySetResult();
+        }
+
+        Assert(await checkedHandle.Task.WaitAsync(testTimeout), "外层等待结束后，后台操作仍应能读取已触发的取消句柄");
+        var deadline = Environment.TickCount64 + (long)testTimeout.TotalMilliseconds;
+        while (Environment.TickCount64 < deadline)
+        {
+            var next = await TrayReader.RunActionAsync(_ => Task.FromResult("invoked"),
+                CancellationToken.None, testTimeout);
+            if (next == "invoked") return;
+            await Task.Delay(10);
+        }
+        throw new InvalidOperationException("后台托盘操作结束后应允许下一次动作");
     }
 
     private static void Assert(bool condition, string message)

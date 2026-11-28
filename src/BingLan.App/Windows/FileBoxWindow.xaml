@@ -583,6 +583,12 @@
                 <Canvas x:Name="FileBoxMotionOverlay"
                         ClipToBounds="True"
                         IsHitTestVisible="False"/>
+                <Canvas x:Name="FileReorderOverlay" ClipToBounds="True" IsHitTestVisible="False">
+                    <Border x:Name="FileReorderIndicator"
+                            Background="{DynamicResource CardFocusBorderBrush}"
+                            CornerRadius="1"
+                            Visibility="Collapsed"/>
+                </Canvas>
             </Grid>
 
             <Grid Grid.Row="1" Margin="17,0,17,7">

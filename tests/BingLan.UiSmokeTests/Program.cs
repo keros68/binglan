@@ -96,6 +96,23 @@ internal static class Program
     [STAThread]
     private static int Main()
     {
+        if (Environment.GetCommandLineArgs().Contains("--tray-read-probe"))
+            return TrayOverflowExperimentTests.ReadLiveSnapshot();
+
+        if (Environment.GetCommandLineArgs().Contains("--tray-action-tests"))
+        {
+            TrayOverflowExperimentTests.ActionLifetime();
+            Console.WriteLine("通过：托盘操作取消、超时和句柄生命周期");
+            return 0;
+        }
+
+        if (Environment.GetCommandLineArgs().Contains("--windows-index-search-tests"))
+        {
+            TopBarWindowTests.WindowsIndexQueryRules();
+            Console.WriteLine("通过：Windows 索引查询规则、取消与超时");
+            return 0;
+        }
+
         if (Environment.GetCommandLineArgs().Contains("--dock-picker-icon-tests"))
         {
             DockFileSystemTests.PickerPrefersShortcutIcon();
@@ -107,6 +124,13 @@ internal static class Program
         // synchronization context to resume on this thread; the harness drives the message
         // loop manually via Pump() instead of Application.Run(), so it must be installed here.
         SynchronizationContext.SetSynchronizationContext(new DispatcherSynchronizationContext());
+
+        if (Environment.GetCommandLineArgs().Contains("--taskbar-notification-tests"))
+        {
+            TestRepeatedTaskbarCreatedDoesNotReconnectXaml();
+            Console.WriteLine("通过：任务栏创建广播先返回、后台探测与同一 Explorer 合并通知");
+            return 0;
+        }
 
         if (Environment.GetCommandLineArgs().Contains("--dock-background-tests"))
         {
@@ -309,7 +333,7 @@ internal static class Program
         Run("周历跨月不断行，每月 1 日标出月份", TestTodoWeekRowsStayContinuous, failures);
         Run("贴屏卡片切周历后完整留在工作区", TestTodoViewSwitchStaysInWorkArea, failures);
         Run("单实例门禁占用与释放", TestSingleInstanceGate, failures);
-        Run("托盘双击打开并恢复设置窗口", TestTrayDoubleClick, failures);
+        Run("冰蓝托盘通知打开并恢复同一设置窗口", TestTrayActivation, failures);
         Run("缺失本机标题字体安全回退", TestUnavailableTitleFontFallback, failures);
         Run("桌面模式同时设置 Dock 与任务栏", TestDesktopModeSelection, failures);
         Run("Dock 距底高度与最大化让出设置即时生效", TestDockPlacementSettings, failures);
@@ -2965,12 +2989,33 @@ internal static class Program
     private static void TestRepeatedTaskbarCreatedDoesNotReconnectXaml()
     {
         const uint explorer = 1234;
+        var dispatcherThread = Environment.CurrentManagedThreadId;
+        var probeThread = 0;
+        var probeCount = 0;
+        var taskbarIdentityReads = 0;
+        var notifications = 0;
+        using var probeEntered = new ManualResetEventSlim();
+        using var allowProbe = new ManualResetEventSlim();
         using var session = new TaskbarXamlSession(Path.GetTempPath());
         using var adapter = new TaskbarAdapter(
             Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "taskbar-recovery.json"),
             ops: new TaskbarPlatformOps
             {
-                ReadTaskbarIdentity = () => (1, explorer),
+                IsTaskbarResponsive = () =>
+                {
+                    probeThread = Environment.CurrentManagedThreadId;
+                    if (Interlocked.Increment(ref probeCount) == 1)
+                    {
+                        return false;
+                    }
+                    probeEntered.Set();
+                    return allowProbe.Wait(TimeSpan.FromSeconds(3));
+                },
+                ReadTaskbarIdentity = () =>
+                {
+                    taskbarIdentityReads++;
+                    return (1, explorer);
+                },
                 ReadEnvironment = _ => new BingLan.Core.Taskbar.TaskbarEnvironment(26200, true, false, false, null)
             });
 
@@ -2984,11 +3029,29 @@ internal static class Program
         var watchTaskbar = type.GetMethod("WatchTaskbar", instanceMembers)!;
         var requestVersion = type.GetField("_requestVersion", instanceMembers)!;
         var version = requestVersion.GetValue(adapter);
+        adapter.ExplorerRestarted += () => notifications++;
         for (var i = 0; i < 2; i++)
             watchTaskbar.Invoke(adapter, [nint.Zero, (int)taskbarCreated, nint.Zero, nint.Zero, false]);
 
-        Assert(Equals(requestVersion.GetValue(adapter), version) && adapter.ActiveMode == TaskbarMode.Transparent,
-            "同一 Explorer 重发 TaskbarCreated 时必须继续用当前会话");
+        try
+        {
+            Assert(!probeEntered.IsSet && notifications == 0 && taskbarIdentityReads == 0,
+                "任务栏创建回调返回前不得调用探测、查询任务栏或通知订阅者");
+            PumpUntil(() => probeEntered.IsSet, "Shell 活性探测应在回调返回后启动");
+            Assert(probeThread != dispatcherThread, "Shell 活性探测不得占用 WPF 线程");
+            Assert(probeCount == 2 && notifications == 0 && taskbarIdentityReads == 0,
+                "第一次探测失败时应继续后台等待，探测成功前不得触及 Shell 订阅者和状态");
+
+            allowProbe.Set();
+            PumpUntil(() => notifications == 1 && taskbarIdentityReads == 1,
+                "同一批 Shell 广播应合并为一次恢复通知和一次身份读取");
+            Assert(Equals(requestVersion.GetValue(adapter), version) && adapter.ActiveMode == TaskbarMode.Transparent,
+                "同一 Explorer 重发 TaskbarCreated 时必须继续用当前会话");
+        }
+        finally
+        {
+            allowProbe.Set();
+        }
     }
 
     private static void TestTaskbarRevealEdgeGuard()
@@ -3635,7 +3698,7 @@ internal static class Program
         var watcher = new FileMappingWatchService(
             () => Task.FromResult(window.RemoveGoneMappings(
                 FileMappingService.CollectGonePaths(state.Items.Select(item => (item.Id, item.Path))))),
-            () => Task.CompletedTask);
+            _ => Task.FromResult<IReadOnlySet<string>>(System.Collections.Frozen.FrozenSet<string>.Empty));
         watcher.UpdateWatchedDirectories(
             FileMappingService.CollectExistingParentDirectories(state.Items.Select(item => item.Path)));
         try
@@ -3845,29 +3908,127 @@ internal static class Program
         var otherDir = Path.Combine(temp, "其他目录");
         Directory.CreateDirectory(importDir);
         Directory.CreateDirectory(otherDir);
-        var importRequested = 0;
+        var oldFile = Path.Combine(importDir, "已在桌面的旧文件.txt");
+        File.WriteAllText(oldFile, "x");
+        File.SetAttributes(oldFile, FileAttributes.Hidden);
+        var collector = new FileBoxState { CollectExtensions = [".txt", ".part"] };
+        FileBoxState[] boxes = [collector];
+        var imported = new List<string>();
         var watcher = new FileMappingWatchService(
             () => Task.CompletedTask,
-            () =>
+            paths =>
             {
-                importRequested++;
-                return Task.CompletedTask;
+                imported.AddRange(paths);
+                var prepared = FileMappingService.PrepareAutomaticDesktopEntries(paths);
+                var distribution = FileMappingService.DistributePreparedAutomatically(prepared, boxes, boxes);
+                if (distribution.ByBox.TryGetValue(collector.Id, out var candidates))
+                {
+                    FileMappingService.AddPrepared(collector, candidates, explicitImport: false);
+                }
+                return Task.FromResult(prepared.TemporarilyHiddenPaths);
             });
-        watcher.UpdateWatchedDirectories([importDir, otherDir]);
+        watcher.UpdateWatchedDirectories([otherDir]);
         watcher.UpdateImportDirectories([importDir]);
         try
         {
-            File.WriteAllText(Path.Combine(otherDir, "普通.txt"), "x");
-            var deadline = DateTime.UtcNow.AddSeconds(2);
-            while (DateTime.UtcNow < deadline)
+            var partialFile = Path.Combine(importDir, "下载中.part");
+            var watchHandles = typeof(FileMappingWatchService).GetField("_watchers",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+            var desktopWatcher = ((Dictionary<string, FileSystemWatcher>)watchHandles!.GetValue(watcher)!)[importDir];
+            var snapshotField = typeof(FileMappingWatchService).GetField("_importDirectories",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+            var desktopSnapshot = ((System.Collections.IDictionary)snapshotField!.GetValue(watcher)!)[importDir]!;
+            var knownEntries = desktopSnapshot.GetType().GetProperty("Entries")!;
+            PumpUntil(() => knownEntries.GetValue(desktopSnapshot) is HashSet<string> entries && entries.Contains(oldFile),
+                "桌面已有路径应先作为溢出恢复的基线");
+            void CreateWithQueuedNotification(string path)
             {
-                Pump();
-                Thread.Sleep(10);
+                var created = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                FileSystemEventHandler onCreated = (_, e) =>
+                {
+                    if (e.FullPath == path)
+                    {
+                        created.TrySetResult();
+                    }
+                };
+                desktopWatcher.Created += onCreated;
+                try
+                {
+                    File.WriteAllText(path, "x");
+                    Assert(created.Task.Wait(TimeSpan.FromSeconds(5)), "桌面监视器应将新增路径排到 Dispatcher");
+                }
+                finally
+                {
+                    desktopWatcher.Created -= onCreated;
+                }
             }
-            Assert(importRequested == 0, "非桌面目录的新文件不应触发自动收纳");
 
-            File.WriteAllText(Path.Combine(importDir, "新桌面文件.txt"), "x");
-            PumpUntil(() => importRequested > 0, "桌面目录的新文件没有触发自动收纳");
+            CreateWithQueuedNotification(partialFile);
+            watcher.UpdateImportDirectories([importDir.ToUpperInvariant(), importDir]);
+            File.WriteAllText(Path.Combine(otherDir, "普通.txt"), "x");
+            PumpUntil(() => imported.Count > 0, "相同目录重新设置应保留已排队的通知");
+            Assert(imported.SequenceEqual([partialFile]) && collector.Items.Count == 0,
+                "忽略非桌面目录的事件，并且不要收纳桌面的部分下载或历史文件");
+
+            var finalFile = Path.Combine(importDir, "下载完成.txt");
+            var newFile = Path.Combine(importDir, "新桌面文件.txt");
+            File.Move(partialFile, finalFile);
+            File.WriteAllText(newFile, "x");
+            PumpUntil(() => collector.Items.Count == 2, "桌面新建和改名完成的项目都应自动收纳");
+            Assert(collector.Items.Select(item => item.Path).ToHashSet(StringComparer.OrdinalIgnoreCase)
+                    .SetEquals([finalFile, newFile]),
+                "新增事件只收纳实际新增和改名的桌面文件，保留原有分类");
+
+            var missedFile = Path.Combine(importDir, "溢出期间新增.txt");
+            desktopWatcher.EnableRaisingEvents = false;
+            File.WriteAllText(missedFile, "x");
+            desktopWatcher.EnableRaisingEvents = true;
+            var reportError = typeof(FileSystemWatcher).GetMethod("OnError",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+            reportError.Invoke(desktopWatcher, [new ErrorEventArgs(new InternalBufferOverflowException())]);
+            PumpUntil(() => collector.Items.Any(item => item.Path == missedFile), "应补收溢出期间遗漏的新增路径");
+            Assert(!imported.Contains(oldFile) && imported.Count(path => path == missedFile) == 1
+                && collector.Items.Count == 3,
+                "溢出恢复只导入基线之后缺失的通知，已有桌面文件继续留在盒外");
+
+            var retryFile = Path.Combine(importDir, "复扫找回.txt");
+            desktopWatcher.EnableRaisingEvents = false;
+            File.WriteAllText(retryFile, "x");
+            desktopWatcher.EnableRaisingEvents = true;
+            var completeScan = typeof(FileMappingWatchService).GetMethod("CompleteDesktopScan",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+            desktopSnapshot.GetType().GetProperty("ScanAgain")!.SetValue(desktopSnapshot, true);
+            completeScan.Invoke(watcher, [importDir, desktopSnapshot, new Dictionary<string, bool>(), null]);
+            PumpUntil(() => collector.Items.Any(item => item.Path == retryFile), "一次读取失败后，已请求的复扫仍应补回新增路径");
+            Assert(!imported.Contains(oldFile), "复扫应继续使用最近一次成功的基线");
+
+            watcher.UpdateWatchedDirectories([otherDir, importDir]);
+            var oldEvent = Path.Combine(importDir, "关闭开关前排队.txt");
+            CreateWithQueuedNotification(oldEvent);
+            watcher.UpdateImportDirectories([]);
+            watcher.UpdateImportDirectories([importDir]);
+            var currentEvent = Path.Combine(importDir, "重新开启后新增.txt");
+            File.WriteAllText(currentEvent, "x");
+            PumpUntil(() => collector.Items.Any(item => item.Path == currentEvent), "重新开启后应继续收纳新增项目");
+            Assert(!imported.Contains(oldEvent), "关闭后重新开启时，旧一轮排队事件应失效");
+
+            var hiddenFile = Path.Combine(importDir, "新建时隐藏.txt");
+            File.WriteAllText(hiddenFile, "x");
+            File.SetAttributes(hiddenFile, FileAttributes.Hidden);
+            PumpUntil(() => imported.Contains(hiddenFile), "新建的隐藏项应经过一次检查");
+            Assert(collector.Items.All(item => item.Path != hiddenFile), "隐藏项应留在盒外，直到变为可见");
+
+            var manual = collector.Items.Single(item => item.Path == currentEvent);
+            FileMappingService.Remove(collector, manual.Id);
+            var currentEventChecks = imported.Count(path => path == currentEvent);
+            File.SetAttributes(currentEvent, FileAttributes.Hidden);
+            File.SetAttributes(currentEvent, FileAttributes.Normal);
+            File.SetAttributes(oldFile, FileAttributes.Normal);
+            File.SetAttributes(hiddenFile, FileAttributes.Normal);
+            PumpUntil(() => collector.Items.Any(item => item.Path == hiddenFile), "本轮新建的隐藏项变为可见时应自动收纳");
+            Assert(!imported.Contains(oldFile) && imported.Count(path => path == currentEvent) == currentEventChecks
+                && collector.Items.All(item => item.Path != currentEvent),
+                "历史隐藏项和已手动移除的映射不能因属性变化重新收纳");
         }
         finally
         {
@@ -4354,33 +4515,54 @@ internal static class Program
         method.Invoke(window, [menu, new RoutedEventArgs()]);
     }
 
-    private static void TestTrayDoubleClick()
+    private static void TestTrayActivation()
     {
+        const int trayCallback = 0x0400 + 2048;
+        const int leftButtonUp = 0x0202;
+        const int leftButtonDoubleClick = 0x0203;
+        const int keyboardSelect = 0x0401;
+        const int iconId = 1;
+        const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance |
+            System.Reflection.BindingFlags.NonPublic;
         var temp = Path.Combine(Path.GetTempPath(), $"BingLan-tray-{Guid.NewGuid():N}");
         Directory.CreateDirectory(temp);
         var coordinator = new WidgetCoordinator(interactiveQa: true, dataDirectory: temp);
         try
         {
             var trayIcon = typeof(WidgetCoordinator)
-                .GetField("_trayIcon", System.Reflection.BindingFlags.Instance |
-                    System.Reflection.BindingFlags.NonPublic)
-                ?.GetValue(coordinator) as BingLan.App.Services.TrayIconHost ??
+                .GetField("_trayIcon", flags)?.GetValue(coordinator) as BingLan.App.Services.TrayIconHost ??
                 throw new InvalidOperationException("托盘图标没有创建");
+            var handle = (nint)typeof(BingLan.App.Services.TrayIconHost).GetField("_window", flags)!.GetValue(trayIcon)!;
+            Assert(handle != 0, "托盘图标未注册回调窗口");
 
-            trayIcon.InvokeDoubleClick();
+            SendMessage(handle, trayCallback, iconId + 1, leftButtonUp);
+            Pump();
+            Assert(!Application.Current.Windows.OfType<SettingsWindow>().Any(window => window.IsVisible),
+                "其他图标 ID 的通知不应打开冰蓝桌面设置");
+
+            SendMessage(handle, trayCallback, iconId, leftButtonUp);
             Pump();
             var settings = Application.Current.Windows
                 .OfType<SettingsWindow>()
                 .SingleOrDefault(window => window.IsVisible) ??
-                throw new InvalidOperationException("托盘双击没有打开冰蓝桌面设置");
+                throw new InvalidOperationException("托盘单击没有打开冰蓝桌面设置");
 
-            settings.WindowState = WindowState.Minimized;
+            foreach (var activation in new[] { leftButtonDoubleClick, keyboardSelect })
+            {
+                settings.WindowState = WindowState.Minimized;
+                Pump();
+                SendMessage(handle, trayCallback, iconId, activation);
+                Pump();
+                Assert(settings.IsVisible && settings.WindowState == WindowState.Normal,
+                    "托盘双击或键盘激活没有恢复已最小化的设置窗口");
+            }
+
+            SendMessage(handle, trayCallback, iconId, leftButtonUp);
+            SendMessage(handle, trayCallback, iconId, leftButtonDoubleClick);
+            SendMessage(handle, trayCallback, iconId, leftButtonUp);
             Pump();
-            trayIcon.InvokeDoubleClick();
-            Pump();
-            Assert(
-                settings.IsVisible && settings.WindowState == WindowState.Normal,
-                "托盘双击没有恢复已最小化的设置窗口");
+            Assert(Application.Current.Windows.OfType<SettingsWindow>().Single(window => window.IsVisible) == settings,
+                "连续的托盘激活通知应复用同一个设置窗口");
 
             Assert(Require<FrameworkElement>(settings, "SchemePage").IsVisible, "打开设置默认显示桌面方案页");
             settings.ShowSettingsPage("Launcher");

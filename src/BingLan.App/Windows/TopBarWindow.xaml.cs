@@ -4294,6 +4294,13 @@ public sealed partial class TopBarWindow : Window
         {
             var autoHide = _autoHide;
             ApplyState();
+            // Applying the new shell layout can close this bar when its monitor disconnected.
+            if (_closing || _appBar?.Monitor is not { } currentMonitor)
+            {
+                return;
+            }
+            monitor = currentMonitor;
+            liveTaskbar = _nativeTaskbar;
             _autoHide = autoHide;
         }
 
@@ -4412,6 +4419,7 @@ public sealed partial class TopBarWindow : Window
             return;
         }
 
+        _appBar.SetFullScreenDetected(false);
         _foregroundTimer.Interval = trueFullScreen
             ? FullScreenCheckInterval
             : SmartHideCheckInterval;
@@ -4422,9 +4430,9 @@ public sealed partial class TopBarWindow : Window
         var backingZoomed = hasBacking && backing.IsZoomed && backing.MonitorHandle == monitor.MonitorHandle;
         var (overlaps, effectiveZoomed) = DockVacateRules.ResolveEffectiveSmartHideOverlap(
             directOverlaps,
-            zoomed,
+            directOverlaps && zoomed,
             backingOverlaps,
-            backingZoomed);
+            backingOverlaps && backingZoomed);
         PixelRect monitorCoveringBounds = default;
         if (!(overlaps && effectiveZoomed)
             && TransientForegroundResolver.TryFindCoveringWindowOnMonitor(
@@ -4433,7 +4441,8 @@ public sealed partial class TopBarWindow : Window
                 _handle,
                 out var monitorOverlaps,
                 out var monitorMaximized,
-                out monitorCoveringBounds))
+                out monitorCoveringBounds,
+                requireBarIntersection: true))
         {
             overlaps |= monitorOverlaps;
             effectiveZoomed |= monitorMaximized;
@@ -4457,8 +4466,7 @@ public sealed partial class TopBarWindow : Window
             cursor.X,
             cursor.Y,
             IsVisible,
-            bounds,
-            excludedCaptionSpan);
+            bounds);
         var inRawRevealZone = TopBarRevealRules.IsInRevealZone(
             cursor.X,
             cursor.Y,
@@ -4470,21 +4478,22 @@ public sealed partial class TopBarWindow : Window
         var leftButtonDown = TopBarNativeMethods.IsKeyCurrentlyDown(TopBarNativeMethods.LeftMouseButton);
         var pointerInRevealZone = TopBarRevealRules.ShouldTriggerRevealAfterDwell(
             inRawRevealZone,
-            overlaps || effectiveZoomed,
+            overlaps,
             IsVisible,
             ref _revealZoneEnteredTick,
             leftButtonDown,
             nowTick);
         var input = new DockAutoHideInput(
             // Keep a hidden bar out of the way if the dragged window moves off the top strip.
-            WindowOverlapsDock: overlaps || effectiveZoomed || (leftButtonDown && !IsVisible),
+            WindowOverlapsDock: overlaps || (leftButtonDown && !IsVisible),
             ForegroundIsFullScreen: trueFullScreen || taskbarOverlaps,
             PointerInRevealZone: pointerInRevealZone,
             PointerOverDock: pointerOverBar,
-            InteractionActive: _menuOpen || _capsuleExpanded || HasAnyOpenFlyout || _searchPopup is not null,
+            InteractionActive: IsMouseCaptureWithin || _menuOpen || _capsuleExpanded
+                || HasAnyOpenFlyout || _searchPopup is not null,
             OverlapIsMaximizedWindow: effectiveZoomed);
         _autoHide.Update(input, DateTimeOffset.UtcNow);
-        var overlappingWhileShown = (overlaps || effectiveZoomed) && _autoHide.IsShown;
+        var overlappingWhileShown = overlaps && _autoHide.IsShown;
         var overlapStateChanged = overlappingWhileShown != _smartHideOverlappingWindow;
         var visibilityChanged = _autoHide.IsShown != IsVisible;
         if (overlapStateChanged)

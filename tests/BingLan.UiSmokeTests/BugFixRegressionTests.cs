@@ -272,7 +272,7 @@ internal static class BugFixRegressionTests
                 Interlocked.Increment(ref sweepCount);
                 return Task.CompletedTask;
             },
-            static () => Task.CompletedTask);
+            static _ => Task.FromResult<IReadOnlySet<string>>(System.Collections.Frozen.FrozenSet<string>.Empty));
         try
         {
             // Place missing directory BEFORE valid directory: missing directory must NOT abort

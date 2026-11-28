@@ -6,7 +6,9 @@ namespace BingLan.Core.Dock;
 public sealed record TrayRevealHotkey(uint Modifiers, int VirtualKey);
 
 /// <summary>Process/parent pair used to count independent top-level app instances.</summary>
-public readonly record struct ProcessHierarchyEntry(uint ProcessId, uint ParentProcessId);
+public readonly record struct ProcessHierarchyEntry(uint ProcessId, uint ParentProcessId, bool IsIdentityVerified = true);
+
+public readonly record struct TrayProcessIdentity(string ExecutablePath, long CreationTime);
 
 /// <summary>Decision for how a tray-resident hotkey app should be revealed when no visible window is found.</summary>
 public enum TrayRevealAction
@@ -14,7 +16,9 @@ public enum TrayRevealAction
     LaunchNewProcess,
     SendGlobalHotkey,
     NotifyMultiInstanceInTray,
-    NotifyHotkeyUnavailable
+    NotifyHotkeyUnavailable,
+    NotifyTargetUnavailable,
+    NotifyTrayInstanceChoiceRequired
 }
 
 /// <summary>
@@ -71,6 +75,165 @@ public static class TrayAppRevealRules
     public static bool SharesHotkey(string? firstExecutablePath, string? secondExecutablePath) =>
         HotkeyFor(firstExecutablePath) is { } first
         && Equals(first, HotkeyFor(secondExecutablePath));
+
+    /// <summary>Uses the alert instance's main executable to reveal an account from its tray.</summary>
+    public static string? ResolveRevealExecutable(string? pinnedExecutable, string? instanceRootExecutable) =>
+        PreventsRelaunchWhenRunning(instanceRootExecutable) ? instanceRootExecutable : pinnedExecutable;
+
+    public static bool IsWeChatHelperExecutable(string? executablePath) =>
+        string.Equals(Path.GetFileName(executablePath), "WeChatAppEx.exe", StringComparison.OrdinalIgnoreCase);
+
+    public static bool IsWeChatProfileHelper(string? executablePath)
+    {
+        if (!IsWeChatHelperExecutable(executablePath))
+        {
+            return false;
+        }
+
+        var roaming = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+        return roaming.Length != 0 && WindowGrouping.NormalizeExecutablePath(executablePath!).StartsWith(
+            Path.Combine(roaming, "Tencent", "xwechat", "xplugin", "plugins", "RadiumWMPF") + Path.DirectorySeparatorChar,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    internal static bool MatchesWeChatHelper(string executablePath, string candidatePath) =>
+        HotkeyFor(executablePath) == WeChat
+        && IsWeChatHelperExecutable(candidatePath)
+        && DockQuitRules.ResolveDedicatedAppRoot(executablePath) is { } appRoot
+        && string.Equals(appRoot, DockQuitRules.ResolveDedicatedAppRoot(candidatePath), StringComparison.OrdinalIgnoreCase);
+
+    public static (HashSet<uint> ProcessIds, string? RootExecutablePath) ResolveAppInstance(
+        uint processId,
+        IReadOnlyDictionary<uint, uint> parentByPid,
+        Func<uint, TrayProcessIdentity?> readIdentity,
+        Func<uint, bool>? hasIndependentWindow = null)
+    {
+        if (processId == 0 || readIdentity(processId) is not { } seed)
+        {
+            return ([], null);
+        }
+
+        if (DockQuitRules.IsProtectedExecutable(seed.ExecutablePath)
+            || DockQuitRules.IsGenericShellExecutable(seed.ExecutablePath))
+        {
+            return ([processId], seed.ExecutablePath);
+        }
+
+        var seedDirectory = DockQuitRules.ResolveDedicatedAppRoot(seed.ExecutablePath);
+        var isWeChatHelper = IsWeChatHelperExecutable(seed.ExecutablePath);
+        var isWeChatMain = HotkeyFor(seed.ExecutablePath) == WeChat;
+        var identities = new Dictionary<uint, TrayProcessIdentity?> { [processId] = seed };
+        TrayProcessIdentity? ReadSameApp(uint pid, string reference, string? appRoot)
+        {
+            if (pid <= 4)
+            {
+                return null;
+            }
+            if (!identities.TryGetValue(pid, out var identity))
+            {
+                identity = readIdentity(pid);
+                identities[pid] = identity;
+            }
+            if (identity is not { } candidate
+                || DockQuitRules.IsProtectedExecutable(candidate.ExecutablePath)
+                || DockQuitRules.IsGenericShellExecutable(candidate.ExecutablePath))
+            {
+                return null;
+            }
+            return DockQuitRules.MatchesExecutableOrVersionSibling(reference, candidate.ExecutablePath)
+                || (IsWeChatProfileHelper(reference) && HotkeyFor(candidate.ExecutablePath) == WeChat)
+                || (HotkeyFor(reference) == WeChat && IsWeChatProfileHelper(candidate.ExecutablePath))
+                || (appRoot is not null && string.Equals(appRoot,
+                    DockQuitRules.ResolveDedicatedAppRoot(candidate.ExecutablePath), StringComparison.OrdinalIgnoreCase))
+                ? candidate
+                : null;
+        }
+
+        var children = parentByPid.ToLookup(pair => pair.Value, pair => pair.Key);
+        bool IsSeparateWeChatProcess(uint pid, TrayProcessIdentity identity)
+        {
+            if (HotkeyFor(identity.ExecutablePath) != WeChat)
+            {
+                return false;
+            }
+            if (hasIndependentWindow?.Invoke(pid) == true)
+            {
+                return true;
+            }
+            var directory = DockQuitRules.ResolveDedicatedAppRoot(identity.ExecutablePath);
+            return children[pid].Any(childPid => ReadSameApp(childPid, identity.ExecutablePath, directory) is { } child
+                && IsWeChatHelperExecutable(child.ExecutablePath)
+                && child.CreationTime >= identity.CreationTime);
+        }
+
+        var rootPid = processId;
+        var root = seed;
+        var visited = new HashSet<uint> { processId };
+        while ((!isWeChatHelper || HotkeyFor(root.ExecutablePath) != WeChat)
+            && (!isWeChatMain || !IsSeparateWeChatProcess(rootPid, root))
+            && parentByPid.TryGetValue(rootPid, out var parentPid)
+            && visited.Add(parentPid)
+            && ReadSameApp(parentPid, seed.ExecutablePath, seedDirectory) is { } parent
+            && parent.CreationTime <= root.CreationTime)
+        {
+            rootPid = parentPid;
+            root = parent;
+        }
+
+        if (isWeChatHelper && HotkeyFor(root.ExecutablePath) != WeChat)
+        {
+            return ([processId], seed.ExecutablePath);
+        }
+
+        var rootDirectory = DockQuitRules.ResolveDedicatedAppRoot(root.ExecutablePath);
+        var instancePids = new HashSet<uint> { rootPid };
+        var pending = new Queue<(uint Pid, TrayProcessIdentity Identity)>();
+        pending.Enqueue((rootPid, root));
+        while (pending.TryDequeue(out var ancestor))
+        {
+            foreach (var childPid in children[ancestor.Pid])
+            {
+                if (!instancePids.Contains(childPid)
+                    && ReadSameApp(childPid, root.ExecutablePath, rootDirectory) is { } child
+                    && child.CreationTime >= ancestor.Identity.CreationTime
+                    && (!(isWeChatHelper || isWeChatMain) || !IsSeparateWeChatProcess(childPid, child)))
+                {
+                    instancePids.Add(childPid);
+                    pending.Enqueue((childPid, child));
+                }
+            }
+        }
+
+        return (instancePids, root.ExecutablePath);
+    }
+
+    public static bool IsSharedHotkeyOwnerAmbiguous(
+        IReadOnlyList<ProcessHierarchyEntry> hotkeyProcesses, IReadOnlySet<uint> targetInstance)
+    {
+        return hotkeyProcesses.Any(entry => !entry.IsIdentityVerified
+            || (targetInstance.Count > 0 && !targetInstance.Contains(entry.ProcessId)));
+    }
+
+    public static List<ProcessHierarchyEntry> ConfirmRunningHierarchy(
+        IReadOnlyDictionary<uint, uint>? parentSnapshot,
+        IReadOnlyDictionary<uint, TrayProcessIdentity?> identities)
+    {
+        var entries = new List<ProcessHierarchyEntry>(identities.Count);
+        foreach (var (pid, identity) in identities)
+        {
+            uint parentPid = 0;
+            if (parentSnapshot is not null && !parentSnapshot.TryGetValue(pid, out parentPid))
+            {
+                continue;
+            }
+            var hasConfirmedParent = parentSnapshot is not null && parentSnapshot.ContainsKey(parentPid)
+                && identity is { } child
+                && identities.TryGetValue(parentPid, out var parentIdentity) && parentIdentity is { } parent
+                && parent.CreationTime <= child.CreationTime;
+            entries.Add(new ProcessHierarchyEntry(pid, hasConfirmedParent ? parentPid : 0, identity is not null));
+        }
+        return entries;
+    }
 
     /// <summary>
     /// Returns true for tray-resident chat apps (WeChat, QQ) whose re-launch while already
@@ -226,11 +389,26 @@ public static class TrayAppRevealRules
     /// Multi-instance tray apps never fire the global hotkey (which always wakes instance #1),
     /// and a single running tray instance never falls back to spawning a fresh login window.
     /// </summary>
-    public static TrayRevealAction DecideWhenHidden(int rootInstanceCount, bool hotkeyRegistered)
+    public static TrayRevealAction DecideWhenHidden(
+        int rootInstanceCount,
+        bool hotkeyRegistered,
+        bool hasPreferredInstance = false,
+        bool preferredInstanceExited = false,
+        bool ambiguousHotkeyOwner = false)
     {
+        if (preferredInstanceExited)
+        {
+            return TrayRevealAction.NotifyTargetUnavailable;
+        }
+        if (ambiguousHotkeyOwner)
+        {
+            return TrayRevealAction.NotifyTrayInstanceChoiceRequired;
+        }
         if (rootInstanceCount <= 0)
         {
-            return TrayRevealAction.LaunchNewProcess;
+            return hasPreferredInstance
+                ? TrayRevealAction.NotifyTargetUnavailable
+                : TrayRevealAction.LaunchNewProcess;
         }
 
         if (rootInstanceCount > 1)
@@ -245,6 +423,9 @@ public static class TrayAppRevealRules
 
     public static string FormatMultiInstanceTrayHint(string displayName) =>
         $"检测到多个 {displayName} 驻留托盘，请从系统托盘点对应图标";
+
+    public static string FormatChooseTrayInstanceHint(string displayName) =>
+        $"请从系统托盘打开对应的 {displayName} 账号";
 
     public static string FormatTrayHotkeyHint(string displayName) =>
         $"{displayName} 已驻留托盘，请用其快捷键或从系统托盘打开（需多开请右键“启动新实例”）";

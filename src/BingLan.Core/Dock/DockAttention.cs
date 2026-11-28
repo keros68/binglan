@@ -38,6 +38,11 @@ public sealed class DockAttention
         var nextSequence = ++_sequence;
         if (_windows.TryGetValue(window, out var existing))
         {
+            if (processId != 0 && existing.ProcessId != 0 && existing.ProcessId != processId)
+            {
+                _windows[window] = (processId, nextUnread, executablePath, nextSequence);
+                return true;
+            }
             var mergedUnread = Math.Max(existing.Unread, nextUnread);
             _windows[window] = (
                 existing.ProcessId != 0 ? existing.ProcessId : processId,
@@ -95,6 +100,24 @@ public sealed class DockAttention
 
     /// <summary>One window was destroyed; other windows of the same process keep their marks.</summary>
     public bool Closed(nint window) => window != 0 && _windows.Remove(window);
+
+    /// <summary>Discards a handled snapshot while preserving any flash recorded since it was taken.</summary>
+    public bool Discard(AttentionEntry entry) =>
+        _windows.TryGetValue(entry.Window, out var marked)
+        && marked.ProcessId == entry.ProcessId
+        && marked.Sequence == entry.Sequence
+        && _windows.Remove(entry.Window);
+
+    public bool UpdateExecutablePath(nint window, uint processId, string executablePath)
+    {
+        if (!_windows.TryGetValue(window, out var marked) || marked.ProcessId != processId
+            || string.Equals(marked.ExecutablePath, executablePath, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+        _windows[window] = (marked.ProcessId, marked.Unread, executablePath, marked.Sequence);
+        return true;
+    }
 
     /// <summary>
     /// Returns 2 when this exact window handle flashed, 1 when a hidden/other window of the
@@ -293,7 +316,9 @@ public sealed class DockAttention
 
         if (item.LaunchTarget is { } target)
         {
-            if (DockPinRules.MatchesExecutablePath(target, candidateExecutablePath))
+            if (DockPinRules.MatchesExecutablePath(target, candidateExecutablePath)
+                || (target.ExecutablePath is { } executablePath
+                    && TrayAppRevealRules.MatchesWeChatHelper(executablePath, candidateExecutablePath)))
             {
                 return true;
             }
@@ -324,7 +349,8 @@ public sealed class DockAttention
                     continue;
                 }
 
-                if (DockQuitRules.MatchesExecutableOrVersionSibling(window.ExecutablePath, candidateExecutablePath))
+                if (DockQuitRules.MatchesExecutableOrVersionSibling(window.ExecutablePath, candidateExecutablePath)
+                    || TrayAppRevealRules.MatchesWeChatHelper(window.ExecutablePath, candidateExecutablePath))
                 {
                     return true;
                 }

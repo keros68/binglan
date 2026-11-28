@@ -18,6 +18,10 @@ public sealed record DesktopDistribution(
     IReadOnlyDictionary<Guid, IReadOnlyList<string>> ByBox,
     IReadOnlyDictionary<DesktopGroupCategory, IReadOnlyList<string>> Unclaimed);
 
+public sealed record PreparedDesktopEntries(
+    IReadOnlyDictionary<DesktopGroupCategory, IReadOnlyList<string>> Entries,
+    IReadOnlySet<string> TemporarilyHiddenPaths);
+
 public static class FileMappingService
 {
     /// <summary>File type groups offered when choosing what a box collects.</summary>
@@ -50,22 +54,39 @@ public static class FileMappingService
     /// folders, other files). Items no box collects are returned by category, so missing
     /// category boxes can be created for them. Nothing on disk is touched.
     /// </summary>
-    public static DesktopDistribution Distribute(IEnumerable<string> paths, IReadOnlyList<FileBoxState> boxes)
+    public static DesktopDistribution Distribute(IEnumerable<string> paths, IReadOnlyList<FileBoxState> boxes) =>
+        Distribute(ClassifyDesktopEntries(paths), boxes);
+
+    private static DesktopDistribution Distribute(
+        IReadOnlyDictionary<DesktopGroupCategory, IReadOnlyList<string>> entries,
+        IReadOnlyList<FileBoxState> boxes,
+        IReadOnlySet<string>? automaticCandidates = null)
     {
         ArgumentNullException.ThrowIfNull(boxes);
         var custom = boxes.Where(box => box.CollectFolders || box.CollectExtensions.Count > 0).ToList();
         var byBox = new Dictionary<Guid, List<string>>();
         var unclaimed = new Dictionary<DesktopGroupCategory, List<string>>();
-        foreach (var (category, categoryPaths) in ClassifyDesktopEntries(paths))
+        foreach (var (category, categoryPaths) in entries)
         {
             foreach (var path in categoryPaths)
             {
+                if (automaticCandidates is not null && !automaticCandidates.Contains(path))
+                {
+                    continue;
+                }
+
                 var isFolder = category == DesktopGroupCategory.Folders;
                 var extension = Path.GetExtension(path).ToLowerInvariant();
                 var box = custom.FirstOrDefault(candidate => isFolder
                         ? candidate.CollectFolders
                         : candidate.CollectExtensions.Contains(extension))
                     ?? boxes.FirstOrDefault(candidate => candidate.DesktopCategory == category);
+                if (automaticCandidates is not null && box is not null
+                    && box.AutoCollectExcludedPaths.Contains(path, StringComparer.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
                 var list = box is null
                     ? unclaimed.TryGetValue(category, out var pending) ? pending : unclaimed[category] = []
                     : byBox.TryGetValue(box.Id, out var assigned) ? assigned : byBox[box.Id] = [];
@@ -78,19 +99,31 @@ public static class FileMappingService
             unclaimed.ToDictionary(pair => pair.Key, pair => (IReadOnlyList<string>)pair.Value));
     }
 
-    /// <summary>Automatic collection preserves paths already curated into any box.</summary>
-    public static DesktopDistribution DistributeAutomatically(IEnumerable<string> paths, IReadOnlyList<FileBoxState> boxes)
+    /// <summary>Reads the current file type of desktop notification paths before routing.</summary>
+    public static PreparedDesktopEntries PrepareAutomaticDesktopEntries(IEnumerable<string> paths)
     {
-        var mapped = boxes.SelectMany(box => box.Items).Select(item => item.Path)
+        var hidden = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        return new PreparedDesktopEntries(ClassifyDesktopEntries(paths, hidden), hidden);
+    }
+
+    /// <summary>Routes prepared paths using current collection rules and mappings on all screens.</summary>
+    public static DesktopDistribution DistributePreparedAutomatically(
+        PreparedDesktopEntries prepared,
+        IReadOnlyList<FileBoxState> eligibleBoxes, IEnumerable<FileBoxState> allBoxes)
+    {
+        var entries = prepared.Entries;
+        // Keep the lookup proportional to the notification batch while checking the live mappings once.
+        var pending = entries.Values.SelectMany(paths => paths)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var distribution = Distribute(paths.Where(path => !mapped.Contains(path)), boxes);
-        return distribution with
+        foreach (var mapping in allBoxes.SelectMany(box => box.Items))
         {
-            ByBox = distribution.ByBox.ToDictionary(pair => pair.Key, pair =>
-                (IReadOnlyList<string>)pair.Value
-                    .Except(boxes.First(box => box.Id == pair.Key).AutoCollectExcludedPaths, StringComparer.OrdinalIgnoreCase)
-                    .ToArray())
-        };
+            if (pending.Count == 0)
+            {
+                break;
+            }
+            pending.Remove(mapping.Path);
+        }
+        return Distribute(entries, eligibleBoxes, pending);
     }
 
     private const string ShellEntryPrefix = "shell:";
@@ -268,22 +301,10 @@ public static class FileMappingService
                              "*",
                              SearchOption.TopDirectoryOnly))
                 {
-                    FileAttributes attributes;
-                    try
+                    if (ReadDesktopEntryAttributes(entry) is { } attributes && IsVisibleDesktopEntry(attributes))
                     {
-                        attributes = File.GetAttributes(entry);
+                        entries.Add(Path.GetFullPath(entry));
                     }
-                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-                    {
-                        continue;
-                    }
-
-                    if ((attributes & (FileAttributes.Hidden | FileAttributes.System)) != 0)
-                    {
-                        continue;
-                    }
-
-                    entries.Add(Path.GetFullPath(entry));
                 }
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -298,6 +319,18 @@ public static class FileMappingService
             .ToArray();
     }
 
+    private static FileAttributes? ReadDesktopEntryAttributes(string path)
+    {
+        try
+        {
+            return File.GetAttributes(path);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            return null;
+        }
+    }
+
     public static int AddExisting(FileBoxState box, IEnumerable<string> paths) =>
         AddPaths(box, paths, checkExistence: true);
 
@@ -305,21 +338,8 @@ public static class FileMappingService
     /// Commits full paths whose existence was checked during background preparation.
     /// Only mapping records are updated; a final dedupe handles overlapping imports.
     /// </summary>
-    public static int AddPrepared(FileBoxState box, IEnumerable<string> fullPaths) =>
-        AddPaths(box, fullPaths, checkExistence: false);
-
-    /// <summary>Rechecks current curation at commit after background preparation.</summary>
-    public static int AddPreparedAutomatically(FileBoxState box, IEnumerable<string> fullPaths, IReadOnlyList<FileBoxState> boxes)
-    {
-        if (!boxes.Contains(box))
-        {
-            return 0;
-        }
-        var blocked = boxes.SelectMany(candidate => candidate.Items).Select(item => item.Path)
-            .Concat(box.AutoCollectExcludedPaths).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        return AddPaths(box, fullPaths.Where(path => !blocked.Contains(path)), checkExistence: false,
-            explicitImport: false);
-    }
+    public static int AddPrepared(FileBoxState box, IEnumerable<string> fullPaths, bool explicitImport = true) =>
+        AddPaths(box, fullPaths, checkExistence: false, explicitImport);
 
     private static int AddPaths(FileBoxState box, IEnumerable<string> paths, bool checkExistence, bool explicitImport = true)
     {
@@ -505,7 +525,13 @@ public static class FileMappingService
     }
 
     public static IReadOnlyDictionary<DesktopGroupCategory, IReadOnlyList<string>>
-        ClassifyDesktopEntries(IEnumerable<string> paths)
+        ClassifyDesktopEntries(IEnumerable<string> paths) => ClassifyDesktopEntries(paths, temporarilyHiddenPaths: null);
+
+    private static bool IsVisibleDesktopEntry(FileAttributes attributes) =>
+        (attributes & (FileAttributes.Hidden | FileAttributes.System)) == 0;
+
+    private static IReadOnlyDictionary<DesktopGroupCategory, IReadOnlyList<string>>
+        ClassifyDesktopEntries(IEnumerable<string> paths, ISet<string>? temporarilyHiddenPaths)
     {
         var groups = new Dictionary<DesktopGroupCategory, List<string>>();
         var known = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -527,12 +553,11 @@ public static class FileMappingService
                 continue;
             }
 
-            if ((!File.Exists(path) && !Directory.Exists(path)) || !known.Add(path))
+            if (!known.Add(path) || GetDesktopCategory(path, temporarilyHiddenPaths) is not { } category)
             {
                 continue;
             }
 
-            var category = GetDesktopCategory(path);
             if (!groups.TryGetValue(category, out var entries))
             {
                 entries = [];
@@ -592,6 +617,35 @@ public static class FileMappingService
 
         (ordered[currentIndex], ordered[targetIndex]) = (ordered[targetIndex], ordered[currentIndex]);
         ApplyOrder(ordered);
+        return true;
+    }
+
+    /// <summary>Inserts the dragged mappings next to the target, preserving their relative order.</summary>
+    public static bool Reorder(FileBoxState box, IReadOnlyCollection<Guid> itemIds, Guid targetId, bool after)
+    {
+        var selected = itemIds.ToHashSet();
+        if (selected.Count == 0 || selected.Contains(targetId))
+        {
+            return false;
+        }
+
+        var ordered = box.Items.OrderBy(item => item.Order).ToList();
+        var moving = ordered.Where(item => selected.Contains(item.Id)).ToList();
+        var remaining = ordered.Where(item => !selected.Contains(item.Id)).ToList();
+        var targetIndex = remaining.FindIndex(item => item.Id == targetId);
+        if (targetIndex < 0 || moving.Count != selected.Count)
+        {
+            return false;
+        }
+
+        remaining.InsertRange(after ? targetIndex + 1 : targetIndex, moving);
+        if (remaining.SequenceEqual(ordered))
+        {
+            return false;
+        }
+
+        ApplyOrder(remaining);
+        box.Items = remaining;
         return true;
     }
 
@@ -690,11 +744,31 @@ public static class FileMappingService
             : $"2|{extension}";
     }
 
-    private static DesktopGroupCategory GetDesktopCategory(string path)
+    private static DesktopGroupCategory? GetDesktopCategory(string path, ISet<string>? temporarilyHiddenPaths)
     {
-        if (Directory.Exists(path))
+        if (temporarilyHiddenPaths is not null)
+        {
+            if (IsPartialDownload(path) || ReadDesktopEntryAttributes(path) is not { } attributes)
+            {
+                return null;
+            }
+            if (!IsVisibleDesktopEntry(attributes))
+            {
+                temporarilyHiddenPaths.Add(path);
+                return null;
+            }
+            if ((attributes & FileAttributes.Directory) != 0)
+            {
+                return DesktopGroupCategory.Folders;
+            }
+        }
+        else if (Directory.Exists(path))
         {
             return DesktopGroupCategory.Folders;
+        }
+        else if (!File.Exists(path))
+        {
+            return null;
         }
 
         return ApplicationExtensions.Contains(Path.GetExtension(path))

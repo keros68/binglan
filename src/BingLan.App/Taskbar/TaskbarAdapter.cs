@@ -30,6 +30,8 @@ internal sealed class TaskbarAdapter : IDisposable
     private static readonly TimeSpan MinimumEventReapplyInterval = TimeSpan.FromMilliseconds(150);
     private const int CompetitorCheckTicks = 10;
     private const int AutoHideRecoveryAttemptCount = 5;
+    private const uint TaskbarProbeTimeoutMilliseconds = 150;
+    private const uint SmtoErrorOnExit = 0x0020;
     private static readonly string[] CompetingCustomizers =
         ["TranslucentTB", "TaskbarX", "RoundedTB", "StartAllBack"];
     private static readonly string[] TaskbarClasses =
@@ -44,6 +46,9 @@ internal sealed class TaskbarAdapter : IDisposable
     private readonly List<Services.BackgroundWinEventPump.WinEventSubscription> _winEventSubscriptions = [];
     private List<nint> _taskbars = [];
     private readonly uint _taskbarCreatedMessage;
+    private bool _shellNotificationQueued;
+    private bool _taskbarCreatedPending;
+    private bool _settingChangePending;
     private HwndSource? _messageWindow;
     private DateTime _lastEventReapply;
     private int _winEventQueued;
@@ -884,40 +889,79 @@ internal sealed class TaskbarAdapter : IDisposable
 
     private nint WatchTaskbar(nint hwnd, int message, nint wParam, nint lParam, ref bool handled)
     {
-        if ((uint)message == _taskbarCreatedMessage)
+        var taskbarCreated = _taskbarCreatedMessage != 0 && (uint)message == _taskbarCreatedMessage;
+        if (_disposed || (!taskbarCreated && message is not (
+                TaskbarNativeMethods.WmSettingChange or TaskbarNativeMethods.WmThemeChanged
+                or TaskbarNativeMethods.WmDwmColorizationColorChanged or TaskbarNativeMethods.WmDisplayChange)))
         {
-            ExplorerRestarted?.Invoke();
+            return 0;
         }
-        if ((uint)message == _taskbarCreatedMessage
-            || message is TaskbarNativeMethods.WmSettingChange
-                or TaskbarNativeMethods.WmThemeChanged
-                or TaskbarNativeMethods.WmDwmColorizationColorChanged
-                or TaskbarNativeMethods.WmDisplayChange)
+
+        _taskbarCreatedPending |= taskbarCreated;
+        _settingChangePending |= message == TaskbarNativeMethods.WmSettingChange;
+        if (!_shellNotificationQueued)
         {
-            if (_xamlSession is not null && ActiveMode == TaskbarMode.Transparent
-                && (uint)message == _taskbarCreatedMessage)
+            // Explorer can be waiting for this broadcast to return. Subscribers and
+            // taskbar reads must run after the window procedure has returned.
+            _shellNotificationQueued = true;
+            _reapplyTimer.Dispatcher.BeginInvoke(DispatcherPriority.Background,
+                () => _ = ProcessShellNotificationAsync());
+        }
+        return 0;
+    }
+
+    private async Task ProcessShellNotificationAsync()
+    {
+        var ready = false;
+        try
+        {
+            for (var attempt = 0; attempt < AutoHideRecoveryAttemptCount && !_disposed; attempt++)
             {
-                TryReconnectXaml();
-            }
-            else if (HoldsAccent)
-            {
-                _taskbars = [];
-                _reapplyTimer.Stop();
-                _reapplyTimer.Start();
-            }
-            else if (ActiveMode == TaskbarMode.SmartHide
-                && ((uint)message == _taskbarCreatedMessage || message == TaskbarNativeMethods.WmSettingChange))
-            {
-                var taskbar = _ops.ReadTaskbarIdentity();
-                // Explorer can report its new default state before sending TaskbarCreated.
-                // Recheck the taskbar identity after the shell has had time to settle.
-                if (taskbar != _autoHideTaskbar || !_ops.GetAutoHide())
+                if (await Task.Run(_ops.IsTaskbarResponsive))
                 {
-                    _reapplyTimer.Start();
+                    ready = true;
+                    break;
+                }
+                if (attempt < AutoHideRecoveryAttemptCount - 1)
+                {
+                    await Task.Delay(ReapplyDelay);
                 }
             }
         }
-        return 0;
+        finally
+        {
+            _shellNotificationQueued = false;
+        }
+        var taskbarCreated = _taskbarCreatedPending;
+        var settingsChanged = _settingChangePending;
+        _taskbarCreatedPending = false;
+        _settingChangePending = false;
+        if (ready && !_disposed)
+        {
+            Guard(() => HandleShellNotification(taskbarCreated, settingsChanged));
+        }
+    }
+
+    private void HandleShellNotification(bool taskbarCreated, bool settingsChanged)
+    {
+        if (taskbarCreated)
+        {
+            ExplorerRestarted?.Invoke();
+        }
+        if (_xamlSession is not null && ActiveMode == TaskbarMode.Transparent && taskbarCreated)
+        {
+            TryReconnectXaml();
+        }
+        else if (HoldsAccent)
+        {
+            _taskbars = [];
+            _reapplyTimer.Stop();
+            _reapplyTimer.Start();
+        }
+        else if (ActiveMode == TaskbarMode.SmartHide && (taskbarCreated || settingsChanged))
+        {
+            _reapplyTimer.Start();
+        }
     }
 
     private bool TryReconnectXaml()
@@ -929,10 +973,15 @@ internal sealed class TaskbarAdapter : IDisposable
         return true;
     }
 
-    private void CheckAutoHideTakeover()
+    private async Task CheckAutoHideTakeoverAsync(int version, CancellationToken cancellationToken)
     {
         // No taskbar window (Explorer restarting) reads as "not hidden"; wait for the next change.
-        if (!_ops.HasTaskbarWindow() || _ops.GetAutoHide())
+        var taskbar = _ops.ReadTaskbarIdentity();
+        if (taskbar.Window == 0 || !_ops.HasTaskbarWindow()
+            || await Task.Run(_ops.GetAutoHide, cancellationToken)
+            || _disposed || cancellationToken.IsCancellationRequested
+            || version != Volatile.Read(ref _requestVersion)
+            || _ops.ReadTaskbarIdentity() != taskbar)
         {
             return;
         }
@@ -1028,7 +1077,7 @@ internal sealed class TaskbarAdapter : IDisposable
             {
                 if (taskbar.Window != 0 && taskbar == _autoHideTaskbar)
                 {
-                    CheckAutoHideTakeover();
+                    await CheckAutoHideTakeoverAsync(version, cancellation.Token);
                     return;
                 }
                 _autoHideRecoveryAttempts = AutoHideRecoveryAttemptCount;
@@ -1070,7 +1119,7 @@ internal sealed class TaskbarAdapter : IDisposable
             if (!_ownsAutoHide && taskbar.Window != 0)
             {
                 _autoHideTaskbar = taskbar;
-                CheckAutoHideTakeover();
+                await CheckAutoHideTakeoverAsync(version, cancellation.Token);
                 return;
             }
             var restored = await RestoreActiveAsync();
@@ -1103,6 +1152,15 @@ internal sealed class TaskbarAdapter : IDisposable
         var window = TaskbarNativeMethods.FindWindowW("Shell_TrayWnd", null);
         return window != 0 && TaskbarNativeMethods.GetWindowThreadProcessId(window, out var processId) != 0
             ? (window, processId) : default;
+    }
+
+    internal static bool IsTaskbarResponsive()
+    {
+        var taskbar = ReadTaskbarIdentity();
+        return taskbar.Window != 0
+            && DockNativeMethods.SendMessageTimeoutW(taskbar.Window, DockNativeMethods.WmNull, 0, 0,
+                DockNativeMethods.SmtoAbortIfHung | SmtoErrorOnExit, TaskbarProbeTimeoutMilliseconds, out _) != 0
+            && ReadTaskbarIdentity() == taskbar;
     }
 
     internal static bool IsProcessRunning(uint processId)
@@ -1351,6 +1409,7 @@ internal sealed class TaskbarPlatformOps
     internal Func<bool, bool> SetAutoHide { get; init; } = TaskbarAdapter.SetAutoHide;
     internal Func<bool> HasTaskbarWindow { get; init; } = TaskbarAdapter.HasTaskbarWindow;
     internal Func<(nint Window, uint ProcessId)> ReadTaskbarIdentity { get; init; } = TaskbarAdapter.ReadTaskbarIdentity;
+    internal Func<bool> IsTaskbarResponsive { get; init; } = TaskbarAdapter.IsTaskbarResponsive;
     internal Func<uint, bool> IsProcessRunning { get; init; } = TaskbarAdapter.IsProcessRunning;
     internal Func<bool> IsSystemTransparencyEnabled { get; init; } = TaskbarAdapter.IsSystemTransparencyEnabled;
     internal Func<bool, bool> TryWriteSystemTransparency { get; init; } = TaskbarAdapter.TryWriteSystemTransparency;

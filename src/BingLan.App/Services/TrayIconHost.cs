@@ -47,9 +47,13 @@ internal sealed class TrayIconHost : IDisposable
     private const uint WmQueryEndSession = 0x0011;
     private const uint WmEndSession = 0x0016;
     private const uint WmTrayCallback = 0x0400 + 2048;
+    private const uint TrayIconId = 1;
+    private const int WmLeftButtonUp = 0x0202;
     private const int WmLeftButtonDoubleClick = 0x0203;
     private const int WmRightButtonUp = 0x0205;
     private const int WmContextMenu = 0x007B;
+    private const int NinSelect = 0x0400;
+    private const int NinKeySelect = 0x0401;
     private const int NinBalloonHide = 0x0403;
     private const int NinBalloonTimeout = 0x0404;
     private const int NinBalloonUserClick = 0x0405;
@@ -78,6 +82,7 @@ internal sealed class TrayIconHost : IDisposable
     private bool _added;
     private bool _disposed;
     private string _text = string.Empty;
+    private DispatcherOperation? _taskbarRestore;
 
     internal TrayIconHost(string text)
     {
@@ -109,7 +114,7 @@ internal sealed class TrayIconHost : IDisposable
         (_iconHandle, _ownsIcon) = LoadApplicationIcon();
     }
 
-    internal event EventHandler? DoubleClick;
+    internal event EventHandler? Activated;
     internal event EventHandler? BalloonTipClicked;
     internal event EventHandler? BalloonTipClosed;
     /// <summary>Raised on WM_ENDSESSION: true when the session is ending, false when shutdown was cancelled.</summary>
@@ -126,7 +131,10 @@ internal sealed class TrayIconHost : IDisposable
 
     internal void AddSeparator() => _items.Add(new TrayMenuItem(string.Empty, null, isSeparator: true));
 
-    internal void InvokeDoubleClick() => DoubleClick?.Invoke(this, EventArgs.Empty);
+    private void InvokeActivation()
+    {
+        if (!_disposed) Activated?.Invoke(this, EventArgs.Empty);
+    }
 
     internal void SetText(string text)
     {
@@ -155,11 +163,15 @@ internal sealed class TrayIconHost : IDisposable
             {
                 AddOrUpdateShellIcon(forceAdd: true);
             }
-            else if (_added)
+            else
             {
-                var data = CreateBaseData();
-                Shell_NotifyIconW(NimDelete, ref data);
-                _added = false;
+                CancelTaskbarRestore();
+                if (_added)
+                {
+                    var data = CreateBaseData();
+                    Shell_NotifyIconW(NimDelete, ref data);
+                    _added = false;
+                }
             }
         }
     }
@@ -201,11 +213,36 @@ internal sealed class TrayIconHost : IDisposable
         }
     }
 
+    internal static DispatcherOperation QueueTaskbarRestore(Dispatcher dispatcher,
+        DispatcherOperation? pending, Action restore) => pending is { Status: DispatcherOperationStatus.Pending }
+        ? pending
+        : dispatcher.BeginInvoke(DispatcherPriority.Background, restore);
+
+    private void RestoreTaskbarIcon()
+    {
+        _taskbarRestore = null;
+        if (_disposed || !_visible) return;
+        try
+        {
+            AddOrUpdateShellIcon(forceAdd: true);
+        }
+        catch (Exception exception)
+        {
+            StartupLog.WriteCrash("TrayIconHost.RestoreTaskbarIcon", exception);
+        }
+    }
+
+    private void CancelTaskbarRestore()
+    {
+        _taskbarRestore?.Abort();
+        _taskbarRestore = null;
+    }
+
     private NotifyIconData CreateBaseData() => new()
     {
         Size = (uint)Marshal.SizeOf<NotifyIconData>(),
         Window = _window,
-        Id = 1,
+        Id = TrayIconId,
         Flags = NifMessage | NifIcon | NifTip,
         CallbackMessage = WmTrayCallback,
         Icon = _iconHandle,
@@ -243,21 +280,25 @@ internal sealed class TrayIconHost : IDisposable
 
             if (!_disposed && TaskbarCreatedMessage != 0 && message == TaskbarCreatedMessage)
             {
-                _added = false;
+                // Return from the shell's broadcast before sending a notification request back to it.
                 if (_visible)
                 {
-                    AddOrUpdateShellIcon(forceAdd: true);
+                    _taskbarRestore = QueueTaskbarRestore(_dispatcher, _taskbarRestore, RestoreTaskbarIcon);
                 }
                 return 0;
             }
 
-            if (message == WmTrayCallback && !_disposed)
+            // The legacy notification protocol puts the registered icon ID in wParam.
+            if (message == WmTrayCallback && wParam == TrayIconId && !_disposed)
             {
                 var notification = (int)(lParam & 0xFFFF);
                 switch (notification)
                 {
+                    case WmLeftButtonUp:
                     case WmLeftButtonDoubleClick:
-                        _dispatcher.BeginInvoke(InvokeDoubleClick);
+                    case NinSelect:
+                    case NinKeySelect:
+                        _dispatcher.BeginInvoke(InvokeActivation);
                         return 0;
                     case WmRightButtonUp:
                     case WmContextMenu:
@@ -435,6 +476,7 @@ internal sealed class TrayIconHost : IDisposable
             return;
         }
         _disposed = true;
+        CancelTaskbarRestore();
         if (_added && _window != 0)
         {
             var data = CreateBaseData();
